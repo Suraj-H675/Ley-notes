@@ -64,3 +64,10 @@ dist-ssr
 *.db
 *.db-shm
 *.db-wal
+
+# Internal planning docs (kept locally, not in public repo)
+/CLAUDE.md
+/ARCHITECTURE.md
+/PROJECT_VISION.md
+/implementation_plan.md
+/task.md
