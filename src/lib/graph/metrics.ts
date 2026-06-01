@@ -17,6 +17,23 @@ export function calculateGraphMetrics(graph: Graph): GraphMetrics {
   const nodeCount = graph.order;
   const edgeCount = graph.size;
 
+  // For very large graphs, expensive computations can hang the UI. Bail out
+  // for graphs over a reasonable size and return partial metrics.
+  if (nodeCount > 2000) {
+    return {
+      nodeCount,
+      edgeCount,
+      avgDegree: nodeCount > 0 ? (2 * edgeCount) / nodeCount : 0,
+      density: 0,
+      diameter: 0,
+      degreeCentrality: new Map(),
+      betweennessCentrality: new Map(),
+      orphanNodes: [],
+      hubNodes: [],
+      leafNodes: [],
+    };
+  }
+
   const avgDegree = nodeCount > 0 ? (2 * edgeCount) / nodeCount : 0;
 
   const maxPossibleEdges = nodeCount * (nodeCount - 1);

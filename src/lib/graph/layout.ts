@@ -20,17 +20,55 @@ export function applyForceLayout(
 ): Map<string, { x: number; y: number }> {
   const { iterations = 100, settings = {} } = options;
 
+  // Seed initial random positions so force-atlas2 has somewhere to start.
+  // Without this, graphology-layout-forceatlas2 produces NaN positions on
+  // fresh graphs that don't have x/y attributes.
+  const positions = new Map<string, { x: number; y: number }>();
+  graph.forEachNode((node) => {
+    if (
+      typeof graph.getNodeAttribute(node, 'x') !== 'number' ||
+      typeof graph.getNodeAttribute(node, 'y') !== 'number'
+    ) {
+      const x = Math.random() * 400 - 200;
+      const y = Math.random() * 400 - 200;
+      graph.setNodeAttribute(node, 'x', x);
+      graph.setNodeAttribute(node, 'y', y);
+      positions.set(node, { x, y });
+    } else {
+      positions.set(node, {
+        x: graph.getNodeAttribute(node, 'x'),
+        y: graph.getNodeAttribute(node, 'y'),
+      });
+    }
+  });
+
   const mergedSettings = {
     ...DEFAULT_SETTINGS,
     ...settings,
   };
 
-  const layout = forceAtlas2(graph, {
-    iterations,
-    settings: mergedSettings,
+  try {
+    forceAtlas2(graph, {
+      iterations,
+      settings: mergedSettings,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('forceAtlas2 failed, falling back to circular layout:', err);
+    return circularLayout(graph);
+  }
+
+  // Read final positions from the graph
+  const result = new Map<string, { x: number; y: number }>();
+  graph.forEachNode((node) => {
+    const x = graph.getNodeAttribute(node, 'x');
+    const y = graph.getNodeAttribute(node, 'y');
+    if (typeof x === 'number' && typeof y === 'number' && !isNaN(x) && !isNaN(y)) {
+      result.set(node, { x, y });
+    }
   });
 
-  return new Map(Object.entries(layout));
+  return result;
 }
 
 export function circularLayout(

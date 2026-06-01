@@ -93,7 +93,11 @@ export function UniversePage() {
     }
 
     const flowNodes: Node[] = filteredNodes.map((node) => {
-      const pos = positions.get(node.id) || { x: 0, y: 0 };
+      const rawPos = positions.get(node.id) || { x: 0, y: 0 };
+      const pos = {
+        x: typeof rawPos.x === 'number' && !isNaN(rawPos.x) ? rawPos.x : 0,
+        y: typeof rawPos.y === 'number' && !isNaN(rawPos.y) ? rawPos.y : 0,
+      };
       const degree = degreeMap.get(node.id) || 0;
       const size = Math.min(40 + degree * 4, 80);
       const color = NODE_COLORS[node.type] || '#6b7280';

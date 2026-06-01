@@ -11,7 +11,10 @@ export function useGraph() {
   const { edges } = useEdges();
 
   const graph = useMemo(() => {
-    const g = new Graph();
+    // Use an undirected, simple graph. Graph algorithms (louvain, force-atlas2)
+    // require this — they fail on "true mixed graphs" with both directed and
+    // undirected edges.
+    const g = new Graph({ type: 'undirected', multi: false, allowSelfLoops: false });
 
     nodes.forEach((node) => {
       g.addNode(node.id, {
@@ -25,11 +28,13 @@ export function useGraph() {
 
     edges.forEach((edge) => {
       if (g.hasNode(edge.source) && g.hasNode(edge.target)) {
-        g.addEdge(edge.source, edge.target, {
-          type: edge.type,
-          label: edge.label,
-          strength: edge.strength,
-        });
+        if (!g.hasEdge(edge.source, edge.target)) {
+          g.addEdge(edge.source, edge.target, {
+            type: edge.type,
+            label: edge.label,
+            strength: edge.strength,
+          });
+        }
       }
     });
 

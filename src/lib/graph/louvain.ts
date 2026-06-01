@@ -7,7 +7,17 @@ export interface CommunityResult {
 }
 
 export function detectCommunities(graph: Graph): CommunityResult {
-  const rawCommunities = louvain(graph);
+  let rawCommunities: Record<string, number> = {};
+  try {
+    rawCommunities = louvain(graph);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('Louvain community detection failed:', err);
+    // Fall back: every node in its own community
+    graph.forEachNode((node) => {
+      rawCommunities[node] = 0;
+    });
+  }
 
   const communities = new Map<string, number>(Object.entries(rawCommunities));
 
