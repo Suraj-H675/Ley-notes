@@ -1,10 +1,8 @@
-import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui';
-import { ArrowRight, Link2, ArrowUpRight, Users } from 'lucide-react';
+import { ArrowUpRight, Link2, Users, ChevronRight } from 'lucide-react';
 
 interface BacklinkNode {
   id: string;
@@ -26,163 +24,119 @@ export function BacklinkPanel({ nodeId, className }: BacklinkPanelProps) {
     const allNodes = await db.nodes.toArray();
     const nodeMap = new Map(allNodes.map((n) => [n.id, n]));
 
-    // Outgoing: edges where this node is the source
     const outgoingEdges = allEdges.filter((e) => e.source === nodeId);
-    const outgoingNodes: BacklinkNode[] = outgoingEdges
-      .map((e) => nodeMap.get(e.target))
-      .filter(Boolean)
-      .map((n) => ({
-        id: n!.id,
-        title: n!.title,
-        type: n!.type,
-        emoji: n!.emoji,
-      }));
-
-    // Incoming: edges where this node is the target
     const incomingEdges = allEdges.filter((e) => e.target === nodeId);
-    const incomingNodes: BacklinkNode[] = incomingEdges
-      .map((e) => nodeMap.get(e.source))
-      .filter(Boolean)
-      .map((n) => ({
-        id: n!.id,
-        title: n!.title,
-        type: n!.type,
-        emoji: n!.emoji,
-      }));
 
-    // Related: 2nd-degree connections (neighbors of neighbors, minus direct connections)
-    const directNeighborIds = new Set([
+    const mapToNode = (id: string): BacklinkNode | null => {
+      const n = nodeMap.get(id);
+      if (!n) return null;
+      return { id: n.id, title: n.title, type: n.type, emoji: n.emoji };
+    };
+
+    const outgoing = outgoingEdges.map((e) => mapToNode(e.target)).filter((n): n is BacklinkNode => n !== null);
+    const incoming = incomingEdges.map((e) => mapToNode(e.source)).filter((n): n is BacklinkNode => n !== null);
+
+    const directIds = new Set([
       ...outgoingEdges.map((e) => e.target),
       ...incomingEdges.map((e) => e.source),
     ]);
 
     const secondDegreeIds = new Set<string>();
     for (const edge of allEdges) {
-      if (directNeighborIds.has(edge.source) && !directNeighborIds.has(edge.target) && edge.target !== nodeId) {
+      if (
+        directIds.has(edge.source) &&
+        !directIds.has(edge.target) &&
+        edge.target !== nodeId
+      ) {
         secondDegreeIds.add(edge.target);
       }
-      if (directNeighborIds.has(edge.target) && !directNeighborIds.has(edge.source) && edge.source !== nodeId) {
+      if (
+        directIds.has(edge.target) &&
+        !directIds.has(edge.source) &&
+        edge.source !== nodeId
+      ) {
         secondDegreeIds.add(edge.source);
       }
     }
+    const related = Array.from(secondDegreeIds)
+      .map(mapToNode)
+      .filter((n): n is BacklinkNode => n !== null);
 
-    const relatedNodes: BacklinkNode[] = Array.from(secondDegreeIds)
-      .map((id) => nodeMap.get(id))
-      .filter(Boolean)
-      .map((n) => ({
-        id: n!.id,
-        title: n!.title,
-        type: n!.type,
-        emoji: n!.emoji,
-      }));
-
-    return { outgoing: outgoingNodes, incoming: incomingNodes, related: relatedNodes };
+    return { outgoing, incoming, related };
   }, [nodeId]);
 
-  const outgoing = data?.outgoing || [];
-  const incoming = data?.incoming || [];
-  const related = data?.related || [];
-
-  const sortedOutgoing = useMemo(
-    () => [...outgoing].sort((a, b) => (a.title || 'Untitled').localeCompare(b.title || 'Untitled')),
-    [outgoing]
-  );
-
-  const sortedIncoming = useMemo(
-    () => [...incoming].sort((a, b) => (a.title || 'Untitled').localeCompare(b.title || 'Untitled')),
-    [incoming]
-  );
-
-  const sortedRelated = useMemo(
-    () => [...related].sort((a, b) => (a.title || 'Untitled').localeCompare(b.title || 'Untitled')),
-    [related]
-  );
-
-  const hasAnyLinks = sortedOutgoing.length > 0 || sortedIncoming.length > 0 || sortedRelated.length > 0;
-
-  if (!hasAnyLinks) {
-    return null;
-  }
+  if (!data) return null;
+  const { outgoing, incoming, related } = data;
+  const hasAny = outgoing.length > 0 || incoming.length > 0 || related.length > 0;
+  if (!hasAny) return null;
 
   return (
-    <div className={cn('space-y-4', className)}>
-      {/* Links To - Outgoing */}
-      {sortedOutgoing.length > 0 && (
-        <section>
-          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-2">
-            <ArrowUpRight className="h-4 w-4" />
-            <span>Links To ({sortedOutgoing.length})</span>
-          </div>
-          <div className="space-y-1">
-            {sortedOutgoing.map((node) => (
-              <button
-                key={node.id}
-                onClick={() => navigate(`/page/${node.id}`)}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left hover:bg-accent transition-colors"
-              >
-                <span className="text-lg">{node.emoji || '📄'}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="truncate font-medium">{node.title || 'Untitled'}</p>
-                  <Badge variant="outline" className="text-xs px-1 py-0">{node.type}</Badge>
-                </div>
-                <ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-              </button>
-            ))}
-          </div>
-        </section>
+    <div className={cn('space-y-6', className)}>
+      {outgoing.length > 0 && (
+        <BacklinkSection
+          icon={<ArrowUpRight className="h-3.5 w-3.5" />}
+          title="Links to"
+          nodes={outgoing}
+          onOpen={(id) => navigate(`/page/${id}`)}
+        />
       )}
-
-      {/* Referenced By - Incoming */}
-      {sortedIncoming.length > 0 && (
-        <section>
-          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-2">
-            <Link2 className="h-4 w-4" />
-            <span>Referenced By ({sortedIncoming.length})</span>
-          </div>
-          <div className="space-y-1">
-            {sortedIncoming.map((node) => (
-              <button
-                key={node.id}
-                onClick={() => navigate(`/page/${node.id}`)}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left hover:bg-accent transition-colors"
-              >
-                <span className="text-lg">{node.emoji || '📄'}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="truncate font-medium">{node.title || 'Untitled'}</p>
-                  <Badge variant="outline" className="text-xs px-1 py-0">{node.type}</Badge>
-                </div>
-                <ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-              </button>
-            ))}
-          </div>
-        </section>
+      {incoming.length > 0 && (
+        <BacklinkSection
+          icon={<Link2 className="h-3.5 w-3.5" />}
+          title="Referenced by"
+          nodes={incoming}
+          onOpen={(id) => navigate(`/page/${id}`)}
+        />
       )}
-
-      {/* Related - 2nd degree */}
-      {sortedRelated.length > 0 && (
-        <section>
-          <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground mb-2">
-            <Users className="h-4 w-4" />
-            <span>Related ({sortedRelated.length})</span>
-          </div>
-          <div className="space-y-1">
-            {sortedRelated.map((node) => (
-              <button
-                key={node.id}
-                onClick={() => navigate(`/page/${node.id}`)}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-left hover:bg-accent transition-colors"
-              >
-                <span className="text-lg">{node.emoji || '📄'}</span>
-                <div className="flex-1 min-w-0">
-                  <p className="truncate font-medium">{node.title || 'Untitled'}</p>
-                  <Badge variant="outline" className="text-xs px-1 py-0">{node.type}</Badge>
-                </div>
-                <ArrowRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-              </button>
-            ))}
-          </div>
-        </section>
+      {related.length > 0 && (
+        <BacklinkSection
+          icon={<Users className="h-3.5 w-3.5" />}
+          title="Related"
+          nodes={related}
+          onOpen={(id) => navigate(`/page/${id}`)}
+        />
       )}
     </div>
+  );
+}
+
+function BacklinkSection({
+  icon,
+  title,
+  nodes,
+  onOpen,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  nodes: BacklinkNode[];
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <section>
+      <div className="mb-1.5 flex items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/65">
+        {icon}
+        <span>{title}</span>
+        <span className="ml-1 tabular-nums text-muted-foreground/45">{nodes.length}</span>
+      </div>
+      <ul className="divide-y divide-border/40 rounded-md border border-border/40">
+        {nodes.map((node) => (
+          <li key={node.id}>
+            <button
+              onClick={() => onOpen(node.id)}
+              className="group flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[13px] transition-colors hover:bg-accent/30"
+            >
+              <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-[12px] leading-none">
+                {node.emoji || (
+                  <span className="block h-1 w-1 rounded-full bg-muted-foreground/40" />
+                )}
+              </span>
+              <span className="flex-1 truncate text-foreground/90">{node.title || 'Untitled'}</span>
+              <span className="text-[11px] capitalize text-muted-foreground/55">{node.type}</span>
+              <ChevronRight className="h-3 w-3 text-muted-foreground/30 transition-transform group-hover:translate-x-0.5 group-hover:text-foreground/60" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

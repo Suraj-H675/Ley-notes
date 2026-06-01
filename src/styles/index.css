@@ -4,65 +4,125 @@
 
 @layer base {
   :root {
-    --background: 224 71.4% 4.1%;
-    --foreground: 213 31% 91%;
-    --card: 223 47.4% 11.1%;
-    --card-foreground: 213 31% 91%;
-    --popover: 223 47.4% 11.1%;
-    --popover-foreground: 213 31% 91%;
-    --primary: 263.4 70% 50.4%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 223 47.4% 11.1%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 223 47.4% 11.1%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 223 47.4% 11.1%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 223 47.4% 17.5%;
-    --input: 223 47.4% 17.5%;
-    --ring: 263.4 70% 50.4%;
-    --radius: 0.5rem;
-  }
-}
+    /* Light mode: warm paper neutrals, ink-blue accent */
+    --background: 30 14% 97%;
+    --foreground: 220 16% 14%;
 
-@layer base {
+    --card: 30 14% 99%;
+    --card-foreground: 220 16% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 16% 14%;
+
+    --primary: 222 70% 48%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 30 10% 93%;
+    --secondary-foreground: 220 16% 14%;
+
+    --muted: 30 10% 93%;
+    --muted-foreground: 220 8% 42%;
+
+    --accent: 30 10% 93%;
+    --accent-foreground: 220 16% 14%;
+
+    --destructive: 0 65% 48%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 30 8% 86%;
+    --input: 30 10% 93%;
+    --ring: 222 70% 48%;
+
+    --radius: 6px;
+  }
+
+  .dark {
+    /* Warm graphite neutrals. Never pure black. Background tinted toward
+       cool blue-black, surfaces layered subtly above it. */
+    --background: 220 14% 7%;
+    --foreground: 220 10% 92%;
+
+    --card: 220 13% 10%;
+    --card-foreground: 220 10% 92%;
+
+    --popover: 220 14% 11%;
+    --popover-foreground: 220 10% 94%;
+
+    --primary: 222 75% 60%;
+    --primary-foreground: 220 14% 8%;
+
+    --secondary: 220 12% 14%;
+    --secondary-foreground: 220 10% 92%;
+
+    --muted: 220 12% 13%;
+    --muted-foreground: 220 8% 60%;
+
+    --accent: 220 12% 16%;
+    --accent-foreground: 220 10% 94%;
+
+    --destructive: 0 60% 55%;
+    --destructive-foreground: 220 14% 96%;
+
+    --border: 220 10% 18%;
+    --input: 220 12% 14%;
+    --ring: 222 75% 60%;
+  }
+
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings: 'rlig' 1, 'calt' 1, 'ss01' 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-synthesis-weight: none;
+  }
+
+  /* Tighter focus ring; no jarring outlines */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-1 ring-offset-background;
   }
 }
 
-/* Custom scrollbar */
+@layer components {
+  .row-hover {
+    @apply transition-colors duration-100 hover:bg-accent/60;
+  }
+
+  .text-meta {
+    @apply text-meta text-muted-foreground;
+  }
+
+  .text-micro {
+    @apply text-micro text-muted-foreground;
+  }
+}
+
+/* Slim, monochrome scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: hsl(var(--muted));
-  border-radius: 4px;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.5);
-  border-radius: 4px;
+  background: hsl(220 10% 22%);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(var(--muted-foreground));
+  background: hsl(220 10% 32%);
+  background-clip: padding-box;
+  border: 2px solid transparent;
 }
 
-/* Focus visible styles */
-:focus-visible {
-  @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
-}
-
-/* Selection */
 ::selection {
-  background: hsl(var(--primary) / 0.3);
+  background: hsl(222 75% 60% / 0.25);
 }

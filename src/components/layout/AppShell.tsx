@@ -8,13 +8,11 @@ export function AppShell() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-screen overflow-hidden bg-background">
+      <div className="flex h-screen overflow-hidden bg-background text-foreground">
         <Sidebar />
         <main
-          className="flex-1 overflow-hidden transition-all duration-300"
-          style={{
-            marginLeft: sidebarCollapsed ? 0 : sidebarWidth,
-          }}
+          className="flex-1 overflow-hidden transition-all duration-200"
+          style={{ marginLeft: sidebarCollapsed ? 0 : sidebarWidth }}
         >
           <Outlet />
         </main>

@@ -5,7 +5,35 @@ import { Command } from 'cmdk';
 import { useSearchStore } from '@/store';
 import { useCommands } from '@/hooks/useCommands';
 import { db } from '@/lib/db';
-import { cn } from '@/lib/utils';
+import {
+  FilePlus,
+  CheckSquare,
+  FolderPlus,
+  Lightbulb,
+  PanelLeft,
+  Globe,
+  Home,
+  ListTodo,
+  Search,
+} from 'lucide-react';
+import type { ReactNode } from 'react';
+
+const ICON_MAP: Record<string, ReactNode> = {
+  Search: <Search className="h-3.5 w-3.5" />,
+  FilePlus: <FilePlus className="h-3.5 w-3.5" />,
+  CheckSquare: <CheckSquare className="h-3.5 w-3.5" />,
+  FolderPlus: <FolderPlus className="h-3.5 w-3.5" />,
+  Lightbulb: <Lightbulb className="h-3.5 w-3.5" />,
+  Sidebar: <PanelLeft className="h-3.5 w-3.5" />,
+  Globe: <Globe className="h-3.5 w-3.5" />,
+  Home: <Home className="h-3.5 w-3.5" />,
+  ListTodo: <ListTodo className="h-3.5 w-3.5" />,
+};
+
+function CommandIcon({ name }: { name?: string }) {
+  if (name && ICON_MAP[name]) return <>{ICON_MAP[name]}</>;
+  return <Search className="h-3.5 w-3.5" />;
+}
 
 export function CommandPalette() {
   const navigate = useNavigate();
@@ -16,13 +44,8 @@ export function CommandPalette() {
   const searchResults = useLiveQuery(
     async () => {
       if (!query || query.length < 2) return [];
-
       const lowerQuery = query.toLowerCase();
-      const nodes = await db.nodes
-        .where('isArchived')
-        .equals(0)
-        .toArray();
-
+      const nodes = await db.nodes.where('isArchived').equals(0).toArray();
       return nodes
         .filter(
           (n) =>
@@ -41,12 +64,11 @@ export function CommandPalette() {
   );
 
   const groupedCommands = useMemo(() => {
-    const categories = {
+    return {
       create: commands.filter((c) => c.category === 'create'),
       navigation: commands.filter((c) => c.category === 'navigation'),
       action: commands.filter((c) => c.category === 'action'),
     };
-    return categories;
   }, [commands]);
 
   useEffect(() => {
@@ -65,117 +87,102 @@ export function CommandPalette() {
           useSearchStore.getState().openSearch();
         }
       }
-
       if (e.key === 'Escape' && isOpen) {
         e.preventDefault();
         closeSearch();
       }
     };
-
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, closeSearch]);
 
   if (!isOpen) return null;
 
+  const renderItem = (item: {
+    id: string;
+    icon?: string;
+    label: string;
+    execute: () => void | Promise<void>;
+  }) => (
+    <Command.Item
+      key={item.id}
+      value={item.label}
+      onSelect={() => {
+        item.execute();
+        closeSearch();
+      }}
+      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] text-foreground/85 aria-selected:bg-accent aria-selected:text-foreground"
+    >
+      <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-muted-foreground/80">
+        <CommandIcon name={item.icon} />
+      </span>
+      <span className="truncate">{item.label}</span>
+    </Command.Item>
+  );
+
   return (
     <div className="fixed inset-0 z-50">
       <div
-        className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+        className="absolute inset-0 bg-background/40 backdrop-blur-sm"
         onClick={closeSearch}
       />
-      <div className="absolute left-1/2 top-[20%] -translate-x-1/2 w-full max-w-xl">
-        <Command
-          className={cn(
-            'relative w-full rounded-lg border bg-popover shadow-lg overflow-hidden',
-            'animate-in fade-in-0 zoom-in-95 slide-in-from-top-4'
-          )}
-        >
-          <div className="flex items-center border-b px-3">
-            <span className="text-muted-foreground mr-2">›</span>
+      <div className="absolute left-1/2 top-[20%] w-full max-w-xl -translate-x-1/2 animate-slide-down">
+        <Command className="overflow-hidden rounded-lg border border-border/80 bg-popover shadow-menu">
+          <div className="flex items-center px-3">
+            <Search className="h-3.5 w-3.5 text-muted-foreground/60" />
             <Command.Input
               ref={inputRef}
               value={query}
               onValueChange={setQuery}
-              placeholder="Search or type a command..."
-              className="w-full py-3 px-1 text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+              placeholder="Search pages, or type a command..."
+              className="h-10 w-full bg-transparent px-2.5 text-[13px] text-foreground outline-none placeholder:text-muted-foreground/60"
             />
+            <kbd className="rounded border border-border/60 bg-background/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/70">
+              esc
+            </kbd>
           </div>
 
-          <Command.List className="max-h-[300px] overflow-y-auto p-2">
-            <Command.Empty className="py-6 text-center text-sm text-muted-foreground">
-              No results found.
+          <Command.List className="max-h-[320px] overflow-y-auto px-1.5 pb-2">
+            <Command.Empty className="py-6 text-center text-[13px] text-muted-foreground/70">
+              No results.
             </Command.Empty>
 
             {query === '' && (
               <>
                 {groupedCommands.create.length > 0 && (
-                  <Command.Group heading="Create">
-                    {groupedCommands.create.map((cmd) => (
-                      <Command.Item
-                        key={cmd.id}
-                        value={cmd.label}
-                        onSelect={() => {
-                          cmd.execute();
-                          closeSearch();
-                        }}
-                        className="flex items-center gap-2 px-2 py-2 rounded-md text-sm cursor-pointer hover:bg-accent"
-                      >
-                        <span className="text-lg">
-                          {getCommandIcon(cmd.icon)}
-                        </span>
-                        <span>{cmd.label}</span>
-                      </Command.Item>
-                    ))}
+                  <Command.Group
+                    heading="Create"
+                    className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted-foreground/60"
+                  >
+                    {groupedCommands.create.map(renderItem)}
                   </Command.Group>
                 )}
 
                 {groupedCommands.navigation.length > 0 && (
-                  <Command.Group heading="Navigate">
-                    {groupedCommands.navigation.map((cmd) => (
-                      <Command.Item
-                        key={cmd.id}
-                        value={cmd.label}
-                        onSelect={() => {
-                          cmd.execute();
-                          closeSearch();
-                        }}
-                        className="flex items-center gap-2 px-2 py-2 rounded-md text-sm cursor-pointer hover:bg-accent"
-                      >
-                        <span className="text-lg">
-                          {getCommandIcon(cmd.icon)}
-                        </span>
-                        <span>{cmd.label}</span>
-                      </Command.Item>
-                    ))}
+                  <Command.Group
+                    heading="Navigate"
+                    className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted-foreground/60"
+                  >
+                    {groupedCommands.navigation.map(renderItem)}
                   </Command.Group>
                 )}
 
                 {groupedCommands.action.length > 0 && (
-                  <Command.Group heading="Actions">
-                    {groupedCommands.action.map((cmd) => (
-                      <Command.Item
-                        key={cmd.id}
-                        value={cmd.label}
-                        onSelect={() => {
-                          cmd.execute();
-                          closeSearch();
-                        }}
-                        className="flex items-center gap-2 px-2 py-2 rounded-md text-sm cursor-pointer hover:bg-accent"
-                      >
-                        <span className="text-lg">
-                          {getCommandIcon(cmd.icon)}
-                        </span>
-                        <span>{cmd.label}</span>
-                      </Command.Item>
-                    ))}
+                  <Command.Group
+                    heading="Actions"
+                    className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted-foreground/60"
+                  >
+                    {groupedCommands.action.map(renderItem)}
                   </Command.Group>
                 )}
               </>
             )}
 
             {query !== '' && searchResults && searchResults.length > 0 && (
-              <Command.Group heading="Pages">
+              <Command.Group
+                heading="Pages"
+                className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-muted-foreground/60"
+              >
                 {searchResults.map((node) => (
                   <Command.Item
                     key={node.id}
@@ -184,43 +191,24 @@ export function CommandPalette() {
                       navigate(`/page/${node.id}`);
                       closeSearch();
                     }}
-                    className="flex items-center gap-2 px-2 py-2 rounded-md text-sm cursor-pointer hover:bg-accent"
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-[13px] text-foreground/85 aria-selected:bg-accent aria-selected:text-foreground"
                   >
-                    <span className="text-lg">{node.emoji || '📄'}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="truncate">{node.title}</p>
-                      <p className="text-xs text-muted-foreground capitalize">
-                        {node.type}
-                      </p>
-                    </div>
+                    <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-[13px] leading-none">
+                      {node.emoji || (
+                        <span className="block h-1 w-1 rounded-full bg-muted-foreground/40" />
+                      )}
+                    </span>
+                    <span className="truncate">{node.title}</span>
+                    <span className="ml-auto text-[11px] capitalize text-muted-foreground/60">
+                      {node.type}
+                    </span>
                   </Command.Item>
                 ))}
               </Command.Group>
             )}
           </Command.List>
-
-          <div className="border-t px-3 py-2 text-xs text-muted-foreground">
-            <span>Press </span>
-            <kbd className="px-1 py-0.5 rounded bg-accent text-xs">Esc</kbd>
-            <span> to close</span>
-          </div>
         </Command>
       </div>
     </div>
   );
-}
-
-function getCommandIcon(icon: string | undefined): string {
-  const iconMap: Record<string, string> = {
-    Search: '🔍',
-    FilePlus: '📄',
-    CheckSquare: '✅',
-    FolderPlus: '📁',
-    Lightbulb: '💡',
-    Sidebar: '📑',
-    Globe: '🌌',
-    Home: '🏠',
-    ListTodo: '📋',
-  };
-  return iconMap[icon || ''] || '▸';
 }

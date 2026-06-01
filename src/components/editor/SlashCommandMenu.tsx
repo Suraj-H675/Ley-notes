@@ -18,7 +18,7 @@ function getCommandIcon(id: string): string {
     taskList: '☑',
     blockquote: '"',
     codeBlock: '<>',
-    horizontalRule: '—',
+    horizontalRule: 'HR',
   };
   return icons[id] || '▸';
 }

@@ -38,42 +38,74 @@ export default {
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
-        // Knowledge graph specific colors
+        // Knowledge graph node colors — desaturated, restraint palette
         node: {
-          document: '#3b82f6',
-          task: '#22c55e',
-          project: '#a855f7',
-          concept: '#f59e0b',
+          document: 'hsl(217 70% 62%)',
+          task: 'hsl(150 50% 55%)',
+          project: 'hsl(265 55% 65%)',
+          concept: 'hsl(35 70% 60%)',
         },
         edge: {
-          wiki: '#6366f1',
-          explicit: '#8b5cf6',
-          depends: '#ef4444',
-          related: '#6b7280',
+          wiki: 'hsl(225 55% 60%)',
+          explicit: 'hsl(265 50% 62%)',
+          depends: 'hsl(0 55% 58%)',
+          related: 'hsl(220 8% 55%)',
         },
       },
       borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        lg: '8px',
+        md: '6px',
+        sm: '4px',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Menlo', 'monospace'],
+        sans: [
+          'Geist',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          'Segoe UI',
+          'system-ui',
+          'sans-serif',
+        ],
+        mono: [
+          'Geist Mono',
+          'JetBrains Mono',
+          'SF Mono',
+          'Menlo',
+          'monospace',
+        ],
+      },
+      fontSize: {
+        // Editorial scale: tight display, comfortable body, small metadata
+        'display': ['28px', { lineHeight: '34px', letterSpacing: '-0.015em' }],
+        'title': ['20px', { lineHeight: '26px', letterSpacing: '-0.01em' }],
+        'body': ['14px', { lineHeight: '22px' }],
+        'meta': ['12px', { lineHeight: '16px', letterSpacing: '0' }],
+        'micro': ['11px', { lineHeight: '14px', letterSpacing: '0.01em' }],
+      },
+      boxShadow: {
+        // Tinted, not black
+        'panel': '0 1px 0 hsl(220 10% 8% / 0.4), 0 0 0 1px hsl(220 10% 100% / 0.04)',
+        'popover': '0 8px 24px hsl(220 20% 4% / 0.32), 0 0 0 1px hsl(220 10% 100% / 0.06)',
+        'menu': '0 12px 32px hsl(220 20% 4% / 0.4), 0 0 0 1px hsl(220 10% 100% / 0.06)',
       },
       keyframes: {
         'fade-in': {
-          '0%': { opacity: '0', transform: 'translateY(-10px)' },
-          '100%': { opacity: '1', transform: 'translateY(0)' },
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
         },
-        'slide-in': {
-          '0%': { transform: 'translateX(-100%)' },
-          '100%': { transform: 'translateX(0)' },
+        'scale-in': {
+          '0%': { opacity: '0', transform: 'scale(0.96)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+        'slide-down': {
+          '0%': { opacity: '0', transform: 'translateY(-4px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
         },
       },
       animation: {
-        'fade-in': 'fade-in 0.2s ease-out',
-        'slide-in': 'slide-in 0.3s ease-out',
+        'fade-in': 'fade-in 150ms cubic-bezier(0.16, 1, 0.3, 1)',
+        'scale-in': 'scale-in 120ms cubic-bezier(0.16, 1, 0.3, 1)',
+        'slide-down': 'slide-down 150ms cubic-bezier(0.16, 1, 0.3, 1)',
       },
     },
   },

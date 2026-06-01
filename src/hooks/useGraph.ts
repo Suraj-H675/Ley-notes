@@ -12,7 +12,7 @@ export function useGraph() {
 
   const graph = useMemo(() => {
     // Use an undirected, simple graph. Graph algorithms (louvain, force-atlas2)
-    // require this — they fail on "true mixed graphs" with both directed and
+    // require this. They fail on "true mixed graphs" with both directed and
     // undirected edges.
     const g = new Graph({ type: 'undirected', multi: false, allowSelfLoops: false });
 

@@ -15,29 +15,29 @@ import { useNodes, useEdges } from '@/hooks';
 import { useUniverseStore } from '@/store';
 import { useGraph } from '@/hooks/useGraph';
 import { applyForceLayout, circularLayout } from '@/lib/graph/layout';
-import { Button } from '@/components/ui';
-import { ArrowLeft } from 'lucide-react';
+import { PageHeader } from '@/components/layout';
 import { UniverseToolbar } from '@/components/universe/UniverseToolbar';
 
+// HSL values match the new design tokens
 const NODE_COLORS: Record<string, string> = {
-  document: '#3b82f6',
-  task: '#22c55e',
-  project: '#f59e0b',
-  concept: '#a855f7',
+  document: 'hsl(217 70% 62%)',
+  task: 'hsl(150 50% 55%)',
+  project: 'hsl(265 55% 65%)',
+  concept: 'hsl(35 70% 60%)',
 };
 
 const EDGE_COLORS: Record<string, string> = {
-  'wiki-link': '#8b5cf6',
-  'explicit': '#06b6d4',
-  'task-dependency': '#22c55e',
-  'project-member': '#f59e0b',
-  'depends-on': '#ef4444',
-  'part-of': '#3b82f6',
-  'related-to': '#6b7280',
-  'contradicts': '#f97316',
-  'extends': '#ec4899',
-  'uses': '#14b8a6',
-  'created-by': '#a855f7',
+  'wiki-link': 'hsl(225 55% 60%)',
+  explicit: 'hsl(265 50% 62%)',
+  'task-dependency': 'hsl(150 50% 55%)',
+  'project-member': 'hsl(35 70% 60%)',
+  'depends-on': 'hsl(0 55% 58%)',
+  'part-of': 'hsl(217 70% 62%)',
+  'related-to': 'hsl(220 8% 55%)',
+  contradicts: 'hsl(15 65% 58%)',
+  extends: 'hsl(295 50% 65%)',
+  uses: 'hsl(170 50% 50%)',
+  'created-by': 'hsl(265 55% 65%)',
 };
 
 export function UniversePage() {
@@ -46,13 +46,7 @@ export function UniversePage() {
   const { edges: dbEdges } = useEdges();
   const { graph, metrics } = useGraph();
 
-  const {
-    showMiniMap,
-    showLabels,
-    layoutMode,
-    filterType,
-    setSelectedNodes,
-  } = useUniverseStore();
+  const { showMiniMap, showLabels, layoutMode, filterType, setSelectedNodes } = useUniverseStore();
 
   const [nodes, setNodes] = useState<any[]>([]);
   const [edges, setEdges] = useState<any[]>([]);
@@ -62,8 +56,7 @@ export function UniversePage() {
     const map = new Map<string, number>();
     if (metrics) {
       graph.forEachNode((nodeId) => {
-        const degree = graph.degree(nodeId);
-        map.set(nodeId, degree);
+        map.set(nodeId, graph.degree(nodeId));
       });
     }
     return map;
@@ -73,11 +66,9 @@ export function UniversePage() {
     const filteredNodes = filterType
       ? dbNodes.filter((n) => n.type === filterType)
       : dbNodes;
-
     const nodeIds = new Set(filteredNodes.map((n) => n.id));
 
     let positions: Map<string, { x: number; y: number }>;
-
     if (layoutMode === 'force') {
       positions = applyForceLayout(graph, { iterations: 50 });
     } else if (layoutMode === 'circular') {
@@ -86,29 +77,28 @@ export function UniversePage() {
       positions = new Map();
       const cols = Math.ceil(Math.sqrt(filteredNodes.length));
       filteredNodes.forEach((node, i) => {
-        const row = Math.floor(i / cols);
-        const col = i % cols;
-        positions.set(node.id, { x: col * 150, y: row * 150 });
+        positions.set(node.id, {
+          x: (i % cols) * 160,
+          y: Math.floor(i / cols) * 160,
+        });
       });
     }
 
     const flowNodes: Node[] = filteredNodes.map((node) => {
-      const rawPos = positions.get(node.id) || { x: 0, y: 0 };
+      const raw = positions.get(node.id) || { x: 0, y: 0 };
       const pos = {
-        x: typeof rawPos.x === 'number' && !isNaN(rawPos.x) ? rawPos.x : 0,
-        y: typeof rawPos.y === 'number' && !isNaN(rawPos.y) ? rawPos.y : 0,
+        x: typeof raw.x === 'number' && !isNaN(raw.x) ? raw.x : 0,
+        y: typeof raw.y === 'number' && !isNaN(raw.y) ? raw.y : 0,
       };
       const degree = degreeMap.get(node.id) || 0;
-      const size = Math.min(40 + degree * 4, 80);
-      const color = NODE_COLORS[node.type] || '#6b7280';
+      const size = Math.min(28 + degree * 3, 56);
+      const color = NODE_COLORS[node.type] || 'hsl(220 8% 55%)';
 
       return {
         id: node.id,
         type: 'default',
         position: pos,
-        data: {
-          label: showLabels ? (node.title || 'Untitled') : '',
-        },
+        data: { label: showLabels ? (node.title || 'Untitled') : '' },
         style: {
           width: size,
           height: size,
@@ -117,47 +107,38 @@ export function UniversePage() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: '20px',
+          fontSize: '14px',
+          fontWeight: 500,
+          color: 'hsl(220 14% 8%)',
           cursor: 'pointer',
+          border: '2px solid hsl(220 14% 7% / 0.4)',
         },
       };
     });
 
     const flowEdges: Edge[] = dbEdges
       .filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
-      .map((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        type: 'smoothstep',
-        data: {
-          edgeType: edge.type,
+      .map((edge) => {
+        const color = EDGE_COLORS[edge.type] || 'hsl(220 8% 55%)';
+        return {
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+          type: 'smoothstep',
+          data: { edgeType: edge.type, label: showLabels ? edge.type : undefined },
           label: showLabels ? edge.type : undefined,
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: EDGE_COLORS[edge.type] || '#6b7280',
-        },
-        style: {
-          stroke: EDGE_COLORS[edge.type] || '#6b7280',
-          strokeWidth: 1.5,
-          opacity: 0.7,
-        },
-      }));
+          markerEnd: { type: MarkerType.ArrowClosed, color },
+          style: { stroke: color, strokeWidth: 1.25, opacity: 0.6 },
+          labelStyle: { fill: 'hsl(220 10% 70%)', fontSize: 10, fontWeight: 500 },
+          labelBgStyle: { fill: 'hsl(220 14% 9%)', fillOpacity: 0.8 },
+          labelBgPadding: [4, 2] as [number, number],
+          labelBgBorderRadius: 4,
+        };
+      });
 
     setNodes(flowNodes);
     setEdges(flowEdges);
-  }, [
-    dbNodes,
-    dbEdges,
-    filterType,
-    layoutMode,
-    showLabels,
-    degreeMap,
-    graph,
-    setNodes,
-    setEdges,
-  ]);
+  }, [dbNodes, dbEdges, filterType, layoutMode, showLabels, degreeMap, graph]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
@@ -167,36 +148,26 @@ export function UniversePage() {
     [navigate, setSelectedNodes]
   );
 
-  const onPaneClick = useCallback(() => {
-    setSelectedNodes([]);
-  }, [setSelectedNodes]);
+  const onPaneClick = useCallback(() => setSelectedNodes([]), [setSelectedNodes]);
 
-  const fitView = useCallback(() => {
-    rfInstance?.fitView({ padding: 0.2 });
-  }, [rfInstance]);
+  const fitView = useCallback(() => rfInstance?.fitView({ padding: 0.2 }), [rfInstance]);
 
   return (
-    <div className="h-full flex flex-col">
-      <header className="flex items-center gap-4 border-b p-4">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => navigate(-1)}
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <h1 className="text-xl font-semibold">Universe</h1>
-        <div className="flex-1" />
-        <UniverseToolbar onFitView={fitView} />
-      </header>
+    <div className="flex h-full flex-col">
+      <PageHeader
+        title="Universe"
+        subtitle={`${dbNodes.length} pages, ${dbEdges.length} edges`}
+        actions={<UniverseToolbar onFitView={fitView} />}
+      />
 
-      <main className="flex-1 relative">
+      <main className="relative flex-1">
         {dbNodes.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-muted-foreground">
-            <div className="text-center space-y-4">
-              <p className="text-4xl">🌌</p>
-              <p className="text-lg font-medium">Your knowledge graph</p>
-              <p>Create some pages to see your knowledge universe</p>
+          <div className="flex h-full items-center justify-center text-muted-foreground">
+            <div className="max-w-sm space-y-2 text-center">
+              <p className="text-[15px] text-foreground/90">No pages yet</p>
+              <p className="text-[13px] text-muted-foreground/70">
+                Create some pages and link them. The graph will appear here.
+              </p>
             </div>
           </div>
         ) : (
@@ -210,18 +181,30 @@ export function UniversePage() {
             fitView
             minZoom={0.1}
             maxZoom={2}
+            proOptions={{ hideAttribution: true }}
           >
             {showMiniMap && (
               <MiniMap
-                nodeColor={(node) => {
-                  return (node.style?.backgroundColor as string) || '#6b7280';
-                }}
+                nodeColor={(node) => (node.style?.backgroundColor as string) || '#6b7280'}
                 pannable
                 zoomable
+                style={{ background: 'hsl(220 14% 9% / 0.6)' }}
+                maskColor="hsl(220 14% 7% / 0.6)"
               />
             )}
-            <Controls />
-            <Background variant={BackgroundVariant.Dots} gap={16} size={1} />
+            <Controls
+              style={{
+                background: 'hsl(220 14% 11%)',
+                border: '1px solid hsl(220 10% 18%)',
+                borderRadius: 6,
+              }}
+            />
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={20}
+              size={1}
+              color="hsl(220 10% 25%)"
+            />
           </ReactFlow>
         )}
       </main>

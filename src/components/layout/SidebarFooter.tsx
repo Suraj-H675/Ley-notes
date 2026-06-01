@@ -1,32 +1,37 @@
-import { useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui';
-import { Settings, Moon, Sun } from 'lucide-react';
 import { useWorkspaceStore } from '@/store';
+import { Sun, Moon, Monitor } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export function SidebarFooter() {
-  const navigate = useNavigate();
   const { theme, setTheme } = useWorkspaceStore();
 
-  const toggleTheme = () => {
-    setTheme(theme === 'dark' ? 'light' : 'dark');
-  };
+  const options: { value: 'light' | 'dark' | 'system'; icon: typeof Sun; label: string }[] = [
+    { value: 'light', icon: Sun, label: 'Light' },
+    { value: 'dark', icon: Moon, label: 'Dark' },
+    { value: 'system', icon: Monitor, label: 'System' },
+  ];
 
   return (
-    <div className="border-t p-3">
-      <div className="flex items-center justify-between">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => navigate('/settings')}
-        >
-          <Settings className="h-4 w-4" />
-        </Button>
-
-        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={toggleTheme}>
-          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </Button>
-      </div>
+    <div className="flex items-center gap-0.5 border-t border-border/40 px-2 py-2">
+      {options.map((opt) => {
+        const Icon = opt.icon;
+        const active = theme === opt.value;
+        return (
+          <button
+            key={opt.value}
+            onClick={() => setTheme(opt.value)}
+            aria-label={opt.label}
+            className={cn(
+              'flex h-6 flex-1 items-center justify-center rounded text-muted-foreground/60 transition-colors',
+              active
+                ? 'bg-accent text-foreground'
+                : 'hover:bg-accent/50 hover:text-foreground'
+            )}
+          >
+            <Icon className="h-3.5 w-3.5" />
+          </button>
+        );
+      })}
     </div>
   );
 }

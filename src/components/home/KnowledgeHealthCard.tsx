@@ -1,8 +1,6 @@
-import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { cn } from '@/lib/utils';
-import { Link2, AlertCircle, CheckCircle2, TrendingUp } from 'lucide-react';
 
 interface KnowledgeHealthCardProps {
   className?: string;
@@ -16,117 +14,62 @@ export function KnowledgeHealthCard({ className }: KnowledgeHealthCardProps) {
     ]);
 
     if (nodes.length === 0) {
-      return {
-        totalNodes: 0,
-        totalEdges: 0,
-        orphanNodes: 0,
-        wikiLinks: 0,
-        healthScore: 0,
-      };
+      return { totalNodes: 0, wikiLinks: 0, orphanNodes: 0, healthScore: 0 };
     }
 
     const wikiLinks = edges.filter((e) => e.type === 'wiki-link').length;
-
-    const connectedNodeIds = new Set<string>();
+    const connected = new Set<string>();
     edges.forEach((e) => {
-      connectedNodeIds.add(e.source);
-      connectedNodeIds.add(e.target);
+      connected.add(e.source);
+      connected.add(e.target);
     });
+    const orphanNodes = nodes.filter((n) => !connected.has(n.id)).length;
+    const orphanRatio = nodes.length > 0 ? orphanNodes / nodes.length : 0;
+    const healthScore = Math.max(0, Math.round(100 - orphanRatio * 100));
 
-    const orphanNodes = nodes.filter((n) => !connectedNodeIds.has(n.id)).length;
-    const orphanPercentage = nodes.length > 0 ? (orphanNodes / nodes.length) * 100 : 0;
-
-    // Health score: 100 if no orphans, decreases by 10% per orphan node
-    const healthScore = Math.max(0, Math.round(100 - orphanPercentage * 10));
-
-    return {
-      totalNodes: nodes.length,
-      totalEdges: edges.length,
-      orphanNodes,
-      wikiLinks,
-      healthScore,
-    };
+    return { totalNodes: nodes.length, wikiLinks, orphanNodes, healthScore };
   }, []);
 
-  const healthLevel = useMemo(() => {
-    if (!health) return 'unknown';
-    if (health.healthScore >= 80) return 'excellent';
-    if (health.healthScore >= 60) return 'good';
-    if (health.healthScore >= 40) return 'fair';
-    return 'needs-attention';
-  }, [health?.healthScore]);
-
-  const HealthIcon = useMemo(() => {
-    switch (healthLevel) {
-      case 'excellent':
-      case 'good':
-        return CheckCircle2;
-      case 'fair':
-        return TrendingUp;
-      default:
-        return AlertCircle;
-    }
-  }, [healthLevel]);
-
-  const healthColor = useMemo(() => {
-    switch (healthLevel) {
-      case 'excellent':
-        return 'text-green-500';
-      case 'good':
-        return 'text-blue-500';
-      case 'fair':
-        return 'text-yellow-500';
-      default:
-        return 'text-red-500';
-    }
-  }, [healthLevel]);
-
-  if (!health) {
-    return null;
-  }
+  if (!health) return null;
 
   return (
-    <div className={cn('p-4 rounded-lg border bg-card', className)}>
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="font-semibold flex items-center gap-2">
-            <TrendingUp className="h-4 w-4" />
-            Knowledge Health
-          </h3>
-          <p className="text-xs text-muted-foreground mt-1">
-            Your knowledge base wellness
-          </p>
-        </div>
-        <div className={cn('flex items-center gap-1', healthColor)}>
-          <HealthIcon className="h-5 w-5" />
-          <span className="text-lg font-bold">{health.healthScore}%</span>
-        </div>
+    <div className={cn('rounded-lg border border-border/60 bg-card/40 p-4', className)}>
+      <div className="mb-3 flex items-baseline justify-between">
+        <h3 className="text-[13px] font-medium text-foreground/90">Knowledge health</h3>
+        <span className="text-[11px] tabular-nums text-muted-foreground/60">
+          {health.healthScore}<span className="opacity-50">/100</span>
+        </span>
       </div>
 
-      <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-        <div className="p-2 rounded bg-accent/50">
-          <div className="text-lg font-bold">{health.totalNodes}</div>
-          <div className="text-xs text-muted-foreground">Nodes</div>
-        </div>
-        <div className="p-2 rounded bg-accent/50">
-          <div className="text-lg font-bold">{health.wikiLinks}</div>
-          <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
-            <Link2 className="h-3 w-3" />
-            Links
-          </div>
-        </div>
-        <div className="p-2 rounded bg-accent/50">
-          <div className="text-lg font-bold">{health.orphanNodes}</div>
-          <div className="text-xs text-muted-foreground">Orphans</div>
-        </div>
+      <div className="mb-3 h-1 overflow-hidden rounded-full bg-accent/50">
+        <div
+          className="h-full rounded-full bg-primary transition-all duration-500"
+          style={{ width: `${health.healthScore}%` }}
+        />
+      </div>
+
+      <div className="grid grid-cols-3 divide-x divide-border/40">
+        <Metric label="Pages" value={health.totalNodes} />
+        <Metric label="Links" value={health.wikiLinks} />
+        <Metric label="Orphans" value={health.orphanNodes} muted={health.orphanNodes > 0} />
       </div>
 
       {health.orphanNodes > 0 && (
-        <p className="mt-3 text-xs text-muted-foreground">
-          {health.orphanNodes} node{health.orphanNodes !== 1 ? 's' : ''} not connected to any other node.
-          Link them to improve your knowledge graph.
+        <p className="mt-3 text-[12px] leading-relaxed text-muted-foreground/70">
+          {health.orphanNodes} page{health.orphanNodes !== 1 ? 's are' : ' is'} not connected to anything yet. Linking them improves the graph.
         </p>
       )}
+    </div>
+  );
+}
+
+function Metric({ label, value, muted }: { label: string; value: number; muted?: boolean }) {
+  return (
+    <div className="px-3 first:pl-0 last:pr-0">
+      <div className={cn('text-[18px] font-medium tabular-nums tracking-tight', muted ? 'text-muted-foreground/70' : 'text-foreground/90')}>
+        {value}
+      </div>
+      <div className="text-[11px] text-muted-foreground/60">{label}</div>
     </div>
   );
 }

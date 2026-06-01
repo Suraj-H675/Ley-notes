@@ -1,122 +1,125 @@
 import { useNavigate } from 'react-router-dom';
 import { useNodes } from '@/hooks';
-import { Button } from '@/components/ui';
 import { formatRelative } from '@/lib/utils';
-import { FilePlus, Lightbulb, CheckSquare, Folder, Sparkles } from 'lucide-react';
+import { FilePlus, Sparkles, ArrowUpRight } from 'lucide-react';
 import { KnowledgeHealthCard } from '@/components/home/KnowledgeHealthCard';
 import { seedDemoData } from '@/scripts/seedDemoData';
 
 export function HomePage() {
   const navigate = useNavigate();
-  const { nodes } = useNodes();
+  const { nodes, createNode } = useNodes();
 
-  const recentNodes = nodes
+  const recentNodes = [...nodes]
     .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, 10);
+    .slice(0, 8);
 
-  const taskNodes = nodes.filter((n) => n.type === 'task');
-  const projectNodes = nodes.filter((n) => n.type === 'project');
-  const conceptNodes = nodes.filter((n) => n.type === 'concept');
-  const documentNodes = nodes.filter((n) => n.type === 'document');
+  const documentCount = nodes.filter((n) => n.type === 'document').length;
+  const taskCount = nodes.filter((n) => n.type === 'task').length;
+  const projectCount = nodes.filter((n) => n.type === 'project').length;
+  const conceptCount = nodes.filter((n) => n.type === 'concept').length;
 
   const handleLoadDemo = async () => {
     if (nodes.length > 0) {
-      const confirmed = window.confirm(
-        'This will replace your current data with demo content. Continue?'
-      );
-      if (!confirmed) return;
+      const ok = window.confirm('Replace current data with demo content?');
+      if (!ok) return;
     }
     await seedDemoData();
   };
 
+  const handleNewPage = async () => {
+    const node = await createNode({ type: 'document', title: '' });
+    navigate(`/page/${node.id}`);
+  };
+
   return (
-    <div className="h-full overflow-auto p-8">
-      <div className="max-w-4xl mx-auto space-y-8">
-        <header className="space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold">Welcome to Knowledge Universe</h1>
-              <p className="text-muted-foreground mt-1">
-                Your local-first workspace for documents, tasks, and ideas.
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={handleLoadDemo}>
-              <Sparkles className="h-4 w-4 mr-2" />
-              {nodes.length === 0 ? 'Load demo data' : 'Reload demo data'}
-            </Button>
-          </div>
+    <div className="h-full overflow-auto">
+      <div className="mx-auto max-w-3xl space-y-10 px-8 py-12">
+        <header className="space-y-1.5">
+          <h1 className="text-[28px] font-semibold tracking-[-0.015em] text-foreground">
+            {greeting()}, {firstName()}.
+          </h1>
+          <p className="text-[14px] text-muted-foreground/80">
+            {nodes.length === 0
+              ? 'A blank workspace. Start a page, or load the demo to see how things connect.'
+              : `${nodes.length} page${nodes.length === 1 ? '' : 's'} in your knowledge graph.`}
+          </p>
         </header>
 
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard
-            icon={<FilePlus className="h-5 w-5" />}
-            label="Documents"
-            count={documentNodes.length}
-            onClick={() => {}}
-          />
-          <StatCard
-            icon={<CheckSquare className="h-5 w-5" />}
-            label="Tasks"
-            count={taskNodes.length}
-            onClick={() => navigate('/tasks')}
-          />
-          <StatCard
-            icon={<Folder className="h-5 w-5" />}
-            label="Projects"
-            count={projectNodes.length}
-            onClick={() => {}}
-          />
-          <StatCard
-            icon={<Lightbulb className="h-5 w-5" />}
-            label="Concepts"
-            count={conceptNodes.length}
-            onClick={() => {}}
-          />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleNewPage}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-[13px] font-medium text-background transition-opacity hover:opacity-90"
+          >
+            <FilePlus className="h-3.5 w-3.5" />
+            New page
+          </button>
+          <button
+            onClick={() => navigate('/universe')}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border/80 bg-background/40 px-3 text-[13px] font-medium text-foreground/80 transition-colors hover:bg-accent"
+          >
+            Open universe
+            <ArrowUpRight className="h-3 w-3 text-muted-foreground/60" />
+          </button>
+          {nodes.length === 0 && (
+            <button
+              onClick={handleLoadDemo}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] text-muted-foreground/80 transition-colors hover:text-foreground"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Load demo
+            </button>
+          )}
+        </div>
+
+        <section className="grid grid-cols-4 divide-x divide-border/60 rounded-lg border border-border/60">
+          <StatCell label="Documents" count={documentCount} onClick={() => {}} />
+          <StatCell label="Tasks" count={taskCount} onClick={() => navigate('/tasks')} />
+          <StatCell label="Projects" count={projectCount} onClick={() => navigate('/projects')} />
+          <StatCell label="Concepts" count={conceptCount} onClick={() => {}} />
         </section>
 
         <section>
           <KnowledgeHealthCard />
         </section>
 
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Recent</h2>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                navigate('/page/new');
-              }}
-            >
-              <FilePlus className="h-4 w-4 mr-2" />
-              New Page
-            </Button>
+        <section className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-[13px] font-medium text-muted-foreground/80">
+              Recent
+            </h2>
+            <span className="text-[11px] text-muted-foreground/50">
+              {recentNodes.length} of {nodes.length}
+            </span>
           </div>
 
           {recentNodes.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <p>No pages yet. Create your first page or load the demo data to explore.</p>
-            </div>
+            <EmptyState onCreate={handleNewPage} onLoadDemo={handleLoadDemo} />
           ) : (
-            <div className="space-y-2">
+            <ul className="divide-y divide-border/40">
               {recentNodes.map((node) => (
-                <button
-                  key={node.id}
-                  onClick={() => navigate(`/page/${node.id}`)}
-                  className="w-full flex items-center gap-3 p-3 rounded-lg border hover:bg-accent hover:text-accent-foreground transition-colors text-left"
-                >
-                  <span className="text-xl">{node.emoji || '📄'}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">
+                <li key={node.id}>
+                  <button
+                    onClick={() => navigate(`/page/${node.id}`)}
+                    className="group flex w-full items-center gap-3 px-2 py-2.5 text-left transition-colors hover:bg-accent/40"
+                  >
+                    <span className="flex h-5 w-5 flex-shrink-0 items-center justify-center text-[14px] leading-none">
+                      {node.emoji || (
+                        <span className="block h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
+                      )}
+                    </span>
+                    <span className="flex-1 truncate text-[13.5px] text-foreground/90">
                       {node.title || 'Untitled'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {node.type} · {formatRelative(node.updatedAt)}
-                    </p>
-                  </div>
-                </button>
+                    </span>
+                    <span className="text-[11px] capitalize text-muted-foreground/60">
+                      {node.type}
+                    </span>
+                    <span className="hidden w-20 text-right text-[11px] text-muted-foreground/50 sm:block">
+                      {formatRelative(node.updatedAt)}
+                    </span>
+                  </button>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
         </section>
       </div>
@@ -124,22 +127,56 @@ export function HomePage() {
   );
 }
 
-interface StatCardProps {
-  icon: React.ReactNode;
-  label: string;
-  count: number;
-  onClick: () => void;
-}
-
-function StatCard({ icon, label, count, onClick }: StatCardProps) {
+function StatCell({ label, count, onClick }: { label: string; count: number; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="flex flex-col items-center gap-2 p-4 rounded-lg border bg-card hover:bg-accent transition-colors"
+      className="group flex flex-col items-start gap-0.5 px-4 py-3 text-left transition-colors first:rounded-l-lg last:rounded-r-lg hover:bg-accent/40"
     >
-      <div className="text-muted-foreground">{icon}</div>
-      <div className="text-2xl font-bold">{count}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
+      <span className="text-[22px] font-medium tabular-nums tracking-tight text-foreground/90">
+        {count}
+      </span>
+      <span className="text-[11px] text-muted-foreground/70">{label}</span>
     </button>
   );
+}
+
+function EmptyState({ onCreate, onLoadDemo }: { onCreate: () => void; onLoadDemo: () => void }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border/60 px-6 py-10 text-center">
+      <h3 className="text-[14px] font-medium text-foreground/90">A blank workspace</h3>
+      <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] text-muted-foreground/70">
+        Create your first page to start building your knowledge graph, or load a curated set of demo pages to explore.
+      </p>
+      <div className="mt-5 flex items-center justify-center gap-2">
+        <button
+          onClick={onCreate}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-[13px] font-medium text-background hover:opacity-90"
+        >
+          <FilePlus className="h-3.5 w-3.5" />
+          New page
+        </button>
+        <button
+          onClick={onLoadDemo}
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border/80 px-3 text-[13px] text-foreground/80 hover:bg-accent/50"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          Load demo
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 5) return 'Working late';
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function firstName(): string {
+  // Light personalization without assuming; falls back to neutral
+  return 'there';
 }

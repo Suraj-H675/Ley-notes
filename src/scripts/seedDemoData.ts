@@ -122,7 +122,7 @@ export async function seedDemoData(): Promise<void> {
         text: 'A neural network is a computational model inspired by the human brain. It consists of layers of interconnected neurons that learn patterns from data.',
       },
       { type: 'h2', text: 'Key Components' },
-      { type: 'bulletList', items: ['Input layer — receives the raw features', 'Hidden layers — extract and transform features', 'Output layer — produces the prediction'] },
+      { type: 'bulletList', items: ['Input layer, receives the raw features', 'Hidden layers, extract and transform features', 'Output layer, produces the prediction'] },
       { type: 'h2', text: 'How Training Works' },
       {
         type: 'p',
@@ -163,10 +163,10 @@ export async function seedDemoData(): Promise<void> {
       {
         type: 'bulletList',
         items: [
-          'Multi-head attention — run attention in parallel subspaces',
-          'Positional encodings — inject order information',
-          'Layer normalization — stabilize training',
-          'Residual connections — help gradient flow',
+          'Multi-head attention, run attention in parallel subspaces',
+          'Positional encodings, inject order information',
+          'Layer normalization, stabilize training',
+          'Residual connections, help gradient flow',
         ],
       },
       {
@@ -310,7 +310,7 @@ export async function seedDemoData(): Promise<void> {
       'Key Findings': 'Reinforcement learning from human feedback aligns models with human preferences',
     },
     content: doc([
-      { type: 'h1', text: 'RLHF — Reinforcement Learning from Human Feedback' },
+      { type: 'h1', text: 'RLHF, Reinforcement Learning from Human Feedback' },
       {
         type: 'p',
         text: 'RLHF is the training technique used to align LLMs with human preferences. It uses human preference data to train a reward model, which then guides the LLM via reinforcement learning.',
@@ -364,9 +364,9 @@ export async function seedDemoData(): Promise<void> {
       {
         type: 'bulletList',
         items: [
-          'Full fine-tuning — updates all weights, expensive',
-          'LoRA — adds small trainable matrices, much cheaper',
-          'QLoRA — combines LoRA with quantization',
+          'Full fine-tuning, updates all weights, expensive',
+          'LoRA, adds small trainable matrices, much cheaper',
+          'QLoRA, combines LoRA with quantization',
         ],
       },
     ]),
@@ -396,9 +396,9 @@ export async function seedDemoData(): Promise<void> {
         type: 'bulletList',
         items: [
           'Be specific about role, format, and constraints',
-          'Few-shot prompting — provide examples',
-          'Chain-of-thought — ask the model to reason step by step',
-          'Self-consistency — sample multiple times and vote',
+          'Few-shot prompting, provide examples',
+          'Chain-of-thought, ask the model to reason step by step',
+          'Self-consistency, sample multiple times and vote',
         ],
       },
       { type: 'h2', text: 'Anti-Patterns' },
@@ -438,7 +438,7 @@ export async function seedDemoData(): Promise<void> {
         items: [
           'Backpropagation algorithm (1986)',
           'Boltzmann machines',
-          'AlexNet (2012) with Alex Krizhevsky — kicked off the deep learning revolution',
+          'AlexNet (2012) with Alex Krizhevsky, kicked off the deep learning revolution',
         ],
       },
       {
@@ -470,8 +470,8 @@ export async function seedDemoData(): Promise<void> {
       {
         type: 'bulletList',
         items: [
-          'Stanford CS231n — convolutional neural networks',
-          'nanoGPT — minimal GPT training codebase',
+          'Stanford CS231n, convolutional neural networks',
+          'nanoGPT, minimal GPT training codebase',
           'Tesla Autopilot vision system',
         ],
       },
@@ -594,7 +594,7 @@ export async function seedDemoData(): Promise<void> {
   // ---------------- Revisions for Transformers ----------------
   const transformersOriginal = doc([
     { type: 'h1', text: 'Transformers (draft)' },
-    { type: 'p', text: 'First draft — short notes on self-attention.' },
+    { type: 'p', text: 'First draft, short notes on self-attention.' },
   ]);
   const transformersV2 = doc([
     { type: 'h1', text: 'Transformers' },
