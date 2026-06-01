@@ -2,8 +2,9 @@ import { useNavigate } from 'react-router-dom';
 import { useNodes } from '@/hooks';
 import { Button } from '@/components/ui';
 import { formatRelative } from '@/lib/utils';
-import { FilePlus, Lightbulb, CheckSquare, Folder } from 'lucide-react';
+import { FilePlus, Lightbulb, CheckSquare, Folder, Sparkles } from 'lucide-react';
 import { KnowledgeHealthCard } from '@/components/home/KnowledgeHealthCard';
+import { seedDemoData } from '@/scripts/seedDemoData';
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -18,14 +19,32 @@ export function HomePage() {
   const conceptNodes = nodes.filter((n) => n.type === 'concept');
   const documentNodes = nodes.filter((n) => n.type === 'document');
 
+  const handleLoadDemo = async () => {
+    if (nodes.length > 0) {
+      const confirmed = window.confirm(
+        'This will replace your current data with demo content. Continue?'
+      );
+      if (!confirmed) return;
+    }
+    await seedDemoData();
+  };
+
   return (
     <div className="h-full overflow-auto p-8">
       <div className="max-w-4xl mx-auto space-y-8">
         <header className="space-y-4">
-          <h1 className="text-3xl font-bold">Welcome to Knowledge Universe</h1>
-          <p className="text-muted-foreground">
-            Your local-first workspace for documents, tasks, and ideas.
-          </p>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold">Welcome to Knowledge Universe</h1>
+              <p className="text-muted-foreground mt-1">
+                Your local-first workspace for documents, tasks, and ideas.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleLoadDemo}>
+              <Sparkles className="h-4 w-4 mr-2" />
+              {nodes.length === 0 ? 'Load demo data' : 'Reload demo data'}
+            </Button>
+          </div>
         </header>
 
         <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -76,7 +95,7 @@ export function HomePage() {
 
           {recentNodes.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
-              <p>No pages yet. Create your first page to get started.</p>
+              <p>No pages yet. Create your first page or load the demo data to explore.</p>
             </div>
           ) : (
             <div className="space-y-2">

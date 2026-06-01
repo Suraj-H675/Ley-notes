@@ -71,3 +71,6 @@ dist-ssr
 /PROJECT_VISION.md
 /implementation_plan.md
 /task.md
+
+# Windows Zone.Identifier metadata
+*:Zone.Identifier
