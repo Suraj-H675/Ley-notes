@@ -145,9 +145,10 @@ function CollectionItem({
   const childCollections = allCollections.filter((c) => c.parentId === collection.id);
   const hasChildren = childCollections.length > 0;
 
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
   const handleDelete = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm(`Delete collection "${collection.name}"?`)) return;
     await db.transaction('rw', [db.collections, db.nodes], async () => {
       const nodesInCollection = await db.nodes
         .where('collections')
@@ -161,44 +162,72 @@ function CollectionItem({
       }
       await db.collections.delete(collection.id);
     });
+    setConfirmingDelete(false);
   };
 
   return (
     <div className="group/row relative">
-      <button
-        onClick={onToggle}
-        className={cn(
-          'group flex w-full items-center gap-1 rounded px-1.5 py-1 text-[13px] text-foreground/80 transition-colors',
-          'hover:bg-accent/60'
-        )}
-        style={{ paddingLeft: `${level * 10 + 6}px` }}
-      >
-        {hasChildren ? (
-          isExpanded ? (
-            <ChevronDown className="h-3 w-3 flex-shrink-0 text-muted-foreground/60" />
-          ) : (
-            <ChevronRight className="h-3 w-3 flex-shrink-0 text-muted-foreground/60" />
-          )
-        ) : (
-          <span className="inline-block h-3 w-3 flex-shrink-0" />
-        )}
-        {collection.emoji ? (
-          <span className="flex-shrink-0 text-[13px] leading-none">{collection.emoji}</span>
-        ) : (
-          <span className="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center text-muted-foreground/40">
-            <span className="h-1 w-1 rounded-full bg-current" />
-          </span>
-        )}
-        <span className="truncate">{collection.name}</span>
-
-        <button
-          onClick={handleDelete}
-          aria-label="Delete collection"
-          className="ml-auto flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground/50 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/row:opacity-100"
+      {confirmingDelete ? (
+        <div
+          className="flex items-center gap-1.5 rounded bg-accent/60 px-1.5 py-1 text-[12px]"
+          style={{ paddingLeft: `${level * 10 + 6}px` }}
         >
-          <Trash2 className="h-3 w-3" />
+          <span className="flex-1 truncate text-foreground/90">Delete "{collection.name}"?</span>
+          <button
+            onClick={handleDelete}
+            className="rounded bg-destructive/15 px-1.5 py-0.5 text-[11.5px] font-medium text-destructive transition-colors hover:bg-destructive/25"
+          >
+            Delete
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmingDelete(false);
+            }}
+            className="rounded px-1.5 py-0.5 text-[11.5px] text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={onToggle}
+          className={cn(
+            'group flex w-full items-center gap-1 rounded px-1.5 py-1 text-[13px] text-foreground/80 transition-colors',
+            'hover:bg-accent/60'
+          )}
+          style={{ paddingLeft: `${level * 10 + 6}px` }}
+        >
+          {hasChildren ? (
+            isExpanded ? (
+              <ChevronDown className="h-3 w-3 flex-shrink-0 text-muted-foreground/60" />
+            ) : (
+              <ChevronRight className="h-3 w-3 flex-shrink-0 text-muted-foreground/60" />
+            )
+          ) : (
+            <span className="inline-block h-3 w-3 flex-shrink-0" />
+          )}
+          {collection.emoji ? (
+            <span className="flex-shrink-0 text-[13px] leading-none">{collection.emoji}</span>
+          ) : (
+            <span className="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center text-muted-foreground/40">
+              <span className="h-1 w-1 rounded-full bg-current" />
+            </span>
+          )}
+          <span className="truncate">{collection.name}</span>
+
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmingDelete(true);
+            }}
+            aria-label="Delete collection"
+            className="ml-auto flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-muted-foreground/50 opacity-0 transition-opacity hover:bg-destructive/15 hover:text-destructive group-hover/row:opacity-100"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
         </button>
-      </button>
+      )}
 
       {isExpanded &&
         childCollections.map((child) => (
@@ -207,7 +236,7 @@ function CollectionItem({
             collection={child}
             allCollections={allCollections}
             expandedCollections={expandedCollections}
-            onToggle={() => onToggle /* propagate to handle child via parent store */}
+            onToggle={() => onToggle}
             level={level + 1}
           />
         ))}

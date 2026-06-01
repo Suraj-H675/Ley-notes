@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState } from 'react';
+import { forwardRef, useEffect, useState, useImperativeHandle } from 'react';
 import { cn } from '@/lib/utils';
 
 interface WikiLinkItem {
@@ -14,7 +14,7 @@ interface WikiLinkSuggestionListProps {
 }
 
 export const WikiLinkSuggestionList = forwardRef<
-  HTMLDivElement,
+  { onKeyDown: (props: { event: KeyboardEvent }) => boolean },
   WikiLinkSuggestionListProps
 >((props, ref) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -23,66 +23,65 @@ export const WikiLinkSuggestionList = forwardRef<
     setSelectedIndex(0);
   }, [props.items]);
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setSelectedIndex((prev) => (prev - 1 + props.items.length) % props.items.length);
+  useImperativeHandle(ref, () => ({
+    onKeyDown: ({ event }) => {
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setSelectedIndex((prev) =>
+          props.items.length === 0 ? 0 : (prev - 1 + props.items.length) % props.items.length
+        );
         return true;
       }
-
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setSelectedIndex((prev) => (prev + 1) % props.items.length);
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setSelectedIndex((prev) =>
+          props.items.length === 0 ? 0 : (prev + 1) % props.items.length
+        );
         return true;
       }
-
-      if (e.key === 'Enter') {
-        e.preventDefault();
+      if (event.key === 'Enter') {
+        event.preventDefault();
         const item = props.items[selectedIndex];
-        if (item) {
-          props.command(item);
-        }
+        if (item) props.command(item);
         return true;
       }
-
       return false;
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [props.items, selectedIndex, props.command]);
+    },
+  }));
 
   if (props.items.length === 0) {
     return (
-      <div
-        ref={ref}
-        className="bg-popover border rounded-md shadow-lg p-2 text-sm text-muted-foreground"
-      >
-        No results found.
+      <div className="min-w-[220px] rounded-md border border-border/80 bg-popover p-2 text-[12.5px] text-muted-foreground/70 shadow-menu">
+        No matching pages
       </div>
     );
   }
 
   return (
-    <div
-      ref={ref}
-      className="bg-popover border rounded-md shadow-lg overflow-hidden max-h-[300px] overflow-y-auto"
-    >
+    <div className="min-w-[260px] overflow-hidden rounded-md border border-border/80 bg-popover p-1 shadow-menu">
+      <div className="px-2 py-1 text-[10.5px] font-medium uppercase tracking-wider text-muted-foreground/60">
+        Pages
+      </div>
       {props.items.map((item, index) => (
         <button
           key={item.id}
           onClick={() => props.command(item)}
           className={cn(
-            'w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-accent transition-colors',
-            index === selectedIndex && 'bg-accent'
+            'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] text-foreground/90 transition-colors',
+            index === selectedIndex
+              ? 'bg-primary/15 text-foreground'
+              : 'hover:bg-accent/40'
           )}
         >
-          <span className="text-lg">{item.emoji || '📄'}</span>
-          <div className="flex-1 min-w-0">
-            <p className="truncate">{item.title || 'Untitled'}</p>
-            <p className="text-xs text-muted-foreground">{item.type}</p>
-          </div>
+          <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-[12px] leading-none">
+            {item.emoji || (
+              <span className="block h-1 w-1 rounded-full bg-muted-foreground/40" />
+            )}
+          </span>
+          <span className="flex-1 truncate">{item.title || 'Untitled'}</span>
+          <span className="ml-auto text-[10.5px] capitalize text-muted-foreground/55">
+            {item.type}
+          </span>
         </button>
       ))}
     </div>

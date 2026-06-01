@@ -72,7 +72,7 @@ export function Sidebar() {
         )}
         style={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
       >
-        <SidebarHeader onSearchClick={openSearch} />
+        <SidebarHeader />
 
         <ScrollArea className="flex-1">
           <div className="px-1.5 pb-4">

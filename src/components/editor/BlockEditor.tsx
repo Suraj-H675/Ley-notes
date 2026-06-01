@@ -109,7 +109,8 @@ export function BlockEditor({
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-sm max-w-none focus:outline-none min-h-[200px] px-4 py-3',
+        class:
+          'focus:outline-none min-h-[300px] py-1 text-[15px] leading-[1.7] text-foreground/90',
       },
     },
   });

@@ -5,15 +5,15 @@ import { createSuggestionRenderer } from '../suggestion-renderer';
 import { SlashCommandMenu } from '../SlashCommandMenu';
 
 const SLASH_COMMANDS = [
-  { id: 'heading1', title: 'Heading 1', description: 'Large section heading', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).run(); } },
-  { id: 'heading2', title: 'Heading 2', description: 'Medium section heading', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).run(); } },
-  { id: 'heading3', title: 'Heading 3', description: 'Small section heading', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setNode('heading', { level: 3 }).run(); } },
-  { id: 'bulletList', title: 'Bullet List', description: 'Create a bullet list', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).toggleBulletList().run(); } },
-  { id: 'numberedList', title: 'Numbered List', description: 'Create a numbered list', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).toggleOrderedList().run(); } },
-  { id: 'taskList', title: 'Task List', description: 'Create a task list', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).toggleTaskList().run(); } },
-  { id: 'blockquote', title: 'Quote', description: 'Create a blockquote', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).toggleBlockquote().run(); } },
-  { id: 'codeBlock', title: 'Code Block', description: 'Create a code block', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setCodeBlock().run(); } },
-  { id: 'horizontalRule', title: 'Divider', description: 'Insert a horizontal rule', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setHorizontalRule().run(); } },
+  { id: 'heading1', title: 'Heading 1', description: 'Large section heading', category: 'inline', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).run(); } },
+  { id: 'heading2', title: 'Heading 2', description: 'Medium section heading', category: 'inline', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).run(); } },
+  { id: 'heading3', title: 'Heading 3', description: 'Small section heading', category: 'inline', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setNode('heading', { level: 3 }).run(); } },
+  { id: 'bulletList', title: 'Bullet List', description: 'Create a bullet list', category: 'lists', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).toggleBulletList().run(); } },
+  { id: 'numberedList', title: 'Numbered List', description: 'Create a numbered list', category: 'lists', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).toggleOrderedList().run(); } },
+  { id: 'taskList', title: 'Task List', description: 'Create a task list', category: 'lists', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).toggleTaskList().run(); } },
+  { id: 'blockquote', title: 'Quote', description: 'Create a blockquote', category: 'blocks', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).toggleBlockquote().run(); } },
+  { id: 'codeBlock', title: 'Code Block', description: 'Create a code block', category: 'blocks', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setCodeBlock().run(); } },
+  { id: 'horizontalRule', title: 'Divider', description: 'Insert a horizontal rule', category: 'blocks', command: ({ editor, range }: any) => { editor.chain().focus().deleteRange(range).setHorizontalRule().run(); } },
 ];
 
 export const SlashCommandExtension = Extension.create({

@@ -4,6 +4,7 @@ import { formatRelative } from '@/lib/utils';
 import { FilePlus, Sparkles, ArrowUpRight } from 'lucide-react';
 import { KnowledgeHealthCard } from '@/components/home/KnowledgeHealthCard';
 import { seedDemoData } from '@/scripts/seedDemoData';
+import { toast } from '@/components/ui';
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -19,11 +20,8 @@ export function HomePage() {
   const conceptCount = nodes.filter((n) => n.type === 'concept').length;
 
   const handleLoadDemo = async () => {
-    if (nodes.length > 0) {
-      const ok = window.confirm('Replace current data with demo content?');
-      if (!ok) return;
-    }
     await seedDemoData();
+    toast('Demo data loaded', { kind: 'success' });
   };
 
   const handleNewPage = async () => {
@@ -143,28 +141,57 @@ function StatCell({ label, count, onClick }: { label: string; count: number; onC
 
 function EmptyState({ onCreate, onLoadDemo }: { onCreate: () => void; onLoadDemo: () => void }) {
   return (
-    <div className="rounded-lg border border-dashed border-border/60 px-6 py-10 text-center">
-      <h3 className="text-[14px] font-medium text-foreground/90">A blank workspace</h3>
-      <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] text-muted-foreground/70">
-        Create your first page to start building your knowledge graph, or load a curated set of demo pages to explore.
-      </p>
-      <div className="mt-5 flex items-center justify-center gap-2">
-        <button
-          onClick={onCreate}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-[13px] font-medium text-background hover:opacity-90"
-        >
-          <FilePlus className="h-3.5 w-3.5" />
-          New page
-        </button>
-        <button
-          onClick={onLoadDemo}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border/80 px-3 text-[13px] text-foreground/80 hover:bg-accent/50"
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          Load demo
-        </button>
+    <div className="rounded-lg border border-dashed border-border/60 px-6 py-12">
+      <div className="flex flex-col items-center text-center">
+        <KnowledgeGraphIllustration />
+        <h3 className="mt-4 text-[15px] font-medium text-foreground/95">A blank workspace</h3>
+        <p className="mx-auto mt-1.5 max-w-sm text-[12.5px] leading-relaxed text-muted-foreground/70">
+          Start with one page and link others to it. Your knowledge graph appears as soon as pages connect.
+        </p>
+        <div className="mt-5 flex items-center gap-2">
+          <button
+            onClick={onCreate}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-[13px] font-medium text-background transition-opacity hover:opacity-90 active:translate-y-px"
+          >
+            <FilePlus className="h-3.5 w-3.5" />
+            New page
+          </button>
+          <button
+            onClick={onLoadDemo}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border/80 bg-background/40 px-3 text-[13px] text-foreground/85 transition-colors hover:border-border hover:bg-accent"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Load demo
+          </button>
+        </div>
       </div>
     </div>
+  );
+}
+
+function KnowledgeGraphIllustration() {
+  // Minimal abstract graph: 5 nodes connected by 4 edges, no labels, no emoji
+  return (
+    <svg
+      width="120"
+      height="84"
+      viewBox="0 0 120 84"
+      fill="none"
+      className="text-foreground/30"
+      aria-hidden
+    >
+      <line x1="20" y1="42" x2="60" y2="20" stroke="currentColor" strokeWidth="1" opacity="0.5" />
+      <line x1="20" y1="42" x2="60" y2="64" stroke="currentColor" strokeWidth="1" opacity="0.5" />
+      <line x1="60" y1="20" x2="100" y2="20" stroke="currentColor" strokeWidth="1" opacity="0.5" />
+      <line x1="60" y1="64" x2="100" y2="64" stroke="currentColor" strokeWidth="1" opacity="0.5" />
+      <line x1="60" y1="20" x2="60" y2="64" stroke="currentColor" strokeWidth="1" opacity="0.3" />
+      <line x1="100" y1="20" x2="100" y2="64" stroke="currentColor" strokeWidth="1" opacity="0.3" />
+      <circle cx="20" cy="42" r="4" fill="currentColor" />
+      <circle cx="60" cy="20" r="4" fill="currentColor" />
+      <circle cx="60" cy="64" r="4" fill="currentColor" />
+      <circle cx="100" cy="20" r="3" fill="currentColor" opacity="0.6" />
+      <circle cx="100" cy="64" r="3" fill="currentColor" opacity="0.6" />
+    </svg>
   );
 }
 

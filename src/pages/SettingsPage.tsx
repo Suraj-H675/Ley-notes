@@ -1,10 +1,11 @@
+import { useState } from 'react';
 import { PageHeader, PageContainer } from '@/components/layout';
 import { useWorkspaceStore } from '@/store';
 import { Sun, Moon, Monitor, Trash2, Sparkles, Database } from 'lucide-react';
 import { db } from '@/lib/db';
 import { seedDemoData } from '@/scripts/seedDemoData';
+import { ConfirmDialog, toast } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import { useState } from 'react';
 
 const THEME_OPTIONS: { value: 'light' | 'dark' | 'system'; label: string; icon: typeof Sun }[] = [
   { value: 'light', label: 'Light', icon: Sun },
@@ -14,26 +15,22 @@ const THEME_OPTIONS: { value: 'light' | 'dark' | 'system'; label: string; icon: 
 
 export function SettingsPage() {
   const { theme, setTheme } = useWorkspaceStore();
-  const [resetting, setResetting] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [seedOpen, setSeedOpen] = useState(false);
 
   const handleReset = async () => {
-    if (!window.confirm('Erase all local data? This cannot be undone.')) return;
-    setResetting(true);
-    try {
-      await db.transaction('rw', [db.nodes, db.edges, db.collections, db.revisions], async () => {
-        await db.nodes.clear();
-        await db.edges.clear();
-        await db.collections.clear();
-        await db.revisions.clear();
-      });
-    } finally {
-      setResetting(false);
-    }
+    await db.transaction('rw', [db.nodes, db.edges, db.collections, db.revisions], async () => {
+      await db.nodes.clear();
+      await db.edges.clear();
+      await db.collections.clear();
+      await db.revisions.clear();
+    });
+    toast('All data erased', { kind: 'success' });
   };
 
   const handleSeed = async () => {
-    if (!window.confirm('Replace current data with demo content?')) return;
     await seedDemoData();
+    toast('Demo data loaded', { kind: 'success' });
   };
 
   return (
@@ -43,7 +40,7 @@ export function SettingsPage() {
       <PageContainer>
         <Section title="Appearance">
           <Row label="Theme" description="How the interface looks on this device.">
-            <div className="flex items-center gap-1 rounded-md border border-border/60 p-0.5">
+            <div className="flex items-center gap-0.5 rounded-md border border-border/60 p-0.5">
               {THEME_OPTIONS.map((opt) => {
                 const Icon = opt.icon;
                 const active = theme === opt.value;
@@ -73,8 +70,8 @@ export function SettingsPage() {
             description="Replace the current workspace with a curated set of pages, tasks, and edges."
           >
             <button
-              onClick={handleSeed}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/80 bg-background/40 px-2.5 text-[12.5px] text-foreground/80 transition-colors hover:bg-accent"
+              onClick={() => setSeedOpen(true)}
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/80 bg-background/40 px-2.5 text-[12.5px] text-foreground/85 transition-colors hover:border-border hover:bg-accent"
             >
               <Sparkles className="h-3.5 w-3.5" />
               Load demo
@@ -85,12 +82,11 @@ export function SettingsPage() {
             description="Permanently remove every page, task, collection, and revision from this device."
           >
             <button
-              onClick={handleReset}
-              disabled={resetting}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/40 px-2.5 text-[12.5px] text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-50"
+              onClick={() => setResetOpen(true)}
+              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/40 px-2.5 text-[12.5px] text-destructive transition-colors hover:bg-destructive/10"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              {resetting ? 'Erasing...' : 'Erase'}
+              Erase
             </button>
           </Row>
         </Section>
@@ -107,6 +103,24 @@ export function SettingsPage() {
           </div>
         </Section>
       </PageContainer>
+
+      <ConfirmDialog
+        open={seedOpen}
+        onOpenChange={setSeedOpen}
+        title="Load demo data?"
+        description="This will replace your current workspace with curated demo content."
+        confirmLabel="Load"
+        onConfirm={handleSeed}
+      />
+      <ConfirmDialog
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+        title="Erase all local data?"
+        description="This permanently removes every page, task, collection, and revision. This cannot be undone."
+        confirmLabel="Erase"
+        destructive
+        onConfirm={handleReset}
+      />
     </div>
   );
 }

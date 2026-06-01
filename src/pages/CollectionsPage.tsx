@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/lib/db';
 import { useWorkspaceStore } from '@/store';
+import { ConfirmDialog, toast } from '@/components/ui';
 import { PageHeader, PageContainer, ListSection } from '@/components/layout';
 import { ChevronRight, Plus, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -34,16 +35,30 @@ export function CollectionsPage() {
     [collections]
   );
 
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+
   if (!collections) return null;
+
+  const handleDelete = async (id: string, name: string) => {
+    await db.transaction('rw', [db.collections, db.nodes], async () => {
+      const nodesInCollection = await db.nodes.where('collections').equals(id).toArray();
+      for (const node of nodesInCollection) {
+        await db.nodes.update(node.id, {
+          collections: node.collections.filter((c) => c !== id),
+          updatedAt: Date.now(),
+        });
+      }
+      await db.collections.delete(id);
+    });
+    toast(`Deleted "${name}"`, { kind: 'success' });
+  };
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title="Collections"
         subtitle={`${collections.length} total`}
-        actions={
-          <NewCollectionButton />
-        }
+        actions={<NewCollectionButton />}
       />
 
       <PageContainer>
@@ -61,28 +76,28 @@ export function CollectionsPage() {
                   nodeCount={collectionNodes?.counts?.get(collection.id) || 0}
                   nodes={collectionNodes?.nodesByCollection?.get(collection.id) || []}
                   onOpenNode={(id) => navigate(`/page/${id}`)}
-                  onDelete={async () => {
-                    if (!window.confirm(`Delete collection "${collection.name}"?`)) return;
-                    await db.transaction('rw', [db.collections, db.nodes], async () => {
-                      const nodesInCollection = await db.nodes
-                        .where('collections')
-                        .equals(collection.id)
-                        .toArray();
-                      for (const node of nodesInCollection) {
-                        await db.nodes.update(node.id, {
-                          collections: node.collections.filter((c) => c !== collection.id),
-                          updatedAt: Date.now(),
-                        });
-                      }
-                      await db.collections.delete(collection.id);
-                    });
-                  }}
+                  onDelete={() => setPendingDelete({ id: collection.id, name: collection.name })}
                 />
               ))}
             </ul>
           )}
         </ListSection>
       </PageContainer>
+
+      <ConfirmDialog
+        open={!!pendingDelete}
+        onOpenChange={(o) => !o && setPendingDelete(null)}
+        title={`Delete "${pendingDelete?.name}"?`}
+        description="Pages in this collection will not be deleted, just unlinked from it."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={async () => {
+          if (pendingDelete) {
+            await handleDelete(pendingDelete.id, pendingDelete.name);
+            setPendingDelete(null);
+          }
+        }}
+      />
     </div>
   );
 }

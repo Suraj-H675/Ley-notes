@@ -31,20 +31,29 @@ export function createSuggestionRenderer(
 
     const updatePosition = (clientRect: (() => DOMRect | null) | null | undefined) => {
       if (!popup || !clientRect) return;
-
       const rect = clientRect();
       if (!rect) return;
 
       computePosition(
         { getBoundingClientRect: () => rect } as Element,
         popup,
-        { placement: 'bottom-start', middleware: [offset(8), flip(), shift({ padding: 8 })] }
+        { placement: 'bottom-start', middleware: [offset(6), flip(), shift({ padding: 8 })] }
       ).then(({ x, y }) => {
         if (popup) {
           popup.style.left = `${x}px`;
           popup.style.top = `${y}px`;
         }
       });
+    };
+
+    const animateIn = (el: HTMLElement) => {
+      el.animate(
+        [
+          { opacity: 0, transform: 'translateY(-4px) scale(0.98)' },
+          { opacity: 1, transform: 'translateY(0) scale(1)' },
+        ],
+        { duration: 120, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'forwards' }
+      );
     };
 
     return {
@@ -66,16 +75,17 @@ export function createSuggestionRenderer(
           updatePosition(props.clientRect);
         }
 
+        // Animate in once attached
+        if (component.element instanceof HTMLElement) {
+          animateIn(component.element);
+        }
+
         options?.suggestion?.onStart?.(props);
       },
 
       onUpdate: (props: SuggestionRenderProps) => {
         component?.updateProps(props);
-
-        if (props.clientRect) {
-          updatePosition(props.clientRect);
-        }
-
+        if (props.clientRect) updatePosition(props.clientRect);
         options?.suggestion?.onUpdate?.(props);
       },
 
@@ -84,12 +94,8 @@ export function createSuggestionRenderer(
           popup?.remove();
           return true;
         }
-
         const ref = (component as any)?.ref;
-        if (ref?.onKeyDown?.(props)) {
-          return true;
-        }
-
+        if (ref?.onKeyDown?.(props)) return true;
         return options?.suggestion?.onKeyDown?.(props) ?? false;
       },
 

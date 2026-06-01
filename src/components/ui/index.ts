@@ -12,3 +12,17 @@ export {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from './DropdownMenu';
+export {
+  Dialog,
+  DialogTrigger,
+  DialogPortal,
+  DialogClose,
+  DialogOverlay,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from './Dialog';
+export { Toaster, toast } from './Toast';
+export { ConfirmDialog } from './ConfirmDialog';

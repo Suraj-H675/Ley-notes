@@ -112,17 +112,20 @@ export function TasksPage() {
                         task.taskStatus === 'completed' ? 'Mark as pending' : 'Mark as completed'
                       }
                       className={cn(
-                        'flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors',
+                        'relative flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors',
+                        'hover:border-foreground/60',
                         task.taskStatus === 'completed'
                           ? 'border-foreground/40 bg-foreground/90 text-background'
                           : task.taskStatus === 'in-progress'
-                          ? 'border-foreground/50 bg-foreground/15'
-                          : 'border-muted-foreground/40 hover:border-foreground/60'
+                          ? 'border-foreground/50'
+                          : 'border-muted-foreground/40'
                       )}
                     >
                       {task.taskStatus === 'completed' && <Check className="h-3 w-3" strokeWidth={3} />}
                       {task.taskStatus === 'in-progress' && (
-                        <span className="block h-1.5 w-1.5 rounded-full bg-foreground/70" />
+                        <span className="absolute inset-px flex items-center justify-center">
+                          <span className="block h-1.5 w-1.5 rounded-full bg-foreground/70" />
+                        </span>
                       )}
                     </button>
                     <button

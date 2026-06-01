@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 import { AppShell } from '@/components/layout';
 import { CommandPalette } from '@/components/search/CommandPalette';
+import { Toaster } from '@/components/ui';
 import { HomePage } from '@/pages/HomePage';
 import { DocumentPage } from '@/pages/DocumentPage';
 import { UniversePage } from '@/pages/UniversePage';
@@ -11,12 +12,15 @@ import { SettingsPage } from '@/pages/SettingsPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { RevisionsPage } from '@/pages/RevisionsPage';
 import { useThemeEffect } from '@/hooks/useThemeEffect';
+import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 
 function App() {
   useThemeEffect();
+  useGlobalShortcuts();
   return (
     <>
       <CommandPalette />
+      <Toaster />
       <Routes>
         <Route element={<AppShell />}>
           <Route path="/" element={<HomePage />} />
