@@ -1,0 +1,126 @@
+/* TipTap Editor Styles */
+
+.ProseMirror {
+  @apply outline-none min-h-[300px] px-4 py-3;
+}
+
+.ProseMirror > * + * {
+  @apply mt-4;
+}
+
+.ProseMirror p {
+  @apply text-foreground leading-relaxed;
+}
+
+.ProseMirror h1 {
+  @apply text-3xl font-bold tracking-tight;
+}
+
+.ProseMirror h2 {
+  @apply text-2xl font-semibold tracking-tight;
+}
+
+.ProseMirror h3 {
+  @apply text-xl font-semibold;
+}
+
+.ProseMirror h4 {
+  @apply text-lg font-medium;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  @apply pl-6;
+}
+
+.ProseMirror ul {
+  @apply list-disc;
+}
+
+.ProseMirror ol {
+  @apply list-decimal;
+}
+
+.ProseMirror li {
+  @apply mt-1;
+}
+
+.ProseMirror blockquote {
+  @apply border-l-4 border-muted-foreground/50 pl-4 italic text-muted-foreground;
+}
+
+.ProseMirror code {
+  @apply font-mono text-sm bg-muted px-1.5 py-0.5 rounded;
+}
+
+.ProseMirror pre {
+  @apply bg-card rounded-lg p-4 overflow-x-auto;
+}
+
+.ProseMirror pre code {
+  @apply bg-transparent p-0 text-sm;
+}
+
+.ProseMirror hr {
+  @apply border-border my-6;
+}
+
+.ProseMirror a {
+  @apply text-primary underline underline-offset-2 hover:text-primary/80;
+}
+
+/* Task list styles */
+.ProseMirror ul[data-type="taskList"] {
+  @apply list-none pl-0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  @apply flex items-start gap-2;
+}
+
+.ProseMirror ul[data-type="taskList"] li > label {
+  @apply mt-0.5;
+}
+
+.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+  @apply w-4 h-4 rounded border-muted-foreground/50 bg-muted accent-primary cursor-pointer;
+}
+
+.ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div > p {
+  @apply line-through text-muted-foreground;
+}
+
+/* Table styles */
+.ProseMirror table {
+  @apply border-collapse w-full;
+}
+
+.ProseMirror th,
+.ProseMirror td {
+  @apply border border-border px-3 py-2 text-left;
+}
+
+.ProseMirror th {
+  @apply bg-muted font-medium;
+}
+
+/* Image styles */
+.ProseMirror img {
+  @apply max-w-full h-auto rounded-lg;
+}
+
+/* Placeholder */
+.ProseMirror p.is-editor-empty:first-child::before {
+  @apply text-muted-foreground/50 pointer-events-none float-left h-0;
+  content: attr(data-placeholder);
+}
+
+/* Wiki link styles */
+.wiki-link {
+  @apply text-primary bg-primary/10 px-1 rounded cursor-pointer hover:bg-primary/20 transition-colors;
+}
+
+/* Mention styles */
+.mention {
+  @apply text-primary bg-primary/10 px-1 rounded;
+}
