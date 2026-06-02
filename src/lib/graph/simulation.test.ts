@@ -83,4 +83,21 @@ describe('createSimulation', () => {
     ).not.toThrow();
     h.stop();
   });
+
+  it('setNodePosition pins a node to the given coordinates', () => {
+    const h = createSimulation(g, {
+      centerForce: 1,
+      chargeForce: -60,
+      linkForce: 1,
+      linkDistance: 80,
+    });
+    h.setNodePosition('a', 100, 200);
+    // After several ticks, the pinned node should remain near the pinned position.
+    for (let i = 0; i < 30; i++) h.tick(1);
+    const pos = h.positions().get('a');
+    expect(pos).toBeDefined();
+    expect(Math.abs(pos!.x - 100)).toBeLessThan(50);
+    expect(Math.abs(pos!.y - 200)).toBeLessThan(50);
+    h.stop();
+  });
 });

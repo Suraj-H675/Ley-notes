@@ -24,6 +24,7 @@ export interface SimulationHandle {
   tick(iterations: number): void;
   positions(): Map<string, { x: number; y: number }>;
   reconfigure(physics: PhysicsConfig): void;
+  setNodePosition(nodeId: string, x: number, y: number): void;
 }
 
 export function createSimulation(
@@ -112,6 +113,16 @@ export function createSimulation(
         .force('center', forceCenter(0, 0).strength(next.centerForce))
         .alpha(0.5)
         .restart();
+    },
+    setNodePosition(nodeId: string, x: number, y: number) {
+      const n = nodes.find((nd) => nd.id === nodeId);
+      if (n) {
+        n.x = x;
+        n.y = y;
+        n.fx = x;
+        n.fy = y;
+        sim.alpha(0.3).restart();
+      }
     },
   };
 }

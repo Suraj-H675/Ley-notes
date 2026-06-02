@@ -13,6 +13,7 @@ import { useFilteredGraph } from '@/hooks/useFilteredGraph';
 import { useColoredGraph } from '@/hooks/useColoredGraph';
 import { ColorLegend } from './ColorLegend';
 import { nodeTypes, edgeTypes } from '.';
+import { db } from '@/lib/db';
 import type { GraphScope } from '@/types/graph-settings.types';
 import type { KnowledgeNode, KnowledgeEdge } from '@/types';
 import type { CommunityResult } from '@/lib/graph/louvain';
@@ -78,7 +79,7 @@ export function UniverseView({
     communities
   );
 
-  const { positions, tick } = useGraphSimulation(graph, physics);
+  const { positions, tick, setNodePosition } = useGraphSimulation(graph, physics);
 
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const neighborSet = useMemo(() => {
@@ -145,6 +146,8 @@ export function UniverseView({
   const [, force] = useState(0);
   useEffect(() => {
     let raf = 0;
+    // Throttle React Flow flushes to ~30fps. The simulation continues at 60fps
+    // internally, but DOM updates happen at half rate to keep pan responsive.
     const loop = (t: number) => {
       tick(1);
       if (t - lastFlushRef.current > 33) {
@@ -157,10 +160,77 @@ export function UniverseView({
     return () => cancelAnimationFrame(raf);
   }, [tick]);
 
+  // Persist node positions to Dexie on drag-end and pin the node in the simulation.
+  const handleNodeDragStop = useCallback(
+    (_: React.MouseEvent, n: Node) => {
+      setNodePosition(n.id, n.position.x, n.position.y);
+      void db.graphPositions.put({
+        nodeId: n.id,
+        x: n.position.x,
+        y: n.position.y,
+        updatedAt: Date.now(),
+      });
+    },
+    [setNodePosition]
+  );
+
+  // Restore persisted positions on graph change.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const positions = await db.graphPositions.toArray();
+      if (cancelled) return;
+      for (const p of positions) {
+        if (graph.hasNode(p.nodeId)) {
+          graph.setNodeAttribute(p.nodeId, 'x', p.x);
+          graph.setNodeAttribute(p.nodeId, 'y', p.y);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [graph]);
+
+  // Warn at scale.
+  useEffect(() => {
+    if (graph.order > 2000) {
+      console.warn(
+        `Graph has ${graph.order} nodes. Performance may degrade beyond 2k nodes.`
+      );
+    }
+  }, [graph.order]);
+
   const handleNodeClick = useCallback(
     (_: React.MouseEvent, n: Node) => onNodeClick?.(n.id),
     [onNodeClick]
   );
+
+  if (graph.order === 0) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-[hsl(220_14%_9%)] text-muted-foreground">
+        <div className="max-w-sm space-y-1.5 text-center">
+          <p className="text-[14px] text-foreground/85">No pages yet</p>
+          <p className="text-[12px] text-muted-foreground/70">
+            Create some pages and link them. The graph will appear here.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (filtered.nodes.length === 0) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-[hsl(220_14%_9%)] text-muted-foreground">
+        <div className="max-w-sm space-y-1.5 text-center">
+          <p className="text-[14px] text-foreground/85">No nodes match the current filters</p>
+          <p className="text-[12px] text-muted-foreground/70">
+            Try clearing the search or selecting fewer tags.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative h-full w-full bg-[hsl(220_14%_9%)]">
@@ -170,6 +240,7 @@ export function UniverseView({
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeClick={handleNodeClick}
+        onNodeDragStop={handleNodeDragStop}
         colorMode="dark"
         fitView
         minZoom={0.05}

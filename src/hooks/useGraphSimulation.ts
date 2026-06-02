@@ -9,6 +9,7 @@ export function useGraphSimulation(
 ): {
   positions: Map<string, { x: number; y: number }>;
   tick: (iterations?: number) => void;
+  setNodePosition: (nodeId: string, x: number, y: number) => void;
 } {
   // Recreate the simulation only when the graph topology changes.
   const graphKey = useMemo(
@@ -42,5 +43,12 @@ export function useGraphSimulation(
     }
   };
 
-  return { positions, tick };
+  const setNodePosition = (nodeId: string, x: number, y: number) => {
+    handleRef.current?.setNodePosition(nodeId, x, y);
+    if (handleRef.current) {
+      setPositions(new Map(handleRef.current.positions()));
+    }
+  };
+
+  return { positions, tick, setNodePosition };
 }
