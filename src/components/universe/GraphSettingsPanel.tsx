@@ -1,5 +1,9 @@
 import { useGraphSettings } from '@/hooks/useGraphSettings';
 import { CollapsibleSection } from './CollapsibleSection';
+import { GroupsSection } from './sections/GroupsSection';
+import { FiltersSection } from './sections/FiltersSection';
+import { DisplaySection } from './sections/DisplaySection';
+import { PhysicsSection } from './sections/PhysicsSection';
 import { cn } from '@/lib/utils';
 import type { GraphScope } from '@/types/graph-settings.types';
 
@@ -50,36 +54,28 @@ export function GraphSettingsPanel({ scope, className }: GraphSettingsPanelProps
           open={settings.panelSectionsOpen.groups}
           onToggle={() => toggle('groups')}
         >
-          <div className="text-[12px] text-muted-foreground/70">
-            Color scheme controls (Phase 7b)
-          </div>
+          <GroupsSection scope={scope} />
         </CollapsibleSection>
         <CollapsibleSection
           title="Filters"
           open={settings.panelSectionsOpen.filters}
           onToggle={() => toggle('filters')}
         >
-          <div className="text-[12px] text-muted-foreground/70">
-            Search, tags, collections (Phase 7b)
-          </div>
+          <FiltersSection scope={scope} />
         </CollapsibleSection>
         <CollapsibleSection
           title="Display"
           open={settings.panelSectionsOpen.display}
           onToggle={() => toggle('display')}
         >
-          <div className="text-[12px] text-muted-foreground/70">
-            Node/edge/fade sliders (Phase 7b)
-          </div>
+          <DisplaySection scope={scope} />
         </CollapsibleSection>
         <CollapsibleSection
           title="Physics"
           open={settings.panelSectionsOpen.physics}
           onToggle={() => toggle('physics')}
         >
-          <div className="text-[12px] text-muted-foreground/70">
-            Center/charge/link forces (Phase 7b)
-          </div>
+          <PhysicsSection scope={scope} />
         </CollapsibleSection>
       </div>
     </aside>

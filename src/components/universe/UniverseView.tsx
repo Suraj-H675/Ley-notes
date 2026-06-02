@@ -10,6 +10,7 @@ import { useGraphSettings } from '@/hooks/useGraphSettings';
 import { useGraphSimulation } from '@/hooks/useGraphSimulation';
 import { useFilteredGraph } from '@/hooks/useFilteredGraph';
 import { useColoredGraph } from '@/hooks/useColoredGraph';
+import { ColorLegend } from './ColorLegend';
 import { nodeTypes, edgeTypes } from '.';
 import type { GraphScope } from '@/types/graph-settings.types';
 
@@ -162,6 +163,7 @@ export function UniverseView({ scope, onNodeClick }: UniverseViewProps) {
       >
         <Background color="transparent" gap={20} size={0} />
       </ReactFlow>
+      <ColorLegend scope={scope} />
     </div>
   );
 }
