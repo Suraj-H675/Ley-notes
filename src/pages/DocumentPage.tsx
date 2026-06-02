@@ -11,9 +11,11 @@ import {
   Archive,
   Link as LinkIcon,
   Copy,
+  Network,
 } from 'lucide-react';
 import { BlockEditor } from '@/components/editor';
 import { BacklinkPanel } from '@/components/editor/BacklinkPanel';
+import { LocalGraphView } from '@/components/universe/LocalGraphView';
 import { extractText } from '@/lib/editor';
 import { useWorkspaceStore } from '@/store';
 import { db } from '@/lib/db';
@@ -30,6 +32,7 @@ export function DocumentPage() {
   const { addToRecentNodes, setLastOpenedNode } = useWorkspaceStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogKind>(null);
+  const [showLocal, setShowLocal] = useState(false);
   const titleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -113,6 +116,24 @@ export function DocumentPage() {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                onClick={() => setShowLocal((v) => !v)}
+                aria-label="Toggle local graph"
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded transition-colors',
+                  showLocal
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground'
+                )}
+              >
+                <Network className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Toggle local graph</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
                 onClick={() => navigate(`/page/${id}/revisions`)}
                 className="flex h-7 items-center gap-1.5 rounded px-2 text-[12px] text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
               >
@@ -189,62 +210,73 @@ export function DocumentPage() {
         </div>
       </div>
 
-      <main className="flex-1 overflow-auto">
-        <div className="mx-auto max-w-3xl px-8 pb-24 pt-6">
-          <div
-            ref={titleRef}
-            contentEditable
-            suppressContentEditableWarning
-            onBlur={handleTitleChange}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                (e.currentTarget as HTMLElement).blur();
-              }
-              if (e.key === 'Escape') {
-                e.preventDefault();
-                if (titleRef.current && node) {
-                  titleRef.current.textContent = node.title;
+      <div className="flex flex-1 overflow-hidden">
+        <main className="flex-1 overflow-auto">
+          <div className="mx-auto max-w-3xl px-8 pb-24 pt-6">
+            <div
+              ref={titleRef}
+              contentEditable
+              suppressContentEditableWarning
+              onBlur={handleTitleChange}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  (e.currentTarget as HTMLElement).blur();
                 }
-                (e.currentTarget as HTMLElement).blur();
-              }
-            }}
-            className={cn(
-              'min-h-[40px] whitespace-pre-wrap break-words rounded-sm text-[28px] font-semibold tracking-[-0.015em]',
-              'text-foreground/95 outline-none transition-colors',
-              'hover:bg-accent/30 focus:bg-accent/40',
-              'empty:before:content-["Untitled"] empty:before:text-muted-foreground/40'
-            )}
-            data-placeholder="Untitled"
-          >
-            {node.title}
-          </div>
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  if (titleRef.current && node) {
+                    titleRef.current.textContent = node.title;
+                  }
+                  (e.currentTarget as HTMLElement).blur();
+                }
+              }}
+              className={cn(
+                'min-h-[40px] whitespace-pre-wrap break-words rounded-sm text-[28px] font-semibold tracking-[-0.015em]',
+                'text-foreground/95 outline-none transition-colors',
+                'hover:bg-accent/30 focus:bg-accent/40',
+                'empty:before:content-["Untitled"] empty:before:text-muted-foreground/40'
+              )}
+              data-placeholder="Untitled"
+            >
+              {node.title}
+            </div>
 
-          <div className="mt-1.5 flex items-center gap-2 text-[12px] text-muted-foreground/70">
-            <span className="capitalize">{node.type}</span>
-            <span className="text-muted-foreground/30">/</span>
-            <span>Updated {formatRelative(node.updatedAt)}</span>
-            {node.tags.length > 0 && (
-              <>
-                <span className="text-muted-foreground/30">/</span>
-                <span className="truncate">{node.tags.join(', ')}</span>
-              </>
-            )}
-          </div>
+            <div className="mt-1.5 flex items-center gap-2 text-[12px] text-muted-foreground/70">
+              <span className="capitalize">{node.type}</span>
+              <span className="text-muted-foreground/30">/</span>
+              <span>Updated {formatRelative(node.updatedAt)}</span>
+              {node.tags.length > 0 && (
+                <>
+                  <span className="text-muted-foreground/30">/</span>
+                  <span className="truncate">{node.tags.join(', ')}</span>
+                </>
+              )}
+            </div>
 
-          <div className="mt-8">
-            <BlockEditor
-              content={node.content}
-              onUpdate={handleContentUpdate}
-              placeholder="Type '/' for commands, or '[[' to link another page"
+            <div className="mt-8">
+              <BlockEditor
+                content={node.content}
+                onUpdate={handleContentUpdate}
+                placeholder="Type '/' for commands, or '[[' to link another page"
+              />
+            </div>
+
+            <div className="mt-16 border-t border-border/40 pt-8">
+              <BacklinkPanel nodeId={node.id} />
+            </div>
+          </div>
+        </main>
+
+        {showLocal && (
+          <aside className="w-[320px] shrink-0 border-l border-foreground/[0.06]">
+            <LocalGraphView
+              nodeId={node.id}
+              onNodeClick={(id) => navigate(`/page/${id}`)}
             />
-          </div>
-
-          <div className="mt-16 border-t border-border/40 pt-8">
-            <BacklinkPanel nodeId={node.id} />
-          </div>
-        </div>
-      </main>
+          </aside>
+        )}
+      </div>
 
       <ConfirmDialog
         open={dialog === 'archive'}

@@ -5,6 +5,7 @@ import {
   type Node,
   type Edge,
 } from '@xyflow/react';
+import Graph from 'graphology';
 import { useGraph } from '@/hooks/useGraph';
 import { useGraphSettings } from '@/hooks/useGraphSettings';
 import { useGraphSimulation } from '@/hooks/useGraphSimulation';
@@ -13,15 +14,40 @@ import { useColoredGraph } from '@/hooks/useColoredGraph';
 import { ColorLegend } from './ColorLegend';
 import { nodeTypes, edgeTypes } from '.';
 import type { GraphScope } from '@/types/graph-settings.types';
+import type { KnowledgeNode, KnowledgeEdge } from '@/types';
+import type { CommunityResult } from '@/lib/graph/louvain';
 
 export interface UniverseViewProps {
   scope: GraphScope;
   onNodeClick?: (nodeId: string) => void;
+  /** Override the graph (e.g., for local graph). Defaults to the global graph. */
+  graphOverride?: Graph;
+  communitiesOverride?: CommunityResult | null;
+  nodesOverride?: KnowledgeNode[];
+  edgesOverride?: KnowledgeEdge[];
 }
 
-export function UniverseView({ scope, onNodeClick }: UniverseViewProps) {
-  const { graph, communities, nodeMap, edgeMap } = useGraph();
+export function UniverseView({
+  scope,
+  onNodeClick,
+  graphOverride,
+  communitiesOverride,
+  nodesOverride,
+  edgesOverride,
+}: UniverseViewProps) {
+  const global = useGraph();
   const { settings } = useGraphSettings(scope);
+
+  const graph = graphOverride ?? global.graph;
+  const communities = communitiesOverride ?? global.communities;
+  const rawNodes = useMemo(
+    () => nodesOverride ?? Array.from(global.nodeMap.values()),
+    [nodesOverride, global.nodeMap]
+  );
+  const rawEdges = useMemo(
+    () => edgesOverride ?? Array.from(global.edgeMap.values()),
+    [edgesOverride, global.edgeMap]
+  );
 
   const filters = settings?.filters;
   const display = settings?.display;
@@ -32,10 +58,6 @@ export function UniverseView({ scope, onNodeClick }: UniverseViewProps) {
     linkDistance: 80,
   };
   const colorScheme = settings?.colorScheme ?? 'untyped';
-
-  // Materialize the graph into node/edge arrays for filtering.
-  const rawNodes = useMemo(() => Array.from(nodeMap.values()), [nodeMap]);
-  const rawEdges = useMemo(() => Array.from(edgeMap.values()), [edgeMap]);
 
   const filtered = useFilteredGraph(
     rawNodes,
@@ -56,7 +78,6 @@ export function UniverseView({ scope, onNodeClick }: UniverseViewProps) {
     communities
   );
 
-  // Run the simulation against the FULL graph (positions persist across filters).
   const { positions, tick } = useGraphSimulation(graph, physics);
 
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -69,7 +90,6 @@ export function UniverseView({ scope, onNodeClick }: UniverseViewProps) {
     return s;
   }, [hoveredId, graph]);
 
-  // Build React Flow nodes/edges from filtered graph + live positions.
   const flowNodes = useMemo<Node[]>(() => {
     return filtered.nodes.map((n) => {
       const pos = positions.get(n.id) ?? { x: 0, y: 0 };
@@ -121,7 +141,6 @@ export function UniverseView({ scope, onNodeClick }: UniverseViewProps) {
     });
   }, [filtered.edges, colorMap, hoveredId, neighborSet, display]);
 
-  // Drive the simulation with a RAF loop, throttled to ~30fps for React Flow flushes.
   const lastFlushRef = useRef(0);
   const [, force] = useState(0);
   useEffect(() => {
