@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { EditorState, RangeSetBuilder } from '@codemirror/state';
 import {
   EditorView,
@@ -19,12 +20,14 @@ import { placeholder as cmPlaceholder } from '@codemirror/view';
 import { parseInlineRanges, type InlineKind } from './inline-ranges';
 import { wikilinkSource } from './wikilink-source';
 import { findTaskLine, type TaskLineMatch } from './task-list';
-import { useNodes } from '@/hooks';
+import { db } from '@/lib/db';
 
 export interface MarkdownEditorProps {
   content: string;
   onChange: (markdown: string) => void;
   onSave?: () => void;
+  onWikilinkNavigate?: (title: string) => void;
+  onWikilinkHover?: (info: { title: string; rect: DOMRect } | null) => void;
   placeholder?: string;
   className?: string;
   autoFocus?: boolean;
@@ -34,7 +37,8 @@ class InlineWidget extends WidgetType {
   constructor(
     readonly kind: InlineKind,
     readonly text: string,
-    readonly href?: string
+    readonly href?: string,
+    readonly onNavigate?: (title: string) => void
   ) {
     super();
   }
@@ -45,6 +49,14 @@ class InlineWidget extends WidgetType {
     el.setAttribute('data-inline', this.kind);
     if (this.href !== undefined) {
       el.setAttribute('data-href', this.href);
+    }
+    if (this.kind === 'wikilink' && this.onNavigate) {
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.onNavigate?.(this.href ?? this.text);
+      });
     }
     switch (this.kind) {
       case 'strong':
@@ -86,7 +98,9 @@ class InlineWidget extends WidgetType {
   }
 
   ignoreEvents(): boolean {
-    return false;
+    // CodeMirror otherwise tries to position the cursor at the click
+    // coords, which throws when the widget sits outside the doc text flow.
+    return true;
   }
 }
 
@@ -150,7 +164,12 @@ function buildDecorations(view: EditorView): DecorationSet {
       r.from,
       r.to,
       Decoration.replace({
-        widget: new InlineWidget(r.kind, r.inner.text ?? '', r.href),
+        widget: new InlineWidget(
+          r.kind,
+          r.inner.text ?? '',
+          r.href,
+          (title) => ((view as any).someProp as ((t: string) => void) | undefined)?.(title)
+        ),
         inclusive: false,
       })
     );
@@ -203,12 +222,29 @@ export function MarkdownEditor({
   content,
   onChange,
   onSave,
+  onWikilinkNavigate,
+  onWikilinkHover,
   placeholder = "Type '/' for commands, or '[[' to link another page",
   className,
   autoFocus,
 }: MarkdownEditorProps) {
   const ref = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  // Always-fresh refs to the latest callbacks/state. The wikilink widget
+  // is created on decoration and reads from these so the closure doesn't
+  // capture a stale value.
+  const navigateRef = useRef(onWikilinkNavigate);
+  navigateRef.current = onWikilinkNavigate;
+  const hoverRef = useRef(onWikilinkHover);
+  hoverRef.current = onWikilinkHover;
+  // Nodes for the wikilink autocomplete. Live-queried at the React layer.
+  const dbNodes = useLiveQuery(
+    async () => (await db.nodes.toArray()).filter((n) => !n.isArchived),
+    [],
+    []
+  );
+  const dbNodesRef = useRef(dbNodes);
+  dbNodesRef.current = dbNodes;
 
   useEffect(() => {
     if (!ref.current) return;
@@ -230,8 +266,8 @@ export function MarkdownEditor({
               const doc = context.state.doc.toString();
               const before = doc.slice(0, context.pos);
               const after = doc.slice(context.pos);
-              const { nodes: dbNodes } = useNodes();
-              const nodeOptions = dbNodes
+              const dbNodesList = dbNodesRef.current ?? [];
+              const nodeOptions = dbNodesList
                 .filter((n) => !n.isArchived)
                 .map((n) => ({ id: n.id, title: n.title || 'Untitled' }));
               const result = wikilinkSource(
@@ -259,6 +295,28 @@ export function MarkdownEditor({
           ],
         }),
         livePreviewPlugin,
+        EditorView.domEventHandlers({
+          mousemove(event, view) {
+            const target = event.target as HTMLElement | null;
+            if (!target) return;
+            let el: HTMLElement | null = target;
+            while (el && el !== view.contentDOM) {
+              const inlineKind = el.getAttribute?.('data-inline');
+              if (inlineKind === 'wikilink' || inlineKind === 'link') {
+                const title =
+                  el.getAttribute('data-href') || el.textContent || '';
+                const rect = el.getBoundingClientRect();
+                hoverRef.current?.({ title, rect });
+                return;
+              }
+              el = el.parentElement;
+            }
+            hoverRef.current?.(null);
+          },
+          mouseleave() {
+            hoverRef.current?.(null);
+          },
+        }),
         keymap.of([
           ...defaultKeymap,
           ...historyKeymap,
@@ -308,6 +366,13 @@ export function MarkdownEditor({
       changes: { from: 0, to: current.length, insert: content },
     });
   }, [content]);
+
+  // Sync onWikilinkNavigate into the editor so the widget can find it.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    (view as any).someProp = (title: string) => onWikilinkNavigate?.(title);
+  }, [onWikilinkNavigate]);
 
   return (
     <div

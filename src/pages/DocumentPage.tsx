@@ -14,6 +14,7 @@ import {
   Network,
 } from 'lucide-react';
 import { MarkdownEditor } from '@/components/editor/MarkdownEditor';
+import { HoverPreview } from '@/components/editor/HoverPreview';
 import { BacklinkPanel } from '@/components/editor/BacklinkPanel';
 import { LocalGraphView } from '@/components/universe/LocalGraphView';
 import { extractPlainText } from '@/lib/markdown';
@@ -32,6 +33,7 @@ export function DocumentPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [showLocal, setShowLocal] = useState(false);
+  const [hoverAnchor, setHoverAnchor] = useState<{ title: string; rect: DOMRect } | null>(null);
   const titleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -258,6 +260,18 @@ export function DocumentPage() {
                 content={node.content ?? ''}
                 onChange={handleContentUpdate}
                 placeholder="Type '/' for commands, or '[[' to link another page"
+                onWikilinkNavigate={(title) => {
+                  // Find the target node id by title and navigate to it.
+                  void db.nodes
+                    .where('isArchived')
+                    .equals(0)
+                    .toArray()
+                    .then((all) => {
+                      const target = all.find((n) => n.title === title);
+                      if (target) navigate(`/page/${target.id}`);
+                    });
+                }}
+                onWikilinkHover={setHoverAnchor}
               />
             </div>
 
@@ -266,6 +280,20 @@ export function DocumentPage() {
             </div>
           </div>
         </main>
+
+        <HoverPreview
+          anchor={
+            hoverAnchor
+              ? {
+                  x: hoverAnchor.rect.left,
+                  y: hoverAnchor.rect.bottom,
+                  width: hoverAnchor.rect.width,
+                  height: hoverAnchor.rect.height,
+                }
+              : null
+          }
+          title={hoverAnchor?.title ?? null}
+        />
 
         {showLocal && (
           <aside className="w-[320px] shrink-0 border-l border-foreground/[0.06]">
