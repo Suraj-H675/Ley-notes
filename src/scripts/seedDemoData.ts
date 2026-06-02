@@ -19,7 +19,7 @@ import {
   createCollection,
   createRevision,
 } from '@/lib/db';
-import type { JSONContent } from '@tiptap/react';
+import { extractPlainText } from '@/lib/markdown';
 
 interface Block {
   type: 'h1' | 'h2' | 'h3' | 'p' | 'bulletList' | 'orderedList' | 'blockquote' | 'codeBlock';
@@ -28,60 +28,35 @@ interface Block {
   language?: string;
 }
 
-function doc(blocks: Block[]): JSONContent {
-  return {
-    type: 'doc',
-    content: blocks.map((b) => {
-      if (b.type === 'bulletList' || b.type === 'orderedList') {
-        return {
-          type: b.type,
-          content: (b.items || []).map((item) => ({
-            type: 'listItem',
-            content: [{ type: 'paragraph', content: [{ type: 'text', text: item }] }],
-          })),
-        };
+/**
+ * Build a Markdown string from a list of semantic blocks. Replaces the
+ * old TipTap-JSON `doc()` helper.
+ */
+function doc(blocks: Block[]): string {
+  return blocks
+    .map((b) => {
+      if (b.type === 'bulletList') {
+        return (b.items || []).map((item) => `- ${item}`).join('\n');
+      }
+      if (b.type === 'orderedList') {
+        return (b.items || []).map((item, i) => `${i + 1}. ${item}`).join('\n');
       }
       if (b.type === 'blockquote') {
-        return {
-          type: 'blockquote',
-          content: [{ type: 'paragraph', content: [{ type: 'text', text: b.text || '' }] }],
-        };
+        return (b.text || '')
+          .split('\n')
+          .map((line) => `> ${line}`)
+          .join('\n');
       }
       if (b.type === 'codeBlock') {
-        return {
-          type: 'codeBlock',
-          attrs: { language: b.language || null },
-          content: [{ type: 'text', text: b.text || '' }],
-        };
+        const lang = b.language || '';
+        return `\`\`\`${lang}\n${b.text || ''}\n\`\`\``;
       }
-      const tag = b.type === 'p' ? 'paragraph' : 'heading';
-      const attrs =
-        b.type === 'h1' ? { level: 1 } : b.type === 'h2' ? { level: 2 } : { level: 3 };
-      return {
-        type: tag,
-        attrs: tag === 'heading' ? attrs : undefined,
-        content: [{ type: 'text', text: b.text || '' }],
-      };
-    }),
-  };
-}
-
-function extractTextFromTiptap(content: JSONContent): string {
-  if (!content) return '';
-  const parts: string[] = [];
-  function walk(node: JSONContent) {
-    if (node.type === 'text' && typeof node.text === 'string') {
-      parts.push(node.text);
-    }
-    if (node.content) {
-      node.content.forEach(walk);
-      if (['paragraph', 'heading', 'listItem', 'bulletList', 'orderedList', 'codeBlock'].includes(String(node.type))) {
-        parts.push('\n');
-      }
-    }
-  }
-  walk(content);
-  return parts.join('').trim();
+      if (b.type === 'h1') return `# ${b.text || ''}`;
+      if (b.type === 'h2') return `## ${b.text || ''}`;
+      if (b.type === 'h3') return `### ${b.text || ''}`;
+      return b.text || '';
+    })
+    .join('\n\n');
 }
 
 export async function seedDemoData(): Promise<void> {
@@ -609,7 +584,7 @@ export async function seedDemoData(): Promise<void> {
   await createRevision({
     nodeId: transformers.id,
     content: transformersOriginal,
-    plainText: extractTextFromTiptap(transformersOriginal),
+    plainText: extractPlainText(transformersOriginal),
   });
   const firstRevs = await db.revisions
     .where('nodeId')
@@ -625,7 +600,7 @@ export async function seedDemoData(): Promise<void> {
   await createRevision({
     nodeId: transformers.id,
     content: transformersV2,
-    plainText: extractTextFromTiptap(transformersV2),
+    plainText: extractPlainText(transformersV2),
   });
   const secondRevs = await db.revisions
     .where('nodeId')
@@ -643,7 +618,7 @@ export async function seedDemoData(): Promise<void> {
   for (const n of allNodes) {
     if (n.content) {
       await db.nodes.update(n.id, {
-        plainText: extractTextFromTiptap(n.content as JSONContent),
+        plainText: extractPlainText(n.content || ''),
       });
     }
   }

@@ -13,13 +13,12 @@ import {
   Copy,
   Network,
 } from 'lucide-react';
-import { BlockEditor } from '@/components/editor';
+import { MarkdownEditor } from '@/components/editor/MarkdownEditor';
 import { BacklinkPanel } from '@/components/editor/BacklinkPanel';
 import { LocalGraphView } from '@/components/universe/LocalGraphView';
-import { extractText } from '@/lib/editor';
+import { extractPlainText } from '@/lib/markdown';
 import { useWorkspaceStore } from '@/store';
 import { db } from '@/lib/db';
-import type { JSONContent } from '@tiptap/react';
 import { formatRelative } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 
@@ -43,9 +42,9 @@ export function DocumentPage() {
   }, [id, setLastOpenedNode, addToRecentNodes]);
 
   const handleContentUpdate = useCallback(
-    async (content: JSONContent) => {
+    async (content: string) => {
       if (!id) return;
-      const plainText = extractText(content);
+      const plainText = extractPlainText(content);
       await updateNode({ content, plainText });
     },
     [id, updateNode]
@@ -255,9 +254,9 @@ export function DocumentPage() {
             </div>
 
             <div className="mt-8">
-              <BlockEditor
-                content={node.content}
-                onUpdate={handleContentUpdate}
+              <MarkdownEditor
+                content={node.content ?? ''}
+                onChange={handleContentUpdate}
                 placeholder="Type '/' for commands, or '[[' to link another page"
               />
             </div>

@@ -1,5 +1,3 @@
-import type { JSONContent } from '@tiptap/react';
-
 export type NodeType = 'document' | 'task' | 'project' | 'concept';
 
 export type NodeTemplate =
@@ -17,7 +15,7 @@ export interface KnowledgeNode {
   type: NodeType;
   title: string;
   emoji?: string;
-  content: JSONContent | null;
+  content: string | null;
   plainText: string;
   collections: string[];
   tags: string[];
@@ -35,7 +33,7 @@ export interface CreateNodeInput {
   type: NodeType;
   title: string;
   emoji?: string;
-  content?: JSONContent | null;
+  content?: string | null;
   collections?: string[];
   tags?: string[];
   properties?: Record<string, string>;
@@ -48,7 +46,7 @@ export interface CreateNodeInput {
 export interface UpdateNodeInput {
   title?: string;
   emoji?: string;
-  content?: JSONContent | null;
+  content?: string | null;
   plainText?: string;
   collections?: string[];
   tags?: string[];

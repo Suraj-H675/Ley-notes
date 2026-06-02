@@ -1,14 +1,13 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import type { JSONContent } from '@tiptap/react';
 
 interface AutoSaveOptions {
   delay?: number;
-  onSave: (content: JSONContent) => Promise<void>;
+  onSave: (content: string) => Promise<void>;
   enabled?: boolean;
 }
 
 export function useAutoSave(
-  content: JSONContent | null,
+  content: string,
   options: AutoSaveOptions
 ) {
   const { delay = 1000, onSave, enabled = true } = options;
@@ -22,15 +21,14 @@ export function useAutoSave(
 
   const save = useCallback(async () => {
     const currentContent = contentRef.current;
-    if (!currentContent) return;
+    if (currentContent == null) return;
 
-    const contentString = JSON.stringify(currentContent);
-    if (contentString === lastSavedContentRef.current) return;
+    if (currentContent === lastSavedContentRef.current) return;
 
     setIsSaving(true);
     try {
       await onSave(currentContent);
-      lastSavedContentRef.current = contentString;
+      lastSavedContentRef.current = currentContent;
       setLastSaved(new Date());
     } finally {
       setIsSaving(false);

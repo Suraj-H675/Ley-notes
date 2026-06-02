@@ -1,5 +1,30 @@
 import Dexie, { type Table } from 'dexie';
-import type { JSONContent } from '@tiptap/react';
+import { tiptapJsonToMarkdown, extractPlainText } from '@/lib/markdown';
+
+type LegacyNodeRecord = {
+  id: string;
+  content: unknown;
+  plainText: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Convert a v2-style node (content is TipTap JSONContent) to v3-style
+ * (content is Markdown string). Exported for unit testing.
+ */
+export function migrateV2NodeToV3(node: LegacyNodeRecord): LegacyNodeRecord {
+  const out = { ...node };
+  if (out.content && typeof out.content === 'object') {
+    const md = tiptapJsonToMarkdown(out.content as any);
+    out.content = md || '';
+    out.plainText = extractPlainText(out.content as string);
+  } else if (typeof out.content === 'string') {
+    out.plainText = extractPlainText(out.content);
+  } else if (out.content == null) {
+    out.content = '';
+  }
+  return out;
+}
 
 export type { NodeType, NodeTemplate, TaskStatus } from '@/types';
 export type { EdgeType } from '@/types';
@@ -27,7 +52,7 @@ interface KnowledgeNodeRecord {
   type: 'document' | 'task' | 'project' | 'concept';
   title: string;
   emoji?: string;
-  content: JSONContent | null;
+  content: string | null;
   plainText: string;
   collections: string[];
   tags: string[];
@@ -63,7 +88,7 @@ interface CollectionRecord {
 interface RevisionRecord {
   id: string;
   nodeId: string;
-  content: JSONContent;
+  content: string;
   plainText: string;
   createdAt: number;
 }
@@ -127,6 +152,33 @@ class KnowledgeUniverseDB extends Dexie {
       graphPositions: 'nodeId, updatedAt',
       graphSettings: 'scope, updatedAt',
     });
+
+    // v3: content field changed from TipTap JSONContent to Markdown string.
+    this.version(3)
+      .stores({
+        nodes: 'id, type, title, *collections, *tags, isArchived, createdAt, updatedAt, parentId',
+        edges: 'id, source, target, type, createdAt',
+        collections: 'id, name, parentId, createdAt',
+        revisions: 'id, nodeId, createdAt',
+        graphPositions: 'nodeId, updatedAt',
+        graphSettings: 'scope, updatedAt',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('nodes')
+          .toCollection()
+          .modify((node: any) => {
+            const migrated = migrateV2NodeToV3(node);
+            Object.assign(node, migrated);
+          });
+        await tx
+          .table('revisions')
+          .toCollection()
+          .modify((rev: any) => {
+            const migrated = migrateV2NodeToV3(rev);
+            Object.assign(rev, migrated);
+          });
+      });
   }
 }
 
