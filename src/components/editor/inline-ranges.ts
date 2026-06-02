@@ -4,7 +4,7 @@ import { unified } from 'unified';
 import { visit } from 'unist-util-visit';
 import type { Root, Emphasis, Strong, InlineCode, Link, Text, Delete } from 'mdast';
 
-export type InlineKind = 'strong' | 'em' | 'code' | 'link' | 'wikilink' | 'strike';
+export type InlineKind = 'strong' | 'em' | 'code' | 'link' | 'wikilink' | 'strike' | 'highlight';
 
 export interface InlineInner {
   from: number;
@@ -110,11 +110,13 @@ export function parseInlineRanges(markdown: string): InlineRange[] {
         });
       }
     } else if (node.type === 'text') {
-      // Detect wikilinks: [[Note Title]] (not a standard mdast node)
+      // Detect non-standard syntax in text nodes.
       const text = (node as Text).value;
+      const basePos = (node as any).position?.start?.offset ?? 0;
+
+      // Wikilinks: [[Note Title]]
       const wikilinkRe = /\[\[([^\]]+)\]\]/g;
       let m: RegExpExecArray | null;
-      const basePos = (node as any).position?.start?.offset ?? 0;
       while ((m = wikilinkRe.exec(text)) !== null) {
         const from = basePos + m.index;
         const to = from + m[0].length;
@@ -125,6 +127,20 @@ export function parseInlineRanges(markdown: string): InlineRange[] {
           kind: 'wikilink',
           inner: { from: from + 2, to: to - 2, text: label },
           href: label,
+        });
+      }
+
+      // Highlight: ==text== (non-standard; Obsidian-style)
+      const highlightRe = /==([^=\n]+)==/g;
+      while ((m = highlightRe.exec(text)) !== null) {
+        const from = basePos + m.index;
+        const to = from + m[0].length;
+        const inner = m[1];
+        ranges.push({
+          from,
+          to,
+          kind: 'highlight',
+          inner: { from: from + 2, to: to - 2, text: inner },
         });
       }
     }

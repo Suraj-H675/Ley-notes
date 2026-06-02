@@ -41,6 +41,14 @@ describe('parseInlineRanges', () => {
     expect(ranges[0].kind).toBe('strike');
   });
 
+  it('detects highlight (==text==)', () => {
+    const md = 'this is ==important== text';
+    const ranges = parseInlineRanges(md);
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0].kind).toBe('highlight');
+    expect(ranges[0].inner.text).toBe('important');
+  });
+
   it('detects a link [text](url)', () => {
     const md = 'see [docs](https://example.com)';
     const ranges = parseInlineRanges(md);
