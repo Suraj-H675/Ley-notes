@@ -20,6 +20,7 @@ import { placeholder as cmPlaceholder } from '@codemirror/view';
 import { parseInlineRanges, type InlineKind } from './inline-ranges';
 import { wikilinkSource } from './wikilink-source';
 import { findTaskLine, type TaskLineMatch } from './task-list';
+import { parseCalloutBlocks, type CalloutBlock, type CalloutType } from './callout';
 import { db } from '@/lib/db';
 
 export interface MarkdownEditorProps {
@@ -153,6 +154,93 @@ class TaskCheckboxWidget extends WidgetType {
   }
 }
 
+const CALLOUT_COLORS: Record<CalloutType, { bg: string; border: string; fg: string }> = {
+  note: { bg: 'hsl(217 30% 22%)', border: 'hsl(217 60% 55%)', fg: 'hsl(217 80% 80%)' },
+  tip: { bg: 'hsl(150 30% 20%)', border: 'hsl(150 55% 50%)', fg: 'hsl(150 70% 75%)' },
+  info: { bg: 'hsl(200 30% 22%)', border: 'hsl(200 60% 55%)', fg: 'hsl(200 80% 80%)' },
+  warning: { bg: 'hsl(35 35% 22%)', border: 'hsl(35 80% 50%)', fg: 'hsl(35 90% 75%)' },
+  danger: { bg: 'hsl(0 40% 24%)', border: 'hsl(0 70% 50%)', fg: 'hsl(0 90% 80%)' },
+  important: { bg: 'hsl(265 30% 22%)', border: 'hsl(265 55% 55%)', fg: 'hsl(265 80% 80%)' },
+  example: { bg: 'hsl(170 30% 22%)', border: 'hsl(170 50% 50%)', fg: 'hsl(170 70% 75%)' },
+  question: { bg: 'hsl(180 30% 22%)', border: 'hsl(180 50% 50%)', fg: 'hsl(180 70% 75%)' },
+  success: { bg: 'hsl(140 35% 20%)', border: 'hsl(140 60% 45%)', fg: 'hsl(140 80% 75%)' },
+  failure: { bg: 'hsl(345 35% 24%)', border: 'hsl(345 70% 50%)', fg: 'hsl(345 85% 80%)' },
+  bug: { bg: 'hsl(335 35% 24%)', border: 'hsl(335 70% 55%)', fg: 'hsl(335 85% 80%)' },
+  quote: { bg: 'hsl(220 15% 18%)', border: 'hsl(220 15% 50%)', fg: 'hsl(220 20% 80%)' },
+};
+
+class CalloutWidget extends WidgetType {
+  constructor(readonly block: CalloutBlock) {
+    super();
+  }
+
+  toDOM(): HTMLElement {
+    const colors = CALLOUT_COLORS[this.block.type];
+    const root = document.createElement('div');
+    root.setAttribute('data-callout', '');
+    root.setAttribute('data-callout-type', this.block.type);
+    root.style.background = colors.bg;
+    root.style.borderLeft = `3px solid ${colors.border}`;
+    root.style.borderRadius = '6px';
+    root.style.padding = '10px 14px';
+    root.style.margin = '4px 0';
+    root.style.fontSize = '13px';
+    root.style.lineHeight = '1.5';
+
+    // Title row
+    const titleRow = document.createElement('div');
+    titleRow.style.display = 'flex';
+    titleRow.style.alignItems = 'baseline';
+    titleRow.style.gap = '6px';
+    titleRow.style.fontWeight = '600';
+    titleRow.style.color = colors.fg;
+    titleRow.style.marginBottom = this.block.body.length > 0 ? '6px' : '0';
+
+    const typePill = document.createElement('span');
+    typePill.style.textTransform = 'uppercase';
+    typePill.style.fontSize = '10.5px';
+    typePill.style.letterSpacing = '0.05em';
+    typePill.style.padding = '1px 6px';
+    typePill.style.borderRadius = '3px';
+    typePill.style.background = colors.border;
+    typePill.style.color = 'hsl(0 0% 10%)';
+    typePill.textContent = this.block.type;
+    titleRow.appendChild(typePill);
+
+    if (this.block.title) {
+      const titleText = document.createElement('span');
+      titleText.textContent = this.block.title;
+      titleText.style.color = 'hsl(0 0% 95%)';
+      titleRow.appendChild(titleText);
+    }
+
+    root.appendChild(titleRow);
+
+    // Body
+    for (const line of this.block.body) {
+      const bodyLine = document.createElement('div');
+      bodyLine.textContent = line || ' ';
+      bodyLine.style.color = 'hsl(0 0% 88%)';
+      root.appendChild(bodyLine);
+    }
+
+    return root;
+  }
+
+  ignoreEvents(): boolean {
+    return false;
+  }
+
+  eq(other: CalloutWidget): boolean {
+    return (
+      other.block.type === this.block.type &&
+      other.block.title === this.block.title &&
+      other.block.startLine === this.block.startLine &&
+      other.block.endLine === this.block.endLine
+    );
+  }
+}
+
 function buildDecorations(view: EditorView): DecorationSet {
   const ranges = parseInlineRanges(view.state.doc.toString());
   const builder = new RangeSetBuilder<Decoration>();
@@ -200,6 +288,38 @@ function buildDecorations(view: EditorView): DecorationSet {
   }
   return builder.finish();
 }
+
+/**
+ * Block decorations (used for callouts) cannot be added via a ViewPlugin;
+ * they need to be supplied by an EditorView.decorations.compute extension.
+ */
+const calloutDecorationExt = EditorView.decorations.compute(
+  ['doc', 'selection'],
+  (state) => {
+    const callouts = parseCalloutBlocks(state.doc.toString());
+    const cursorLine = state.doc.lineAt(state.selection.main.head).number;
+    const builder = new RangeSetBuilder<Decoration>();
+    for (const c of callouts) {
+      if (c.startLine === cursorLine) continue;
+      const startLine = state.doc.line(c.startLine);
+      const replaceFrom = startLine.from;
+      const replaceTo =
+        c.endLine < state.doc.lines
+          ? state.doc.line(c.endLine + 1).from
+          : state.doc.length;
+      builder.add(
+        replaceFrom,
+        replaceTo,
+        Decoration.replace({
+          widget: new CalloutWidget(c),
+          block: true,
+          inclusive: true,
+        })
+      );
+    }
+    return builder.finish();
+  }
+);
 
 const livePreviewPlugin = ViewPlugin.fromClass(
   class {
@@ -295,6 +415,7 @@ export function MarkdownEditor({
           ],
         }),
         livePreviewPlugin,
+        calloutDecorationExt,
         EditorView.domEventHandlers({
           mousemove(event, view) {
             const target = event.target as HTMLElement | null;

@@ -189,3 +189,45 @@ describe('MarkdownEditor — task list', () => {
     expect(last).toContain('- [x] first task');
   });
 });
+
+describe('MarkdownEditor — callouts', () => {
+  const CALLOUT = `cursor here
+
+> [!warning] Be careful
+> Hot stove ahead.`;
+
+  it('renders a callout as a styled card with the type and title', () => {
+    const { container } = render(
+      <MarkdownEditor content={CALLOUT} onChange={() => {}} />
+    );
+    const card = container.querySelector('[data-callout]');
+    expect(card).toBeTruthy();
+    expect(card?.getAttribute('data-callout-type')).toBe('warning');
+    expect(card?.textContent).toContain('Be careful');
+    expect(card?.textContent).toContain('Hot stove ahead.');
+  });
+
+  it('renders the raw callout source on the cursor line, the card elsewhere', () => {
+    // Cursor is on line 1; callout is on lines 3-4. So the card should
+    // render (not the raw > [!warning] text).
+    const { container } = render(
+      <MarkdownEditor content={CALLOUT} onChange={() => {}} />
+    );
+    const card = container.querySelector('[data-callout]');
+    expect(card).toBeTruthy();
+    expect(container.textContent).not.toContain('> [!warning] Be careful');
+  });
+
+  it('handles callouts without a title', () => {
+    const md = `para
+
+> [!tip]
+> Just a tip.`;
+    const { container } = render(
+      <MarkdownEditor content={md} onChange={() => {}} />
+    );
+    const card = container.querySelector('[data-callout-type="tip"]');
+    expect(card).toBeTruthy();
+    expect(card?.textContent).toContain('Just a tip.');
+  });
+});
