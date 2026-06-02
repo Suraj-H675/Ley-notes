@@ -68,12 +68,45 @@ interface RevisionRecord {
   createdAt: number;
 }
 
+interface GraphSettingsRecord {
+  scope: 'global' | 'local';
+  colorScheme: 'untyped' | 'tag' | 'collection' | 'link-count' | 'community';
+  physics: {
+    centerForce: number;
+    chargeForce: number;
+    linkForce: number;
+    linkDistance: number;
+  };
+  display: {
+    nodeSize: number;
+    edgeThickness: number;
+    textFade: number;
+    showLabels: boolean;
+  };
+  filters: {
+    searchQuery: string;
+    selectedTags: string[];
+    selectedCollections: string[];
+    showOrphans: boolean;
+  };
+  panelSectionsOpen: {
+    groups: boolean;
+    filters: boolean;
+    display: boolean;
+    physics: boolean;
+  };
+  panelVisible: boolean;
+  localDepth: 1 | 2;
+  updatedAt: number;
+}
+
 class KnowledgeUniverseDB extends Dexie {
   nodes!: Table<KnowledgeNodeRecord>;
   edges!: Table<KnowledgeEdgeRecord>;
   collections!: Table<CollectionRecord>;
   revisions!: Table<RevisionRecord>;
   graphPositions!: Table<GraphPosition>;
+  graphSettings!: Table<GraphSettingsRecord>;
 
   constructor() {
     super('knowledge-universe');
@@ -84,6 +117,15 @@ class KnowledgeUniverseDB extends Dexie {
       collections: 'id, name, parentId, createdAt',
       revisions: 'id, nodeId, createdAt',
       graphPositions: 'nodeId, updatedAt',
+    });
+
+    this.version(2).stores({
+      nodes: 'id, type, title, *collections, *tags, isArchived, createdAt, updatedAt, parentId',
+      edges: 'id, source, target, type, createdAt',
+      collections: 'id, name, parentId, createdAt',
+      revisions: 'id, nodeId, createdAt',
+      graphPositions: 'nodeId, updatedAt',
+      graphSettings: 'scope, updatedAt',
     });
   }
 }

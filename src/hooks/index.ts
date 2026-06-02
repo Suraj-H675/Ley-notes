@@ -5,3 +5,7 @@ export { useKeyboard, useEscapeKey, useGlobalShortcuts } from './useKeyboard';
 export { useAutoSave } from './useAutoSave';
 export { useGraph } from './useGraph';
 export { useCommands } from './useCommands';
+export { useGraphSettings } from './useGraphSettings';
+export { useGraphSimulation } from './useGraphSimulation';
+export { useFilteredGraph, applyFilters } from './useFilteredGraph';
+export { useColoredGraph, colorMapForGraph } from './useColoredGraph';
