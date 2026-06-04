@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, act } from '@testing-library/react';
+import 'fake-indexeddb/auto';
 import { MarkdownEditor } from './MarkdownEditor';
 
 const MULTI = `cursor here
@@ -229,5 +230,61 @@ describe('MarkdownEditor — callouts', () => {
     const card = container.querySelector('[data-callout-type="tip"]');
     expect(card).toBeTruthy();
     expect(card?.textContent).toContain('Just a tip.');
+  });
+});
+
+describe('MarkdownEditor — transclusions', () => {
+  beforeEach(async () => {
+    const { db } = await import('@/lib/db');
+    await db.nodes.clear();
+  });
+
+  it('renders a transclusion as a styled card on a non-cursor line', async () => {
+    const { db } = await import('@/lib/db');
+    await db.nodes.put({
+      id: 't1',
+      type: 'document',
+      title: 'Embedded',
+      content: 'Embedded body content.',
+      plainText: 'Embedded body content.',
+      collections: [],
+      tags: [],
+      properties: {},
+      isArchived: 0,
+      createdAt: 0,
+      updatedAt: 0,
+    });
+
+    const md = `cursor here
+
+see ![[Embedded]] now`;
+    const { findByTestId } = render(
+      <MarkdownEditor content={md} onChange={() => {}} />
+    );
+
+    const embed = await findByTestId('transclusion', undefined, { timeout: 2000 });
+    expect(embed).toBeTruthy();
+    expect(embed.getAttribute('data-transclusion-title')).toBe('Embedded');
+  });
+
+  it('falls back to "Note not found" when the target does not exist', async () => {
+    const md = `cursor here
+
+see ![[Missing Note]] now`;
+    const { findByTestId } = render(
+      <MarkdownEditor content={md} onChange={() => {}} />
+    );
+    const embed = await findByTestId('transclusion', undefined, { timeout: 2000 });
+    expect(embed.textContent).toMatch(/not found/i);
+  });
+
+  it('hides the embed card on the cursor line, showing the raw ![[...]] source', () => {
+    const md = 'inline ![[Embedded]] here';
+    const { container } = render(
+      <MarkdownEditor content={md} onChange={() => {}} />
+    );
+    const embed = container.querySelector('[data-transclusion]');
+    expect(embed).toBeNull();
+    expect(container.textContent).toContain('![[Embedded]]');
   });
 });

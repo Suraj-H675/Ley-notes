@@ -4,7 +4,7 @@ import { unified } from 'unified';
 import { visit } from 'unist-util-visit';
 import type { Root, Emphasis, Strong, InlineCode, Link, Text, Delete } from 'mdast';
 
-export type InlineKind = 'strong' | 'em' | 'code' | 'link' | 'wikilink' | 'strike' | 'highlight';
+export type InlineKind = 'strong' | 'em' | 'code' | 'link' | 'wikilink' | 'strike' | 'highlight' | 'transclusion';
 
 export interface InlineInner {
   from: number;
@@ -114,9 +114,25 @@ export function parseInlineRanges(markdown: string): InlineRange[] {
       const text = (node as Text).value;
       const basePos = (node as any).position?.start?.offset ?? 0;
 
-      // Wikilinks: [[Note Title]]
-      const wikilinkRe = /\[\[([^\]]+)\]\]/g;
+      // Transclusions: ![[Note Title]] (must come before wikilinks so the
+      // negative lookbehind on the wikilink regex can rely on it).
+      const transclusionRe = /!\[\[([^\]]+)\]\]/g;
       let m: RegExpExecArray | null;
+      while ((m = transclusionRe.exec(text)) !== null) {
+        const from = basePos + m.index;
+        const to = from + m[0].length;
+        const label = m[1].trim();
+        ranges.push({
+          from,
+          to,
+          kind: 'transclusion',
+          inner: { from: from + 3, to: to - 2, text: label },
+          href: label,
+        });
+      }
+
+      // Wikilinks: [[Note Title]] (negative lookbehind skips transclusions).
+      const wikilinkRe = /(?<!!)\[\[([^\]]+)\]\]/g;
       while ((m = wikilinkRe.exec(text)) !== null) {
         const from = basePos + m.index;
         const to = from + m[0].length;

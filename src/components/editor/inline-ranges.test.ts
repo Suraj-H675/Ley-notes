@@ -97,4 +97,29 @@ describe('parseInlineRanges', () => {
     expect(kinds).toContain('code');
     expect(kinds).toContain('strong');
   });
+
+  it('detects a transclusion ![[Note Title]]', () => {
+    const md = 'see ![[Embedded Note]] here';
+    const ranges = parseInlineRanges(md);
+    const t = ranges.find((r) => r.kind === 'transclusion');
+    expect(t).toBeDefined();
+    expect(t?.href).toBe('Embedded Note');
+    expect(t?.inner.text).toBe('Embedded Note');
+  });
+
+  it('does not match a transclusion as a wikilink', () => {
+    const md = 'see ![[Embedded Note]] here';
+    const ranges = parseInlineRanges(md);
+    const wikilinks = ranges.filter((r) => r.kind === 'wikilink');
+    expect(wikilinks).toHaveLength(0);
+  });
+
+  it('detects multiple transclusions in the same line', () => {
+    const md = 'A: ![[One]] and B: ![[Two]]';
+    const ranges = parseInlineRanges(md);
+    const ts = ranges.filter((r) => r.kind === 'transclusion');
+    expect(ts).toHaveLength(2);
+    expect(ts[0].href).toBe('One');
+    expect(ts[1].href).toBe('Two');
+  });
 });

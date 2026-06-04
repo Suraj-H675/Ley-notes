@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { EditorState, RangeSetBuilder } from '@codemirror/state';
+import { EditorState, RangeSetBuilder, StateEffect } from '@codemirror/state';
 import {
   EditorView,
   Decoration,
@@ -22,6 +22,20 @@ import { wikilinkSource } from './wikilink-source';
 import { findTaskLine, type TaskLineMatch } from './task-list';
 import { parseCalloutBlocks, type CalloutBlock, type CalloutType } from './callout';
 import { db } from '@/lib/db';
+
+/**
+ * Per-title data the transclusion widget needs. `null` means the target
+ * note was not found. `undefined` means we haven't loaded it yet.
+ */
+export interface TransclusionData {
+  title: string;
+  plainText: string;
+  exists: boolean;
+}
+
+/** State effect fired when the transclusion data map changes, so the
+ * live-preview plugin rebuilds its decorations with the fresh data. */
+const transclusionDataChanged = StateEffect.define<true>();
 
 export interface MarkdownEditorProps {
   content: string;
@@ -241,6 +255,91 @@ class CalloutWidget extends WidgetType {
   }
 }
 
+class TransclusionWidget extends WidgetType {
+  // Captured at construction so eq() can detect when the data map changes.
+  private readonly dataMapRef: Map<string, TransclusionData> | undefined;
+
+  constructor(
+    readonly title: string,
+    readonly view: EditorView
+  ) {
+    super();
+    this.dataMapRef = (view as any).transclusionData;
+  }
+
+  toDOM(): HTMLElement {
+    const dataMap = this.dataMapRef;
+    const data = dataMap?.get(this.title);
+    const navigate = (this.view as any).someProp as
+      | ((t: string) => void)
+      | undefined;
+
+    const el = document.createElement('span');
+    el.setAttribute('data-transclusion', '');
+    el.setAttribute('data-transclusion-title', this.title);
+    el.setAttribute('data-testid', 'transclusion');
+    el.style.display = 'inline-block';
+    el.style.padding = '6px 10px';
+    el.style.margin = '2px 0';
+    el.style.borderLeft = '3px solid hsl(265 55% 65%)';
+    el.style.background = 'hsl(265 25% 20%)';
+    el.style.borderRadius = '4px';
+    el.style.fontSize = '12px';
+    el.style.lineHeight = '1.45';
+    el.style.verticalAlign = 'middle';
+    el.style.maxWidth = '100%';
+    el.style.cursor = navigate ? 'pointer' : 'default';
+
+    if (dataMap === undefined) {
+      // The React layer hasn't pushed any data yet.
+      el.textContent = `Loading ${this.title}…`;
+      el.style.opacity = '0.55';
+    } else if (!data || !data.exists) {
+      // The data map is loaded but this title is missing → no such note.
+      el.textContent = `Note not found: ${this.title}`;
+      el.style.opacity = '0.55';
+      el.style.fontStyle = 'italic';
+    } else {
+      const titleEl = document.createElement('div');
+      titleEl.style.fontWeight = '600';
+      titleEl.style.color = 'hsl(265 80% 80%)';
+      titleEl.style.marginBottom = '2px';
+      titleEl.textContent = data.title;
+
+      const previewEl = document.createElement('div');
+      previewEl.style.color = 'hsl(0 0% 80%)';
+      previewEl.style.fontSize = '11.5px';
+      const text = data.plainText || '';
+      previewEl.textContent =
+        text.length > 200 ? text.slice(0, 200) + '…' : text;
+
+      el.appendChild(titleEl);
+      el.appendChild(previewEl);
+    }
+
+    if (navigate) {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        navigate(this.title);
+      });
+    }
+
+    return el;
+  }
+
+  ignoreEvents(): boolean {
+    return true; // We handle the click ourselves
+  }
+
+  eq(other: TransclusionWidget): boolean {
+    if (other.title !== this.title) return false;
+    // Compare the dataMap captured at construction so a refresh after the
+    // data effect fires triggers a DOM rebuild.
+    return this.dataMapRef === other.dataMapRef;
+  }
+}
+
 function buildDecorations(view: EditorView): DecorationSet {
   const ranges = parseInlineRanges(view.state.doc.toString());
   const builder = new RangeSetBuilder<Decoration>();
@@ -248,6 +347,17 @@ function buildDecorations(view: EditorView): DecorationSet {
   for (const r of ranges) {
     const line = view.state.doc.lineAt(r.from).number;
     if (line === cursorLine) continue;
+    if (r.kind === 'transclusion') {
+      builder.add(
+        r.from,
+        r.to,
+        Decoration.replace({
+          widget: new TransclusionWidget(r.inner.text ?? '', view),
+          inclusive: false,
+        })
+      );
+      continue;
+    }
     builder.add(
       r.from,
       r.to,
@@ -328,7 +438,10 @@ const livePreviewPlugin = ViewPlugin.fromClass(
       this.decorations = buildDecorations(view);
     }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet) {
+      const dataChanged = update.transactions.some((t) =>
+        t.effects.some((e) => e.is(transclusionDataChanged))
+      );
+      if (update.docChanged || update.selectionSet || dataChanged) {
         this.decorations = buildDecorations(update.view);
       }
     }
@@ -430,6 +543,13 @@ export function MarkdownEditor({
                 hoverRef.current?.({ title, rect });
                 return;
               }
+              if (el.hasAttribute?.('data-transclusion')) {
+                const title =
+                  el.getAttribute('data-transclusion-title') || '';
+                const rect = el.getBoundingClientRect();
+                hoverRef.current?.({ title, rect });
+                return;
+              }
               el = el.parentElement;
             }
             hoverRef.current?.(null);
@@ -494,6 +614,27 @@ export function MarkdownEditor({
     if (!view) return;
     (view as any).someProp = (title: string) => onWikilinkNavigate?.(title);
   }, [onWikilinkNavigate]);
+
+  // Build the transclusion data map from live-queried nodes and push it
+  // onto the editor view. Dispatch a StateEffect so the live-preview
+  // plugin rebuilds decorations with the new data.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const map = new Map<string, TransclusionData>();
+    for (const n of dbNodes ?? []) {
+      const title = (n.title || '').trim();
+      if (!title) continue;
+      // Last write wins on title collisions — fine for our scale.
+      map.set(title, {
+        title,
+        plainText: n.plainText ?? '',
+        exists: true,
+      });
+    }
+    (view as any).transclusionData = map;
+    view.dispatch({ effects: transclusionDataChanged.of(true) });
+  }, [dbNodes]);
 
   return (
     <div
