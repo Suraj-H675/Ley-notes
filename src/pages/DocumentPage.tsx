@@ -14,10 +14,11 @@ import {
   Network,
 } from 'lucide-react';
 import { MarkdownEditor } from '@/components/editor/MarkdownEditor';
+import { PropertiesEditor } from '@/components/editor/PropertiesEditor';
 import { HoverPreview } from '@/components/editor/HoverPreview';
 import { BacklinkPanel } from '@/components/editor/BacklinkPanel';
 import { LocalGraphView } from '@/components/universe/LocalGraphView';
-import { extractPlainText } from '@/lib/markdown';
+import { extractPlainText, splitFrontmatter, parseFrontmatter, stringifyFrontmatter } from '@/lib/markdown';
 import { useWorkspaceStore } from '@/store';
 import { db } from '@/lib/db';
 import { formatRelative } from '@/lib/utils';
@@ -59,6 +60,20 @@ export function DocumentPage() {
       updateNode({ title: newTitle });
     }
   };
+
+  /** When properties change: update the properties field and re-serialize
+   * the markdown content with the new frontmatter block. */
+  const handlePropertiesChange = useCallback(
+    async (properties: Record<string, string>) => {
+      if (!id || !node) return;
+      const { frontmatter: _fm, body } = splitFrontmatter(node.content ?? '');
+      const newContent = stringifyFrontmatter(properties, body);
+      const plainText = extractPlainText(newContent);
+      // Write both the properties cache and the re-serialized markdown.
+      await updateNode({ properties, content: newContent, plainText });
+    },
+    [id, node, updateNode]
+  );
 
   const handleArchive = async () => {
     if (!id) return;
@@ -254,6 +269,24 @@ export function DocumentPage() {
                 </>
               )}
             </div>
+
+            {/* Properties editor: parses frontmatter from content so the YAML
+                is always the source of truth for structured metadata. */}
+            {node && (
+              <PropertiesEditor
+                properties={(() => {
+                  const { frontmatter } = splitFrontmatter(node.content ?? '');
+                  const rec = parseFrontmatter(frontmatter);
+                  // Convert any non-string values (e.g. Date from coerceDates) to string.
+                  const strProps: Record<string, string> = {};
+                  for (const [k, v] of Object.entries(rec)) {
+                    strProps[k] = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+                  }
+                  return strProps;
+                })()}
+                onChange={handlePropertiesChange}
+              />
+            )}
 
             <div className="mt-8">
               <MarkdownEditor
