@@ -126,3 +126,50 @@
 ::selection {
   background: hsl(222 75% 60% / 0.25);
 }
+
+/* Collapsible heading gutter markers */
+.cm-heading-collapse-gutter {
+  width: 18px;
+}
+
+.cm-collapse-marker {
+  cursor: pointer;
+  color: hsl(220 10% 55%);
+  font-size: 10px;
+  line-height: 1;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  transition: background-color 0.1s ease;
+}
+
+.cm-collapse-marker:hover {
+  background-color: hsl(220 10% 22% / 0.3);
+  color: hsl(220 10% 70%);
+}
+
+.cm-collapse-marker:active {
+  background-color: hsl(220 10% 22% / 0.5);
+}
+
+/* Folded heading indicator */
+.cm-folded .cm-line:has(.cm-heading-collapse-gutter) {
+  opacity: 0.7;
+}
+
+.cm-folded .cm-line:has(.cm-heading-collapse-gutter)::after {
+  content: ' ...';
+  color: hsl(220 8% 50%);
+  font-style: italic;
+}
+
+/* Folded content region styling */
+.cm-folded .cm-fold-placeholder {
+  background: hsl(220 14% 15%);
+  border-left: 2px solid hsl(220 10% 30%);
+  opacity: 0.6;
+}

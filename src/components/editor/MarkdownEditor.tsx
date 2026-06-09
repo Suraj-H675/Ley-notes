@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { EditorState, RangeSetBuilder, StateEffect } from '@codemirror/state';
 import {
@@ -25,6 +25,7 @@ import { fetchTransclusionData } from '@/lib/markdown/transclusions';
 import { db } from '@/lib/db';
 import { blockDragHandleExtension } from './BlockDragHandle';
 import { headingCollapseGutter } from './HeadingCollapse';
+import { EditorFindBar, clearFindHighlights } from './EditorFindBar';
 
 /**
  * Per-title data the transclusion widget needs. `null` means the target
@@ -470,6 +471,7 @@ export function MarkdownEditor({
 }: MarkdownEditorProps) {
   const ref = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [showFindBar, setShowFindBar] = useState(false);
   // Always-fresh refs to the latest callbacks/state. The wikilink widget
   // is created on decoration and reads from these so the closure doesn't
   // capture a stale value.
@@ -579,6 +581,14 @@ export function MarkdownEditor({
             preventDefault: true,
             run: () => {
               onSave?.();
+              return true;
+            },
+          },
+          {
+            key: 'Mod-f',
+            preventDefault: true,
+            run: () => {
+              setShowFindBar(true);
               return true;
             },
           },
