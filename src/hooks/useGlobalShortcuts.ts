@@ -10,7 +10,7 @@ import { nanoid } from 'nanoid';
  */
 export function useGlobalShortcuts(createNode?: (input: any) => Promise<any>) {
   const navigate = useNavigate();
-  const { openSearch } = useSearchStore();
+  const { openSearch, openQuickSwitcher } = useSearchStore();
   const { toggleSidebar } = useWorkspaceStore();
 
   useEffect(() => {
@@ -39,6 +39,7 @@ export function useGlobalShortcuts(createNode?: (input: any) => Promise<any>) {
             tags: [],
             properties: {},
             isArchived: 0 as const,
+            isPinned: 0 as const,
             createdAt: Date.now(),
             updatedAt: Date.now(),
           };
@@ -53,9 +54,15 @@ export function useGlobalShortcuts(createNode?: (input: any) => Promise<any>) {
         toggleSidebar();
         return;
       }
+
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        openQuickSwitcher();
+        return;
+      }
     };
 
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [navigate, openSearch, toggleSidebar, createNode]);
+  }, [navigate, openSearch, openQuickSwitcher, toggleSidebar, createNode]);
 }

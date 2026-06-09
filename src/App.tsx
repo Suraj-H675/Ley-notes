@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 import { AppShell } from '@/components/layout';
 import { CommandPalette } from '@/components/search/CommandPalette';
+import { QuickSwitcher } from '@/components/editor/QuickSwitcher';
 import { Toaster } from '@/components/ui';
 import { HomePage } from '@/pages/HomePage';
 import { DocumentPage } from '@/pages/DocumentPage';
@@ -20,6 +21,7 @@ function App() {
   return (
     <>
       <CommandPalette />
+      <QuickSwitcher />
       <Toaster />
       <Routes>
         <Route element={<AppShell />}>

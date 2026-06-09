@@ -6,6 +6,7 @@ interface SearchState {
   query: string;
   recentSearches: string[];
   selectedResultIndex: number;
+  quickSwitcherOpen: boolean;
 
   openSearch: () => void;
   closeSearch: () => void;
@@ -17,6 +18,8 @@ interface SearchState {
   moveSelectionUp: () => void;
   moveSelectionDown: (maxIndex: number) => void;
   resetSelection: () => void;
+  openQuickSwitcher: () => void;
+  closeQuickSwitcher: () => void;
 }
 
 export const useSearchStore = create<SearchState>()(
@@ -25,6 +28,7 @@ export const useSearchStore = create<SearchState>()(
     query: '',
     recentSearches: [],
     selectedResultIndex: -1,
+    quickSwitcherOpen: false,
 
     openSearch: () =>
       set((state) => {
@@ -89,6 +93,18 @@ export const useSearchStore = create<SearchState>()(
 
     resetSelection: () =>
       set((state) => {
+        state.selectedResultIndex = -1;
+      }),
+
+    openQuickSwitcher: () =>
+      set((state) => {
+        state.quickSwitcherOpen = true;
+        state.selectedResultIndex = -1;
+      }),
+
+    closeQuickSwitcher: () =>
+      set((state) => {
+        state.quickSwitcherOpen = false;
         state.selectedResultIndex = -1;
       }),
   }))
