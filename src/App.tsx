@@ -12,6 +12,7 @@ import { CollectionsPage } from '@/pages/CollectionsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { RevisionsPage } from '@/pages/RevisionsPage';
+import { TagsPage } from '@/pages/TagsPage';
 import { useThemeEffect } from '@/hooks/useThemeEffect';
 import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts';
 
@@ -33,6 +34,7 @@ function App() {
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/collections" element={<CollectionsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/tags" element={<TagsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Routes>

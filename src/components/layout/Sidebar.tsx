@@ -17,6 +17,7 @@ import {
   Settings,
   ChevronsRight,
   Pin,
+  Tag,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 
@@ -25,6 +26,7 @@ const TOP_ITEMS: { label: string; to: string; icon: ReactNode; shortcut?: string
   { label: 'Home', to: '/', icon: <Home className="h-3.5 w-3.5" /> },
   { label: 'Tasks', to: '/tasks', icon: <ListTodo className="h-3.5 w-3.5" /> },
   { label: 'Projects', to: '/projects', icon: <Folder className="h-3.5 w-3.5" /> },
+  { label: 'Tags', to: '/tags', icon: <Tag className="h-3.5 w-3.5" /> },
   { label: 'Universe', to: '/universe', icon: <Globe className="h-3.5 w-3.5" /> },
   { label: 'Settings', to: '/settings', icon: <Settings className="h-3.5 w-3.5" /> },
 ];

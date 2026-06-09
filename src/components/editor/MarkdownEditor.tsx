@@ -25,7 +25,7 @@ import { fetchTransclusionData } from '@/lib/markdown/transclusions';
 import { db } from '@/lib/db';
 import { blockDragHandleExtension } from './BlockDragHandle';
 import { headingCollapseGutter } from './HeadingCollapse';
-import { EditorFindBar, clearFindHighlights } from './EditorFindBar';
+import { EditorFindBar, clearFindHighlights, findHighlightPlugin } from './EditorFindBar';
 
 /**
  * Per-title data the transclusion widget needs. `null` means the target
@@ -542,6 +542,7 @@ export function MarkdownEditor({
         calloutDecorationExt,
         blockDragHandleExtension,
         headingCollapseGutter,
+        findHighlightPlugin,
         EditorView.domEventHandlers({
           mousemove(event, view) {
             const target = event.target as HTMLElement | null;
@@ -671,11 +672,21 @@ export function MarkdownEditor({
     build();
   }, [dbNodes]);
 
+  const handleFindClose = useCallback(() => {
+    setShowFindBar(false);
+    viewRef.current?.dispatch({ effects: clearFindHighlights.of(true) });
+  }, []);
+
   return (
-    <div
-      ref={ref}
-      data-placeholder={placeholder}
-      className={className}
-    />
+    <div className="editor-find-wrapper" style={{ position: 'relative' }}>
+      {showFindBar && viewRef.current && (
+        <EditorFindBar view={viewRef.current} onClose={handleFindClose} />
+      )}
+      <div
+        ref={ref}
+        data-placeholder={placeholder}
+        className={className}
+      />
+    </div>
   );
 }

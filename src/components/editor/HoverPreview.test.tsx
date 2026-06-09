@@ -25,6 +25,7 @@ describe('HoverPreview', () => {
       tags: [],
       properties: {},
       isArchived: 0,
+      isPinned: 0,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -59,6 +60,7 @@ describe('HoverPreview', () => {
       tags: [],
       properties: {},
       isArchived: 0,
+      isPinned: 0,
       createdAt: 0,
       updatedAt: 0,
     });

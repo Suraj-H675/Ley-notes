@@ -6,3 +6,4 @@ export { ProjectsPage } from './ProjectsPage';
 export { CollectionsPage } from './CollectionsPage';
 export { SettingsPage } from './SettingsPage';
 export { NotFoundPage } from './NotFoundPage';
+export { TagsPage } from './TagsPage';
