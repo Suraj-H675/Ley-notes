@@ -61,6 +61,7 @@ interface KnowledgeNodeRecord {
   taskStatus?: 'pending' | 'in-progress' | 'completed';
   taskDueDate?: number;
   isArchived: 0 | 1;
+  isPinned?: 0 | 1;
   createdAt: number;
   updatedAt: number;
   parentId?: string;
@@ -178,6 +179,22 @@ class KnowledgeUniverseDB extends Dexie {
             const migrated = migrateV2NodeToV3(rev);
             Object.assign(rev, migrated);
           });
+      });
+
+    // v4: add isPinned field with index
+    this.version(4)
+      .stores({
+        nodes: 'id, type, title, *collections, *tags, isArchived, isPinned, createdAt, updatedAt, parentId',
+        edges: 'id, source, target, type, createdAt',
+        collections: 'id, name, parentId, createdAt',
+        revisions: 'id, nodeId, createdAt',
+        graphPositions: 'nodeId, updatedAt',
+        graphSettings: 'scope, updatedAt',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('nodes').toCollection().modify((node: any) => {
+          if (node.isPinned === undefined) node.isPinned = 0;
+        });
       });
   }
 }

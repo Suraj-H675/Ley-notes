@@ -13,6 +13,8 @@ import {
   Copy,
   Network,
   List,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 import { MarkdownEditor } from '@/components/editor/MarkdownEditor';
 import { PropertiesEditor } from '@/components/editor/PropertiesEditor';
@@ -121,6 +123,14 @@ export function DocumentPage() {
     if (!id) return;
     await navigator.clipboard.writeText(`${window.location.origin}/page/${id}`);
     toast('Link copied', { kind: 'success' });
+  };
+
+  const handlePinToggle = async () => {
+    if (!id || !node) return;
+    const newPinned = node.isPinned ? 0 : 1;
+    await db.nodes.update(id, { isPinned: newPinned, updatedAt: Date.now() });
+    toast(newPinned ? 'Page pinned' : 'Page unpinned', { kind: 'success' });
+    setMenuOpen(false);
   };
 
   if (!node) {
@@ -246,6 +256,11 @@ export function DocumentPage() {
                       handleCopyLink();
                       setMenuOpen(false);
                     }}
+                  />
+                  <MenuItem
+                    icon={node.isPinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+                    label={node.isPinned ? 'Unpin page' : 'Pin page'}
+                    onClick={handlePinToggle}
                   />
                   <div className="my-1 h-px bg-border/60" />
                   <MenuItem

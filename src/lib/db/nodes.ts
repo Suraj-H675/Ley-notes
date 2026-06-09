@@ -20,6 +20,7 @@ export async function createNode(input: CreateNodeInput): Promise<KnowledgeNode>
     taskStatus: input.taskStatus,
     taskDueDate: input.taskDueDate,
     isArchived: 0,
+    isPinned: input.isPinned ?? 0,
     createdAt: now,
     updatedAt: now,
     parentId: input.parentId,

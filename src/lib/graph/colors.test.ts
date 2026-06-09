@@ -17,6 +17,7 @@ const baseNode: KnowledgeNode = {
   tags: [],
   properties: {},
   isArchived: 0,
+  isPinned: 0,
   createdAt: 0,
   updatedAt: 0,
 };

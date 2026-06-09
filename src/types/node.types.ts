@@ -24,6 +24,7 @@ export interface KnowledgeNode {
   taskStatus?: TaskStatus;
   taskDueDate?: number;
   isArchived: 0 | 1;
+  isPinned?: 0 | 1;
   createdAt: number;
   updatedAt: number;
   parentId?: string;
@@ -40,6 +41,7 @@ export interface CreateNodeInput {
   template?: NodeTemplate;
   taskStatus?: TaskStatus;
   taskDueDate?: number;
+  isPinned?: 0 | 1;
   parentId?: string;
 }
 
@@ -54,6 +56,7 @@ export interface UpdateNodeInput {
   taskStatus?: TaskStatus;
   taskDueDate?: number;
   isArchived?: 0 | 1;
+  isPinned?: 0 | 1;
   parentId?: string;
 }
 

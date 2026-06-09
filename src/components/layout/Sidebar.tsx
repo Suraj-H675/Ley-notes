@@ -1,7 +1,9 @@
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { ScrollArea } from '@/components/ui';
 import { useWorkspaceStore, useSearchStore } from '@/store';
 import { useNodes, useCollections } from '@/hooks';
+import { db } from '@/lib/db';
 import { SidebarHeader } from './SidebarHeader';
 import { SidebarCollections } from './SidebarCollections';
 import { SidebarFooter } from './SidebarFooter';
@@ -14,6 +16,7 @@ import {
   Folder,
   Settings,
   ChevronsRight,
+  Pin,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 
@@ -58,6 +61,12 @@ export function Sidebar() {
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 8);
 
+  const pinnedNodes = useLiveQuery(
+    () => db.nodes.where('isPinned').equals(1).toArray(),
+    [],
+    []
+  ).filter((n) => n.type === 'document').slice(0, 5);
+
   const isActive = (to: string) => {
     if (to === '/') return location.pathname === '/';
     return location.pathname.startsWith(to);
@@ -76,6 +85,36 @@ export function Sidebar() {
 
         <ScrollArea className="flex-1">
           <div className="px-1.5 pb-4">
+            {pinnedNodes.length > 0 && (
+              <div className="mb-3 space-y-0.5">
+                <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground/70">
+                  Pinned
+                </div>
+                {pinnedNodes.map((node) => (
+                  <button
+                    key={node.id}
+                    onClick={() => navigate(`/page/${node.id}`)}
+                    className={cn(
+                      'group flex w-full items-center gap-2 rounded px-2 py-[5px] text-left text-[13px] transition-colors',
+                      isActive(`/page/${node.id}`)
+                        ? 'bg-accent/70 text-foreground'
+                        : 'text-foreground/75 hover:bg-accent/50'
+                    )}
+                  >
+                    <span className="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center text-muted-foreground/70">
+                      <Pin className="h-3 w-3" />
+                    </span>
+                    <span className="flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center text-[12px] leading-none">
+                      {node.emoji || <span className="block h-1 w-1 rounded-full bg-muted-foreground/40" />}
+                    </span>
+                    <span className="flex-1 truncate">
+                      {node.title || 'Untitled'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="space-y-0.5">
               {TOP_ITEMS.map((item) => {
                 const isSearch = item.to === '__search__';
