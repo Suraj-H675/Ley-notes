@@ -68,7 +68,15 @@ export function BacklinkPanel({ nodeId, className }: BacklinkPanelProps) {
   if (!data) return null;
   const { outgoing, incoming, related } = data;
   const hasAny = outgoing.length > 0 || incoming.length > 0 || related.length > 0;
-  if (!hasAny) return null;
+
+  if (!hasAny) {
+    return (
+      <div className={cn('px-1 py-4', className)}>
+        <p className="text-[12px] text-muted-foreground/60">No pages link here yet.</p>
+        <p className="mt-1 text-[11px] text-muted-foreground/40">Link to this page using [[Page Title]]</p>
+      </div>
+    );
+  }
 
   return (
     <div className={cn('space-y-6', className)}>

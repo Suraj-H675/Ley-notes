@@ -11,7 +11,7 @@ import { nanoid } from 'nanoid';
 export function useGlobalShortcuts(createNode?: (input: any) => Promise<any>) {
   const navigate = useNavigate();
   const { openSearch, openQuickSwitcher } = useSearchStore();
-  const { toggleSidebar } = useWorkspaceStore();
+  const { toggleRightSidebar } = useWorkspaceStore();
 
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
@@ -49,9 +49,9 @@ export function useGlobalShortcuts(createNode?: (input: any) => Promise<any>) {
         return;
       }
 
-      if (mod && e.key === '/') {
+      if (mod && e.key === '\\') {
         e.preventDefault();
-        toggleSidebar();
+        toggleRightSidebar();
         return;
       }
 
@@ -64,5 +64,5 @@ export function useGlobalShortcuts(createNode?: (input: any) => Promise<any>) {
 
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [navigate, openSearch, openQuickSwitcher, toggleSidebar, createNode]);
+  }, [navigate, openSearch, openQuickSwitcher, toggleRightSidebar, createNode]);
 }

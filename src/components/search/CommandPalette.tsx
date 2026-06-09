@@ -144,7 +144,7 @@ export function CommandPalette() {
 
           <Command.List className="max-h-[320px] overflow-y-auto px-1.5 pb-2">
             <Command.Empty className="py-6 text-center text-[13px] text-muted-foreground/70">
-              No results.
+              No results{query ? ` for '${query}'` : ''}. Press Enter to create a page with this title.
             </Command.Empty>
 
             {query === '' && (

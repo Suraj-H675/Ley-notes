@@ -465,7 +465,7 @@ export function MarkdownEditor({
   onWikilinkNavigate,
   onWikilinkHover,
   onEditorReady,
-  placeholder = "Type '/' for commands, or '[[' to link another page",
+  placeholder = "Start writing, or type [[ to link another page",
   className,
   autoFocus,
 }: MarkdownEditorProps) {
