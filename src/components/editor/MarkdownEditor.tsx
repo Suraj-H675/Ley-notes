@@ -44,6 +44,9 @@ export interface MarkdownEditorProps {
   onSave?: () => void;
   onWikilinkNavigate?: (title: string) => void;
   onWikilinkHover?: (info: { title: string; rect: DOMRect } | null) => void;
+  /** Called once with the CodeMirror EditorView when the editor is mounted.
+   * Use this to imperatively scroll the editor to a character offset. */
+  onEditorReady?: (view: EditorView) => void;
   placeholder?: string;
   className?: string;
   autoFocus?: boolean;
@@ -458,6 +461,7 @@ export function MarkdownEditor({
   onSave,
   onWikilinkNavigate,
   onWikilinkHover,
+  onEditorReady,
   placeholder = "Type '/' for commands, or '[[' to link another page",
   className,
   autoFocus,
@@ -471,6 +475,8 @@ export function MarkdownEditor({
   navigateRef.current = onWikilinkNavigate;
   const hoverRef = useRef(onWikilinkHover);
   hoverRef.current = onWikilinkHover;
+  const editorReadyRef = useRef(onEditorReady);
+  editorReadyRef.current = onEditorReady;
   // Nodes for the wikilink autocomplete. Live-queried at the React layer.
   const dbNodes = useLiveQuery(
     async () => (await db.nodes.toArray()).filter((n) => !n.isArchived),
@@ -587,6 +593,7 @@ export function MarkdownEditor({
       parent: ref.current,
     });
     viewRef.current = view;
+    editorReadyRef.current?.(view);
 
     if (autoFocus) {
       view.focus();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useNode } from '@/hooks';
 import { Button, ConfirmDialog, toast } from '@/components/ui';
@@ -12,13 +12,15 @@ import {
   Link as LinkIcon,
   Copy,
   Network,
+  List,
 } from 'lucide-react';
 import { MarkdownEditor } from '@/components/editor/MarkdownEditor';
 import { PropertiesEditor } from '@/components/editor/PropertiesEditor';
+import { OutlinePanel } from '@/components/editor/OutlinePanel';
 import { HoverPreview } from '@/components/editor/HoverPreview';
 import { BacklinkPanel } from '@/components/editor/BacklinkPanel';
 import { LocalGraphView } from '@/components/universe/LocalGraphView';
-import { extractPlainText, splitFrontmatter, parseFrontmatter, stringifyFrontmatter } from '@/lib/markdown';
+import { extractPlainText, splitFrontmatter, parseFrontmatter, stringifyFrontmatter, extractHeadings } from '@/lib/markdown';
 import { useWorkspaceStore } from '@/store';
 import { db, renameNode } from '@/lib/db';
 import { formatRelative } from '@/lib/utils';
@@ -30,12 +32,34 @@ export function DocumentPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { node, updateNode } = useNode(id || null);
-  const { addToRecentNodes, setLastOpenedNode } = useWorkspaceStore();
+  const { addToRecentNodes, setLastOpenedNode, rightSidebarOpen, toggleRightSidebar } = useWorkspaceStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [showLocal, setShowLocal] = useState(false);
   const [hoverAnchor, setHoverAnchor] = useState<{ title: string; rect: DOMRect } | null>(null);
   const titleRef = useRef<HTMLDivElement>(null);
+  const editorViewRef = useRef<any>(null);
+
+  const headings = useMemo(() => extractHeadings(node?.content ?? ''), [node?.content]);
+
+  const handleEditorReady = useCallback((view: any) => {
+    editorViewRef.current = view;
+  }, []);
+
+  const handleHeadingClick = useCallback((offset: number) => {
+    const view = editorViewRef.current;
+    if (!view) return;
+    try {
+      const line = view.state.doc.lineAt(offset);
+      view.dispatch({
+        selection: { anchor: line.from },
+        scrollIntoView: true,
+      });
+      view.focus();
+    } catch {
+      // offset may be out of range if doc changed — ignore
+    }
+  }, []);
 
   useEffect(() => {
     if (id) {
@@ -153,6 +177,24 @@ export function DocumentPage() {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
+                onClick={toggleRightSidebar}
+                aria-label="Toggle outline"
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded transition-colors',
+                  rightSidebarOpen
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground'
+                )}
+              >
+                <List className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Toggle outline (Cmd+\)</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
                 onClick={() => navigate(`/page/${id}/revisions`)}
                 className="flex h-7 items-center gap-1.5 rounded px-2 text-[12px] text-muted-foreground/80 transition-colors hover:bg-accent hover:text-foreground"
               >
@@ -230,7 +272,7 @@ export function DocumentPage() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <main className="flex-1 overflow-auto">
+        <main className={cn('flex-1 overflow-auto', rightSidebarOpen && 'mr-0 transition-[margin] duration-150')}>
           <div className="mx-auto max-w-3xl px-8 pb-24 pt-6">
             <div
               ref={titleRef}
@@ -308,6 +350,7 @@ export function DocumentPage() {
                     });
                 }}
                 onWikilinkHover={setHoverAnchor}
+                onEditorReady={handleEditorReady}
               />
             </div>
 
@@ -316,6 +359,16 @@ export function DocumentPage() {
             </div>
           </div>
         </main>
+
+        {/* Right sidebar: outline panel */}
+        {rightSidebarOpen && (
+          <aside className="flex w-64 flex-shrink-0 flex-col overflow-hidden border-l border-border/40 bg-background">
+            <OutlinePanel
+              headings={headings}
+              onHeadingClick={handleHeadingClick}
+            />
+          </aside>
+        )}
 
         <HoverPreview
           anchor={

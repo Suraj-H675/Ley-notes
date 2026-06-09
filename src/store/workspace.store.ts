@@ -6,6 +6,8 @@ interface WorkspaceState {
   expandedCollections: string[];
   sidebarWidth: number;
   sidebarCollapsed: boolean;
+  rightSidebarOpen: boolean;
+  rightSidebarWidth: number;
   theme: 'light' | 'dark' | 'system';
   lastOpenedNodeId: string | null;
   recentNodeIds: string[];
@@ -13,6 +15,8 @@ interface WorkspaceState {
   toggleCollection: (id: string) => void;
   setSidebarWidth: (width: number) => void;
   toggleSidebar: () => void;
+  toggleRightSidebar: () => void;
+  setRightSidebarWidth: (width: number) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   setLastOpenedNode: (nodeId: string) => void;
   addToRecentNodes: (nodeId: string) => void;
@@ -25,6 +29,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       expandedCollections: [],
       sidebarWidth: 280,
       sidebarCollapsed: false,
+      rightSidebarOpen: false,
+      rightSidebarWidth: 260,
       theme: 'dark',
       lastOpenedNodeId: null,
       recentNodeIds: [],
@@ -46,6 +52,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       toggleSidebar: () =>
         set((state) => {
           state.sidebarCollapsed = !state.sidebarCollapsed;
+        }),
+
+      toggleRightSidebar: () =>
+        set((state) => {
+          state.rightSidebarOpen = !state.rightSidebarOpen;
+        }),
+
+      setRightSidebarWidth: (width) =>
+        set((state) => {
+          state.rightSidebarWidth = Math.max(200, Math.min(500, width));
         }),
 
       setTheme: (theme) =>
@@ -75,6 +91,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         expandedCollections: state.expandedCollections,
         sidebarWidth: state.sidebarWidth,
         sidebarCollapsed: state.sidebarCollapsed,
+        rightSidebarOpen: state.rightSidebarOpen,
+        rightSidebarWidth: state.rightSidebarWidth,
         theme: state.theme,
         lastOpenedNodeId: state.lastOpenedNodeId,
         recentNodeIds: state.recentNodeIds,
