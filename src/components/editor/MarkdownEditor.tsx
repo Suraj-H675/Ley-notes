@@ -23,6 +23,8 @@ import { findTaskLine, type TaskLineMatch } from './task-list';
 import { parseCalloutBlocks, type CalloutBlock, type CalloutType } from './callout';
 import { fetchTransclusionData } from '@/lib/markdown/transclusions';
 import { db } from '@/lib/db';
+import { blockDragHandleExtension } from './BlockDragHandle';
+import { headingCollapseGutter } from './HeadingCollapse';
 
 /**
  * Per-title data the transclusion widget needs. `null` means the target
@@ -536,6 +538,8 @@ export function MarkdownEditor({
         }),
         livePreviewPlugin,
         calloutDecorationExt,
+        blockDragHandleExtension,
+        headingCollapseGutter,
         EditorView.domEventHandlers({
           mousemove(event, view) {
             const target = event.target as HTMLElement | null;
