@@ -1,6 +1,8 @@
 import { nanoid } from 'nanoid';
 import type { CreateNodeInput, KnowledgeNode, UpdateNodeInput } from '@/types';
 import { db } from './index';
+import { escapeRegex } from '@/lib/markdown/utils';
+import { extractPlainText } from '@/lib/markdown';
 
 export async function createNode(input: CreateNodeInput): Promise<KnowledgeNode> {
   const now = Date.now();
@@ -133,4 +135,61 @@ export async function getRecentNodes(limit = 10): Promise<KnowledgeNode[]> {
     .reverse()
     .sortBy('updatedAt')
     .then((nodes) => nodes.slice(0, limit));
+}
+
+/** Atomically rename a node and update all [[Old Title]] → [[New Title]]
+ * references across every document in the workspace.
+ *
+ * @throws Error with message 'DUPLICATE_TITLE' if another node already has newTitle.
+ * @throws Error with message 'EMPTY_TITLE' if newTitle is blank.
+ * @throws Error with message 'NODE_NOT_FOUND' if the node does not exist. */
+export async function renameNode(
+  id: string,
+  newTitle: string
+): Promise<KnowledgeNode | undefined> {
+  const trimmed = (newTitle || '').trim();
+  if (!trimmed) throw new Error('EMPTY_TITLE');
+
+  const node = await db.nodes.get(id);
+  if (!node) throw new Error('NODE_NOT_FOUND');
+
+  const oldTitle = node.title;
+  if (trimmed === oldTitle) return node;
+
+  // Check for duplicate title on another node
+  const dupe = await db.nodes
+    .where('title')
+    .equals(trimmed)
+    .and((n) => n.id !== id)
+    .first();
+  if (dupe) throw new Error('DUPLICATE_TITLE');
+
+  const escapedOld = escapeRegex(oldTitle);
+  // Match [[Old Title]] with optional ! prefix (transclusion) — both link types
+  const wikilinkRe = new RegExp(`!?\\[\\[${escapedOld}\\]\\]`, 'g');
+
+  await db.transaction('rw', [db.nodes, db.revisions], async () => {
+    // 1. Update the node's own title
+    await db.nodes.update(id, { title: trimmed, updatedAt: Date.now() });
+
+    // 2. Update all referencing documents
+    const allNodes = await db.nodes.toArray();
+    for (const n of allNodes) {
+      if (n.id === id) continue;
+      if (typeof n.content !== 'string') continue;
+      if (!wikilinkRe.test(n.content)) continue;
+
+      // Reset lastIndex since .test() moves it on global regex
+      wikilinkRe.lastIndex = 0;
+      const newContent = n.content.replace(wikilinkRe, `![[${trimmed}]]`);
+      const newPlainText = extractPlainText(newContent);
+      await db.nodes.update(n.id, {
+        content: newContent,
+        plainText: newPlainText,
+        updatedAt: Date.now(),
+      });
+    }
+  });
+
+  return db.nodes.get(id);
 }

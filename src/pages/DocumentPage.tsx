@@ -20,7 +20,7 @@ import { BacklinkPanel } from '@/components/editor/BacklinkPanel';
 import { LocalGraphView } from '@/components/universe/LocalGraphView';
 import { extractPlainText, splitFrontmatter, parseFrontmatter, stringifyFrontmatter } from '@/lib/markdown';
 import { useWorkspaceStore } from '@/store';
-import { db } from '@/lib/db';
+import { db, renameNode } from '@/lib/db';
 import { formatRelative } from '@/lib/utils';
 import { cn } from '@/lib/utils';
 
@@ -54,11 +54,14 @@ export function DocumentPage() {
   );
 
   const handleTitleChange = () => {
-    if (!id || !titleRef.current) return;
+    if (!id || !titleRef.current || !node) return;
     const newTitle = titleRef.current.textContent || '';
-    if (newTitle !== node?.title) {
-      updateNode({ title: newTitle });
-    }
+    if (newTitle.trim() === node.title) return;
+    renameNode(id, newTitle).catch((err: Error) => {
+      toast(err.message === 'DUPLICATE_TITLE' ? 'A page with that title already exists' : 'Failed to rename page', { kind: 'error' });
+      // Restore the title in the DOM
+      if (titleRef.current) titleRef.current.textContent = node.title;
+    });
   };
 
   /** When properties change: update the properties field and re-serialize
