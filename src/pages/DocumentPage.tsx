@@ -19,6 +19,7 @@ import { PropertiesEditor } from '@/components/editor/PropertiesEditor';
 import { OutlinePanel } from '@/components/editor/OutlinePanel';
 import { HoverPreview } from '@/components/editor/HoverPreview';
 import { BacklinkPanel } from '@/components/editor/BacklinkPanel';
+import { StatusBar } from '@/components/editor/StatusBar';
 import { LocalGraphView } from '@/components/universe/LocalGraphView';
 import { extractPlainText, splitFrontmatter, parseFrontmatter, stringifyFrontmatter, extractHeadings } from '@/lib/markdown';
 import { useWorkspaceStore } from '@/store';
@@ -357,6 +358,8 @@ export function DocumentPage() {
             <div className="mt-16 border-t border-border/40 pt-8">
               <BacklinkPanel nodeId={node.id} />
             </div>
+
+            <StatusBar content={node.content ?? ''} />
           </div>
         </main>
 
