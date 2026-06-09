@@ -21,6 +21,7 @@ import { parseInlineRanges, type InlineKind } from './inline-ranges';
 import { wikilinkSource } from './wikilink-source';
 import { findTaskLine, type TaskLineMatch } from './task-list';
 import { parseCalloutBlocks, type CalloutBlock, type CalloutType } from './callout';
+import { fetchTransclusionData } from '@/lib/markdown/transclusions';
 import { db } from '@/lib/db';
 
 /**
@@ -618,22 +619,35 @@ export function MarkdownEditor({
   // Build the transclusion data map from live-queried nodes and push it
   // onto the editor view. Dispatch a StateEffect so the live-preview
   // plugin rebuilds decorations with the new data.
+  //
+  // Cycle guard: resolveAllTransclusions is called per-node with a fresh
+  // visited set so that A→B→A is correctly detected (B's call finds A
+  // already in the parent chain's visited set) and depth is capped at 5.
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    const map = new Map<string, TransclusionData>();
-    for (const n of dbNodes ?? []) {
-      const title = (n.title || '').trim();
-      if (!title) continue;
-      // Last write wins on title collisions — fine for our scale.
-      map.set(title, {
-        title,
-        plainText: n.plainText ?? '',
-        exists: true,
-      });
-    }
-    (view as any).transclusionData = map;
-    view.dispatch({ effects: transclusionDataChanged.of(true) });
+
+    const build = async () => {
+      const map = new Map<string, TransclusionData>();
+      for (const n of dbNodes ?? []) {
+        const title = (n.title || '').trim();
+        if (!title) continue;
+
+        // Recursively resolve nested transclusions; each root call starts
+        // its own visited set so sibling branches don't share visited state.
+        await fetchTransclusionData(title, 0, new Set<string>());
+
+        map.set(title, {
+          title,
+          plainText: n.plainText ?? '',
+          exists: true,
+        });
+      }
+      (view as any).transclusionData = map;
+      view.dispatch({ effects: transclusionDataChanged.of(true) });
+    };
+
+    build();
   }, [dbNodes]);
 
   return (
