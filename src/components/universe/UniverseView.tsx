@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   ReactFlow,
   Background,
+  MarkerType,
   type Node,
   type Edge,
+  type NodeChange,
 } from '@xyflow/react';
 import Graph from 'graphology';
 import { useGraph } from '@/hooks/useGraph';
@@ -79,7 +81,9 @@ export function UniverseView({
     communities
   );
 
-  const { positions, tick, setNodePosition } = useGraphSimulation(graph, physics);
+  const { positions, tick, setNodePosition, pause, resume } = useGraphSimulation(graph, physics);
+
+  const [isInteracting, setIsInteracting] = useState(false);
 
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const neighborSet = useMemo(() => {
@@ -104,6 +108,8 @@ export function UniverseView({
         id: n.id,
         type: 'universe',
         position: pos,
+        width: size,
+        height: size,
         data: {
           label: n.title,
           color,
@@ -148,8 +154,9 @@ export function UniverseView({
     let raf = 0;
     // Throttle React Flow flushes to ~30fps. The simulation continues at 60fps
     // internally, but DOM updates happen at half rate to keep pan responsive.
+    // Skip simulation ticks while the user is dragging/panning the graph.
     const loop = (t: number) => {
-      tick(1);
+      if (!isInteracting) tick(1);
       if (t - lastFlushRef.current > 33) {
         lastFlushRef.current = t;
         force((n) => n + 1);
@@ -158,21 +165,7 @@ export function UniverseView({
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [tick]);
-
-  // Persist node positions to Dexie on drag-end and pin the node in the simulation.
-  const handleNodeDragStop = useCallback(
-    (_: React.MouseEvent, n: Node) => {
-      setNodePosition(n.id, n.position.x, n.position.y);
-      void db.graphPositions.put({
-        nodeId: n.id,
-        x: n.position.x,
-        y: n.position.y,
-        updatedAt: Date.now(),
-      });
-    },
-    [setNodePosition]
-  );
+  }, [tick, isInteracting]);
 
   // Restore persisted positions on graph change.
   useEffect(() => {
@@ -206,6 +199,38 @@ export function UniverseView({
     [onNodeClick]
   );
 
+  // Pause simulation while user is dragging a node so it doesn't fight back.
+  const handleNodeDragStart = useCallback(() => {
+    pause();
+    setIsInteracting(true);
+  }, [pause]);
+
+  // Resume after drag ends and persist the pinned position.
+  const handleNodeDragStop = useCallback(
+    (_: React.MouseEvent, n: Node) => {
+      setNodePosition(n.id, n.position.x, n.position.y);
+      void db.graphPositions.put({
+        nodeId: n.id,
+        x: n.position.x,
+        y: n.position.y,
+        updatedAt: Date.now(),
+      });
+      setIsInteracting(false);
+      resume();
+    },
+    [setNodePosition, resume]
+  );
+
+  // Handle node position changes from React Flow (dragging, etc.)
+  const onNodesChange: (changes: NodeChange[]) => void = useCallback(
+    (_changes: NodeChange[]) => {
+      // React Flow needs this to properly track node positions during drag
+      // We don't need to do anything with the changes since positions are
+      // managed by our simulation and synced via handleNodeDragStop
+    },
+    []
+  );
+
   if (graph.order === 0) {
     return (
       <div className="flex h-full w-full items-center justify-center bg-[hsl(220_14%_9%)] text-muted-foreground">
@@ -233,25 +258,53 @@ export function UniverseView({
   }
 
   return (
-    <div className="relative h-full w-full bg-[hsl(220_14%_9%)]">
+    <div
+      className="relative h-full w-full bg-[hsl(220_14%_9%)]"
+      onMouseUp={() => {
+        if (isInteracting) {
+          setIsInteracting(false);
+          resume();
+        }
+      }}
+    >
       <ReactFlow
         nodes={flowNodes}
         edges={flowEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeClick={handleNodeClick}
+        onNodesChange={onNodesChange}
+        onNodeDragStart={handleNodeDragStart}
         onNodeDragStop={handleNodeDragStop}
+        onPaneClick={() => {
+          setIsInteracting(true);
+          pause();
+        }}
         colorMode="dark"
         fitView
-        minZoom={0.05}
-        maxZoom={4}
+        fitViewOptions={{ padding: 0.25 }}
+        minZoom={0.1}
+        maxZoom={2}
+        panOnDrag
+        zoomOnScroll
+        zoomOnDoubleClick={false}
+        panOnScroll={false}
+        selectionOnDrag={false}
         proOptions={{ hideAttribution: true }}
         nodesDraggable
         nodesConnectable={false}
         elementsSelectable
-        zoomOnDoubleClick={false}
+        defaultEdgeOptions={{
+          type: 'universe',
+          markerEnd: { type: MarkerType.ArrowClosed },
+        }}
       >
-        <Background color="transparent" gap={20} size={0} />
+        <Background
+          color="hsl(220 10% 22%)"
+          gap={28}
+          size={1.5}
+          style={{ opacity: 0.6 }}
+        />
       </ReactFlow>
       <ColorLegend scope={scope} />
     </div>

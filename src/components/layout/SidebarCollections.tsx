@@ -190,10 +190,18 @@ function CollectionItem({
           </button>
         </div>
       ) : (
-        <button
+        <div
+          role="button"
+          tabIndex={0}
           onClick={onToggle}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onToggle();
+            }
+          }}
           className={cn(
-            'group flex w-full items-center gap-1 rounded px-1.5 py-1 text-[13px] text-foreground/80 transition-colors',
+            'group flex w-full cursor-pointer items-center gap-1 rounded px-1.5 py-1 text-[13px] text-foreground/80 transition-colors',
             'hover:bg-accent/60'
           )}
           style={{ paddingLeft: `${level * 10 + 6}px` }}
@@ -226,7 +234,7 @@ function CollectionItem({
           >
             <Trash2 className="h-3 w-3" />
           </button>
-        </button>
+        </div>
       )}
 
       {isExpanded &&

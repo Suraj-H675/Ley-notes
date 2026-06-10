@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { BaseEdge, getBezierPath, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, getStraightPath, type EdgeProps } from '@xyflow/react';
 
 export interface UniverseEdgeData extends Record<string, unknown> {
   stroke?: string;
@@ -9,31 +9,28 @@ export interface UniverseEdgeData extends Record<string, unknown> {
 }
 
 export const UniverseEdge = memo(function UniverseEdge(props: EdgeProps) {
-  const data = props.data as UniverseEdgeData;
-  const stroke = data.stroke ?? 'hsl(220 8% 55%)';
-  const thickness = (data.thickness ?? 1.5) * (data.isHighlighted ? 1.5 : 1);
-  const opacity = data.dimmed ? 0.1 : data.isHighlighted ? 1 : 0.6;
-
-  const [edgePath] = getBezierPath({
+  // Obsidian uses straight lines - clean, minimal connections
+  const [path] = getStraightPath({
     sourceX: props.sourceX,
     sourceY: props.sourceY,
     targetX: props.targetX,
     targetY: props.targetY,
-    sourcePosition: props.sourcePosition,
-    targetPosition: props.targetPosition,
-    curvature: 0.25,
   });
+
+  const data = props.data as UniverseEdgeData;
+  const isHighlighted = data.isHighlighted && !data.dimmed;
+  const thickness = (data.thickness as number) ?? 1.5;
+  const opacity = data.dimmed ? 0.08 : isHighlighted ? 1 : 0.5;
 
   return (
     <BaseEdge
       id={props.id}
-      path={edgePath}
+      path={path}
       style={{
-        stroke,
         strokeWidth: thickness,
         opacity,
+        strokeDasharray: isHighlighted ? '6 3' : undefined,
       }}
-      markerEnd={props.markerEnd}
     />
   );
 });

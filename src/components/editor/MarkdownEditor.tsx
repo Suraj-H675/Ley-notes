@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { EditorState, RangeSetBuilder, StateEffect } from '@codemirror/state';
+import { EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
 import {
   EditorView,
   Decoration,
-  DecorationSet,
   WidgetType,
-  ViewPlugin,
-  ViewUpdate,
   keymap,
   drawSelection,
   highlightActiveLine,
@@ -38,8 +35,7 @@ export interface TransclusionData {
 }
 
 /** State effect fired when the transclusion data map changes, so the
- * live-preview plugin rebuilds its decorations with the fresh data. */
-const transclusionDataChanged = StateEffect.define<true>();
+ * decorations extension rebuilds its decorations with the fresh data. */
 
 export interface MarkdownEditorProps {
   content: string;
@@ -264,22 +260,23 @@ class CalloutWidget extends WidgetType {
 
 class TransclusionWidget extends WidgetType {
   // Captured at construction so eq() can detect when the data map changes.
-  private readonly dataMapRef: Map<string, TransclusionData> | undefined;
+  private readonly dataMap: Map<string, TransclusionData> | undefined;
+  private readonly view: EditorView | null;
 
   constructor(
     readonly title: string,
-    readonly view: EditorView
+    dataMap: Map<string, TransclusionData> | undefined,
+    view: EditorView | null
   ) {
     super();
-    this.dataMapRef = (view as any).transclusionData;
+    this.dataMap = dataMap;
+    this.view = view;
   }
 
   toDOM(): HTMLElement {
-    const dataMap = this.dataMapRef;
+    const dataMap = this.dataMap;
     const data = dataMap?.get(this.title);
-    const navigate = (this.view as any).someProp as
-      | ((t: string) => void)
-      | undefined;
+    const navigate = this.view ? (this.view as any).someProp as ((t: string) => void) | undefined : undefined;
 
     const el = document.createElement('span');
     el.setAttribute('data-transclusion', '');
@@ -343,23 +340,23 @@ class TransclusionWidget extends WidgetType {
     if (other.title !== this.title) return false;
     // Compare the dataMap captured at construction so a refresh after the
     // data effect fires triggers a DOM rebuild.
-    return this.dataMapRef === other.dataMapRef;
+    return this.dataMap === other.dataMap;
   }
 }
 
-function buildDecorations(view: EditorView): DecorationSet {
-  const ranges = parseInlineRanges(view.state.doc.toString());
+function buildDecorations(state: EditorState, transclusionMap: Map<string, TransclusionData>): RangeSetBuilder<Decoration> {
+  const ranges = parseInlineRanges(state.doc.toString());
   const builder = new RangeSetBuilder<Decoration>();
-  const cursorLine = view.state.doc.lineAt(view.state.selection.main.head).number;
+  const cursorLine = state.doc.lineAt(state.selection.main.head).number;
   for (const r of ranges) {
-    const line = view.state.doc.lineAt(r.from).number;
+    const line = state.doc.lineAt(r.from).number;
     if (line === cursorLine) continue;
     if (r.kind === 'transclusion') {
       builder.add(
         r.from,
         r.to,
         Decoration.replace({
-          widget: new TransclusionWidget(r.inner.text ?? '', view),
+          widget: new TransclusionWidget(r.inner.text ?? '', transclusionMap, null),
           inclusive: false,
         })
       );
@@ -373,7 +370,7 @@ function buildDecorations(view: EditorView): DecorationSet {
           r.kind,
           r.inner.text ?? '',
           r.href,
-          (title) => ((view as any).someProp as ((t: string) => void) | undefined)?.(title)
+          (_title: string) => null as any
         ),
         inclusive: false,
       })
@@ -381,7 +378,7 @@ function buildDecorations(view: EditorView): DecorationSet {
   }
   // Task list checkboxes: replace "- [ ] " or "- [x] " with a checkbox widget
   // for every line that is a task.
-  const doc = view.state.doc;
+  const doc = state.doc;
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
     const task = findTaskLine(line.text, 0);
@@ -393,7 +390,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       line.from,
       replaceTo,
       Decoration.replace({
-        widget: new TaskCheckboxWidget(task.checked, view, {
+        widget: new TaskCheckboxWidget(task.checked, null as any, {
           lineStart: line.from,
           checkboxFrom: line.from + (task.checkboxFrom - task.lineStart),
           checkboxTo: line.from + (task.checkboxTo - task.lineStart),
@@ -403,19 +400,22 @@ function buildDecorations(view: EditorView): DecorationSet {
       })
     );
   }
-  return builder.finish();
+  return builder;
 }
 
 /**
- * Block decorations (used for callouts) cannot be added via a ViewPlugin;
- * they need to be supplied by an EditorView.decorations.compute extension.
+ * Combined decorations extension for all inline widgets (wikilinks, transclusions,
+ * task checkboxes) and block widgets (callouts).
+ * Uses EditorView.decorations.compute so block decorations work correctly.
+ * Rebuilds when transclusionDataChanged effect is dispatched.
  */
-const calloutDecorationExt = EditorView.decorations.compute(
+const allDecorationsExt = EditorView.decorations.compute(
   ['doc', 'selection'],
   (state) => {
+    const transclusionMap = state.field(transclusionDataStateField);
+    const decorations = buildDecorations(state, transclusionMap);
     const callouts = parseCalloutBlocks(state.doc.toString());
     const cursorLine = state.doc.lineAt(state.selection.main.head).number;
-    const builder = new RangeSetBuilder<Decoration>();
     for (const c of callouts) {
       if (c.startLine === cursorLine) continue;
       const startLine = state.doc.line(c.startLine);
@@ -424,7 +424,7 @@ const calloutDecorationExt = EditorView.decorations.compute(
         c.endLine < state.doc.lines
           ? state.doc.line(c.endLine + 1).from
           : state.doc.length;
-      builder.add(
+      decorations.add(
         replaceFrom,
         replaceTo,
         Decoration.replace({
@@ -434,29 +434,24 @@ const calloutDecorationExt = EditorView.decorations.compute(
         })
       );
     }
-    return builder.finish();
+    return decorations.finish();
   }
 );
 
-const livePreviewPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(view: EditorView) {
-      this.decorations = buildDecorations(view);
-    }
-    update(update: ViewUpdate) {
-      const dataChanged = update.transactions.some((t) =>
-        t.effects.some((e) => e.is(transclusionDataChanged))
-      );
-      if (update.docChanged || update.selectionSet || dataChanged) {
-        this.decorations = buildDecorations(update.view);
-      }
-    }
+// State field to hold the transclusion data map, enabling reactive rebuilds
+const transclusionDataField = StateEffect.define<Map<string, TransclusionData>>();
+
+const transclusionDataStateField = StateField.define<Map<string, TransclusionData>>({
+  create() {
+    return new Map();
   },
-  {
-    decorations: (v) => v.decorations,
-  }
-);
+  update(value, tr) {
+    return tr.effects.reduce((acc, eff) => {
+      if (eff.is(transclusionDataField)) return eff.value;
+      return acc;
+    }, value);
+  },
+});
 
 export function MarkdownEditor({
   content,
@@ -538,8 +533,8 @@ export function MarkdownEditor({
             },
           ],
         }),
-        livePreviewPlugin,
-        calloutDecorationExt,
+        transclusionDataStateField,
+        allDecorationsExt,
         blockDragHandleExtension,
         headingCollapseGutter,
         findHighlightPlugin,
@@ -665,8 +660,9 @@ export function MarkdownEditor({
           exists: true,
         });
       }
-      (view as any).transclusionData = map;
-      view.dispatch({ effects: transclusionDataChanged.of(true) });
+      view.dispatch({
+        effects: transclusionDataField.of(map),
+      });
     };
 
     build();
