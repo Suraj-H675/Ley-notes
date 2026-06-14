@@ -206,6 +206,13 @@ export function EditorFindBar({
     }
   };
 
+  // Cleanup debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
   const matchCount = matches.length;
   const currentMatch = matchCount > 0 ? activeIndex + 1 : 0;
 

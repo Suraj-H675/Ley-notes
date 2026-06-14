@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Search } from 'lucide-react';
@@ -6,6 +6,7 @@ import { useSearchStore } from '@/store';
 import { db } from '@/lib/db';
 import { formatRelative } from '@/lib/utils/date';
 import { cn } from '@/lib/utils';
+import type { KnowledgeNode } from '@/types';
 
 const MAX_RESULTS = 8;
 
@@ -23,15 +24,19 @@ export function QuickSwitcher() {
   );
 
   // Filter nodes by query (case-insensitive title match)
-  const results = allNodes
-    ? allNodes
-        .filter((n) =>
-          query.trim() === ''
-            ? true
-            : n.title.toLowerCase().includes(query.toLowerCase())
-        )
-        .slice(0, MAX_RESULTS)
-    : [];
+  const results = useMemo<KnowledgeNode[]>(
+    () =>
+      allNodes
+        ? allNodes
+            .filter((n) =>
+              query.trim() === ''
+                ? true
+                : n.title.toLowerCase().includes(query.toLowerCase())
+            )
+            .slice(0, MAX_RESULTS)
+        : [],
+    [allNodes, query]
+  );
 
   // Reset state when opening
   useEffect(() => {

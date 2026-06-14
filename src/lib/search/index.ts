@@ -34,9 +34,7 @@ export async function initializeSearch(nodes: KnowledgeNode[]): Promise<void> {
     resolution: 9,
   });
 
-  for (const node of nodes) {
-    await indexNode(node);
-  }
+  await Promise.all(nodes.map((node) => indexNode(node)));
 
   isInitialized = true;
 }

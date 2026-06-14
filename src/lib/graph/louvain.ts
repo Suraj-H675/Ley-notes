@@ -11,7 +11,6 @@ export function detectCommunities(graph: Graph): CommunityResult {
   try {
     rawCommunities = louvain(graph);
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn('Louvain community detection failed:', err);
     // Fall back: every node in its own community
     graph.forEachNode((node) => {

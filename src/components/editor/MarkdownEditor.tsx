@@ -34,9 +34,6 @@ export interface TransclusionData {
   exists: boolean;
 }
 
-/** State effect fired when the transclusion data map changes, so the
- * decorations extension rebuilds its decorations with the fresh data. */
-
 export interface MarkdownEditorProps {
   content: string;
   onChange: (markdown: string) => void;
@@ -52,13 +49,16 @@ export interface MarkdownEditorProps {
 }
 
 class InlineWidget extends WidgetType {
+  private readonly view: EditorView | null;
+
   constructor(
     readonly kind: InlineKind,
     readonly text: string,
     readonly href?: string,
-    readonly onNavigate?: (title: string) => void
+    view: EditorView | null = null
   ) {
     super();
+    this.view = view;
   }
 
   toDOM(): HTMLElement {
@@ -68,12 +68,13 @@ class InlineWidget extends WidgetType {
     if (this.href !== undefined) {
       el.setAttribute('data-href', this.href);
     }
-    if (this.kind === 'wikilink' && this.onNavigate) {
+    if (this.kind === 'wikilink') {
       el.style.cursor = 'pointer';
       el.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.onNavigate?.(this.href ?? this.text);
+        const navigate = (this.view as any).someProp as ((t: string) => void) | undefined;
+        navigate?.(this.href ?? this.text);
       });
     }
     switch (this.kind) {
@@ -116,19 +117,20 @@ class InlineWidget extends WidgetType {
   }
 
   ignoreEvents(): boolean {
-    // CodeMirror otherwise tries to position the cursor at the click
-    // coords, which throws when the widget sits outside the doc text flow.
     return true;
   }
 }
 
 class TaskCheckboxWidget extends WidgetType {
+  private readonly view: EditorView | null;
+
   constructor(
     readonly checked: boolean,
-    readonly view: EditorView,
-    readonly task: TaskLineMatch
+    readonly task: TaskLineMatch,
+    view: EditorView | null
   ) {
     super();
+    this.view = view;
   }
 
   toDOM(): HTMLElement {
@@ -148,9 +150,9 @@ class TaskCheckboxWidget extends WidgetType {
     cb.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      // Toggle the checkbox character in the editor document
       const newChar = this.checked ? ' ' : 'x';
-      // The character inside the [ ] brackets is at checkboxFrom + 1.
-      this.view.dispatch({
+      this.view?.dispatch({
         changes: {
           from: this.task.checkboxFrom + 1,
           to: this.task.checkboxFrom + 2,
@@ -163,7 +165,7 @@ class TaskCheckboxWidget extends WidgetType {
   }
 
   ignoreEvents(): boolean {
-    return true; // We handle the click ourselves
+    return true;
   }
 
   eq(other: TaskCheckboxWidget): boolean {
@@ -204,7 +206,6 @@ class CalloutWidget extends WidgetType {
     root.style.fontSize = '13px';
     root.style.lineHeight = '1.5';
 
-    // Title row
     const titleRow = document.createElement('div');
     titleRow.style.display = 'flex';
     titleRow.style.alignItems = 'baseline';
@@ -233,10 +234,9 @@ class CalloutWidget extends WidgetType {
 
     root.appendChild(titleRow);
 
-    // Body
     for (const line of this.block.body) {
       const bodyLine = document.createElement('div');
-      bodyLine.textContent = line || ' ';
+      bodyLine.textContent = line || ' ';
       bodyLine.style.color = 'hsl(0 0% 88%)';
       root.appendChild(bodyLine);
     }
@@ -259,7 +259,6 @@ class CalloutWidget extends WidgetType {
 }
 
 class TransclusionWidget extends WidgetType {
-  // Captured at construction so eq() can detect when the data map changes.
   private readonly dataMap: Map<string, TransclusionData> | undefined;
   private readonly view: EditorView | null;
 
@@ -295,11 +294,9 @@ class TransclusionWidget extends WidgetType {
     el.style.cursor = navigate ? 'pointer' : 'default';
 
     if (dataMap === undefined) {
-      // The React layer hasn't pushed any data yet.
       el.textContent = `Loading ${this.title}…`;
       el.style.opacity = '0.55';
     } else if (!data || !data.exists) {
-      // The data map is loaded but this title is missing → no such note.
       el.textContent = `Note not found: ${this.title}`;
       el.style.opacity = '0.55';
       el.style.fontStyle = 'italic';
@@ -333,18 +330,20 @@ class TransclusionWidget extends WidgetType {
   }
 
   ignoreEvents(): boolean {
-    return true; // We handle the click ourselves
+    return true;
   }
 
   eq(other: TransclusionWidget): boolean {
     if (other.title !== this.title) return false;
-    // Compare the dataMap captured at construction so a refresh after the
-    // data effect fires triggers a DOM rebuild.
     return this.dataMap === other.dataMap;
   }
 }
 
-function buildDecorations(state: EditorState, transclusionMap: Map<string, TransclusionData>): RangeSetBuilder<Decoration> {
+function buildDecorations(
+  state: EditorState,
+  transclusionMap: Map<string, TransclusionData>,
+  view: EditorView | null
+): RangeSetBuilder<Decoration> {
   const ranges = parseInlineRanges(state.doc.toString());
   const builder = new RangeSetBuilder<Decoration>();
   const cursorLine = state.doc.lineAt(state.selection.main.head).number;
@@ -356,7 +355,7 @@ function buildDecorations(state: EditorState, transclusionMap: Map<string, Trans
         r.from,
         r.to,
         Decoration.replace({
-          widget: new TransclusionWidget(r.inner.text ?? '', transclusionMap, null),
+          widget: new TransclusionWidget(r.inner.text ?? '', transclusionMap, view),
           inclusive: false,
         })
       );
@@ -366,36 +365,32 @@ function buildDecorations(state: EditorState, transclusionMap: Map<string, Trans
       r.from,
       r.to,
       Decoration.replace({
-        widget: new InlineWidget(
-          r.kind,
-          r.inner.text ?? '',
-          r.href,
-          (_title: string) => null as any
-        ),
+        widget: new InlineWidget(r.kind, r.inner.text ?? '', r.href, view),
         inclusive: false,
       })
     );
   }
-  // Task list checkboxes: replace "- [ ] " or "- [x] " with a checkbox widget
-  // for every line that is a task.
   const doc = state.doc;
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
     const task = findTaskLine(line.text, 0);
     if (!task) continue;
     if (i === cursorLine) continue;
-    // Replace from the line start up to and including the closing bracket + space.
     const replaceTo = line.from + task.checkboxTo - task.lineStart + 1;
     builder.add(
       line.from,
       replaceTo,
       Decoration.replace({
-        widget: new TaskCheckboxWidget(task.checked, null as any, {
-          lineStart: line.from,
-          checkboxFrom: line.from + (task.checkboxFrom - task.lineStart),
-          checkboxTo: line.from + (task.checkboxTo - task.lineStart),
-          checked: task.checked,
-        }),
+        widget: new TaskCheckboxWidget(
+          task.checked,
+          {
+            lineStart: line.from,
+            checkboxFrom: line.from + (task.checkboxFrom - task.lineStart),
+            checkboxTo: line.from + (task.checkboxTo - task.lineStart),
+            checked: task.checked,
+          },
+          view
+        ),
         inclusive: false,
       })
     );
@@ -403,17 +398,12 @@ function buildDecorations(state: EditorState, transclusionMap: Map<string, Trans
   return builder;
 }
 
-/**
- * Combined decorations extension for all inline widgets (wikilinks, transclusions,
- * task checkboxes) and block widgets (callouts).
- * Uses EditorView.decorations.compute so block decorations work correctly.
- * Rebuilds when transclusionDataChanged effect is dispatched.
- */
 const allDecorationsExt = EditorView.decorations.compute(
   ['doc', 'selection'],
   (state) => {
     const transclusionMap = state.field(transclusionDataStateField);
-    const decorations = buildDecorations(state, transclusionMap);
+    const view: EditorView | null = (state as any).doc?.view ?? null;
+    const decorations = buildDecorations(state, transclusionMap, view);
     const callouts = parseCalloutBlocks(state.doc.toString());
     const cursorLine = state.doc.lineAt(state.selection.main.head).number;
     for (const c of callouts) {
@@ -438,7 +428,6 @@ const allDecorationsExt = EditorView.decorations.compute(
   }
 );
 
-// State field to hold the transclusion data map, enabling reactive rebuilds
 const transclusionDataField = StateEffect.define<Map<string, TransclusionData>>();
 
 const transclusionDataStateField = StateField.define<Map<string, TransclusionData>>({
@@ -467,16 +456,10 @@ export function MarkdownEditor({
   const ref = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [showFindBar, setShowFindBar] = useState(false);
-  // Always-fresh refs to the latest callbacks/state. The wikilink widget
-  // is created on decoration and reads from these so the closure doesn't
-  // capture a stale value.
-  const navigateRef = useRef(onWikilinkNavigate);
-  navigateRef.current = onWikilinkNavigate;
   const hoverRef = useRef(onWikilinkHover);
   hoverRef.current = onWikilinkHover;
   const editorReadyRef = useRef(onEditorReady);
   editorReadyRef.current = onEditorReady;
-  // Nodes for the wikilink autocomplete. Live-queried at the React layer.
   const dbNodes = useLiveQuery(
     async () => (await db.nodes.toArray()).filter((n) => !n.isArchived),
     [],
@@ -528,7 +511,7 @@ export function MarkdownEditor({
                   apply: o.apply,
                   detail: o.detail,
                 })),
-                validFor: /[\]a-zA-Z0-9 _-]*/, // accept closing bracket too
+                validFor: /[\]a-zA-Z0-9 _-]*/,
               };
             },
           ],
@@ -626,20 +609,12 @@ export function MarkdownEditor({
     });
   }, [content]);
 
-  // Sync onWikilinkNavigate into the editor so the widget can find it.
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     (view as any).someProp = (title: string) => onWikilinkNavigate?.(title);
   }, [onWikilinkNavigate]);
 
-  // Build the transclusion data map from live-queried nodes and push it
-  // onto the editor view. Dispatch a StateEffect so the live-preview
-  // plugin rebuilds decorations with the new data.
-  //
-  // Cycle guard: resolveAllTransclusions is called per-node with a fresh
-  // visited set so that A→B→A is correctly detected (B's call finds A
-  // already in the parent chain's visited set) and depth is capped at 5.
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -649,11 +624,7 @@ export function MarkdownEditor({
       for (const n of dbNodes ?? []) {
         const title = (n.title || '').trim();
         if (!title) continue;
-
-        // Recursively resolve nested transclusions; each root call starts
-        // its own visited set so sibling branches don't share visited state.
         await fetchTransclusionData(title, 0, new Set<string>());
-
         map.set(title, {
           title,
           plainText: n.plainText ?? '',

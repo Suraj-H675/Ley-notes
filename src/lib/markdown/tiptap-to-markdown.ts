@@ -7,7 +7,7 @@ type JSONContent = {
 };
 
 function escapeMarkdown(text: string): string {
-  return text.replace(/([\\`*_{}\[\]()#+\-.!])/g, '\\$1');
+  return text.replace(/([\\`*_{}[\]()#+\-.!])/g, '\\$1');
 }
 
 function renderInline(node: JSONContent): string {
@@ -29,7 +29,7 @@ function renderInline(node: JSONContent): string {
           out = `~~${out}~~`;
           break;
         case 'code':
-          out = '`' + text + '`'; // backticks wrap raw text, not escaped
+          out = '`' + out + '`'; // backticks wrap rendered text, not original
           break;
         case 'link': {
           const href = mark.attrs?.href ?? '';
@@ -37,8 +37,8 @@ function renderInline(node: JSONContent): string {
           break;
         }
         case 'wikiLink': {
-          const label = mark.attrs?.label ?? text;
-          out = `[[${label}]]`;
+          const title = mark.attrs?.title ?? text;
+          out = `[[${title}]]`;
           break;
         }
         case 'underline':

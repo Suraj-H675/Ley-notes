@@ -24,7 +24,7 @@ export function TagsPane() {
   const tagCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const node of nodes) {
-      for (const tag of node.tags) {
+      for (const tag of node.tags ?? []) {
         counts.set(tag, (counts.get(tag) ?? 0) + 1);
       }
     }

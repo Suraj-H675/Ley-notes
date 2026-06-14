@@ -96,7 +96,7 @@ export function DocumentPage() {
   const handlePropertiesChange = useCallback(
     async (properties: Record<string, string>) => {
       if (!id || !node) return;
-      const { frontmatter: _fm, body } = splitFrontmatter(node.content ?? '');
+      const { body } = splitFrontmatter(node.content ?? '');
       const newContent = stringifyFrontmatter(properties, body);
       const plainText = extractPlainText(newContent);
       // Write both the properties cache and the re-serialized markdown.
@@ -356,14 +356,9 @@ export function DocumentPage() {
                 placeholder="Type '/' for commands, or '[[' to link another page"
                 onWikilinkNavigate={(title) => {
                   // Find the target node id by title and navigate to it.
-                  void db.nodes
-                    .where('isArchived')
-                    .equals(0)
-                    .toArray()
-                    .then((all) => {
-                      const target = all.find((n) => n.title === title);
-                      if (target) navigate(`/page/${target.id}`);
-                    });
+                  db.nodes.where('title').equals(title).first().then((target) => {
+                    if (target && !target.isArchived) navigate(`/page/${target.id}`);
+                  });
                 }}
                 onWikilinkHover={setHoverAnchor}
                 onEditorReady={handleEditorReady}

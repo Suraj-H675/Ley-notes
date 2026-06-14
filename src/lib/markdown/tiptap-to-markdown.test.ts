@@ -65,7 +65,7 @@ describe('tiptapJsonToMarkdown', () => {
               type: 'text',
               text: 'other',
               marks: [
-                { type: 'wikiLink', attrs: { id: 'x', label: 'Other Note' } },
+                { type: 'wikiLink', attrs: { id: 'x', title: 'Other Note' } },
               ],
             },
             { type: 'text', text: ' for context' },

@@ -623,7 +623,6 @@ export async function seedDemoData(): Promise<void> {
     }
   }
 
-  // eslint-disable-next-line no-console
   console.log('Demo data seeded:', {
     nodes: await db.nodes.count(),
     edges: await db.edges.count(),

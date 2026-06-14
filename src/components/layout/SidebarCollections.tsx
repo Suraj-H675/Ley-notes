@@ -244,7 +244,7 @@ function CollectionItem({
             collection={child}
             allCollections={allCollections}
             expandedCollections={expandedCollections}
-            onToggle={() => onToggle}
+            onToggle={onToggle}
             level={level + 1}
           />
         ))}

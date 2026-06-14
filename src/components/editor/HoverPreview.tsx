@@ -44,8 +44,7 @@ export function HoverPreview({
   const target = useLiveQuery(
     async () => {
       if (!title) return null;
-      const all = await db.nodes.where('isArchived').equals(0).toArray();
-      return all.find((n) => n.title === title) ?? null;
+      return (await db.nodes.where('title').equals(title).first()) ?? null;
     },
     [title],
     null

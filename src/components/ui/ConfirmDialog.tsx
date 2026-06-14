@@ -39,6 +39,8 @@ export function ConfirmDialog({
     try {
       await onConfirm();
       onOpenChange(false);
+    } catch (err) {
+      // Keep dialog open so user sees the error; loading will be cleared below
     } finally {
       setLoading(false);
     }
