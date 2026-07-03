@@ -1,5 +1,9 @@
 import Dexie, { type Table } from 'dexie';
 import { tiptapJsonToMarkdown, extractPlainText } from '@/lib/markdown';
+import type {
+  RefLinkType,
+  BlockType,
+} from '@/types';
 
 type LegacyNodeRecord = {
   id: string;
@@ -38,6 +42,13 @@ export type {
 export type {
   KnowledgeEdge,
   CreateEdgeInput,
+} from '@/types';
+export type {
+  KnowledgeBlock,
+  BlockType,
+  RefRecord,
+  RefLinkType,
+  BlockAttribute,
 } from '@/types';
 
 export interface GraphPosition {
@@ -94,6 +105,45 @@ interface RevisionRecord {
   createdAt: number;
 }
 
+/**
+ * Dexie record shape for the `blocks` table. Mirrors `KnowledgeBlock` but
+ * uses literal unions where Dexie/IndexedDB needs them.
+ */
+interface KnowledgeBlockRecord {
+  id: string;
+  nodeId: string;
+  order: number;
+  type: BlockType;
+  markdown: string;
+  textContent: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * Dexie record shape for the `refs` (denormalized backlink index) table.
+ * See `KnowledgeBlock`/`RefRecord` in `@/types/block.types` for semantics.
+ */
+interface RefRecordRecord {
+  id: string;
+  sourceBlockId: string;
+  targetNodeId: string | null;
+  targetNodeTitle: string | null;
+  targetBlockId: string | null;
+  linkType: RefLinkType;
+  context: string;
+  createdAt: number;
+}
+
+/** Dexie record shape for the `blockAttributes` table. */
+interface BlockAttributeRecord {
+  id: string;
+  blockId: string;
+  name: string;
+  value: string;
+  createdAt: number;
+}
+
 interface GraphSettingsRecord {
   scope: 'global' | 'local';
   colorScheme: 'untyped' | 'tag' | 'collection' | 'link-count' | 'community';
@@ -133,6 +183,9 @@ class KnowledgeUniverseDB extends Dexie {
   revisions!: Table<RevisionRecord>;
   graphPositions!: Table<GraphPosition>;
   graphSettings!: Table<GraphSettingsRecord>;
+  blocks!: Table<KnowledgeBlockRecord>;
+  refs!: Table<RefRecordRecord>;
+  blockAttributes!: Table<BlockAttributeRecord>;
 
   constructor() {
     super('knowledge-universe');
@@ -196,6 +249,34 @@ class KnowledgeUniverseDB extends Dexie {
           if (node.isPinned === undefined) node.isPinned = 0;
         });
       });
+
+    // v5: add block-level tables for the v2 refactor.
+    //
+    // Tables:
+    //   blocks          — one row per top-level block (id, nodeId, order, type,
+    //                     markdown, textContent, createdAt, updatedAt)
+    //   refs            — denormalized backlink index (parsed from `[[Title]]`
+    //                     and `((block-id))` references in block markdown)
+    //   blockAttributes — per-block typed key-value (parsed from `key:: value`
+    //                     inline syntax in Phase 9)
+    //
+    // No data migration in v5 — blocks are populated lazily by Phase 4's
+    // `lazyMigrateNode`. Until that runs, the tables are empty.
+    this.version(5).stores({
+      // Existing tables — unchanged.
+      nodes: 'id, type, title, *collections, *tags, isArchived, isPinned, createdAt, updatedAt, parentId',
+      edges: 'id, source, target, type, createdAt',
+      collections: 'id, name, parentId, createdAt',
+      revisions: 'id, nodeId, createdAt',
+      graphPositions: 'nodeId, updatedAt',
+      graphSettings: 'scope, updatedAt',
+
+      // New tables — see KnowledgeBlockRecord / RefRecordRecord / BlockAttributeRecord.
+      blocks: 'id, nodeId, [nodeId+order], type, updatedAt',
+      refs:
+        'id, sourceBlockId, targetNodeId, targetBlockId, [sourceBlockId+targetNodeId], [targetNodeId+sourceBlockId]',
+      blockAttributes: 'id, blockId, name, value, [blockId+name], [name+value]',
+    });
   }
 }
 
