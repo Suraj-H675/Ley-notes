@@ -355,9 +355,15 @@ export function DocumentPage() {
                 onChange={handleContentUpdate}
                 placeholder="Type '/' for commands, or '[[' to link another page"
                 onWikilinkNavigate={(title) => {
-                  // Find the target node id by title and navigate to it.
-                  db.nodes.where('title').equals(title).first().then((target) => {
-                    if (target && !target.isArchived) navigate(`/page/${target.id}`);
+                  // Case-insensitive title lookup. For workspaces up to ~10k
+                  // nodes the in-memory filter is fine; for larger workspaces
+                  // we'd add a `titleLower` indexed field in a future phase.
+                  const targetLower = title.toLowerCase();
+                  db.nodes.toArray().then((allNodes) => {
+                    const target = allNodes.find(
+                      (n) => n.title.toLowerCase() === targetLower && !n.isArchived,
+                    );
+                    if (target) navigate(`/page/${target.id}`);
                   });
                 }}
                 onWikilinkHover={setHoverAnchor}

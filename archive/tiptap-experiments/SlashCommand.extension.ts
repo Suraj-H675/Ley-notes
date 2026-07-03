@@ -1,3 +1,4 @@
+// ARCHIVED — TipTap extension experiments, never wired up. See README.md.
 import { Extension } from '@tiptap/core';
 import { PluginKey } from '@tiptap/pm/state';
 import Suggestion from '@tiptap/suggestion';
