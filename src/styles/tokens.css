@@ -1,0 +1,88 @@
+/**
+ * Design tokens. Both themes share the same variable names; values flip.
+ * All component CSS reads these — never hardcode colors.
+ *
+ * Color scale: 220 (blue-grey) for backgrounds, 220 (cool) for text, accents
+ * 217 (blue) for primary, 265 (purple) for accent, 150 (green) for success,
+ * 0 (red) for destructive.
+ */
+
+:root,
+:root[data-theme='dark'] {
+  /* Surfaces — slightly tinted, not pure black. */
+  --background: 220 14% 9%;
+  --surface-1: 220 13% 12%;
+  --surface-2: 220 12% 15%;
+  --surface-3: 220 11% 18%;
+
+  /* Text — high contrast for body, muted for metadata. */
+  --foreground: 220 14% 92%;
+  --muted-foreground: 220 8% 60%;
+  --subtle-foreground: 220 6% 45%;
+
+  /* Borders and dividers. */
+  --border: 220 10% 22%;
+  --border-strong: 220 10% 32%;
+
+  /* Accent — blue for primary actions. */
+  --primary: 217 70% 62%;
+  --primary-foreground: 220 14% 98%;
+
+  /* Secondary — purple for tags and links. */
+  --secondary: 265 55% 65%;
+  --secondary-foreground: 220 14% 98%;
+
+  /* Muted — neutral grey for chips and metadata pills. */
+  --muted: 220 10% 22%;
+  --muted-foreground-strong: 220 8% 75%;
+
+  /* Destructive. */
+  --destructive: 0 55% 58%;
+  --destructive-foreground: 220 14% 98%;
+
+  /* Graph node colors (shared with light theme — these are desaturated). */
+  --node-document: 217 70% 62%;
+  --node-task: 150 50% 55%;
+  --node-project: 265 55% 65%;
+  --node-concept: 35 70% 60%;
+
+  --edge-wiki: 225 55% 60%;
+  --edge-explicit: 265 50% 62%;
+  --edge-depends: 0 55% 58%;
+  --edge-related: 220 8% 55%;
+
+  /* Shadows — tinted, not black. */
+  --shadow-panel: 0 1px 0 hsl(220 20% 4% / 0.4), 0 0 0 1px hsl(220 10% 100% / 0.04);
+  --shadow-popover: 0 8px 24px hsl(220 20% 4% / 0.32), 0 0 0 1px hsl(220 10% 100% / 0.06);
+  --shadow-menu: 0 12px 32px hsl(220 20% 4% / 0.4), 0 0 0 1px hsl(220 10% 100% / 0.06);
+}
+
+:root[data-theme='light'] {
+  --background: 220 16% 96%;
+  --surface-1: 0 0% 100%;
+  --surface-2: 220 14% 92%;
+  --surface-3: 220 12% 86%;
+
+  --foreground: 220 14% 14%;
+  --muted-foreground: 220 8% 38%;
+  --subtle-foreground: 220 6% 55%;
+
+  --border: 220 10% 86%;
+  --border-strong: 220 10% 70%;
+
+  --primary: 217 70% 50%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 265 55% 55%;
+  --secondary-foreground: 0 0% 100%;
+
+  --muted: 220 14% 92%;
+  --muted-foreground-strong: 220 8% 28%;
+
+  --destructive: 0 55% 48%;
+  --destructive-foreground: 0 0% 100%;
+
+  --shadow-panel: 0 1px 0 hsl(220 14% 70% / 0.4), 0 0 0 1px hsl(220 10% 14% / 0.04);
+  --shadow-popover: 0 8px 24px hsl(220 20% 14% / 0.12), 0 0 0 1px hsl(220 10% 14% / 0.06);
+  --shadow-menu: 0 12px 32px hsl(220 20% 14% / 0.16), 0 0 0 1px hsl(220 10% 14% / 0.06);
+}

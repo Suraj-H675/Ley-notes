@@ -1,0 +1,94 @@
+/**
+ * Lightweight page index that lives outside React. The React tree pushes
+ * pages into this index on every change; non-React code (e.g. CodeMirror
+ * view plugins for autocomplete) reads from it synchronously.
+ *
+ * Why a bridge instead of querying Dexie from the autocomplete:
+ *  - Autocomplete runs in a CM6 keydown handler (synchronous).
+ *  - Dexie queries are async.
+ *  - We refresh the bridge via Dexie's liveQuery in the React app, so the
+ *    autocomplete sees consistent, up-to-date data without needing await.
+ */
+
+import { liveQuery } from 'dexie';
+import { db } from '@/data/db';
+
+interface IndexEntry {
+  id: string;
+  title: string;
+  display: string;
+  lcTitle: string;
+  aliases: string[];
+}
+
+let entries: IndexEntry[] = [];
+
+const refreshSubs = new Set<() => void>();
+
+function notify() {
+  for (const cb of refreshSubs) cb();
+}
+
+/** Start the live subscription that keeps the index in sync. Idempotent. */
+let started = false;
+export function startPageIndex(): () => void {
+  if (started) return () => {};
+  started = true;
+  const sub = liveQuery(() => db.pages.toArray()).subscribe({
+    next: (pages) => {
+      entries = pages
+        .filter((p) => p.deletedAt === null)
+        .map((p) => ({
+          id: p.id,
+          title: p.title,
+          display: p.title,
+          lcTitle: p.lcTitle,
+          aliases: p.aliases,
+        }));
+      notify();
+    },
+    error: (err) => {
+      console.error('[page-index] liveQuery error:', err);
+    },
+  });
+  return () => sub.unsubscribe();
+}
+
+export function getPageIndex(): IndexEntry[] {
+  return entries;
+}
+
+export function subscribePageIndex(cb: () => void): () => void {
+  refreshSubs.add(cb);
+  return () => refreshSubs.delete(cb);
+}
+
+/**
+ * Synchronous resolve by title or alias. Use only for UI suggestions where
+ * stale-by-one-render is acceptable.
+ */
+export function resolveTitleSync(title: string): string | null {
+  const lc = title.toLowerCase();
+  for (const e of entries) {
+    if (e.lcTitle === lc) return e.id;
+    if (e.aliases.some((a) => a.toLowerCase() === lc)) return e.id;
+  }
+  return null;
+}
+
+/**
+ * Async resolve against the live Dexie DB. Use this when correctness matters
+ * (e.g. rebuilding backlink index right after a write — the bridge might be
+ * one tick behind).
+ */
+export async function resolveTitle(title: string): Promise<string | null> {
+  const lc = title.toLowerCase();
+  const byTitle = await db.pages.where('lcTitle').equals(lc).first();
+  if (byTitle && byTitle.deletedAt === null) return byTitle.id;
+  const all = await db.pages.toArray();
+  for (const p of all) {
+    if (p.deletedAt !== null) continue;
+    if (p.aliases.some((a) => a.toLowerCase() === lc)) return p.id;
+  }
+  return null;
+}

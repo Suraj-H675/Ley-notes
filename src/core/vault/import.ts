@@ -1,0 +1,106 @@
+/**
+ * Vault import — accepts an Obsidian-compatible ZIP and inserts every .md
+ * file as a new Page. Existing pages with the same path are skipped (no
+ * overwrite — safer default). Returns the count of pages imported.
+ */
+
+import JSZip from 'jszip';
+import { db } from '@/data/db';
+import { nanoid } from '@/lib/nanoid';
+import {
+  parseFrontmatter,
+  getAliases,
+} from '@/core/parser/frontmatter';
+import { extractWikiLinks } from '@/core/parser/wiki-links';
+import { extractInlineTags } from '@/core/parser/tags';
+import { now } from '@/lib/time';
+import type { Page } from '@/data/schema';
+
+export async function importVaultFromFile(file: File): Promise<number> {
+  const zip = await JSZip.loadAsync(file);
+  const mdFiles = Object.values(zip.files).filter(
+    (f) => !f.dir && f.name.endsWith('.md'),
+  );
+
+  // Build a title→id lookup up front so wiki links can resolve during import.
+  const existing = await db.pages.toArray();
+  const titleToId = new Map<string, string>();
+  for (const p of existing) {
+    if (p.deletedAt === null) titleToId.set(p.lcTitle, p.id);
+  }
+
+  // Pass 1: insert all pages (without rebuilding cross-links yet).
+  const newPages: Page[] = [];
+  for (const f of mdFiles) {
+    const path = f.name;
+    const text = await f.async('string');
+    const { frontmatter, body } = parseFrontmatter(text);
+
+    const titleFromPath = path
+      .replace(/\.md$/, '')
+      .split('/')
+      .pop()!;
+    const title = (frontmatter.title as string) ?? titleFromPath;
+    const lc = title.toLowerCase();
+
+    if (titleToId.has(lc)) continue; // skip duplicates
+
+    const ts = now();
+    const page: Page = {
+      id: nanoid(),
+      title,
+      lcTitle: lc,
+      path,
+      content: body,
+      frontmatter,
+      aliases: getAliases(frontmatter),
+      createdAt: ts,
+      updatedAt: ts,
+      deletedAt: null,
+    };
+    newPages.push(page);
+    titleToId.set(lc, page.id);
+  }
+
+  if (newPages.length === 0) return 0;
+
+  await db.pages.bulkAdd(newPages);
+
+  // Pass 2: rebuild link rows + tag rows for each new page.
+  for (const p of newPages) {
+    const links = extractWikiLinks(p.content);
+    const linkRows: Array<{
+      id: string;
+      sourcePageId: string;
+      sourceBlockId: null;
+      targetTitle: string;
+      targetPageId: string | null;
+      kind: 'wiki' | 'embed';
+      position: number;
+    }> = [];
+    for (const l of links) {
+      const targetId = titleToId.get(l.target.toLowerCase()) ?? null;
+      linkRows.push({
+        id: nanoid(),
+        sourcePageId: p.id,
+        sourceBlockId: null,
+        targetTitle: l.target,
+        targetPageId: targetId,
+        kind: l.isEmbed ? 'embed' : 'wiki',
+        position: l.position,
+      });
+    }
+    if (linkRows.length > 0) await db.links.bulkAdd(linkRows);
+
+    const inlineTags = extractInlineTags(p.content);
+    const fmTags = Array.isArray(p.frontmatter.tags)
+      ? (p.frontmatter.tags as unknown[]).filter((t): t is string => typeof t === 'string')
+      : [];
+    const tagRows: Array<{ pageId: string; tag: string; source: 'frontmatter' | 'inline' }> = [];
+    for (const tag of fmTags) tagRows.push({ pageId: p.id, tag, source: 'frontmatter' });
+    for (const tag of inlineTags) tagRows.push({ pageId: p.id, tag, source: 'inline' });
+    if (tagRows.length > 0) await db.tags.bulkAdd(tagRows);
+  }
+
+  return newPages.length;
+}

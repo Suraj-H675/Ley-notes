@@ -72,5 +72,8 @@ dist-ssr
 /implementation_plan.md
 /task.md
 
+# Reference projects used as blueprints (not part of Ley)
+/ref/
+
 # Windows Zone.Identifier metadata
 *:Zone.Identifier

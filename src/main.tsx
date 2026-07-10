@@ -1,26 +1,17 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
-import '@xyflow/react/dist/style.css';
-import App from './App';
+/**
+ * Entry point. Mounts App into #root.
+ */
+
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
 import './styles/index.css';
 
-async function initDB() {
-  const { db } = await import('./lib/db');
-  await db.open();
-  return db;
-}
+const rootEl = document.getElementById('root');
+if (!rootEl) throw new Error('No #root element found in index.html');
 
-const dbPromise = initDB();
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <BrowserRouter
-      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-    >
-      <App />
-    </BrowserRouter>
-  </React.StrictMode>
+createRoot(rootEl).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
 );
-
-export { dbPromise };
