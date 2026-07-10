@@ -168,7 +168,15 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
           )}
         </aside>
 
-        <main className="min-w-0 flex-1">
+        <main
+          className="relative min-w-0 flex-1"
+          style={{
+            // Subtle radial vignette makes the dense graph center feel
+            // more "screen-like" without going pure black.
+            background:
+              'radial-gradient(ellipse at center, hsl(220 14% 11%) 0%, hsl(220 14% 7%) 100%)',
+          }}
+        >
           {filteredGraph ? (
             <GraphCanvas
               graph={filteredGraph}
@@ -178,6 +186,7 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
               showArrows={showArrows}
               linkThickness={linkThickness}
               enableHoverHighlight
+              showHalos
             />
           ) : (
             <div className="flex h-full items-center justify-center text-meta text-muted-foreground">

@@ -1,14 +1,16 @@
 /**
  * GraphNode — custom React Flow node for the Ley graph view.
  *
- * Renders a circle sized by degree + a label below (or inside for large nodes).
- * Uses memo so re-renders only happen when the node's own data changes.
+ * Visual style matches Obsidian / Graphify:
+ *   - Tiny dots (4-10px diameter)
+ *   - No label by default — label appears on hover OR for hub nodes
+ *   - Strong glow on the active page
+ *   - Subtle hover ring (no jarring border change)
+ *   - Soft scale-up animation when hovered
  *
- * Visual hierarchy:
- *   - Node size: 8-60px based on √(degree)
- *   - Label visibility: always shown for degree >= 1, only on hover for degree 0
- *   - Active page: 2px primary border + subtle outer glow
- *   - Hovered: stays full-opacity, others dim to 25%
+ * Reads its color from the shared COMMUNITY_PALETTE via the node's `community`
+ * attribute. The HoverInfo overlay (rendered separately by GraphCanvas) shows
+ * the full title — this node just renders the dot.
  */
 
 import { memo } from 'react';
@@ -21,63 +23,74 @@ export interface GraphNodeData extends Record<string, unknown> {
   hovered: boolean;
   faded: boolean;
   isActive: boolean;
+  /** Max degree over visible nodes — used to scale node size proportionally. */
+  maxDegree: number;
+  /** Show the chip label only when true (hover or active or hub). */
+  showLabel: boolean;
 }
 
 function GraphNodeImpl({ data }: NodeProps) {
   const d = data as unknown as GraphNodeData;
-  const size = Math.max(14, Math.min(60, 8 + Math.sqrt(d.degree) * 6));
-  const showLabel = d.degree >= 1 || d.hovered;
-  // Hub nodes (degree ≥ 4) get the label inside the circle; others below.
-  const labelInside = size >= 36;
+  // Size: 4px (isolated leaf) up to 11px (extreme hub). Sqrt curve so hub
+  // pages stand out without dominating the canvas.
+  const ratio = d.maxDegree > 0 ? d.degree / d.maxDegree : 0;
+  const size = 4 + Math.sqrt(ratio) * 7;
+
   const fill = COMMUNITY_PALETTE[d.community % COMMUNITY_PALETTE.length];
 
   return (
     <div
       className="relative flex items-center justify-center"
       style={{
-        width: size,
-        height: size,
-        opacity: d.faded ? 0.25 : 1,
-        transition: 'opacity 120ms ease',
+        width: 28,
+        height: 28,
+        opacity: d.faded ? 0.18 : 1,
+        transition: 'opacity 140ms ease, transform 140ms ease',
+        transform: d.hovered ? 'scale(1.25)' : 'scale(1)',
       }}
     >
-      {/* Required by React Flow even when we don't use handles — keeps
-          edge anchors stable so arrows line up correctly. */}
       <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
 
+      {/* Glow halo — only visible for active node. */}
+      {d.isActive && (
+        <div
+          className="absolute rounded-full"
+          style={{
+            width: size * 4,
+            height: size * 4,
+            background: `radial-gradient(circle, ${fill}66 0%, ${fill}00 70%)`,
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+
+      {/* The dot itself. */}
       <div
-        className="absolute inset-0 rounded-full"
+        className="relative rounded-full"
         style={{
+          width: size,
+          height: size,
           background: fill,
-          border: d.isActive
-            ? '2px solid hsl(var(--primary))'
-            : '1.5px solid rgba(255, 255, 255, 0.35)',
-          boxShadow: d.isActive
-            ? '0 0 0 4px hsl(var(--primary) / 0.15), 0 4px 12px hsl(220 20% 4% / 0.5)'
-            : '0 2px 6px hsl(220 20% 4% / 0.4)',
+          border: d.hovered
+            ? '1.5px solid rgba(255, 255, 255, 0.95)'
+            : '1px solid rgba(255, 255, 255, 0.15)',
+          boxShadow: d.hovered ? `0 0 8px ${fill}` : 'none',
         }}
       />
 
-      {labelInside && (
-        <span
-          className="relative z-10 select-none px-1 text-center font-medium leading-tight text-white"
-          style={{ fontSize: Math.max(9, Math.min(11, size / 5)) }}
-        >
-          {truncate(d.label, Math.max(3, Math.floor(size / 8)))}
-        </span>
-      )}
-
-      {!labelInside && showLabel && (
-        <span
-          className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 select-none whitespace-nowrap rounded-sm px-1 py-0.5 text-[10px] font-medium text-foreground"
+      {/* Label chip — shown on hover, active, or hub. */}
+      {d.showLabel && (
+        <div
+          className="pointer-events-none absolute left-1/2 top-full mt-1.5 -translate-x-1/2 select-none whitespace-nowrap rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-medium text-foreground"
           style={{
-            background: 'hsl(var(--surface-1) / 0.9)',
-            border: '1px solid hsl(var(--border))',
+            background: 'hsl(220 14% 9% / 0.92)',
+            border: '1px solid hsl(220 10% 22%)',
+            color: 'hsl(220 14% 92%)',
           }}
         >
-          {truncate(d.label, 24)}
-        </span>
+          {truncate(d.label, 30)}
+        </div>
       )}
     </div>
   );
@@ -90,16 +103,27 @@ function truncate(s: string, max: number): string {
 
 export const GraphNode = memo(GraphNodeImpl);
 
-// Shared palette with GraphCanvas/GraphLegend so node fills stay in sync.
+/**
+ * Shared palette — keep node fills, halo fills, and legend swatches in sync.
+ * Chosen to be distinguishable on a dark navy background.
+ */
 export const COMMUNITY_PALETTE = [
-  'hsl(217 70% 62%)',
-  'hsl(265 55% 65%)',
-  'hsl(150 50% 55%)',
-  'hsl(35 70% 60%)',
-  'hsl(0 55% 58%)',
-  'hsl(195 60% 55%)',
-  'hsl(50 65% 55%)',
-  'hsl(290 50% 65%)',
-  'hsl(105 45% 55%)',
-  'hsl(330 60% 65%)',
+  'hsl(217 75% 65%)', // blue
+  'hsl(280 60% 70%)', // purple
+  'hsl(150 55% 60%)', // green
+  'hsl(35 75% 60%)',  // orange
+  'hsl(0 65% 65%)',   // red
+  'hsl(190 65% 60%)', // cyan
+  'hsl(50 70% 60%)',  // yellow
+  'hsl(310 60% 70%)', // magenta
+  'hsl(110 50% 60%)', // lime
+  'hsl(25 65% 65%)',  // coral
 ];
+
+/**
+ * Edge colors keyed by link kind.
+ */
+export const EDGE_COLOR: Record<'wiki' | 'embed', string> = {
+  wiki: 'hsl(217 50% 70%)',
+  embed: 'hsl(280 50% 75%)',
+};
