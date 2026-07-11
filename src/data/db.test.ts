@@ -56,7 +56,7 @@ describe('seedIfEmpty', () => {
     const theme = await db.settings.get('theme');
     const format = await db.settings.get('daily-note-format');
     expect(theme?.value).toBe('dark');
-    expect(format?.value).toBe('YYYY-MM-DD');
+    expect(format?.value).toBe('yyyy-MM-dd');
   });
 
   it('is idempotent — does not re-seed if pages exist', async () => {

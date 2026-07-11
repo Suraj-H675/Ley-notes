@@ -74,7 +74,7 @@ export async function seedIfEmpty(): Promise<void> {
       deletedAt: null,
     });
 
-    await db.settings.put({ key: 'daily-note-format', value: 'YYYY-MM-DD' });
+    await db.settings.put({ key: 'daily-note-format', value: 'yyyy-MM-dd' });
     await db.settings.put({ key: 'daily-note-template', value: DAILY_TEMPLATE });
     await db.settings.put({ key: 'theme', value: 'dark' });
     await db.settings.put({ key: 'graph-node-limit', value: 5000 });

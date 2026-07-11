@@ -1,9 +1,10 @@
 /**
  * Daily notes — opens or creates the daily note for the given date.
  *
- * Naming: configurable via the `daily-note-format` setting (default YYYY-MM-DD).
- * Bodies: populated from the `daily-note-template` setting, with `{{date}}`,
- * `{{time}}`, `{{title}}` substituted.
+ * Naming: configurable via the `daily-note-format` setting, which follows
+ * date-fns tokens (default "yyyy-MM-dd"). Bodies: populated from the
+ * `daily-note-template` setting, with `{{date}}`, `{{time}}`, `{{title}}`
+ * substituted.
  *
  * Idempotent — if today's daily note already exists, just opens it.
  */

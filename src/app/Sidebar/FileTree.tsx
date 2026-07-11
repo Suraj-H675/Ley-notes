@@ -9,8 +9,6 @@ import { ChevronRight, ChevronDown, FileText, FolderClosed, FolderOpen, Plus } f
 import { usePages } from '@/hooks/usePages';
 import { useNavStore } from '@/store/nav';
 import { createPage, deletePage, renamePage } from '@/core/vault/pages';
-import { db } from '@/data/db';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { cn } from '@/lib/classnames';
 
 interface TreeNode {
@@ -234,7 +232,3 @@ function PageNode({
     </button>
   );
 }
-
-// Suppress unused warning for liveQuery import — used implicitly via usePages.
-void db;
-void useLiveQuery;

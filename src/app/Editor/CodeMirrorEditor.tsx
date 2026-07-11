@@ -1,20 +1,26 @@
 /**
  * CodeMirrorEditor — React wrapper around the imperative mount factory.
- * Manages the editor instance lifecycle and routes the `ley:follow-link`
- * custom event from the wiki-link decoration into the nav store.
+ * The wiki-link decoration dispatches a `ley:follow-link` CustomEvent; we
+ * listen for it once here and resolve-or-create the target.
  */
 
 import { useEffect, useRef } from 'react';
 import { mountEditor, type EditorController } from '@/editor/mount';
 import { useNavStore } from '@/store/nav';
 import { useDebouncedCallback } from '@/hooks/useDebounce';
-import { updatePageContent } from '@/core/vault/pages';
+import { updatePageContent, createPage } from '@/core/vault/pages';
 import { resolveTitle, startPageIndex } from '@/core/vault/page-index';
-import { createPage } from '@/core/vault/pages';
 
 interface CodeMirrorEditorProps {
   pageId: string;
   initialContent: string;
+}
+
+async function followOrCreate(target: string): Promise<string> {
+  const resolved = await resolveTitle(target);
+  if (resolved) return resolved;
+  const created = await createPage({ title: target });
+  return created.id;
 }
 
 export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorProps) {
@@ -43,36 +49,25 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
     const controller = mountEditor(containerRef.current, {
       initialDoc: initialContent,
       onChange: debouncedSave,
-      onWikiLinkFollow: async (target) => {
-        // If the target resolves, navigate; otherwise create the page first.
-        const resolved = await resolveTitle(target);
-        if (resolved) {
-          openPage(resolved);
-          pushRecent(resolved);
-        } else {
-          const created = await createPage({ title: target });
-          openPage(created.id);
-          pushRecent(created.id);
-        }
+      // Autocomplete-panel Enter/Tab accept. Not called on click — clicks
+      // dispatch the `ley:follow-link` event handled below.
+      onWikiLinkFollow: (target) => {
+        followOrCreate(target).then((id) => {
+          openPage(id);
+          pushRecent(id);
+        });
       },
     });
 
     controllerRef.current = controller;
 
-    // Listen for the `ley:follow-link` event the decoration plugin dispatches.
     const onFollow = async (e: Event) => {
       const ce = e as CustomEvent<{ target: string }>;
       const target = ce.detail?.target;
       if (!target) return;
-      const resolved = await resolveTitle(target);
-      if (resolved) {
-        openPage(resolved);
-        pushRecent(resolved);
-      } else {
-        const created = await createPage({ title: target });
-        openPage(created.id);
-        pushRecent(created.id);
-      }
+      const id = await followOrCreate(target);
+      openPage(id);
+      pushRecent(id);
     };
     controller.view.contentDOM.addEventListener('ley:follow-link', onFollow);
 
@@ -82,8 +77,10 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
       controllerRef.current = null;
     };
     // initialContent is the doc snapshot when the editor mounts; we want a
-    // fresh editor for each new pageId rather than re-initialising on content
-    // changes (those flow through debouncedSave).
+    // Fresh editor for each new pageId rather than re-initialising on content
+    // changes (those flow through debouncedSave). debouncedSave / openPage /
+    // pushRecent are stable (Zustand actions and a useMemo'd debouncer), so
+    // re-binding on every change is unnecessary churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageId]);
 

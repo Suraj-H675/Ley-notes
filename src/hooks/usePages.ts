@@ -25,15 +25,22 @@ export function usePageById(id: string | null): Page | undefined {
 }
 
 /**
- * Recent pages in MRU order, capped at N. Uses the Zustand nav store so it
- * persists across renders.
+ * Recent pages in MRU order, capped at N. The Zustand nav store has the IDs;
+ * callers (e.g. RecentPane) wire those IDs into a Page[] themselves.
  */
-export function useRecentPages(): Page[] {
-  const recentIds = (typeof window !== 'undefined' ? null : null) as string[] | null;
-  void recentIds;
-  return useLiveQuery(async () => {
-    // We don't have access to nav store here to avoid circular hooks; the
-    // Sidebar component is responsible for passing in the IDs.
-    return [];
-  }, []) ?? [];
+export function useRecentPages(/** pageIds from the nav store, in MRU order */ ids: string[]): Page[] {
+  return (
+    useLiveQuery(async () => {
+      if (ids.length === 0) return [];
+      const rows = await db.pages.where('id').anyOf(ids).toArray();
+      const byId = new Map(rows.map((p) => [p.id, p]));
+      // Preserve MRU order.
+      const out: Page[] = [];
+      for (const id of ids) {
+        const p = byId.get(id);
+        if (p && p.deletedAt === null) out.push(p);
+      }
+      return out;
+    }, [ids]) ?? []
+  );
 }

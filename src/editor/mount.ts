@@ -13,12 +13,17 @@
  * component so it can be reused in previews, the search modal, etc.
  */
 
-import { EditorState, Compartment } from '@codemirror/state';
+import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { syntaxHighlighting, defaultHighlightStyle, indentOnInput } from '@codemirror/language';
-import { bracketMatching, HighlightStyle } from '@codemirror/language';
+import {
+  syntaxHighlighting,
+  defaultHighlightStyle,
+  indentOnInput,
+  bracketMatching,
+  HighlightStyle,
+} from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 
 import { wikiLinkDecoration, wikiLinkAutocomplete } from './extensions/wiki-links';
@@ -114,8 +119,6 @@ const cmHighlight = HighlightStyle.define([
 ]);
 
 export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorController {
-  const compartment = new Compartment();
-
   const state = EditorState.create({
     doc: opts.initialDoc,
     extensions: [
@@ -138,7 +141,6 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       EditorView.updateListener.of((update) => {
         if (update.docChanged) opts.onChange(update.state.doc.toString());
       }),
-      compartment.of(opts.compact ? EditorView.editable.of(false) : []),
     ],
   });
 

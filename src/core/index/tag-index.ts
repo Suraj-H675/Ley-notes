@@ -10,11 +10,8 @@
  */
 
 import { db } from '@/data/db';
-import {
-  extractInlineTags,
-} from '@/core/parser/tags';
+import { extractInlineTags } from '@/core/parser/tags';
 import { getFrontmatterTags } from '@/core/parser/frontmatter';
-import { nanoid } from '@/lib/nanoid';
 
 export async function rebuildPageTags(
   pageId: string,
@@ -68,7 +65,3 @@ export async function getPagesByTag(tag: string): Promise<string[]> {
   const rows = await db.tags.where('tag').equals(tag).toArray();
   return rows.map((r) => r.pageId);
 }
-
-// Suppress unused warning on nanoid — kept for future per-row IDs in case we
-// evolve the schema to allow duplicate (pageId, tag) pairs.
-void nanoid;

@@ -1,9 +1,13 @@
 /**
  * Template variable substitution. Supports:
- *   {{date}}   — formatted date (default pattern "YYYY-MM-DD")
+ *   {{date}}   — formatted date (default "yyyy-MM-dd")
  *   {{time}}   — current time HH:mm
  *   {{title}}  — the page title (passed in by caller)
  *   {{uuid}}   — random nanoid (use sparingly)
+ *
+ * Format tokens follow date-fns (`yyyy-MM-dd`, `yyyy/MM/dd`, etc.) — NOT
+ * the uppercase `YYYY-MM-DD` that some tools (moment.js, Obsidian templates
+ * docs) use. Date-fns fails silently on unknown tokens.
  *
  * Variable syntax mirrors Obsidian's Templates plugin.
  */
@@ -13,7 +17,7 @@ import { format } from 'date-fns';
 export type TemplateVars = {
   title?: string;
   date?: Date;
-  /** Override the {{date}} format. Default YYYY-MM-DD. */
+  /** Override the {{date}} format. Default "yyyy-MM-dd". */
   dateFormat?: string;
 };
 
