@@ -14,9 +14,12 @@ import { parseFrontmatter, getAliases } from '@/core/parser/frontmatter';
 import { rebuildPageLinks } from '@/core/index/backlink';
 import { rebuildPageTags } from '@/core/index/tag-index';
 import { activeDataKind, filesystemDataKind, markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
+import { nanoid } from '@/shared/lib/nanoid';
 
 const LAST_VAULT_KEY = 'ley:last-filesystem-vault';
 const BROWSER_HANDLE_KEY = 'browser-directory-handle';
+const BROWSER_VAULT_ID_KEY = 'browser-directory-vault-id';
+const BROWSER_VAULT_REGISTRY_KEY = 'browser-directory-vault-registry';
 
 export interface VaultFileSnapshot {
   path: string;
@@ -39,6 +42,7 @@ export interface DesktopVault {
 
 let activeVaultPath: string | null = null;
 let activeBrowserHandle: LeyDirectoryHandle | null = null;
+let activeBrowserVaultId: string | null = null;
 
 interface LeyFileHandle {
   kind: 'file';
@@ -56,6 +60,12 @@ interface LeyDirectoryHandle {
   removeEntry(name: string, options?: { recursive?: boolean }): Promise<void>;
   queryPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
   requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
+  isSameEntry?(other: LeyDirectoryHandle): Promise<boolean>;
+}
+
+interface BrowserVaultRegistryEntry {
+  id: string;
+  handle: LeyDirectoryHandle;
 }
 
 export function isDesktopApp(): boolean {
@@ -79,6 +89,7 @@ export function getActiveVaultKind(): 'desktop' | 'browser-folder' | null {
 export function deactivateFilesystemVault(): void {
   activeVaultPath = null;
   activeBrowserHandle = null;
+  activeBrowserVaultId = null;
 }
 
 export async function startDesktopVaultWatcher(onChange: (paths: string[]) => void): Promise<() => void> {
@@ -129,8 +140,10 @@ export async function chooseBrowserFolderVault(): Promise<DesktopVault | null> {
   const handle = await picker({ mode: 'readwrite' });
   const permission = await handle.requestPermission({ mode: 'readwrite' });
   if (permission !== 'granted') throw new Error('Ley needs read and write access to use this folder as a vault.');
+  const vaultId = await resolveBrowserVaultId(handle);
   await db.settings.put({ key: BROWSER_HANDLE_KEY, value: handle });
-  return loadBrowserFolderVault(handle);
+  await db.settings.put({ key: BROWSER_VAULT_ID_KEY, value: vaultId });
+  return loadBrowserFolderVault(handle, vaultId);
 }
 
 export async function restoreBrowserFolderVault(): Promise<DesktopVault | null> {
@@ -139,11 +152,14 @@ export async function restoreBrowserFolderVault(): Promise<DesktopVault | null> 
   const handle = row?.value as LeyDirectoryHandle | undefined;
   if (!handle || handle.kind !== 'directory') return null;
   if (await handle.queryPermission({ mode: 'readwrite' }) !== 'granted') return null;
-  return loadBrowserFolderVault(handle);
+  const storedId = (await db.settings.get(BROWSER_VAULT_ID_KEY))?.value;
+  const vaultId = await resolveBrowserVaultId(handle, typeof storedId === 'string' ? storedId : undefined);
+  if (storedId !== vaultId) await db.settings.put({ key: BROWSER_VAULT_ID_KEY, value: vaultId });
+  return loadBrowserFolderVault(handle, vaultId);
 }
 
 export async function refreshBrowserFolderVault(): Promise<DesktopVault | null> {
-  return activeBrowserHandle ? loadBrowserFolderVault(activeBrowserHandle) : null;
+  return activeBrowserHandle && activeBrowserVaultId ? loadBrowserFolderVault(activeBrowserHandle, activeBrowserVaultId) : null;
 }
 
 export async function refreshDesktopVault(): Promise<DesktopVault | null> {
@@ -163,12 +179,31 @@ async function loadDesktopVault(path: string): Promise<DesktopVault> {
   };
 }
 
-async function loadBrowserFolderVault(handle: LeyDirectoryHandle): Promise<DesktopVault> {
+async function loadBrowserFolderVault(handle: LeyDirectoryHandle, vaultId: string): Promise<DesktopVault> {
   const snapshots = await scanBrowserFolder(handle);
   activeBrowserHandle = handle;
+  activeBrowserVaultId = vaultId;
   activeVaultPath = null;
-  await projectFilesIntoCache(`browser-folder:${handle.name}`, snapshots);
+  await projectFilesIntoCache(`browser-folder:${vaultId}`, snapshots);
   return { path: handle.name, name: handle.name, noteCount: snapshots.length };
+}
+
+async function resolveBrowserVaultId(handle: LeyDirectoryHandle, preferredId?: string): Promise<string> {
+  const stored = (await db.settings.get(BROWSER_VAULT_REGISTRY_KEY))?.value;
+  const registry = Array.isArray(stored)
+    ? stored.filter((entry): entry is BrowserVaultRegistryEntry => Boolean(entry && typeof entry === 'object' && typeof (entry as BrowserVaultRegistryEntry).id === 'string' && (entry as BrowserVaultRegistryEntry).handle?.kind === 'directory'))
+    : [];
+  for (const entry of registry) {
+    const same = handle.isSameEntry
+      ? await handle.isSameEntry(entry.handle).catch(() => false)
+      : entry.handle.isSameEntry
+        ? await entry.handle.isSameEntry(handle).catch(() => false)
+        : false;
+    if (same) return entry.id;
+  }
+  const id = preferredId ?? nanoid();
+  await db.settings.put({ key: BROWSER_VAULT_REGISTRY_KEY, value: [...registry, { id, handle }] });
+  return id;
 }
 
 async function scanBrowserFolder(root: LeyDirectoryHandle): Promise<VaultFileSnapshot[]> {

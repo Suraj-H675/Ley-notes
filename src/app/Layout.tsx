@@ -15,6 +15,7 @@ import { useGraphHotkey } from '@/features/graph/useGraphHotkey';
 import { useCommandPaletteHotkey } from '@/features/commands/useCommandPaletteHotkey';
 import { FileTree } from '@/features/sidebar/FileTree';
 import { RecentPane } from '@/features/sidebar/RecentPane';
+import { FavoritesPane } from '@/features/favorites/FavoritesPane';
 import { TagPane } from '@/features/sidebar/TagPane';
 import { EditorTabs } from '@/features/editor/EditorTabs';
 import { BacklinksPanel } from '@/features/backlinks/BacklinksPanel';
@@ -31,6 +32,8 @@ import { db } from '@/infrastructure/database/db';
 import { OutlinePanel } from '@/features/outline/OutlinePanel';
 import { RevisionPanel } from '@/features/history/RevisionPanel';
 import { FeatureErrorBoundary } from '@/shared/components/FeatureErrorBoundary';
+import { useIsFavoritePage } from '@/features/favorites/useFavorites';
+import { toggleFavoritePage } from '@/core/vault/favorites';
 
 const GraphView = lazy(() => import('@/features/graph/GraphView').then((module) => ({ default: module.GraphView })));
 const GraphModal = lazy(() => import('@/features/graph/GraphModal').then((module) => ({ default: module.GraphModal })));
@@ -61,6 +64,7 @@ export function Layout({
   const activeTab = useNavStore((s) => s.activeTab);
   const pages = usePages();
   const activePage = usePageById(activeTab);
+  const activePageFavorite = useIsFavoritePage(activeTab);
   const [searchOpen, setSearchOpen] = useSearchHotkey();
   const [settingsOpen, setSettingsOpen] = useSettingsHotkey();
   const [graphOpen, setGraphOpen] = useGraphHotkey();
@@ -176,6 +180,8 @@ export function Layout({
           <aside className="fixed inset-y-10 left-0 z-30 flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-surface-1 py-3 shadow-menu md:static md:w-64 md:shadow-none">
             <FileTree onNewPage={(folder) => { setNewNoteFolder(folder ?? ''); setNewNoteOpen(true); }} />
             <div className="mx-2 border-t border-border" />
+            <FavoritesPane />
+            <div className="mx-2 border-t border-border" />
             <RecentPane />
             <div className="mx-2 border-t border-border" />
             <TagPane />
@@ -247,6 +253,8 @@ export function Layout({
         onToggleSidebar={toggleSidebar}
         onToggleRightDock={toggleRightDock}
         onSetTheme={(nextTheme) => { useUIStore.getState().setTheme(nextTheme); void db.settings.put({ key: 'theme', value: nextTheme }); }}
+        favoriteActiveNote={activeTab ? activePageFavorite : null}
+        onToggleFavorite={async () => { if (activeTab) await toggleFavoritePage(activeTab); }}
       />
       <NewNoteModal open={newNoteOpen} initialFolder={newNoteFolder} onClose={() => setNewNoteOpen(false)} />
       {canvasOpen && <FeatureErrorBoundary feature="Canvas" overlay><Suspense fallback={null}><CanvasModal open onClose={() => setCanvasOpen(false)} /></Suspense></FeatureErrorBoundary>}

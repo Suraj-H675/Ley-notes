@@ -16,6 +16,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Full and heading/block-scoped note embeds, pasted or dropped attachments, and safe vault-relative media rendering
 - Automatic backlinks, outgoing links, unlinked mentions, tags, and ghost-link resolution
 - Full-text search, quick switcher, command palette, daily notes, and keyboard navigation
+- Vault-scoped favorites with workspace, sidebar, explorer, and command-palette access
 - Global and contextual knowledge graphs with deterministic layouts and community coloring
 - Interoperable JSON Canvas files with text cards, note cards, connections, and trash recovery
 - Vault-native templates for new notes and daily notes

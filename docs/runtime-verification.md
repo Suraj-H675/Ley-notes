@@ -38,6 +38,9 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Read-mode task clicks persist to Markdown, including tasks after an embed and tasks inside a partial-note embed.
 - Read-mode and Ctrl/Cmd-click wiki links honor both `#Heading` and `#^block-id` destinations and focus the exact source line.
 - Heading-scoped embeds stop at the next sibling heading; block embeds render only the referenced block.
+- Starring a note updates the workspace button and Favorites sidebar immediately; the state survives reload and is also reachable through the explorer context menu and command palette.
+- Trashing a favorite hides it without discarding the preference; restoring the note restores its place in Favorites.
+- At 320×568, Favorites remains readable and reachable with no horizontal document overflow.
 - The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.
 - An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.
 

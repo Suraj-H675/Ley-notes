@@ -33,6 +33,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Settings | Keep | Contains durable product configuration only; transfer controls appear only in browser-local mode. |
 | Right dock toggle | Keep | Backlinks and outline are core second-brain context, while the dock remains dismissible. |
 | Recent and Tags panels | Improve | Both are collapsible to prevent the sidebar becoming a permanently crowded stack. Tags now truly filter the page tree. |
+| Favorites panel | Add | Important notes can be starred from the workspace, explorer, or command palette and remain one click away without changing Markdown or folder structure. Favorites are isolated per vault and survive trash/restore. |
 | Explorer context menu | Improve | Rename, move, duplicate, copy-wiki-link, and trash now operate on real vault state. Moving is also available through drag/drop, with the dialog retained as the keyboard-accessible path. |
 | Folder organization | Improve | Existing folders are first-class destinations and nested paths can be created by moving or creating notes. Empty-folder controls remain absent because they add no durable information to browser-local storage. |
 

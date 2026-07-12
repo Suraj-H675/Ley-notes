@@ -10,6 +10,7 @@ import {
   PanelRight,
   Search,
   Settings,
+  Star,
   Sun,
 } from 'lucide-react';
 import { Kbd } from '@/shared/components/Kbd';
@@ -37,6 +38,8 @@ export function CommandPalette({
   onToggleSidebar,
   onToggleRightDock,
   onSetTheme,
+  favoriteActiveNote,
+  onToggleFavorite,
 }: {
   open: boolean;
   onClose: () => void;
@@ -49,6 +52,8 @@ export function CommandPalette({
   onToggleSidebar: () => void;
   onToggleRightDock: () => void;
   onSetTheme: (theme: 'light' | 'dark') => void;
+  favoriteActiveNote: boolean | null;
+  onToggleFavorite: () => void | Promise<void>;
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
@@ -61,13 +66,14 @@ export function CommandPalette({
       { id: 'daily', label: "Open today's daily note", detail: 'Capture thoughts and activity for today', icon: <CalendarDays size={15} />, shortcut: '⌘D', run: onDailyNote },
       { id: 'graph', label: 'Open graph view', detail: 'Explore the connections in this vault', icon: <Network size={15} />, shortcut: '⌘G', run: onGraph },
       { id: 'canvas', label: 'Open canvas', detail: 'Arrange notes and thoughts on a spatial board', icon: <LayoutDashboard size={15} />, keywords: 'board spatial json canvas', run: onCanvas },
+      ...(favoriteActiveNote === null ? [] : [{ id: 'favorite', label: favoriteActiveNote ? 'Remove active note from favorites' : 'Add active note to favorites', detail: 'Keep important notes one click away in the sidebar', icon: <Star size={15} className={favoriteActiveNote ? 'fill-current' : undefined} />, keywords: 'star bookmark pin', run: onToggleFavorite }]),
       { id: 'toggle-left', label: 'Toggle left sidebar', detail: 'Show or hide the file explorer', icon: <PanelLeft size={15} />, run: onToggleSidebar },
       { id: 'toggle-right', label: 'Toggle right sidebar', detail: 'Show or hide contextual panels', icon: <PanelRight size={15} />, run: onToggleRightDock },
       { id: 'light', label: 'Use light theme', detail: 'Switch the workspace appearance', icon: <Sun size={15} />, run: () => onSetTheme('light') },
       { id: 'dark', label: 'Use dark theme', detail: 'Switch the workspace appearance', icon: <Moon size={15} />, run: () => onSetTheme('dark') },
       { id: 'settings', label: 'Open settings', detail: 'Configure Ley and this vault', icon: <Settings size={15} />, shortcut: '⌘,', run: onSettings },
     ],
-    [onCanvas, onDailyNote, onGraph, onNewNote, onQuickSwitcher, onSetTheme, onSettings, onToggleRightDock, onToggleSidebar],
+    [favoriteActiveNote, onCanvas, onDailyNote, onGraph, onNewNote, onQuickSwitcher, onSetTheme, onSettings, onToggleFavorite, onToggleRightDock, onToggleSidebar],
   );
 
   const matches = useMemo(() => {
