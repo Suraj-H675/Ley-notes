@@ -14,6 +14,7 @@ interface NavState {
   closeTab: (pageId: string) => void;
   setActiveTab: (pageId: string) => void;
   pushRecent: (pageId: string) => void;
+  reconcile: (pageIds: Set<string>) => void;
   reset: () => void;
 }
 
@@ -44,5 +45,13 @@ export const useNavStore = create<NavState>((set) => ({
       const filtered = s.recentPages.filter((id) => id !== pageId);
       return { recentPages: [pageId, ...filtered].slice(0, MAX_RECENT) };
     }),
+  reconcile: (pageIds) => set((state) => {
+    const openTabs = state.openTabs.filter((id) => pageIds.has(id));
+    return {
+      openTabs,
+      activeTab: state.activeTab && pageIds.has(state.activeTab) ? state.activeTab : (openTabs.at(-1) ?? null),
+      recentPages: state.recentPages.filter((id) => pageIds.has(id)),
+    };
+  }),
   reset: () => set({ openTabs: [], activeTab: null, recentPages: [] }),
 }));

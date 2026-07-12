@@ -95,6 +95,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Daily-note format | Improve | Invalid date patterns are surfaced before they create bad filenames. |
 | ZIP import/export | Relocate | Visible only for browser-local storage. Filesystem vault folders are already the portable source of truth. |
 | Browser-local recycle bin | Add | Soft-deleted notes can be restored or permanently erased with a two-step destructive action. Filesystem vaults continue to use their ordinary `.trash` directory. |
+| Refresh / switch vault | Add | Filesystem users can deliberately rescan external changes or open another folder. Web users can change storage modes without mixing folder projections into authoritative browser-local data, and can return from the chooser without losing context. |
 | Legacy demo controls and generator | Remove | Product-demo state was not user knowledge. |
 | Unused block parser and result helper | Remove | Neither powered a reachable feature; keeping them implied a capability the product did not have. |
 | Empty-folder creation gateway | Remove | No reachable workflow used it; note paths already create required parent folders. |

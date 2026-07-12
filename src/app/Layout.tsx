@@ -38,7 +38,17 @@ const SettingsModal = lazy(() => import('@/features/settings/SettingsModal').the
 const NoteWorkspace = lazy(() => import('@/features/editor/NoteWorkspace').then((module) => ({ default: module.NoteWorkspace })));
 const CanvasModal = lazy(() => import('@/features/canvas/CanvasModal').then((module) => ({ default: module.CanvasModal })));
 
-export function Layout() {
+export function Layout({
+  vaultMode,
+  vaultName,
+  onRefreshVault,
+  onSwitchVault,
+}: {
+  vaultMode: 'desktop' | 'browser-folder' | 'browser-local';
+  vaultName: string;
+  onRefreshVault: () => Promise<{ noteCount: number } | null>;
+  onSwitchVault: () => Promise<void>;
+}) {
   const theme = useUIStore((s) => s.theme);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
@@ -221,7 +231,7 @@ export function Layout() {
         )}
       </div>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
-      {settingsOpen && <FeatureErrorBoundary feature="Settings" overlay><Suspense fallback={null}><SettingsModal open onClose={() => setSettingsOpen(false)} /></Suspense></FeatureErrorBoundary>}
+      {settingsOpen && <FeatureErrorBoundary feature="Settings" overlay><Suspense fallback={null}><SettingsModal open vaultMode={vaultMode} vaultName={vaultName} onRefreshVault={onRefreshVault} onSwitchVault={onSwitchVault} onClose={() => setSettingsOpen(false)} /></Suspense></FeatureErrorBoundary>}
       {graphOpen && <FeatureErrorBoundary feature="Graph" overlay><Suspense fallback={null}><GraphModal open onClose={() => setGraphOpen(false)} /></Suspense></FeatureErrorBoundary>}
       <CommandPalette
         open={commandOpen}

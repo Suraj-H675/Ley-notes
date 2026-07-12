@@ -27,7 +27,9 @@ Linux development builds emit the native executable plus `.deb` and `.rpm` packa
 
 ## Persistence contract
 
-For filesystem vaults, Markdown is authoritative. A vault scan projects files into Dexie, then rebuilds links and tags after every page exists so forward references resolve correctly. Page IDs are stable hashes of vault identity and relative file path.
+For filesystem vaults, Markdown is authoritative. A vault scan projects files into Dexie, then rebuilds links and tags after every page exists so forward references resolve correctly. First scans derive IDs from vault identity and relative path; subsequent scans preserve the current ID for each matching path so in-session creations, renames, tabs, and revisions remain coherent.
+
+The active `pages`, `assets`, and `revisions` tables represent exactly one vault at a time. Before a browser-local vault yields the active projection to a filesystem folder, Ley snapshots its authoritative pages, binary assets, and revision history into dedicated browser-local tables. Returning restores that snapshot and rebuilds disposable links/tags. Filesystem rescans preserve existing IDs by path for the same vault, while changing vaults clears cache-only assets and history so state cannot leak across vault boundaries.
 
 Writes follow this order:
 

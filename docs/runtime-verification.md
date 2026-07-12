@@ -16,6 +16,9 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Browser and native launchers own `h-full overflow-y-auto` roots; they must not rely on document scrolling.
 - At 320×568, the heading, both browser vault choices, errors, and privacy statement are reachable.
 - Oversized content starts at a reachable top rather than being vertically centered above the scroll origin.
+- Leaving an active web vault exposes a return action; returning restores the same vault and opens a valid note.
+- Browser-local → folder → browser-local transitions preserve local pages, attachments, revisions, and deleted notes while folder data is active only as a disposable projection.
+- Rescanning the same folder preserves page IDs; changing folders does not preserve IDs or cache-only revision state.
 
 ## Workspace
 

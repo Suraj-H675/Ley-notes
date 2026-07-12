@@ -17,6 +17,9 @@ describe('db schema', () => {
     expect(db.assets).toBeDefined();
     expect(db.revisions).toBeDefined();
     expect(db.settings).toBeDefined();
+    expect(db.browserLocalPages).toBeDefined();
+    expect(db.browserLocalAssets).toBeDefined();
+    expect(db.browserLocalRevisions).toBeDefined();
   });
 
   it('inserts and reads a page', async () => {

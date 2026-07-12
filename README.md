@@ -9,6 +9,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Real filesystem vaults on desktop, with atomic saves and a `.trash` folder
 - Browser folder vaults through the File System Access API, plus an explicit browser-local mode
 - Folder-aware file explorer with safe move, drag/drop, duplicate, rename, trash, and browser-local restore workflows
+- Safe vault switching and rescanning without mixing browser-local authority with filesystem cache data
 - Markdown editing and reading views with `[[wiki links]]`, aliases, heading links, and properties
 - Keyboard and touch-accessible Markdown formatting with vault-aware, accessible link completion
 - Note embeds, pasted or dropped attachments, and safe vault-relative media rendering

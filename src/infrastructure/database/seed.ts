@@ -78,6 +78,7 @@ export async function seedIfEmpty(): Promise<void> {
     await db.settings.put({ key: 'theme', value: 'dark' });
     await db.settings.put({ key: 'graph-node-limit', value: 5000 });
     await db.settings.put({ key: 'local-graph-depth', value: 2 });
+    await db.settings.put({ key: 'active-data-kind', value: 'browser-local' });
   });
 
 }

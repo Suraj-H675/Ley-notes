@@ -1,15 +1,19 @@
-import { ArrowRight, Database, FolderOpen, Globe2, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Database, FolderOpen, Globe2, ShieldCheck } from 'lucide-react';
 
 export function WebVaultLauncher({
   folderSupported,
   busy,
   error,
+  returnLabel,
+  onReturn,
   onOpenFolder,
   onBrowserLocal,
 }: {
   folderSupported: boolean;
   busy: boolean;
   error: string | null;
+  returnLabel?: string;
+  onReturn?: () => void;
   onOpenFolder: () => void;
   onBrowserLocal: () => void;
 }) {
@@ -17,6 +21,7 @@ export function WebVaultLauncher({
     <main data-page="web-vault-launcher" className="relative flex h-full flex-col items-center overflow-y-auto overscroll-y-contain bg-background px-5 py-8 text-foreground sm:py-12">
       <div className="pointer-events-none absolute inset-0 [background:radial-gradient(circle_at_50%_15%,hsl(var(--primary)/0.17),transparent_43%)]" />
       <section className="relative my-auto w-full max-w-2xl">
+        {onReturn && <button type="button" disabled={busy} onClick={onReturn} className="mb-5 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-meta text-muted-foreground hover:bg-surface-1 hover:text-foreground"><ArrowLeft size={13} />Return to {returnLabel}</button>}
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex size-11 items-center justify-center rounded-xl bg-primary text-lg font-semibold text-primary-foreground">L</div>
           <h1 className="text-3xl font-semibold tracking-[-0.035em]">Where should your knowledge live?</h1>

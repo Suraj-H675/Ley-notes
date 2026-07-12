@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, Download, FolderOpen, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { X, Download, FolderOpen, RefreshCw, Repeat2, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { db } from '@/infrastructure/database/db';
 import { useUIStore, type Theme } from '@/shared/state/ui';
 import { exportVault } from '@/core/vault/export';
@@ -18,7 +18,21 @@ import { listVaultTemplates } from '@/core/vault/templates';
 import { format as formatDate } from 'date-fns';
 import { listDeletedPages, permanentlyDeletePage, restorePage } from '@/core/vault/pages';
 
-export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SettingsModal({
+  open,
+  vaultMode,
+  vaultName,
+  onRefreshVault,
+  onSwitchVault,
+  onClose,
+}: {
+  open: boolean;
+  vaultMode: 'desktop' | 'browser-folder' | 'browser-local';
+  vaultName: string;
+  onRefreshVault: () => Promise<{ noteCount: number } | null>;
+  onSwitchVault: () => Promise<void>;
+  onClose: () => void;
+}) {
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
   const [importing, setImporting] = useState(false);
@@ -26,8 +40,10 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const [dailyFormatError, setDailyFormatError] = useState<string | null>(null);
   const [trashStatus, setTrashStatus] = useState<string | null>(null);
   const [eraseArmed, setEraseArmed] = useState<string | null>(null);
+  const [vaultActionStatus, setVaultActionStatus] = useState<string | null>(null);
+  const [vaultActionBusy, setVaultActionBusy] = useState(false);
   const eraseTimer = useRef<number | null>(null);
-  const filesystemVault = Boolean(getActiveVaultKind());
+  const filesystemVault = vaultMode !== 'browser-local';
 
   const dailyFormat = useLiveQuery(
     async () => (await db.settings.get('daily-note-format'))?.value as string | undefined,
@@ -113,6 +129,19 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
       setTrashStatus('The note was permanently deleted.');
     } catch (cause) {
       setTrashStatus(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function handleRefreshVault() {
+    setVaultActionBusy(true);
+    setVaultActionStatus('Refreshing vault…');
+    try {
+      const refreshed = await onRefreshVault();
+      setVaultActionStatus(refreshed ? `Up to date · ${refreshed.noteCount} ${refreshed.noteCount === 1 ? 'note' : 'notes'}.` : 'Vault refresh is unavailable.');
+    } catch (cause) {
+      setVaultActionStatus(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setVaultActionBusy(false);
     }
   }
 
@@ -202,11 +231,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           </section>
 
           <section>
-            <div className="mb-2 text-meta font-medium text-foreground">Vault</div>
+            <div className="mb-2 flex items-center justify-between gap-3"><span className="text-meta font-medium text-foreground">Vault</span><span className="max-w-56 truncate font-mono text-micro text-muted-foreground">{vaultName}</span></div>
             {filesystemVault ? (
               <div className="rounded-lg border border-border bg-surface-2 p-3 text-meta text-muted-foreground">
                 <div className="flex items-center gap-2 font-medium text-foreground"><FolderOpen size={14} className="text-secondary" />Already portable</div>
                 <p className="mt-1 leading-relaxed">This vault is an ordinary folder. Back it up, sync it, zip it, or commit it with your normal filesystem tools.</p>
+                <button type="button" disabled={vaultActionBusy} onClick={() => void handleRefreshVault()} className="mt-3 flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-meta text-foreground hover:bg-surface-3 disabled:opacity-50"><RefreshCw size={13} className={vaultActionBusy ? 'animate-spin' : ''} />Refresh from folder</button>
               </div>
             ) : <><div className="flex gap-2">
               <button
@@ -238,6 +268,8 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
             </div>
             {transferStatus && <div className="mt-1 text-meta text-secondary" role="status">{transferStatus}</div>}
             </>}
+            <button type="button" onClick={() => { onClose(); void onSwitchVault(); }} className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-3 py-2 text-meta text-muted-foreground-strong hover:bg-surface-2 hover:text-foreground"><Repeat2 size={13} />{vaultMode === 'desktop' ? 'Open another folder' : 'Change vault or storage'}</button>
+            {vaultActionStatus && <button type="button" onClick={() => setVaultActionStatus(null)} className="mt-2 text-left text-micro text-secondary" role="status">{vaultActionStatus}</button>}
           </section>
 
           {!filesystemVault && <section>

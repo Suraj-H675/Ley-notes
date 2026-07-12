@@ -11,7 +11,7 @@ import { db as defaultDb } from '@/infrastructure/database/db';
 export async function resetDb(db: typeof defaultDb = defaultDb): Promise<void> {
   await db.transaction(
     'rw',
-    [db.pages, db.blocks, db.links, db.tags, db.assets, db.revisions, db.settings],
+    [db.pages, db.blocks, db.links, db.tags, db.assets, db.revisions, db.settings, db.browserLocalPages, db.browserLocalAssets, db.browserLocalRevisions],
     async () => {
       await Promise.all([
         db.pages.clear(),
@@ -21,6 +21,9 @@ export async function resetDb(db: typeof defaultDb = defaultDb): Promise<void> {
         db.assets.clear(),
         db.revisions.clear(),
         db.settings.clear(),
+        db.browserLocalPages.clear(),
+        db.browserLocalAssets.clear(),
+        db.browserLocalRevisions.clear(),
       ]);
     },
   );

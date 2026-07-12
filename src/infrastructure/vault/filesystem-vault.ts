@@ -12,6 +12,7 @@ import type { Page } from '@/infrastructure/database/schema';
 import { parseFrontmatter, getAliases } from '@/core/parser/frontmatter';
 import { rebuildPageLinks } from '@/core/index/backlink';
 import { rebuildPageTags } from '@/core/index/tag-index';
+import { activeDataKind, filesystemDataKind, markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
 
 const LAST_VAULT_KEY = 'ley:last-filesystem-vault';
 const BROWSER_HANDLE_KEY = 'browser-directory-handle';
@@ -72,6 +73,11 @@ export function getActiveVaultKind(): 'desktop' | 'browser-folder' | null {
   if (activeVaultPath) return 'desktop';
   if (activeBrowserHandle) return 'browser-folder';
   return null;
+}
+
+export function deactivateFilesystemVault(): void {
+  activeVaultPath = null;
+  activeBrowserHandle = null;
 }
 
 export async function restoreDesktopVault(): Promise<DesktopVault | null> {
@@ -165,13 +171,21 @@ async function scanBrowserFolder(root: LeyDirectoryHandle): Promise<VaultFileSna
   return snapshots.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-async function projectFilesIntoCache(vaultPath: string, snapshots: VaultFileSnapshot[]): Promise<void> {
-  const pages = snapshots.map((snapshot) => pageFromSnapshot(vaultPath, snapshot));
+export async function projectFilesIntoCache(vaultPath: string, snapshots: VaultFileSnapshot[]): Promise<void> {
+  const kind = filesystemDataKind(vaultPath);
+  const previousKind = await activeDataKind();
+  const sameVault = previousKind === kind;
+  const existingByPath = sameVault
+    ? new Map((await db.pages.toArray()).map((page) => [page.path.toLowerCase(), page]))
+    : new Map<string, Page>();
+  const pages = snapshots.map((snapshot) => pageFromSnapshot(vaultPath, snapshot, existingByPath.get(snapshot.path.toLowerCase())));
 
-  await db.transaction('rw', db.pages, db.blocks, db.links, db.tags, async () => {
+  await db.transaction('rw', [db.pages, db.blocks, db.links, db.tags, db.assets, db.revisions], async () => {
     await Promise.all([db.pages.clear(), db.blocks.clear(), db.links.clear(), db.tags.clear()]);
+    if (!sameVault) await Promise.all([db.assets.clear(), db.revisions.clear()]);
     if (pages.length > 0) await db.pages.bulkPut(pages);
   });
+  await markActiveDataKind(kind);
 
   // Resolve links only after every page exists in the cache.
   for (const page of pages) {
@@ -180,21 +194,21 @@ async function projectFilesIntoCache(vaultPath: string, snapshots: VaultFileSnap
   }
 }
 
-function pageFromSnapshot(vaultPath: string, snapshot: VaultFileSnapshot): Page {
+function pageFromSnapshot(vaultPath: string, snapshot: VaultFileSnapshot, existing?: Page): Page {
   const parsed = parseFrontmatter(snapshot.content);
   const filename = snapshot.path.split('/').at(-1)?.replace(/\.md$/i, '') ?? 'Untitled';
   const title = typeof parsed.frontmatter.title === 'string' && parsed.frontmatter.title.trim()
     ? parsed.frontmatter.title.trim()
     : filename;
   return {
-    id: stableFileId(vaultPath, snapshot.path),
+    id: existing?.id ?? stableFileId(vaultPath, snapshot.path),
     title,
     lcTitle: title.toLowerCase(),
     path: snapshot.path,
     content: parsed.body,
     frontmatter: parsed.frontmatter,
     aliases: getAliases(parsed.frontmatter),
-    createdAt: snapshot.createdAt || snapshot.updatedAt || Date.now(),
+    createdAt: existing?.createdAt ?? (snapshot.createdAt || snapshot.updatedAt || Date.now()),
     updatedAt: snapshot.updatedAt || Date.now(),
     deletedAt: null,
   };
