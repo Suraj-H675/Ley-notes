@@ -22,6 +22,7 @@ export function SettingsModal({
   open,
   vaultMode,
   vaultName,
+  watcherStatus,
   onRefreshVault,
   onSwitchVault,
   onClose,
@@ -29,6 +30,7 @@ export function SettingsModal({
   open: boolean;
   vaultMode: 'desktop' | 'browser-folder' | 'browser-local';
   vaultName: string;
+  watcherStatus: 'inactive' | 'starting' | 'watching' | 'error';
   onRefreshVault: () => Promise<{ noteCount: number } | null>;
   onSwitchVault: () => Promise<void>;
   onClose: () => void;
@@ -236,6 +238,7 @@ export function SettingsModal({
               <div className="rounded-lg border border-border bg-surface-2 p-3 text-meta text-muted-foreground">
                 <div className="flex items-center gap-2 font-medium text-foreground"><FolderOpen size={14} className="text-secondary" />Already portable</div>
                 <p className="mt-1 leading-relaxed">This vault is an ordinary folder. Back it up, sync it, zip it, or commit it with your normal filesystem tools.</p>
+                <div className="mt-2 flex items-center gap-1.5 text-micro text-muted-foreground"><span className={`size-1.5 rounded-full ${vaultMode === 'desktop' && watcherStatus === 'watching' ? 'bg-emerald-400' : watcherStatus === 'error' ? 'bg-destructive' : 'bg-muted-foreground'}`} />{vaultMode === 'desktop' ? watcherStatus === 'watching' ? 'Watching external changes live' : watcherStatus === 'error' ? 'Live watcher unavailable · focus and manual refresh remain active' : 'Starting live filesystem watcher…' : 'Refreshes after returning to Ley or on request'}</div>
                 <button type="button" disabled={vaultActionBusy} onClick={() => void handleRefreshVault()} className="mt-3 flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-meta text-foreground hover:bg-surface-3 disabled:opacity-50"><RefreshCw size={13} className={vaultActionBusy ? 'animate-spin' : ''} />Refresh from folder</button>
               </div>
             ) : <><div className="flex gap-2">

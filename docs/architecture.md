@@ -40,6 +40,8 @@ Writes follow this order:
 
 Renames move the file and retarget incoming wiki links. Folder moves preserve note identity and titles, so links remain valid; duplicates receive an independent title/path and intentionally drop aliases to avoid ambiguous resolution. Deletes move filesystem notes into `.trash`; browser-local notes use a recoverable soft-delete marker and expose restore/permanent-delete controls. Binary attachments live under `attachments/` and are constrained by extension, size, and safe relative paths. Interoperable JSON Canvas documents live under `canvases/` and use the same atomic-write and trash lifecycle. All native relative paths reject absolute paths and traversal segments.
 
+The desktop runtime owns one recursive native watcher for the active vault. It emits only visible Markdown and JSON Canvas paths, ignores hidden/internal files, and suppresses events caused by Ley's own atomic writes. The web layer debounces event bursts before rescanning and reconciles tabs against the new projection. If an external edit arrives while the current CodeMirror document is dirty, autosave pauses and the user explicitly chooses the disk version or their local version; neither side wins silently.
+
 ## Derived state
 
 Dexie tables for pages, blocks, links, tags, and settings support reactive UI queries. FlexSearch and the synchronous title resolver subscribe to Dexie and are disposable. Revisions are sparse checkpoints rather than keystroke logs and are restored through the same normal save path.

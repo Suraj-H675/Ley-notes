@@ -21,6 +21,7 @@ import {
   refreshDesktopVault,
   restoreBrowserFolderVault,
   restoreDesktopVault,
+  startDesktopVaultWatcher,
   type DesktopVault,
 } from '@/infrastructure/vault/filesystem-vault';
 import {
@@ -63,6 +64,8 @@ export function App() {
   const [vaultBusy, setVaultBusy] = useState(false);
   const [vaultError, setVaultError] = useState<string | null>(null);
   const [returnVault, setReturnVault] = useState<{ mode: Exclude<VaultMode, 'desktop'>; name: string } | null>(null);
+  const [watcherStatus, setWatcherStatus] = useState<'inactive' | 'starting' | 'watching' | 'error'>('inactive');
+  const desktopVaultPath = desktopVault?.path;
 
   // Auto-open the most recently updated page on first launch, so the user
   // lands somewhere useful. If the vault is empty, the welcome page will be
@@ -131,6 +134,40 @@ export function App() {
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
   }, [desktopVault, vaultBusy, vaultMode]);
+
+  useEffect(() => {
+    if (!desktopVaultPath || vaultMode !== 'desktop') return;
+    let active = true;
+    let dispose: () => void = () => undefined;
+    let refreshTimer: number | null = null;
+    queueMicrotask(() => { if (active) setWatcherStatus('starting'); });
+    void startDesktopVaultWatcher((paths) => {
+      window.dispatchEvent(new CustomEvent('ley:vault-files-changed', { detail: { paths } }));
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        void refreshDesktopVault().then(async (next) => {
+          if (!active || !next) return;
+          setDesktopVault(next);
+          await reconcileNavigation();
+        }).catch((error) => {
+          console.error('[vault] Live refresh failed', error);
+          if (active) setWatcherStatus('error');
+        });
+      }, 250);
+    }).then((stop) => {
+      if (!active) { stop(); return; }
+      dispose = stop;
+      setWatcherStatus('watching');
+    }).catch((error) => {
+      console.error('[vault] Could not start filesystem watcher', error);
+      if (active) setWatcherStatus('error');
+    });
+    return () => {
+      active = false;
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+      dispose();
+    };
+  }, [desktopVaultPath, vaultMode]);
 
   async function openDesktopVault(): Promise<DesktopVault | null> {
     setVaultBusy(true);
@@ -244,5 +281,5 @@ export function App() {
     return <WebVaultLauncher folderSupported={isBrowserFolderSupported()} busy={vaultBusy} error={vaultError} returnLabel={returnVault?.name} onReturn={returnVault ? () => void returnToCurrentVault() : undefined} onOpenFolder={() => void openBrowserFolder()} onBrowserLocal={() => void activateBrowserLocalVault()} />;
   }
   if (!vaultMode) return null;
-  return <Layout vaultMode={vaultMode} vaultName={desktopVault?.name ?? 'Browser-local vault'} onRefreshVault={refreshActiveVault} onSwitchVault={switchVault} />;
+  return <Layout vaultMode={vaultMode} vaultName={desktopVault?.name ?? 'Browser-local vault'} watcherStatus={watcherStatus} onRefreshVault={refreshActiveVault} onSwitchVault={switchVault} />;
 }

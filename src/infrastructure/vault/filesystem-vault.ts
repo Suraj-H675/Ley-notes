@@ -6,6 +6,7 @@
  */
 
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { db } from '@/infrastructure/database/db';
 import type { Page } from '@/infrastructure/database/schema';
@@ -78,6 +79,22 @@ export function getActiveVaultKind(): 'desktop' | 'browser-folder' | null {
 export function deactivateFilesystemVault(): void {
   activeVaultPath = null;
   activeBrowserHandle = null;
+}
+
+export async function startDesktopVaultWatcher(onChange: (paths: string[]) => void): Promise<() => void> {
+  if (!activeVaultPath) return () => undefined;
+  const watchedPath = activeVaultPath;
+  const unlisten = await listen<{ paths: string[] }>('ley-vault-changed', (event) => onChange(event.payload.paths));
+  try {
+    await invoke('watch_vault', { vaultPath: watchedPath });
+  } catch (error) {
+    unlisten();
+    throw error;
+  }
+  return () => {
+    unlisten();
+    void invoke('stop_watching_vault', { vaultPath: watchedPath }).catch((error) => console.error('[vault] Could not stop filesystem watcher', error));
+  };
 }
 
 export async function restoreDesktopVault(): Promise<DesktopVault | null> {

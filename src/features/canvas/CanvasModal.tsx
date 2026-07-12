@@ -46,6 +46,23 @@ export function CanvasModal({ open, onClose }: { open: boolean; onClose: () => v
     return () => { active = false; };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    const refreshExternalCanvas = (event: Event) => {
+      const paths = (event as CustomEvent<{ paths?: string[] }>).detail?.paths ?? [];
+      if (!paths.some((path) => path.toLowerCase().endsWith('.canvas'))) return;
+      void listCanvases().then((items) => {
+        setCanvases(items);
+        if (dirty) return;
+        const current = items.find((canvas) => canvas.path === activePath) ?? items[0] ?? null;
+        setActivePath(current?.path ?? null);
+        setDocument(current?.document ?? { nodes: [], edges: [] });
+      });
+    };
+    window.addEventListener('ley:vault-files-changed', refreshExternalCanvas);
+    return () => window.removeEventListener('ley:vault-files-changed', refreshExternalCanvas);
+  }, [activePath, dirty, open]);
+
   const activeCanvas = canvases.find((canvas) => canvas.path === activePath) ?? null;
   const pageByPath = useMemo(() => new Map(pages.map((page) => [page.path, page])), [pages]);
   const openFile = useCallback(async (path: string) => {

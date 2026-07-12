@@ -19,6 +19,7 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Leaving an active web vault exposes a return action; returning restores the same vault and opens a valid note.
 - Browser-local → folder → browser-local transitions preserve local pages, attachments, revisions, and deleted notes while folder data is active only as a disposable projection.
 - Rescanning the same folder preserves page IDs; changing folders does not preserve IDs or cache-only revision state.
+- A native external `.md` create/edit/delete emits a vault-change event; hidden files, unrelated extensions, and Ley's own atomic writes do not produce a user-visible refresh.
 
 ## Workspace
 
@@ -35,6 +36,7 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Enter and Tab accept a completion and keep the current note open.
 - Normal click inside a wiki link positions the cursor; Ctrl/Cmd-click opens its target without creating an ID-named note.
 - The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.
+- An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.
 
 ## Release evidence
 

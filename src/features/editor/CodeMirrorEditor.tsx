@@ -30,15 +30,24 @@ async function followOrCreate(target: string): Promise<string> {
 export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<EditorController | null>(null);
+  const dirtyRef = useRef(false);
+  const syncingRef = useRef(false);
+  const externalContentRef = useRef<string | null>(null);
   const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
+  const [externalContent, setExternalContent] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   const openPage = useNavStore((s) => s.openPage);
   const pushRecent = useNavStore((s) => s.pushRecent);
 
   // Save handler — debounced to coalesce keystrokes.
   const debouncedSave = useDebouncedCallback((value: string) => {
-    updatePageContent(pageId, value).catch((err) => {
+    if (externalContentRef.current !== null) return;
+    updatePageContent(pageId, value).then(() => {
+      if (controllerRef.current?.getValue() === value) dirtyRef.current = false;
+    }).catch((err) => {
       console.error('[editor] save failed:', err);
+      setSyncStatus(err instanceof Error ? err.message : String(err));
     });
   }, 600);
 
@@ -47,7 +56,11 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
 
     const controller = mountEditor(containerRef.current, {
       initialDoc: initialContent,
-      onChange: debouncedSave,
+      onChange: (value) => {
+        if (syncingRef.current) return;
+        dirtyRef.current = true;
+        debouncedSave(value);
+      },
     });
 
     controllerRef.current = controller;
@@ -113,6 +126,31 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
   }, [pageId]);
 
   useEffect(() => {
+    const controller = controllerRef.current;
+    if (!controller) return;
+    const current = controller.getValue();
+    if (current === initialContent) {
+      dirtyRef.current = false;
+      externalContentRef.current = null;
+      queueMicrotask(() => setExternalContent(null));
+      return;
+    }
+    if (dirtyRef.current) {
+      debouncedSave.cancel();
+      externalContentRef.current = initialContent;
+      queueMicrotask(() => setExternalContent(initialContent));
+      return;
+    }
+    syncingRef.current = true;
+    controller.setValue(initialContent);
+    syncingRef.current = false;
+    queueMicrotask(() => {
+      setSyncStatus('Updated from disk');
+      window.setTimeout(() => setSyncStatus(null), 1600);
+    });
+  }, [debouncedSave, initialContent]);
+
+  useEffect(() => {
     const jump = (event: Event) => {
       const { line } = (event as CustomEvent<{ line: number }>).detail;
       const view = controllerRef.current?.view;
@@ -125,9 +163,37 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
     return () => window.removeEventListener('ley:editor-jump', jump);
   }, []);
 
+  function reloadExternalContent() {
+    const controller = controllerRef.current;
+    if (!controller || externalContentRef.current === null) return;
+    syncingRef.current = true;
+    controller.setValue(externalContentRef.current);
+    syncingRef.current = false;
+    dirtyRef.current = false;
+    externalContentRef.current = null;
+    setExternalContent(null);
+    setSyncStatus('Reloaded external version');
+  }
+
+  async function keepLocalContent() {
+    const value = controllerRef.current?.getValue();
+    if (value === undefined) return;
+    externalContentRef.current = null;
+    setExternalContent(null);
+    setSyncStatus('Saving your version…');
+    try {
+      await updatePageContent(pageId, value);
+      dirtyRef.current = false;
+      setSyncStatus('Your version saved');
+    } catch (error) {
+      setSyncStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   return (
     <div className="relative flex h-full w-full flex-col">
       <div ref={containerRef} className="min-h-0 w-full flex-1 overflow-hidden bg-background" data-testid="cm-editor" />
+      {externalContent !== null && <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-amber-400/30 bg-amber-400/8 px-3 py-2 text-micro text-muted-foreground-strong" role="alert"><span className="min-w-48 flex-1">This note changed outside Ley while you had unsaved edits.</span><button type="button" onClick={reloadExternalContent} className="rounded-md border border-border bg-background px-2 py-1 hover:bg-surface-2">Reload disk</button><button type="button" onClick={() => void keepLocalContent()} className="rounded-md bg-primary px-2 py-1 font-medium text-primary-foreground">Keep mine</button></div>}
       <div className="flex shrink-0 items-center justify-center gap-0.5 border-t border-border bg-surface-1/95 p-1 backdrop-blur" role="toolbar" aria-label="Markdown formatting">
         <FormatButton label="Bold" shortcut="⌘B" format="bold" controller={controllerRef}><Bold size={13} /></FormatButton>
         <FormatButton label="Italic" shortcut="⌘I" format="italic" controller={controllerRef}><Italic size={13} /></FormatButton>
@@ -137,6 +203,7 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
         <FormatButton label="Cycle task" format="task" controller={controllerRef}><ListChecks size={13} /></FormatButton>
       </div>
       {attachmentStatus && <div className="absolute bottom-12 right-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-meta text-foreground shadow-menu" role="status">{attachmentStatus}</div>}
+      {syncStatus && <button type="button" onClick={() => setSyncStatus(null)} className="absolute bottom-12 left-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-left text-meta text-foreground shadow-menu" role="status">{syncStatus}</button>}
     </div>
   );
 }

@@ -41,11 +41,13 @@ const CanvasModal = lazy(() => import('@/features/canvas/CanvasModal').then((mod
 export function Layout({
   vaultMode,
   vaultName,
+  watcherStatus,
   onRefreshVault,
   onSwitchVault,
 }: {
   vaultMode: 'desktop' | 'browser-folder' | 'browser-local';
   vaultName: string;
+  watcherStatus: 'inactive' | 'starting' | 'watching' | 'error';
   onRefreshVault: () => Promise<{ noteCount: number } | null>;
   onSwitchVault: () => Promise<void>;
 }) {
@@ -231,7 +233,7 @@ export function Layout({
         )}
       </div>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
-      {settingsOpen && <FeatureErrorBoundary feature="Settings" overlay><Suspense fallback={null}><SettingsModal open vaultMode={vaultMode} vaultName={vaultName} onRefreshVault={onRefreshVault} onSwitchVault={onSwitchVault} onClose={() => setSettingsOpen(false)} /></Suspense></FeatureErrorBoundary>}
+      {settingsOpen && <FeatureErrorBoundary feature="Settings" overlay><Suspense fallback={null}><SettingsModal open vaultMode={vaultMode} vaultName={vaultName} watcherStatus={watcherStatus} onRefreshVault={onRefreshVault} onSwitchVault={onSwitchVault} onClose={() => setSettingsOpen(false)} /></Suspense></FeatureErrorBoundary>}
       {graphOpen && <FeatureErrorBoundary feature="Graph" overlay><Suspense fallback={null}><GraphModal open onClose={() => setGraphOpen(false)} /></Suspense></FeatureErrorBoundary>}
       <CommandPalette
         open={commandOpen}

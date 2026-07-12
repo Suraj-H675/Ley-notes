@@ -1,10 +1,14 @@
+use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Component, Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Mutex, OnceLock},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tauri::{AppHandle, Emitter, State};
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Serialize)]
@@ -22,6 +26,38 @@ struct CanvasFile {
     path: String,
     content: String,
     updated_at: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultChange {
+    paths: Vec<String>,
+}
+
+struct ActiveVaultWatcher {
+    root: PathBuf,
+    _watcher: RecommendedWatcher,
+}
+
+#[derive(Default)]
+struct VaultWatcherState(Mutex<Option<ActiveVaultWatcher>>);
+
+static SUPPRESSED_CHANGES: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
+
+fn suppress_change(path: &Path) {
+    let changes = SUPPRESSED_CHANGES.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut changes) = changes.lock() {
+        changes.insert(path.to_path_buf(), Instant::now());
+    }
+}
+
+fn is_suppressed(path: &Path) -> bool {
+    let changes = SUPPRESSED_CHANGES.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut changes) = changes.lock() else {
+        return false;
+    };
+    changes.retain(|_, created| created.elapsed() < Duration::from_millis(750));
+    changes.contains_key(path)
 }
 
 fn unix_millis(value: Result<SystemTime, std::io::Error>) -> u64 {
@@ -109,6 +145,94 @@ fn visible_entry(entry: &DirEntry) -> bool {
     !name.starts_with('.') && name != "node_modules"
 }
 
+fn relevant_change_path(root: &Path, path: &Path) -> Option<String> {
+    if is_suppressed(path) {
+        return None;
+    }
+    let relative = path.strip_prefix(root).ok()?;
+    if relative.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|part| part.starts_with('.') || part == "node_modules")
+    }) {
+        return None;
+    }
+    let extension = relative.extension()?.to_str()?.to_lowercase();
+    if extension != "md" && extension != "canvas" {
+        return None;
+    }
+    Some(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn build_vault_watcher<F>(root: PathBuf, mut on_change: F) -> Result<RecommendedWatcher, String>
+where
+    F: FnMut(Vec<String>) + Send + 'static,
+{
+    let event_root = root.clone();
+    let mut watcher = RecommendedWatcher::new(
+        move |result: notify::Result<Event>| {
+            let Ok(event) = result else { return };
+            let mut paths: Vec<String> = event
+                .paths
+                .iter()
+                .filter_map(|path| relevant_change_path(&event_root, path))
+                .collect();
+            paths.sort();
+            paths.dedup();
+            if !paths.is_empty() {
+                on_change(paths);
+            }
+        },
+        Config::default(),
+    )
+    .map_err(|error| format!("Cannot create vault watcher: {error}"))?;
+    watcher
+        .watch(&root, RecursiveMode::Recursive)
+        .map_err(|error| format!("Cannot watch vault: {error}"))?;
+    Ok(watcher)
+}
+
+#[tauri::command]
+fn watch_vault(
+    app: AppHandle,
+    state: State<'_, VaultWatcherState>,
+    vault_path: String,
+) -> Result<(), String> {
+    let root = canonical_vault(&vault_path)?;
+    let watcher = build_vault_watcher(root.clone(), move |paths| {
+        let _ = app.emit("ley-vault-changed", VaultChange { paths });
+    })?;
+    let mut active = state
+        .0
+        .lock()
+        .map_err(|_| "Vault watcher lock is unavailable".to_string())?;
+    *active = Some(ActiveVaultWatcher {
+        root,
+        _watcher: watcher,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_watching_vault(
+    state: State<'_, VaultWatcherState>,
+    vault_path: String,
+) -> Result<(), String> {
+    let mut active = state
+        .0
+        .lock()
+        .map_err(|_| "Vault watcher lock is unavailable".to_string())?;
+    let requested = fs::canonicalize(&vault_path).unwrap_or_else(|_| PathBuf::from(vault_path));
+    if active
+        .as_ref()
+        .is_some_and(|watcher| watcher.root == requested)
+    {
+        *active = None;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn scan_vault(vault_path: String) -> Result<Vec<VaultFile>, String> {
     let root = canonical_vault(&vault_path)?;
@@ -194,6 +318,7 @@ fn write_canvas_file(
         .map_err(|error| format!("Canvas JSON is invalid: {error}"))?;
     let root = canonical_vault(&vault_path)?;
     let target = canvas_path(&root, &relative_path)?;
+    suppress_change(&target);
     let parent = target.parent().ok_or("The canvas has no parent folder")?;
     fs::create_dir_all(parent).map_err(|error| format!("Cannot create canvas folder: {error}"))?;
     let temp = parent.join(format!(
@@ -232,6 +357,8 @@ fn trash_canvas_file(vault_path: String, relative_path: String) -> Result<(), St
         candidate = trash.join(format!("{stem} {suffix}.canvas"));
         suffix += 1;
     }
+    suppress_change(&source);
+    suppress_change(&candidate);
     fs::rename(source, candidate).map_err(|error| format!("Cannot move canvas to .trash: {error}"))
 }
 
@@ -243,6 +370,7 @@ fn write_vault_file(
 ) -> Result<(), String> {
     let root = canonical_vault(&vault_path)?;
     let target = markdown_path(&root, &relative_path)?;
+    suppress_change(&target);
     let parent = target.parent().ok_or("The note has no parent folder")?;
     fs::create_dir_all(parent).map_err(|error| format!("Cannot create note folder: {error}"))?;
 
@@ -311,6 +439,8 @@ fn rename_vault_file(vault_path: String, from: String, to: String) -> Result<(),
         fs::create_dir_all(parent)
             .map_err(|error| format!("Cannot create destination folder: {error}"))?;
     }
+    suppress_change(&source);
+    suppress_change(&target);
     fs::rename(source, target).map_err(|error| format!("Cannot rename note: {error}"))
 }
 
@@ -337,6 +467,8 @@ fn trash_vault_file(vault_path: String, relative_path: String) -> Result<String,
         candidate = trash.join(format!("{stem} {suffix}.md"));
         suffix += 1;
     }
+    suppress_change(&source);
+    suppress_change(&candidate);
     fs::rename(source, &candidate)
         .map_err(|error| format!("Cannot move note to .trash: {error}"))?;
     Ok(candidate
@@ -349,6 +481,7 @@ fn trash_vault_file(vault_path: String, relative_path: String) -> Result<String,
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(VaultWatcherState::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scan_vault,
@@ -359,7 +492,9 @@ pub fn run() {
             write_vault_attachment,
             read_vault_attachment,
             rename_vault_file,
-            trash_vault_file
+            trash_vault_file,
+            watch_vault,
+            stop_watching_vault
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ley");
@@ -452,6 +587,27 @@ mod tests {
         assert!(root.join(".trash/Ideas.canvas").is_file());
         assert!(scan_canvases(vault.clone()).unwrap().is_empty());
         assert!(write_canvas_file(vault, "../escape.canvas".into(), "{}".into()).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn native_watcher_reports_external_markdown_changes_and_ignores_hidden_files() {
+        let root = std::env::temp_dir().join(format!("ley-watcher-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".trash")).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let watcher = build_vault_watcher(root.clone(), move |paths| {
+            let _ = sender.send(paths);
+        })
+        .unwrap();
+
+        fs::write(root.join("External.md"), "# Changed outside Ley").unwrap();
+        let paths = receiver.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(paths.contains(&"External.md".to_string()));
+        assert!(relevant_change_path(&root, &root.join(".trash/Hidden.md")).is_none());
+        assert!(relevant_change_path(&root, &root.join("image.png")).is_none());
+
+        drop(watcher);
         fs::remove_dir_all(root).unwrap();
     }
 }
