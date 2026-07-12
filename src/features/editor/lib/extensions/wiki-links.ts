@@ -36,7 +36,7 @@ export function wikiLinkDecoration(): Extension {
           );
           if (!link) return;
           view.contentDOM.dispatchEvent(new CustomEvent('ley:follow-link', {
-            detail: { target: link.target },
+            detail: { target: link.target, heading: link.heading, blockId: link.blockId },
             bubbles: true,
           }));
         },

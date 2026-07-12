@@ -8,23 +8,15 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'rea
 import { EditorView } from '@codemirror/view';
 import { Bold, Braces, Italic, Link2, ListChecks } from 'lucide-react';
 import { mountEditor, type EditorController } from '@/features/editor/lib/mount';
-import { useNavStore } from '@/shared/state/nav';
 import { useDebouncedCallback } from '@/shared/hooks/useDebounce';
-import { updatePageContent, createPage } from '@/core/vault/pages';
-import { resolveTitle } from '@/core/vault/page-index';
+import { updatePageContent } from '@/core/vault/pages';
 import { attachmentInsertion, saveAttachment } from '@/core/vault/attachments';
 import type { EditorFormat } from './lib/formatting';
+import { openWikiDestination, type WikiDestination } from './lib/open-wiki-destination';
 
 interface CodeMirrorEditorProps {
   pageId: string;
   initialContent: string;
-}
-
-async function followOrCreate(target: string): Promise<string> {
-  const resolved = await resolveTitle(target);
-  if (resolved) return resolved;
-  const created = await createPage({ title: target });
-  return created.id;
 }
 
 export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorProps) {
@@ -36,9 +28,6 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
   const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
   const [externalContent, setExternalContent] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
-
-  const openPage = useNavStore((s) => s.openPage);
-  const pushRecent = useNavStore((s) => s.pushRecent);
 
   // Save handler — debounced to coalesce keystrokes.
   const debouncedSave = useDebouncedCallback((value: string) => {
@@ -66,12 +55,9 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
     controllerRef.current = controller;
 
     const onFollow = async (e: Event) => {
-      const ce = e as CustomEvent<{ target: string }>;
-      const target = ce.detail?.target;
-      if (!target) return;
-      const id = await followOrCreate(target);
-      openPage(id);
-      pushRecent(id);
+      const destination = (e as CustomEvent<WikiDestination>).detail;
+      if (!destination?.target) return;
+      await openWikiDestination(destination);
     };
     controller.view.contentDOM.addEventListener('ley:follow-link', onFollow);
 
@@ -120,7 +106,7 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
     // initialContent is the doc snapshot when the editor mounts; we want a
     // Fresh editor for each new pageId rather than re-initialising on content
     // changes (those flow through debouncedSave). debouncedSave / openPage /
-    // pushRecent are stable (Zustand actions and a useMemo'd debouncer), so
+    // navigation and debouncing are stable, so
     // re-binding on every change is unnecessary churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageId]);

@@ -1,14 +1,9 @@
 import { Hash, ListTree } from 'lucide-react';
 import type { Page } from '@/infrastructure/database/schema';
-
-interface HeadingEntry {
-  level: number;
-  title: string;
-  line: number;
-}
+import { extractMarkdownHeadings } from '@/core/parser/destinations';
 
 export function OutlinePanel({ page }: { page: Page | undefined }) {
-  const headings = page ? extractHeadings(page.content) : [];
+  const headings = page ? extractMarkdownHeadings(page.content) : [];
   return (
     <div className="h-full overflow-y-auto px-3 py-4">
       <div className="mb-3 flex items-center gap-1.5 text-meta font-medium text-muted-foreground"><ListTree size={13} />Outline<span className="ml-auto text-micro">{headings.length}</span></div>
@@ -27,16 +22,4 @@ export function OutlinePanel({ page }: { page: Page | undefined }) {
       ))}
     </div>
   );
-}
-
-function extractHeadings(content: string): HeadingEntry[] {
-  const headings: HeadingEntry[] = [];
-  let inFence = false;
-  content.split('\n').forEach((line, index) => {
-    if (/^\s*(```|~~~)/.test(line)) { inFence = !inFence; return; }
-    if (inFence) return;
-    const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
-    if (match) headings.push({ level: match[1].length, title: match[2], line: index + 1 });
-  });
-  return headings;
 }

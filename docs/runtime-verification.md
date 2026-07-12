@@ -35,6 +35,9 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Typing `[[` exposes recent note suggestions; typing a partial title filters them.
 - Enter and Tab accept a completion and keep the current note open.
 - Normal click inside a wiki link positions the cursor; Ctrl/Cmd-click opens its target without creating an ID-named note.
+- Read-mode task clicks persist to Markdown, including tasks after an embed and tasks inside a partial-note embed.
+- Read-mode and Ctrl/Cmd-click wiki links honor both `#Heading` and `#^block-id` destinations and focus the exact source line.
+- Heading-scoped embeds stop at the next sibling heading; block embeds render only the referenced block.
 - The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.
 - An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.
 
