@@ -1,88 +1,164 @@
 /**
- * Full-text search over pages. Uses Flexsearch for fast prefix + token search.
+ * Reactive full-text index for the vault.
  *
- * Index strategy: a single Flexsearch Document indexed by page ID. On every
- * save we delete the old entry and re-add with the updated fields. We do NOT
- * re-tokenize the entire vault on each save (that would be O(n)).
- *
- * Why client-side and not a separate index store? Vaults are small (10k
- * pages typical, 50k ceiling in our plan). A single in-memory index keeps
- * the model simple — no sync, no persistence, just rebuild on cold start.
- *
- * Re-build on cold start is sub-100ms for 10k pages based on Flexsearch's
- * published benchmarks; users won't notice.
+ * Pages remain the source of truth. This module keeps a disposable in-memory
+ * FlexSearch index in sync with Dexie and can rebuild it at any time. Search
+ * never depends on callers remembering to manually index a write.
  */
 
 import FlexSearch from 'flexsearch';
-import type { Page } from '@/data/schema';
+import { liveQuery, type Subscription } from 'dexie';
+import { db } from '@/infrastructure/database/db';
+import type { Page, Tag } from '@/infrastructure/database/schema';
 
-/**
- * Flexsearch Document requires a string index signature. We model docs as
- * `{ id, title, content, tags }` and cast to `any` at the constructor so we
- * don't have to maintain the public API's exact field shape in our types.
- */
-type Doc = { [key: string]: string };
-
-const index = new FlexSearch.Document({
-  document: {
-    id: 'id',
-    index: [
-      { field: 'title', tokenize: 'forward' },
-      { field: 'content', tokenize: 'forward' },
-      { field: 'tags', tokenize: 'forward' },
-    ],
-    store: ['title', 'content', 'tags'],
-  },
-  tokenize: 'forward',
-});
-
-/** Add or replace a page in the index. */
-export async function indexPage(page: Page, tags: string[]): Promise<void> {
-  const doc: Doc = {
-    id: page.id,
-    title: page.title,
-    content: page.content.slice(0, 50_000), // cap per-page content for index size
-    tags: tags.join(' '),
-  };
-  await index.removeAsync(page.id);
-  await index.addAsync(doc);
+interface SearchDoc {
+  [key: string]: string | number;
+  id: string;
+  title: string;
+  content: string;
+  tags: string;
+  path: string;
+  aliases: string;
+  updatedAt: number;
 }
 
-/** Remove a page from the index. */
-export async function removePageFromIndex(pageId: string): Promise<void> {
-  await index.removeAsync(pageId);
+export interface PageSearchResult {
+  id: string;
+  title: string;
+  path: string;
+  snippet: string;
+  score: number;
 }
 
-/**
- * Search the index. Returns up to `limit` matching page IDs, ranked by Flexsearch.
- * Filter syntax: `tag:foo` (must have tag foo), `path:folder/` (path prefix).
- */
-export async function searchPages(
-  query: string,
-  limit = 20,
-): Promise<Array<{ id: string; title: string; score: number }>> {
-  const trimmed = query.trim();
-  if (!trimmed) return [];
+function createIndex() {
+  return new FlexSearch.Document({
+    document: {
+      id: 'id',
+      index: [
+        { field: 'title', tokenize: 'forward' },
+        { field: 'aliases', tokenize: 'forward' },
+        { field: 'content', tokenize: 'forward' },
+        { field: 'tags', tokenize: 'forward' },
+        { field: 'path', tokenize: 'forward' },
+      ],
+      store: ['title', 'content', 'tags', 'path', 'aliases', 'updatedAt'],
+    },
+    tokenize: 'forward',
+  });
+}
 
-  const filter = parseFilter(trimmed);
-  const results = await index.searchAsync(filter.terms, { limit, enrich: true });
+let index = createIndex();
+let docs = new Map<string, SearchDoc>();
+let subscription: Subscription | null = null;
+let consumers = 0;
+let rebuildVersion = 0;
+let ready = false;
 
-  // Flatten across fields (Flexsearch returns one result per field).
-  const seen = new Map<string, { title: string; score: number }>();
-  for (const fieldResult of results) {
-    for (const item of fieldResult.result) {
-      const id = String(item.id);
-      const title = String(item.doc?.title ?? '');
-      // Flexsearch's score is field-local; combine by best (lowest distance wins).
-      const score = seen.get(id)?.score ?? 0;
-      if (!seen.has(id) || score > 0) seen.set(id, { title, score: 1 });
-    }
+/** Start the Dexie → search-index bridge. Safe under React Strict Mode. */
+export function startSearchIndex(): () => void {
+  consumers += 1;
+  if (!subscription) {
+    subscription = liveQuery(async () => {
+      const [pages, tags] = await Promise.all([db.pages.toArray(), db.tags.toArray()]);
+      return { pages, tags };
+    }).subscribe({
+      next: ({ pages, tags }) => {
+        void rebuildIndex(pages, tags);
+      },
+      error: (error) => console.error('[search-index] live query failed:', error),
+    });
   }
 
-  // Convert to sorted list.
-  return [...seen.entries()]
-    .map(([id, v]) => ({ id, title: v.title, score: v.score }))
-    .sort((a, b) => b.score - a.score)
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    consumers = Math.max(0, consumers - 1);
+    if (consumers === 0) {
+      subscription?.unsubscribe();
+      subscription = null;
+    }
+  };
+}
+
+async function rebuildIndex(pages: Page[], tags: Tag[]): Promise<void> {
+  const version = ++rebuildVersion;
+  const tagsByPage = new Map<string, string[]>();
+  for (const row of tags) {
+    const values = tagsByPage.get(row.pageId) ?? [];
+    values.push(row.tag);
+    tagsByPage.set(row.pageId, values);
+  }
+
+  const nextIndex = createIndex();
+  const nextDocs = new Map<string, SearchDoc>();
+  for (const page of pages) {
+    if (page.deletedAt !== null) continue;
+    const doc: SearchDoc = {
+      id: page.id,
+      title: page.title,
+      content: page.content.slice(0, 100_000),
+      tags: (tagsByPage.get(page.id) ?? []).join(' '),
+      path: page.path,
+      aliases: page.aliases.join(' '),
+      updatedAt: page.updatedAt,
+    };
+    nextDocs.set(page.id, doc);
+    await nextIndex.addAsync(doc);
+  }
+
+  // A newer live-query emission won the race; discard this stale rebuild.
+  if (version !== rebuildVersion) return;
+  index = nextIndex;
+  docs = nextDocs;
+  ready = true;
+}
+
+async function ensureReady(): Promise<void> {
+  if (ready) return;
+  const [pages, tags] = await Promise.all([db.pages.toArray(), db.tags.toArray()]);
+  await rebuildIndex(pages, tags);
+}
+
+/**
+ * Search titles, aliases, content, tags, and paths.
+ *
+ * Operators are post-filters and work with or without free text:
+ * `tag:research`, `path:projects/`.
+ */
+export async function searchPages(query: string, limit = 20): Promise<PageSearchResult[]> {
+  await ensureReady();
+  const filter = parseFilter(query.trim());
+
+  if (!filter.terms) {
+    return [...docs.values()]
+      .filter((doc) => matchesFilters(doc, filter))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit)
+      .map((doc) => toResult(doc, '', 1));
+  }
+
+  const raw = await index.searchAsync(filter.terms, { limit: Math.max(limit * 4, 40), enrich: true });
+  const ranked = new Map<string, number>();
+  const queryLc = filter.terms.toLowerCase();
+
+  for (const fieldResult of raw) {
+    const fieldBoost = fieldResult.field === 'title' ? 50 : fieldResult.field === 'aliases' ? 35 : 10;
+    fieldResult.result.forEach((item, position) => {
+      const id = String(item.id);
+      const doc = docs.get(id);
+      if (!doc || !matchesFilters(doc, filter)) return;
+      let score = fieldBoost + Math.max(0, 30 - position);
+      const title = doc.title.toLowerCase();
+      if (title === queryLc) score += 100;
+      else if (title.startsWith(queryLc)) score += 60;
+      ranked.set(id, Math.max(ranked.get(id) ?? 0, score));
+    });
+  }
+
+  return [...ranked.entries()]
+    .map(([id, score]) => toResult(docs.get(id)!, filter.terms, score))
+    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
     .slice(0, limit);
 }
 
@@ -93,23 +169,45 @@ interface ParsedFilter {
 }
 
 function parseFilter(query: string): ParsedFilter {
-  const parts = query.split(/\s+/);
   const terms: string[] = [];
   let tag: string | undefined;
   let pathPrefix: string | undefined;
-  for (const p of parts) {
-    if (p.startsWith('tag:')) {
-      tag = p.slice(4);
-    } else if (p.startsWith('path:')) {
-      pathPrefix = p.slice(5);
-    } else {
-      terms.push(p);
-    }
+  for (const part of query.split(/\s+/).filter(Boolean)) {
+    if (part.toLowerCase().startsWith('tag:')) tag = part.slice(4).replace(/^#/, '').toLowerCase();
+    else if (part.toLowerCase().startsWith('path:')) pathPrefix = part.slice(5).toLowerCase();
+    else terms.push(part);
   }
   return { terms: terms.join(' '), tag, pathPrefix };
 }
 
-/** Returns the parsed filter for callers that want to apply post-filter logic. */
+function matchesFilters(doc: SearchDoc, filter: ParsedFilter): boolean {
+  const tags = String(doc.tags).toLowerCase().split(/\s+/);
+  if (filter.tag && !tags.some((tag) => tag === filter.tag || tag.startsWith(`${filter.tag}/`))) return false;
+  if (filter.pathPrefix && !String(doc.path).toLowerCase().startsWith(filter.pathPrefix)) return false;
+  return true;
+}
+
+function toResult(doc: SearchDoc, terms: string, score: number): PageSearchResult {
+  return {
+    id: doc.id,
+    title: String(doc.title),
+    path: String(doc.path),
+    snippet: makeSnippet(String(doc.content), terms),
+    score,
+  };
+}
+
+function makeSnippet(content: string, terms: string): string {
+  const compact = content.replace(/[#>*_`[\]]/g, '').replace(/\s+/g, ' ').trim();
+  if (!compact) return 'Empty note';
+  const needle = terms.split(/\s+/).find(Boolean)?.toLowerCase();
+  const at = needle ? compact.toLowerCase().indexOf(needle) : -1;
+  const start = at > 50 ? at - 40 : 0;
+  const prefix = start > 0 ? '…' : '';
+  const suffix = start + 150 < compact.length ? '…' : '';
+  return `${prefix}${compact.slice(start, start + 150)}${suffix}`;
+}
+
 export function getFilter(query: string): ParsedFilter {
   return parseFilter(query);
 }

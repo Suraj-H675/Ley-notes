@@ -3,7 +3,7 @@
  * with a unique name per test, so parallel test files don't share state.
  */
 
-import { db as defaultDb } from '@/data/db';
+import { db as defaultDb } from '@/infrastructure/database/db';
 
 /**
  * Clear all tables. Use between tests to start with a known state.

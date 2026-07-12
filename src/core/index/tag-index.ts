@@ -9,7 +9,7 @@
  * The Tag pane in the sidebar reads from this table grouped by tag path.
  */
 
-import { db } from '@/data/db';
+import { db } from '@/infrastructure/database/db';
 import { extractInlineTags } from '@/core/parser/tags';
 import { getFrontmatterTags } from '@/core/parser/frontmatter';
 

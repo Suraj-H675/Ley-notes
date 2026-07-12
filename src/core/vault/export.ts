@@ -8,7 +8,7 @@
  */
 
 import JSZip from 'jszip';
-import { db } from '@/data/db';
+import { db } from '@/infrastructure/database/db';
 import { serializeFrontmatter } from '@/core/parser/frontmatter';
 
 export async function exportVault(): Promise<Blob> {

@@ -6,17 +6,24 @@
  * idempotent so a crash mid-save leaves no orphan rows.
  */
 
-import { db } from '@/data/db';
-import { nanoid } from '@/lib/nanoid';
-import { slugify, uniqueSlug } from '@/lib/slug';
+import { db } from '@/infrastructure/database/db';
+import { nanoid } from '@/shared/lib/nanoid';
+import { slugify, uniqueSlug } from '@/shared/lib/slug';
 import {
   getAliases,
   parseFrontmatter,
 } from '@/core/parser/frontmatter';
-import { rebuildPageLinks } from '@/core/index/backlink';
+import { rebuildPageLinks, resolveGhostLinksForPage } from '@/core/index/backlink';
 import { rebuildPageTags } from '@/core/index/tag-index';
-import { now } from '@/lib/time';
-import type { Page } from '@/data/schema';
+import { now } from '@/shared/lib/time';
+import type { Page } from '@/infrastructure/database/schema';
+import { retargetWikiLinks } from '@/core/parser/wiki-links';
+import { serializeFrontmatter } from '@/core/parser/frontmatter';
+import {
+  renameActiveVaultFile,
+  trashActiveVaultFile,
+  writeActiveVaultFile,
+} from '@/infrastructure/vault/filesystem-vault';
 
 export interface CreatePageInput {
   title: string;
@@ -74,11 +81,13 @@ export async function createPage(input: CreatePageInput): Promise<Page> {
     deletedAt: null,
   };
 
+  await writeActiveVaultFile(path, serializeFrontmatter(page.frontmatter, page.content));
   await db.pages.add(page);
 
   // Initial index build.
   await rebuildPageLinks(page.id, page.content);
   await rebuildPageTags(page.id, page.content, page.frontmatter);
+  await resolveGhostLinksForPage(page);
 
   return page;
 }
@@ -94,10 +103,14 @@ export async function updatePageContent(
   const page = await db.pages.get(pageId);
   if (!page) throw new Error(`updatePageContent: page ${pageId} not found`);
 
-  const { frontmatter, body } = parseFrontmatter(content);
+  const hasFrontmatter = content.startsWith('---\n') || content.startsWith('---\r\n');
+  const parsed = hasFrontmatter ? parseFrontmatter(content) : { frontmatter: page.frontmatter, body: content };
+  const { frontmatter, body } = parsed;
   const aliases = getAliases(frontmatter);
 
   const ts = now();
+  await checkpointPage(page);
+  await writeActiveVaultFile(page.path, serializeFrontmatter(frontmatter, body));
   await db.pages.update(pageId, {
     content: body,
     frontmatter,
@@ -107,6 +120,29 @@ export async function updatePageContent(
 
   await rebuildPageLinks(pageId, body);
   await rebuildPageTags(pageId, body, frontmatter);
+}
+
+/** Update YAML properties without rewriting editor-visible Markdown. */
+export async function updatePageFrontmatter(
+  pageId: string,
+  frontmatter: Record<string, unknown>,
+): Promise<void> {
+  const page = await db.pages.get(pageId);
+  if (!page) throw new Error(`updatePageFrontmatter: page ${pageId} not found`);
+  const aliases = getAliases(frontmatter);
+  await checkpointPage(page);
+  await writeActiveVaultFile(page.path, serializeFrontmatter(frontmatter, page.content));
+  await db.pages.update(pageId, { frontmatter, aliases, updatedAt: now() });
+  await rebuildPageTags(pageId, page.content, frontmatter);
+  await resolveGhostLinksForPage({ ...page, frontmatter, aliases });
+}
+
+async function checkpointPage(page: Page): Promise<void> {
+  const revisions = await db.revisions.where('pageId').equals(page.id).toArray();
+  const latest = revisions.sort((left, right) => right.createdAt - left.createdAt)[0];
+  const snapshot = serializeFrontmatter(page.frontmatter, page.content);
+  if (latest && (now() - latest.createdAt < 5 * 60_000 || latest.content === snapshot)) return;
+  await db.revisions.add({ id: nanoid(), pageId: page.id, content: snapshot, createdAt: now() });
 }
 
 /**
@@ -139,7 +175,19 @@ export async function renamePage(pageId: string, newTitle: string): Promise<Page
     path,
     updatedAt: now(),
   };
+  const inbound = await db.links.where('targetPageId').equals(pageId).toArray();
+  const affectedSourceIds = [...new Set(inbound.map((link) => link.sourcePageId))];
+  await renameActiveVaultFile(page.path, path);
   await db.pages.update(pageId, updated);
+
+  // Obsidian-style automatic link maintenance. Each affected source is also
+  // persisted to disk through updatePageContent.
+  for (const sourceId of affectedSourceIds) {
+    const source = await db.pages.get(sourceId);
+    if (!source || source.deletedAt !== null) continue;
+    const nextContent = retargetWikiLinks(source.content, page.title, newTitle);
+    if (nextContent !== source.content) await updatePageContent(source.id, nextContent);
+  }
 
   return { ...page, ...updated } as Page;
 }
@@ -149,6 +197,9 @@ export async function renamePage(pageId: string, newTitle: string): Promise<Page
  * resolve gracefully until they're rebuilt on next save.
  */
 export async function deletePage(pageId: string): Promise<void> {
+  const page = await db.pages.get(pageId);
+  if (!page) return;
+  await trashActiveVaultFile(page.path);
   await db.pages.update(pageId, { deletedAt: now() });
   await db.links.where('sourcePageId').equals(pageId).delete();
   await db.tags.where('pageId').equals(pageId).delete();

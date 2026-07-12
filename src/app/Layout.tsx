@@ -3,30 +3,38 @@
  * right dock (backlinks). Toggles via the UI store.
  */
 
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { PanelLeft, PanelRight, Search, CalendarPlus, Settings as SettingsIcon, Network } from 'lucide-react';
-import { useUIStore } from '@/store/ui';
-import { useNavStore } from '@/store/nav';
-import { usePages, usePageById } from '@/hooks/usePages';
-import { useSearchHotkey } from '@/hooks/useSearchHotkey';
-import { useDailyNoteHotkey } from '@/hooks/useDailyNoteHotkey';
-import { useSettingsHotkey } from '@/hooks/useSettingsHotkey';
-import { useGraphHotkey } from '@/hooks/useGraphHotkey';
-import { FileTree } from './Sidebar/FileTree';
-import { RecentPane } from './Sidebar/RecentPane';
-import { TagPane } from './Sidebar/TagPane';
-import { EditorTabs } from './Editor/EditorTabs';
-import { CodeMirrorEditor } from './Editor/CodeMirrorEditor';
-import { BacklinksPanel } from './Backlinks/BacklinksPanel';
-import { GraphView } from './Graph/GraphView';
-import { GraphModal } from './Graph/GraphModal';
-import { SearchModal } from './Search/SearchModal';
-import { SettingsModal } from './Settings/SettingsModal';
-import { Button } from '@/ui/Button';
-import { EmptyState } from '@/ui/EmptyState';
-import { Kbd } from '@/ui/Kbd';
+import { useUIStore } from '@/shared/state/ui';
+import { useNavStore } from '@/shared/state/nav';
+import { usePages, usePageById } from '@/features/notes/usePages';
+import { useSearchHotkey } from '@/features/search/useSearchHotkey';
+import { useDailyNoteHotkey } from '@/features/notes/useDailyNoteHotkey';
+import { useSettingsHotkey } from '@/features/settings/useSettingsHotkey';
+import { useGraphHotkey } from '@/features/graph/useGraphHotkey';
+import { useCommandPaletteHotkey } from '@/features/commands/useCommandPaletteHotkey';
+import { FileTree } from '@/features/sidebar/FileTree';
+import { RecentPane } from '@/features/sidebar/RecentPane';
+import { TagPane } from '@/features/sidebar/TagPane';
+import { EditorTabs } from '@/features/editor/EditorTabs';
+import { BacklinksPanel } from '@/features/backlinks/BacklinksPanel';
+import { SearchModal } from '@/features/search/SearchModal';
+import { CommandPalette } from '@/features/commands/CommandPalette';
+import { NewNoteModal } from '@/features/editor/NewNoteModal';
+import { Button } from '@/shared/components/Button';
+import { EmptyState } from '@/shared/components/EmptyState';
+import { Kbd } from '@/shared/components/Kbd';
 import { startPageIndex } from '@/core/vault/page-index';
+import { startSearchIndex } from '@/core/index/search';
 import { getOrCreateDailyNote } from '@/core/vault/daily-notes';
+import { db } from '@/infrastructure/database/db';
+import { OutlinePanel } from '@/features/outline/OutlinePanel';
+import { RevisionPanel } from '@/features/history/RevisionPanel';
+
+const GraphView = lazy(() => import('@/features/graph/GraphView').then((module) => ({ default: module.GraphView })));
+const GraphModal = lazy(() => import('@/features/graph/GraphModal').then((module) => ({ default: module.GraphModal })));
+const SettingsModal = lazy(() => import('@/features/settings/SettingsModal').then((module) => ({ default: module.SettingsModal })));
+const NoteWorkspace = lazy(() => import('@/features/editor/NoteWorkspace').then((module) => ({ default: module.NoteWorkspace })));
 
 export function Layout() {
   const theme = useUIStore((s) => s.theme);
@@ -42,19 +50,38 @@ export function Layout() {
   const [searchOpen, setSearchOpen] = useSearchHotkey();
   const [settingsOpen, setSettingsOpen] = useSettingsHotkey();
   const [graphOpen, setGraphOpen] = useGraphHotkey();
+  const [commandOpen, setCommandOpen] = useCommandPaletteHotkey();
+  const [newNoteOpen, setNewNoteOpen] = useState(false);
+  const [newNoteFolder, setNewNoteFolder] = useState('');
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
-  // Kick off the page-index bridge so the CM autocomplete stays in sync.
-  useEffect(() => startPageIndex(), []);
+  // Keep the disposable navigation and search indexes synchronized with the vault.
+  useEffect(() => {
+    const stopPageIndex = startPageIndex();
+    const stopSearchIndex = startSearchIndex();
+    return () => {
+      stopPageIndex();
+      stopSearchIndex();
+    };
+  }, []);
 
-  // Global hotkeys (Cmd+P, Cmd+D, Cmd+,, Cmd+G).
-  useSearchHotkey();
+  // Global hotkeys not already owned by their modal hooks.
   useDailyNoteHotkey();
-  useSettingsHotkey();
-  useGraphHotkey();
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
+        event.preventDefault();
+        setNewNoteFolder('');
+        setNewNoteOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   async function openDailyNote() {
     const note = await getOrCreateDailyNote();
@@ -82,9 +109,8 @@ export function Layout() {
             className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-meta text-muted-foreground hover:bg-surface-3"
           >
             <Search size={12} />
-            <span>Search</span>
-            <Kbd>⌘</Kbd>
-            <Kbd>P</Kbd>
+            <span className="hidden sm:inline">Open note</span>
+            <span className="hidden sm:flex"><Kbd>⌘</Kbd><Kbd>O</Kbd></span>
           </button>
           <Button
             size="sm"
@@ -94,7 +120,7 @@ export function Layout() {
             title="Open today's daily note"
           >
             <CalendarPlus size={14} />
-            <Kbd>⌘D</Kbd>
+            <span className="hidden md:inline"><Kbd>⌘D</Kbd></span>
           </Button>
           <Button
             size="sm"
@@ -104,7 +130,7 @@ export function Layout() {
             title="Graph view (⌘G)"
           >
             <Network size={14} />
-            <Kbd>⌘G</Kbd>
+            <span className="hidden md:inline"><Kbd>⌘G</Kbd></span>
           </Button>
           <Button
             size="sm"
@@ -115,7 +141,7 @@ export function Layout() {
           >
             <SettingsIcon size={14} />
           </Button>
-          <Button size="sm" variant="ghost" onClick={toggleRightDock} aria-label="Toggle right dock">
+          <Button size="sm" variant="ghost" className="hidden lg:inline-flex" onClick={toggleRightDock} aria-label="Toggle right dock">
             <PanelRight size={14} />
           </Button>
         </div>
@@ -124,8 +150,8 @@ export function Layout() {
       {/* Main: sidebar / editor / right dock */}
       <div className="flex flex-1 overflow-hidden">
         {sidebarOpen && (
-          <aside className="flex w-64 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-surface-1 py-3">
-            <FileTree />
+          <aside className="fixed inset-y-10 left-0 z-30 flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-surface-1 py-3 shadow-menu md:static md:w-64 md:shadow-none">
+            <FileTree onNewPage={(folder) => { setNewNoteFolder(folder ?? ''); setNewNoteOpen(true); }} />
             <div className="mx-2 border-t border-border" />
             <RecentPane />
             <div className="mx-2 border-t border-border" />
@@ -135,8 +161,8 @@ export function Layout() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           <EditorTabs />
-          {activeTab && activePage ? (
-            <CodeMirrorEditor key={activeTab} pageId={activeTab} initialContent={activePage.content} />
+          {activeTab && activePage?.id === activeTab ? (
+            <Suspense fallback={<PanelLoading label="Opening note…" />}><NoteWorkspace key={activeTab} page={activePage} /></Suspense>
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <EmptyState
@@ -152,9 +178,9 @@ export function Layout() {
         </main>
 
         {rightDockOpen && (
-          <aside className="flex w-80 shrink-0 flex-col border-l border-border bg-surface-1">
+          <aside className="hidden w-80 shrink-0 flex-col border-l border-border bg-surface-1 lg:flex">
             <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
-              {(['backlinks', 'graph'] as const).map((t) => (
+              {(['backlinks', 'outline', 'history', 'graph'] as const).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -172,16 +198,37 @@ export function Layout() {
             <div className="min-h-0 flex-1">
               {rightDockTab === 'backlinks' ? (
                 <BacklinksPanel pageId={activeTab} />
+              ) : rightDockTab === 'outline' ? (
+                <OutlinePanel page={activePage} />
+              ) : rightDockTab === 'history' ? (
+                <RevisionPanel pageId={activeTab} />
               ) : (
-                <GraphView activePageId={activeTab} />
+                <Suspense fallback={<PanelLoading label="Building local graph…" />}><GraphView activePageId={activeTab} /></Suspense>
               )}
             </div>
           </aside>
         )}
       </div>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <GraphModal open={graphOpen} onClose={() => setGraphOpen(false)} />
+      {settingsOpen && <Suspense fallback={null}><SettingsModal open onClose={() => setSettingsOpen(false)} /></Suspense>}
+      {graphOpen && <Suspense fallback={null}><GraphModal open onClose={() => setGraphOpen(false)} /></Suspense>}
+      <CommandPalette
+        open={commandOpen}
+        onClose={() => setCommandOpen(false)}
+        onNewNote={() => { setNewNoteFolder(''); setNewNoteOpen(true); }}
+        onQuickSwitcher={() => setSearchOpen(true)}
+        onDailyNote={openDailyNote}
+        onGraph={() => setGraphOpen(true)}
+        onSettings={() => setSettingsOpen(true)}
+        onToggleSidebar={toggleSidebar}
+        onToggleRightDock={toggleRightDock}
+        onSetTheme={(nextTheme) => { useUIStore.getState().setTheme(nextTheme); void db.settings.put({ key: 'theme', value: nextTheme }); }}
+      />
+      <NewNoteModal open={newNoteOpen} initialFolder={newNoteFolder} onClose={() => setNewNoteOpen(false)} />
     </div>
   );
+}
+
+function PanelLoading({ label }: { label: string }) {
+  return <div className="flex h-full items-center justify-center text-micro text-muted-foreground">{label}</div>;
 }

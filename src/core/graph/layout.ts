@@ -117,14 +117,16 @@ export function layoutGraph(
 }
 
 /**
- * Seed each node with a random (x, y) position so the FA1 algorithm has
- * something to spread out. Positions are uniformly distributed in a circle
- * of radius `r` around the origin.
+ * Seed nodes deterministically on a sunflower spiral. Force layouts are
+ * sensitive to their initial state; deterministic seeds prevent the graph
+ * from jumping between opens and keep tests reproducible.
  */
 function seedInitialPositions(graph: Graph, r = 50): void {
-  for (const id of graph.nodes()) {
-    const angle = Math.random() * Math.PI * 2;
-    const radius = Math.sqrt(Math.random()) * r; // sqrt for uniform area density
+  const nodes = graph.nodes().sort();
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  for (const [index, id] of nodes.entries()) {
+    const angle = index * goldenAngle;
+    const radius = Math.sqrt((index + 1) / Math.max(1, nodes.length)) * r;
     const x = radius * Math.cos(angle);
     const y = radius * Math.sin(angle);
     graph.setNodeAttribute(id, 'x', x);

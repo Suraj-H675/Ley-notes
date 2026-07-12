@@ -17,8 +17,8 @@
 
 import Graph from 'graphology';
 import louvain from 'graphology-communities-louvain';
-import type { Link, Page } from '@/data/schema';
-import type { Tag } from '@/data/schema';
+import type { Link, Page } from '@/infrastructure/database/schema';
+import type { Tag } from '@/infrastructure/database/schema';
 
 export interface GraphNodeAttrs {
   label: string;

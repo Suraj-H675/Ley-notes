@@ -9,7 +9,7 @@
  * Idempotent — if today's daily note already exists, just opens it.
  */
 
-import { db } from '@/data/db';
+import { db } from '@/infrastructure/database/db';
 import { createPage, getPageByTitle } from './pages';
 import { applyTemplate } from './templates';
 import { format } from 'date-fns';

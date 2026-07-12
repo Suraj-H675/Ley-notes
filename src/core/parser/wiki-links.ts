@@ -42,7 +42,7 @@ export interface WikiLink {
 // links with brackets inside prose naturally and skip code blocks
 // unambiguously.
 const FENCE_RE = /^(```|~~~)/;
-const WIKI_RE = /(!?)\[\[([^[\]\n|#^]+)(?:\|([^\]\n]+))?(?:#([^\]\n]+))?\]\]/g;
+const WIKI_RE = /(!?)\[\[([^\]\n]+)\]\]/g;
 
 export function extractWikiLinks(source: string): WikiLink[] {
   const results: WikiLink[] = [];
@@ -75,9 +75,14 @@ export function extractWikiLinks(source: string): WikiLink[] {
         const key = `${cursor + m.index}::${m[0]}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        const target = m[2].trim();
-        const alias = m[3] ? m[3].trim() : null;
-        const anchor = m[4] ?? null;
+        const rawInner = m[2];
+        const pipeAt = rawInner.indexOf('|');
+        const destination = (pipeAt >= 0 ? rawInner.slice(0, pipeAt) : rawInner).trim();
+        const alias = pipeAt >= 0 ? rawInner.slice(pipeAt + 1).trim() || null : null;
+        const hashAt = destination.indexOf('#');
+        const target = (hashAt >= 0 ? destination.slice(0, hashAt) : destination).trim();
+        const anchor = hashAt >= 0 ? destination.slice(hashAt + 1).trim() || null : null;
+        if (!target) continue;
         let heading: string | null = null;
         let blockId: string | null = null;
         if (anchor) {
@@ -103,6 +108,21 @@ export function extractWikiLinks(source: string): WikiLink[] {
   }
 
   return results;
+}
+
+/** Retarget links to a renamed page without touching code spans or fences. */
+export function retargetWikiLinks(source: string, oldTitle: string, newTitle: string): string {
+  const matches = extractWikiLinks(source)
+    .filter((link) => link.target.localeCompare(oldTitle, undefined, { sensitivity: 'accent' }) === 0)
+    .sort((left, right) => right.position - left.position);
+  let output = source;
+  for (const link of matches) {
+    const anchor = link.blockId ? `#^${link.blockId}` : link.heading ? `#${link.heading}` : '';
+    const alias = link.alias ? `|${link.alias}` : '';
+    const replacement = `${link.isEmbed ? '!' : ''}[[${newTitle}${anchor}${alias}]]`;
+    output = `${output.slice(0, link.position)}${replacement}${output.slice(link.position + link.raw.length)}`;
+  }
+  return output;
 }
 
 /**

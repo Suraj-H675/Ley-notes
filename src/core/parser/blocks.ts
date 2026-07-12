@@ -12,7 +12,7 @@
  * non-blank lines.
  */
 
-import { blockId } from '@/lib/nanoid';
+import { blockId } from '@/shared/lib/nanoid';
 
 export type BlockType =
   | 'paragraph'

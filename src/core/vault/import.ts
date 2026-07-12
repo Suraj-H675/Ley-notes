@@ -5,16 +5,16 @@
  */
 
 import JSZip from 'jszip';
-import { db } from '@/data/db';
-import { nanoid } from '@/lib/nanoid';
+import { db } from '@/infrastructure/database/db';
+import { nanoid } from '@/shared/lib/nanoid';
 import {
   parseFrontmatter,
   getAliases,
 } from '@/core/parser/frontmatter';
 import { extractWikiLinks } from '@/core/parser/wiki-links';
 import { extractInlineTags } from '@/core/parser/tags';
-import { now } from '@/lib/time';
-import type { Page } from '@/data/schema';
+import { now } from '@/shared/lib/time';
+import type { Page } from '@/infrastructure/database/schema';
 
 export async function importVaultFromFile(file: File): Promise<number> {
   const zip = await JSZip.loadAsync(file);

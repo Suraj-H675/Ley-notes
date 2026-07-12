@@ -12,11 +12,11 @@
  * pages+links tables. That's fine for single-user local-first — no contention.
  */
 
-import { db } from '@/data/db';
+import { db } from '@/infrastructure/database/db';
 import { extractWikiLinks } from '@/core/parser/wiki-links';
 import { resolveTitle } from '@/core/vault/page-index';
-import type { Link } from '@/data/schema';
-import { nanoid } from '@/lib/nanoid';
+import type { Link, Page } from '@/infrastructure/database/schema';
+import { nanoid } from '@/shared/lib/nanoid';
 
 /**
  * Rebuild the link rows for a single source page. Call after every save.
@@ -45,6 +45,15 @@ export async function rebuildPageLinks(
     await db.links.where('sourcePageId').equals(sourcePageId).delete();
     if (nowRows.length > 0) await db.links.bulkAdd(nowRows);
   });
+}
+
+/** Resolve dangling links when their target page is eventually created. */
+export async function resolveGhostLinksForPage(page: Page): Promise<void> {
+  const names = new Set([page.title, ...page.aliases].map((value) => value.toLowerCase()));
+  const unresolved = await db.links.filter((link) => link.targetPageId === null).toArray();
+  const matching = unresolved.filter((link) => names.has(link.targetTitle.toLowerCase()));
+  if (matching.length === 0) return;
+  await db.links.bulkPut(matching.map((link) => ({ ...link, targetPageId: page.id })));
 }
 
 /**

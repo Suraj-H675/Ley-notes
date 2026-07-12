@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest';
-import { db } from '@/data/db';
+import { db } from '@/infrastructure/database/db';
 import {
   createPage,
   deletePage,

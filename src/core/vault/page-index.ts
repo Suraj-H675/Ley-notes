@@ -11,7 +11,7 @@
  */
 
 import { liveQuery } from 'dexie';
-import { db } from '@/data/db';
+import { db } from '@/infrastructure/database/db';
 
 interface IndexEntry {
   id: string;
@@ -30,28 +30,40 @@ function notify() {
 }
 
 /** Start the live subscription that keeps the index in sync. Idempotent. */
-let started = false;
+let sub: import('dexie').Subscription | null = null;
+let consumers = 0;
 export function startPageIndex(): () => void {
-  if (started) return () => {};
-  started = true;
-  const sub = liveQuery(() => db.pages.toArray()).subscribe({
-    next: (pages) => {
-      entries = pages
-        .filter((p) => p.deletedAt === null)
-        .map((p) => ({
-          id: p.id,
-          title: p.title,
-          display: p.title,
-          lcTitle: p.lcTitle,
-          aliases: p.aliases,
-        }));
-      notify();
-    },
-    error: (err) => {
-      console.error('[page-index] liveQuery error:', err);
-    },
-  });
-  return () => sub.unsubscribe();
+  consumers += 1;
+  if (!sub) {
+    sub = liveQuery(() => db.pages.toArray()).subscribe({
+      next: (pages) => {
+        entries = pages
+          .filter((p) => p.deletedAt === null)
+          .map((p) => ({
+            id: p.id,
+            title: p.title,
+            display: p.title,
+            lcTitle: p.lcTitle,
+            aliases: p.aliases,
+          }));
+        notify();
+      },
+      error: (err) => {
+        console.error('[page-index] liveQuery error:', err);
+      },
+    });
+  }
+
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    consumers = Math.max(0, consumers - 1);
+    if (consumers === 0) {
+      sub?.unsubscribe();
+      sub = null;
+    }
+  };
 }
 
 export function getPageIndex(): IndexEntry[] {

@@ -3,6 +3,7 @@ import {
   completeWikiLink,
   extractWikiLinkTargets,
   extractWikiLinks,
+  retargetWikiLinks,
 } from './wiki-links';
 
 describe('extractWikiLinks', () => {
@@ -35,6 +36,11 @@ describe('extractWikiLinks', () => {
     const r = extractWikiLinks('see [[Foo#^abc123]]');
     expect(r[0].target).toBe('Foo');
     expect(r[0].blockId).toBe('abc123');
+  });
+
+  it('extracts Obsidian heading links with aliases', () => {
+    const [link] = extractWikiLinks('[[Foo#Deep section|read this]]');
+    expect(link).toMatchObject({ target: 'Foo', heading: 'Deep section', alias: 'read this' });
   });
 
   it('marks embeds via !', () => {
@@ -72,6 +78,15 @@ describe('extractWikiLinks', () => {
   it('handles titles with spaces', () => {
     const r = extractWikiLinks('[[My Note Title]]');
     expect(r[0].target).toBe('My Note Title');
+  });
+});
+
+describe('retargetWikiLinks', () => {
+  it('updates normal, anchored, aliased, and embedded links while preserving code', () => {
+    const source = '[[Old]] [[Old#Part|label]] ![[Old#^block]] `[[Old]]`\n```\n[[Old]]\n```';
+    expect(retargetWikiLinks(source, 'Old', 'New title')).toBe(
+      '[[New title]] [[New title#Part|label]] ![[New title#^block]] `[[Old]]`\n```\n[[Old]]\n```',
+    );
   });
 });
 
