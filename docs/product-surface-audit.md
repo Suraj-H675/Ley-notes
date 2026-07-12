@@ -45,6 +45,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Editable title | Keep | Renames the filesystem note and retargets incoming wiki links. |
 | Edit / Read modes | Keep | Editing and composed reading are materially different tasks; note embeds resolve only in reading mode. |
 | Formatting toolbelt | Add | Bold, italic, note-link, code, and task actions remain reachable on touch and short screens; desktop shortcuts use the same underlying Markdown transactions. |
+| In-note find and replace | Add | CodeMirror owns scoped search, next/previous match navigation, replace/replace-all, case, regular-expression, and whole-word behavior. `Cmd/Ctrl+F` and the touch toolbelt open the same accessible panel. |
 | Wiki-link completion | Improve | Official CodeMirror completion now owns positioning, keyboard precedence, and accessibility. Selecting a result inserts without navigating; normal click edits and Ctrl/Cmd-click follows. |
 | Attach | Improve | Now writes real binary files via desktop, browser-folder, or browser-local adapters; paste and drag/drop share the same path. |
 | Properties | Keep | YAML frontmatter remains portable and visible rather than hidden in proprietary metadata. |

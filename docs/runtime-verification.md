@@ -41,6 +41,9 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Starring a note updates the workspace button and Favorites sidebar immediately; the state survives reload and is also reachable through the explorer context menu and command palette.
 - Trashing a favorite hides it without discarding the preference; restoring the note restores its place in Favorites.
 - At 320×568, Favorites remains readable and reachable with no horizontal document overflow.
+- `Cmd/Ctrl+F` and the editor Find button open the same focused in-note search panel; next/previous, replace, replace-all, case, regular-expression, and whole-word controls operate on source Markdown.
+- Replacements persist after the normal editor debounce and reload. Escape closes the panel without invoking browser page search.
+- At 320×568, the search panel remains fully reachable without horizontal overflow and stays beneath the mobile sidebar overlay.
 - The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.
 - An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.
 

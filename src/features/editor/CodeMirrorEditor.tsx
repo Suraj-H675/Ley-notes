@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { EditorView } from '@codemirror/view';
-import { Bold, Braces, Italic, Link2, ListChecks } from 'lucide-react';
+import { Bold, Braces, Italic, Link2, ListChecks, Search } from 'lucide-react';
 import { mountEditor, type EditorController } from '@/features/editor/lib/mount';
 import { useDebouncedCallback } from '@/shared/hooks/useDebounce';
 import { updatePageContent } from '@/core/vault/pages';
@@ -187,6 +187,7 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
         <FormatButton label="Inline code" shortcut="⌘⇧`" format="code" controller={controllerRef}><Braces size={13} /></FormatButton>
         <span className="mx-0.5 h-4 w-px bg-border" />
         <FormatButton label="Cycle task" format="task" controller={controllerRef}><ListChecks size={13} /></FormatButton>
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => controllerRef.current?.openSearch()} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Find and replace" title="Find and replace (⌘F)"><Search size={13} /><span className="hidden sm:inline">Find</span></button>
       </div>
       {attachmentStatus && <div className="absolute bottom-12 right-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-meta text-foreground shadow-menu" role="status">{attachmentStatus}</div>}
       {syncStatus && <button type="button" onClick={() => setSyncStatus(null)} className="absolute bottom-12 left-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-left text-meta text-foreground shadow-menu" role="status">{syncStatus}</button>}

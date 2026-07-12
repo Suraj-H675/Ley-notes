@@ -25,6 +25,7 @@ import {
   HighlightStyle,
 } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
+import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from '@codemirror/search';
 
 import { wikiLinkDecoration, wikiLinkAutocomplete } from './extensions/wiki-links';
 import { applyEditorFormat, editorFormattingKeymap, type EditorFormat } from './formatting';
@@ -42,6 +43,7 @@ export interface EditorController {
   setValue: (value: string) => void;
   insertText: (value: string) => void;
   format: (format: EditorFormat) => void;
+  openSearch: () => void;
   focus: () => void;
   destroy: () => void;
 }
@@ -109,6 +111,96 @@ const cmTheme = EditorView.theme({
     backgroundColor: 'hsl(var(--surface-3))',
     color: 'hsl(var(--foreground))',
   },
+  '.cm-panels-top': {
+    borderBottom: '1px solid hsl(var(--border))',
+  },
+  // CodeMirror defaults sticky panels to z-index 300. Keep them inside the
+  // editor's stacking layer so Ley's mobile sidebar remains a true overlay.
+  '.cm-panels': {
+    zIndex: '1 !important',
+  },
+  '.cm-panel.cm-search': {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '10px 38px 10px 12px',
+    backgroundColor: 'hsl(var(--surface-1))',
+    color: 'hsl(var(--foreground))',
+    fontFamily: 'var(--font-sans)',
+  },
+  '.cm-panel.cm-search br': {
+    flexBasis: '100%',
+    height: '0',
+  },
+  '.cm-panel.cm-search .cm-textfield': {
+    height: '30px',
+    minWidth: '120px',
+    flex: '1 1 220px',
+    margin: '0',
+    border: '1px solid hsl(var(--border))',
+    borderRadius: '6px',
+    backgroundColor: 'hsl(var(--background))',
+    color: 'hsl(var(--foreground))',
+    padding: '0 9px',
+    fontFamily: 'var(--font-sans)',
+    fontSize: '12px',
+    outline: 'none',
+  },
+  '.cm-panel.cm-search .cm-textfield:focus': {
+    borderColor: 'hsl(var(--primary))',
+    boxShadow: '0 0 0 2px hsl(var(--primary) / 0.15)',
+  },
+  '.cm-panel.cm-search .cm-button': {
+    height: '28px',
+    margin: '0',
+    border: '1px solid hsl(var(--border))',
+    borderRadius: '6px',
+    backgroundImage: 'none',
+    backgroundColor: 'hsl(var(--surface-2))',
+    color: 'hsl(var(--foreground))',
+    padding: '0 9px',
+    fontFamily: 'var(--font-sans)',
+    fontSize: '11px',
+    textTransform: 'capitalize',
+  },
+  '.cm-panel.cm-search .cm-button:hover': {
+    backgroundColor: 'hsl(var(--surface-3))',
+  },
+  '.cm-panel.cm-search label': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '3px',
+    margin: '0 2px 0 0',
+    color: 'hsl(var(--muted-foreground))',
+    fontSize: '10px',
+  },
+  '.cm-panel.cm-search input[type=checkbox]': {
+    margin: '0',
+    accentColor: 'hsl(var(--primary))',
+  },
+  '.cm-panel.cm-search [name=close]': {
+    top: '9px',
+    right: '11px',
+    width: '24px',
+    height: '24px',
+    borderRadius: '5px',
+    color: 'hsl(var(--muted-foreground))',
+    fontSize: '18px',
+    lineHeight: '20px',
+  },
+  '.cm-panel.cm-search [name=close]:hover': {
+    backgroundColor: 'hsl(var(--surface-3))',
+    color: 'hsl(var(--foreground))',
+  },
+  '.cm-searchMatch': {
+    backgroundColor: 'hsl(var(--secondary) / 0.28)',
+    outline: '1px solid hsl(var(--secondary) / 0.35)',
+  },
+  '.cm-searchMatch-selected': {
+    backgroundColor: 'hsl(var(--primary) / 0.38)',
+    outline: '1px solid hsl(var(--primary) / 0.65)',
+  },
 });
 
 /**
@@ -152,7 +244,9 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       indentOnInput(),
       bracketMatching(),
       EditorView.lineWrapping,
-      keymap.of([...editorFormattingKeymap(), ...defaultKeymap, ...historyKeymap, indentWithTab]),
+      search({ top: true }),
+      highlightSelectionMatches({ highlightWordAroundCursor: true }),
+      keymap.of([...editorFormattingKeymap(), ...searchKeymap.filter((binding) => binding.key !== 'Mod-d'), ...defaultKeymap, ...historyKeymap, indentWithTab]),
       markdown(),
       syntaxHighlighting(cmHighlight),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
@@ -184,6 +278,7 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       view.focus();
     },
     format: (format) => { applyEditorFormat(view, format); },
+    openSearch: () => { openSearchPanel(view); },
     focus: () => view.focus(),
     destroy: () => view.destroy(),
   };
