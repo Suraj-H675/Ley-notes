@@ -2,12 +2,14 @@
  * RecentPane — shows the last 20 visited pages.
  */
 
-import { FileClock } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronDown, ChevronRight, FileClock } from 'lucide-react';
 import { useNavStore } from '@/shared/state/nav';
 import { useRecentPages } from '@/features/notes/usePages';
 import { cn } from '@/shared/lib/classnames';
 
 export function RecentPane() {
+  const [expanded, setExpanded] = useState(true);
   const recentIds = useNavStore((s) => s.recentPages);
   const openPage = useNavStore((s) => s.openPage);
   const pushRecent = useNavStore((s) => s.pushRecent);
@@ -18,11 +20,10 @@ export function RecentPane() {
 
   return (
     <div className="flex flex-col gap-1 px-2">
-      <div className="flex items-center gap-1.5 px-2 py-1 text-meta font-medium text-muted-foreground">
-        <FileClock size={12} />
-        <span>Recent</span>
-      </div>
-      {pages.map((p) => (
+      <button type="button" onClick={() => setExpanded((value) => !value)} className="flex items-center gap-1.5 rounded px-2 py-1 text-meta font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground" aria-expanded={expanded}>
+        {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<FileClock size={12} /><span>Recent</span><span className="ml-auto text-micro text-subtle-foreground">{pages.length}</span>
+      </button>
+      {expanded && pages.map((p) => (
         <button
           key={p.id}
           type="button"

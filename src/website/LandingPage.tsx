@@ -58,7 +58,7 @@ export function LandingPage() {
                   Start in your browser <ArrowRight size={15} />
                 </a>
                 <a href="#desktop" className="flex items-center justify-center gap-2 rounded-lg border border-white/12 bg-white/5 px-5 py-3 text-sm font-medium hover:bg-white/9">
-                  <Download size={15} /> Get the desktop app
+                  <Download size={15} /> Explore the desktop app
                 </a>
               </div>
               <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-white/38">
@@ -110,7 +110,7 @@ export function LandingPage() {
               <h2 className="mt-3 text-3xl font-semibold tracking-[-0.03em]">Keep every note in a folder you control.</h2>
               <p className="mt-3 leading-7 text-white/50">The native app reads and writes ordinary Markdown, supports external editors and Git, and keeps indexes disposable.</p>
             </div>
-            <div className="shrink-0 rounded-lg border border-white/10 bg-black/20 px-5 py-3 text-sm text-white/55">Desktop builds coming from this repository</div>
+            <div className="shrink-0 rounded-lg border border-white/10 bg-black/20 px-5 py-3 font-mono text-sm text-white/55">npm run desktop:build</div>
           </div>
         </section>
       </main>

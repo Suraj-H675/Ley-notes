@@ -9,12 +9,9 @@ import { Maximize2 } from 'lucide-react';
 import { useGraphData, applyLocalFilter } from './useGraphData';
 import { layoutGraph } from '@/core/graph/layout';
 import { GraphCanvas } from './GraphCanvas';
-import { useGraphHotkey } from '@/features/graph/useGraphHotkey';
-import { GraphModal } from './GraphModal';
 
-export function GraphView({ activePageId }: { activePageId: string | null }) {
+export function GraphView({ activePageId, onOpenFullGraph }: { activePageId: string | null; onOpenFullGraph: () => void }) {
   const [localMode, setLocalMode] = useState(false);
-  const [modalOpen, setModalOpen] = useGraphHotkey();
   const data = useGraphData();
 
   const fullGraph = data?.fullGraph ?? null;
@@ -40,7 +37,7 @@ export function GraphView({ activePageId }: { activePageId: string | null }) {
       <div className="absolute right-2 top-2 z-10 flex gap-1">
         <button
           type="button"
-          onClick={() => setModalOpen(true)}
+          onClick={onOpenFullGraph}
           className="flex items-center gap-1 rounded-sm border border-border bg-surface-2 px-1.5 py-0.5 text-micro text-muted-foreground hover:bg-surface-3"
           title="Open full graph (⌘G)"
         >
@@ -72,8 +69,6 @@ export function GraphView({ activePageId }: { activePageId: string | null }) {
           {data ? 'Open a page to see connections.' : 'Loading…'}
         </div>
       )}
-
-      <GraphModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </div>
   );
 }

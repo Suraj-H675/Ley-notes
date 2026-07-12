@@ -13,6 +13,9 @@ import { useNavStore } from '@/shared/state/nav';
 import { deletePage, renamePage } from '@/core/vault/pages';
 import { cn } from '@/shared/lib/classnames';
 import { useUIStore } from '@/shared/state/ui';
+import { useTagFilter } from '@/shared/state/tag-filter';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '@/infrastructure/database/db';
 
 interface TreeNode {
   name: string;
@@ -51,15 +54,23 @@ function buildTree(pages: Array<{ id: string; title: string; path: string }>): T
 
 export function FileTree({ onNewPage }: { onNewPage: (folder?: string) => void }) {
   const pages = usePages();
+  const activeTag = useTagFilter((state) => state.activeTag);
+  const taggedPageIds = useLiveQuery(async () => activeTag
+    ? new Set((await db.tags.where('tag').equals(activeTag).toArray()).map((tag) => tag.pageId))
+    : null, [activeTag]);
+  const visiblePages = useMemo(
+    () => activeTag ? (pages ?? []).filter((page) => taggedPageIds?.has(page.id)) : (pages ?? []),
+    [activeTag, pages, taggedPageIds],
+  );
   const tree = useMemo(
-    () => buildTree((pages ?? []).map((p) => ({ id: p.id, title: p.title, path: p.path }))),
-    [pages],
+    () => buildTree(visiblePages.map((p) => ({ id: p.id, title: p.title, path: p.path }))),
+    [visiblePages],
   );
 
   return (
     <div className="flex flex-col gap-1 px-2">
       <div className="flex items-center justify-between px-2 py-1">
-        <span className="text-meta font-medium text-muted-foreground">Pages</span>
+        <span className="truncate text-meta font-medium text-muted-foreground">{activeTag ? `Pages · #${activeTag}` : 'Pages'}</span>
         <button
           type="button"
           onClick={() => onNewPage()}
@@ -70,6 +81,7 @@ export function FileTree({ onNewPage }: { onNewPage: (folder?: string) => void }
         </button>
       </div>
       <Node node={tree} depth={0} onNewPage={onNewPage} />
+      {activeTag && visiblePages.length === 0 && <p className="px-2 py-3 text-micro leading-relaxed text-muted-foreground">No notes currently use #{activeTag}.</p>}
     </div>
   );
 }

@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
-import { BookOpen, Edit3, FileText } from 'lucide-react';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { BookOpen, Edit3, FileText, Paperclip } from 'lucide-react';
 import type { Page } from '@/infrastructure/database/schema';
 import { renamePage } from '@/core/vault/pages';
 import { PropertiesPanel } from './PropertiesPanel';
+import { attachmentInsertion, saveAttachment } from '@/core/vault/attachments';
 
 const MarkdownReadingView = lazy(() => import('./MarkdownReadingView').then((module) => ({ default: module.MarkdownReadingView })));
 const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor').then((module) => ({ default: module.CodeMirrorEditor })));
@@ -13,6 +14,8 @@ export function NoteWorkspace({ page }: { page: Page }) {
   const [mode, setMode] = useState<EditorMode>(() => (localStorage.getItem('ley:editor-mode') as EditorMode) || 'edit');
   const [title, setTitle] = useState(page.title);
   const [titleError, setTitleError] = useState<string | null>(null);
+  const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
+  const attachmentInput = useRef<HTMLInputElement>(null);
 
   async function commitTitle() {
     const next = title.trim();
@@ -29,6 +32,23 @@ export function NoteWorkspace({ page }: { page: Page }) {
   function changeMode(next: EditorMode) {
     setMode(next);
     localStorage.setItem('ley:editor-mode', next);
+  }
+
+  async function attachFiles(files: File[]) {
+    if (files.length === 0) return;
+    setAttachmentStatus('Adding…');
+    try {
+      const saved = await Promise.all(files.map((file) => saveAttachment(page.id, file)));
+      setMode('edit');
+      localStorage.setItem('ley:editor-mode', 'edit');
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent('ley:editor-insert', {
+        detail: { text: attachmentInsertion(saved) },
+      })), 80);
+      setAttachmentStatus(saved.length === 1 ? 'Added' : `${saved.length} added`);
+      window.setTimeout(() => setAttachmentStatus(null), 1800);
+    } catch (error) {
+      setAttachmentStatus(error instanceof Error ? error.message : String(error));
+    }
   }
 
   useEffect(() => {
@@ -57,6 +77,10 @@ export function NoteWorkspace({ page }: { page: Page }) {
           />
           <div className={`truncate font-mono text-micro ${titleError ? 'text-destructive' : 'text-subtle-foreground'}`}>{titleError ?? page.path}</div>
         </div>
+        <input ref={attachmentInput} type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,audio/mpeg,audio/wav,video/mp4,video/webm" className="hidden" onChange={(event) => { void attachFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
+        <button type="button" onClick={() => attachmentInput.current?.click()} className="flex items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-2 hover:text-foreground" title="Attach files">
+          <Paperclip size={12} /> {attachmentStatus ?? 'Attach'}
+        </button>
         <div className="flex rounded-md border border-border bg-surface-1 p-0.5">
           <ModeButton active={mode === 'edit'} onClick={() => changeMode('edit')} icon={<Edit3 size={12} />} label="Edit" />
           <ModeButton active={mode === 'read'} onClick={() => changeMode('read')} icon={<BookOpen size={12} />} label="Read" />

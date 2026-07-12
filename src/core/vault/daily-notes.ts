@@ -11,7 +11,7 @@
 
 import { db } from '@/infrastructure/database/db';
 import { createPage, getPageByTitle } from './pages';
-import { applyTemplate } from './templates';
+import { applyTemplate, templateFrontmatter } from './templates';
 import { format } from 'date-fns';
 
 export interface DailyNoteResult {
@@ -36,10 +36,14 @@ export async function getOrCreateDailyNote(
   }
 
   // Apply template.
+  const templatePath = (await db.settings.get('daily-note-template-path'))?.value;
+  const templatePage = typeof templatePath === 'string' && templatePath
+    ? await db.pages.where('path').equals(templatePath).first()
+    : undefined;
   const tmplSetting = await db.settings.get('daily-note-template');
-  const tmpl = (tmplSetting?.value as string) ?? `# {{date}}\n\n`;
+  const tmpl = templatePage?.content ?? (tmplSetting?.value as string) ?? `# {{date}}\n\n`;
   const content = applyTemplate(tmpl, { title, date });
 
-  const page = await createPage({ title, content });
+  const page = await createPage({ title, content, frontmatter: templatePage ? templateFrontmatter(templatePage) : undefined });
   return { pageId: page.id, title, created: true };
 }

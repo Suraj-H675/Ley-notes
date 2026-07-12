@@ -14,7 +14,7 @@ export function WebVaultLauncher({
   onBrowserLocal: () => void;
 }) {
   return (
-    <main className="relative flex h-full min-h-[600px] items-center justify-center overflow-hidden bg-background px-5 text-foreground">
+    <main className="relative flex min-h-full items-center justify-center overflow-y-auto bg-background px-5 py-12 text-foreground">
       <div className="pointer-events-none absolute inset-0 [background:radial-gradient(circle_at_50%_15%,hsl(var(--primary)/0.17),transparent_43%)]" />
       <section className="relative w-full max-w-2xl">
         <div className="mb-8 text-center">

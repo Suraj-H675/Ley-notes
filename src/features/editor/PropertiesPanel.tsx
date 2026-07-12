@@ -17,7 +17,7 @@ export function PropertiesPanel({ pageId, frontmatter }: { pageId: string; front
 
   const entries = Object.entries(frontmatter).filter(([key]) => key !== 'title');
   return (
-    <div className="mx-auto w-full max-w-[820px] px-10 pt-5">
+    <div className="mx-auto w-full max-w-[820px] px-4 pt-4 sm:px-10 sm:pt-5">
       <div className="rounded-lg border border-border bg-surface-1/55">
         <div className="flex items-center gap-2 px-3 py-2 text-micro font-medium uppercase tracking-wide text-muted-foreground">
           <Tags size={12} /> Properties

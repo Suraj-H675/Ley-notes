@@ -21,6 +21,10 @@ export async function exportVault(): Promise<Blob> {
     zip.file(p.path, body);
   }
 
+  for (const asset of await db.assets.toArray()) {
+    if (asset.filename.startsWith('attachments/')) zip.file(asset.filename, asset.blob);
+  }
+
   // Drop a manifest so the exporter knows it was a Ley vault.
   const manifest = {
     generator: 'Ley Notes',

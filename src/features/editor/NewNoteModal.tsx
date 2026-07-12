@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { FilePlus2, Folder } from 'lucide-react';
+import { FilePlus2, Files, Folder } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { createPage } from '@/core/vault/pages';
 import { useNavStore } from '@/shared/state/nav';
 import { Kbd } from '@/shared/components/Kbd';
 import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
+import { applyTemplate, listVaultTemplates, templateFrontmatter } from '@/core/vault/templates';
 
 export function NewNoteModal({
   open,
@@ -18,7 +20,9 @@ export function NewNoteModal({
   const [folder, setFolder] = useState(initialFolder);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [templateId, setTemplateId] = useState('');
   const titleRef = useRef<HTMLInputElement>(null);
+  const templates = useLiveQuery(listVaultTemplates, [], []);
 
   useEffect(() => {
     if (!open) return;
@@ -26,6 +30,7 @@ export function NewNoteModal({
       setTitle('');
       setFolder(initialFolder);
       setError(null);
+      setTemplateId('');
       titleRef.current?.focus();
     });
   }, [initialFolder, open]);
@@ -38,7 +43,13 @@ export function NewNoteModal({
     setBusy(true);
     setError(null);
     try {
-      const page = await createPage({ title: cleanTitle, folder: folder.trim().replace(/^\/+|\/+$/g, '') || undefined });
+      const template = templates.find((candidate) => candidate.id === templateId);
+      const page = await createPage({
+        title: cleanTitle,
+        folder: folder.trim().replace(/^\/+|\/+$/g, '') || undefined,
+        content: template ? applyTemplate(template.content, { title: cleanTitle }) : '',
+        frontmatter: template ? templateFrontmatter(template) : undefined,
+      });
       const nav = useNavStore.getState();
       nav.openPage(page.id);
       nav.pushRecent(page.id);
@@ -58,6 +69,14 @@ export function NewNoteModal({
           <label className="block text-meta text-muted-foreground-strong">
             Title
             <input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Untitled note" className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-foreground outline-none focus:border-primary" />
+          </label>
+          <label className="block text-meta text-muted-foreground-strong">
+            <span className="flex items-center gap-1"><Files size={13} />Template <span className="text-muted-foreground">(optional)</span></span>
+            <select value={templateId} onChange={(event) => setTemplateId(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-meta text-foreground outline-none focus:border-primary">
+              <option value="">Blank note</option>
+              {templates.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}
+            </select>
+            {templates.length === 0 && <span className="mt-1 block text-micro text-muted-foreground">Add Markdown files to the templates folder to use them here.</span>}
           </label>
           <label className="block text-meta text-muted-foreground-strong">
             <span className="flex items-center gap-1"><Folder size={13} />Folder <span className="text-muted-foreground">(optional)</span></span>

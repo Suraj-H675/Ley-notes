@@ -38,10 +38,8 @@ export function App() {
   // lands somewhere useful. If the vault is empty, the welcome page will be
   // the first result from seedIfEmpty.
   const firstPage = useLiveQuery(async () => {
-    const pages = await db.pages
-      .filter((p) => p.deletedAt === null)
-      .reverse()
-      .sortBy('updatedAt');
+    const pages = (await db.pages.filter((page) => page.deletedAt === null).toArray())
+      .sort((left, right) => right.updatedAt - left.updatedAt);
     return pages[0] ?? null;
   }, []);
 

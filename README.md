@@ -9,9 +9,12 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Real filesystem vaults on desktop, with atomic saves and a `.trash` folder
 - Browser folder vaults through the File System Access API, plus an explicit browser-local mode
 - Markdown editing and reading views with `[[wiki links]]`, aliases, heading links, and properties
+- Note embeds, pasted or dropped attachments, and safe vault-relative media rendering
 - Automatic backlinks, outgoing links, unlinked mentions, tags, and ghost-link resolution
 - Full-text search, quick switcher, command palette, daily notes, and keyboard navigation
 - Global and contextual knowledge graphs with deterministic layouts and community coloring
+- Interoperable JSON Canvas files with text cards, note cards, connections, and trash recovery
+- Vault-native templates for new notes and daily notes
 - Sparse local revision snapshots with a user-facing recovery panel
 - Offline-capable PWA and a separate public website
 
@@ -58,4 +61,4 @@ Browser-local mode is a compatibility option for browsers without folder access.
 
 ## Status
 
-Ley is under active development. Core note creation, editing, linking, search, graph, folder vaults, and recovery are functional; advanced Obsidian-style canvases, embeds, and plugin extensibility remain future work.
+Ley is under active development. Core note creation, editing, linking, embeds, attachments, templates, search, graph, JSON Canvas, folder vaults, and recovery are functional. Sync, a stable plugin API, and dedicated mobile clients remain future work.

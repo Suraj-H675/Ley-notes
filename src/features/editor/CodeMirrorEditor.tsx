@@ -4,13 +4,14 @@
  * listen for it once here and resolve-or-create the target.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { EditorView } from '@codemirror/view';
 import { mountEditor, type EditorController } from '@/features/editor/lib/mount';
 import { useNavStore } from '@/shared/state/nav';
 import { useDebouncedCallback } from '@/shared/hooks/useDebounce';
 import { updatePageContent, createPage } from '@/core/vault/pages';
 import { resolveTitle } from '@/core/vault/page-index';
+import { attachmentInsertion, saveAttachment } from '@/core/vault/attachments';
 
 interface CodeMirrorEditorProps {
   pageId: string;
@@ -27,6 +28,7 @@ async function followOrCreate(target: string): Promise<string> {
 export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<EditorController | null>(null);
+  const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
 
   const openPage = useNavStore((s) => s.openPage);
   const pushRecent = useNavStore((s) => s.pushRecent);
@@ -66,8 +68,45 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
     };
     controller.view.contentDOM.addEventListener('ley:follow-link', onFollow);
 
+    const insertFiles = async (files: File[]) => {
+      if (files.length === 0) return;
+      setAttachmentStatus(files.length === 1 ? 'Adding attachment…' : `Adding ${files.length} attachments…`);
+      try {
+        const saved = await Promise.all(files.map((file) => saveAttachment(pageId, file)));
+        controller.insertText(attachmentInsertion(saved));
+        setAttachmentStatus(saved.length === 1 ? 'Attachment added' : `${saved.length} attachments added`);
+        window.setTimeout(() => setAttachmentStatus(null), 1800);
+      } catch (error) {
+        setAttachmentStatus(error instanceof Error ? error.message : String(error));
+      }
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      const files = Array.from(event.clipboardData?.files ?? []);
+      if (files.length === 0) return;
+      event.preventDefault();
+      void insertFiles(files);
+    };
+    const onDrop = (event: DragEvent) => {
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      event.preventDefault();
+      void insertFiles(files);
+    };
+    const onInsert = (event: Event) => {
+      const text = (event as CustomEvent<{ text?: string }>).detail?.text;
+      if (text) controller.insertText(text);
+    };
+    controller.view.contentDOM.addEventListener('paste', onPaste);
+    controller.view.contentDOM.addEventListener('drop', onDrop);
+    window.addEventListener('ley:editor-insert', onInsert);
+    window.addEventListener('blur', debouncedSave.flush);
+
     return () => {
       controller.view.contentDOM.removeEventListener('ley:follow-link', onFollow);
+      controller.view.contentDOM.removeEventListener('paste', onPaste);
+      controller.view.contentDOM.removeEventListener('drop', onDrop);
+      window.removeEventListener('ley:editor-insert', onInsert);
+      window.removeEventListener('blur', debouncedSave.flush);
       controller.destroy();
       controllerRef.current = null;
     };
@@ -93,10 +132,9 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      className="h-full w-full overflow-auto bg-background"
-      data-testid="cm-editor"
-    />
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="h-full w-full overflow-auto bg-background" data-testid="cm-editor" />
+      {attachmentStatus && <div className="absolute bottom-4 right-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-meta text-foreground shadow-menu" role="status">{attachmentStatus}</div>}
+    </div>
   );
 }

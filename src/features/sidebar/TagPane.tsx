@@ -3,14 +3,16 @@
  * a tag to filter the graph or search.
  */
 
+import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Hash } from 'lucide-react';
+import { ChevronDown, ChevronRight, Hash } from 'lucide-react';
 import { db } from '@/infrastructure/database/db';
 import { cn } from '@/shared/lib/classnames';
 import { tagSegments } from '@/core/parser/tags';
 import { useTagFilter } from '@/shared/state/tag-filter';
 
 export function TagPane() {
+  const [expanded, setExpanded] = useState(false);
   const tags = useLiveQuery(async () => {
     const rows = await db.tags.toArray();
     const counts = new Map<string, number>();
@@ -27,8 +29,10 @@ export function TagPane() {
 
   return (
     <div className="flex flex-col gap-1 px-2">
-      <div className="flex items-center justify-between px-2 py-1">
-        <span className="text-meta font-medium text-muted-foreground">Tags</span>
+      <div className="flex items-center justify-between">
+        <button type="button" onClick={() => setExpanded((value) => !value)} className="flex flex-1 items-center gap-1.5 rounded px-2 py-1 text-meta font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground" aria-expanded={expanded}>
+          {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<Hash size={12} /><span>Tags</span><span className="ml-auto text-micro text-subtle-foreground">{tags.length}</span>
+        </button>
         {activeTag && (
           <button
             type="button"
@@ -39,7 +43,7 @@ export function TagPane() {
           </button>
         )}
       </div>
-      {tags.map(({ tag, count }) => {
+      {expanded && tags.map(({ tag, count }) => {
         const segs = tagSegments(tag);
         return (
           <button

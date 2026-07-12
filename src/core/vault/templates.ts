@@ -13,6 +13,8 @@
  */
 
 import { format } from 'date-fns';
+import { db } from '@/infrastructure/database/db';
+import type { Page } from '@/infrastructure/database/schema';
 
 export type TemplateVars = {
   title?: string;
@@ -22,6 +24,23 @@ export type TemplateVars = {
 };
 
 const VAR_RE = /\{\{\s*(date|time|title|uuid)\s*(?::([^}]+))?\}\}/g;
+
+export async function listVaultTemplates(): Promise<Page[]> {
+  const configured = (await db.settings.get('template-folder'))?.value;
+  const folder = typeof configured === 'string' && configured.trim() ? configured.trim() : 'templates';
+  const prefix = `${folder.replace(/^\/+|\/+$/g, '').toLowerCase()}/`;
+  return (await db.pages.toArray())
+    .filter((page) => page.deletedAt === null && page.path.toLowerCase().startsWith(prefix))
+    .sort((left, right) => left.title.localeCompare(right.title));
+}
+
+export function templateFrontmatter(page: Page): Record<string, unknown> {
+  const frontmatter = { ...page.frontmatter };
+  delete frontmatter.title;
+  delete frontmatter.alias;
+  delete frontmatter.aliases;
+  return frontmatter;
+}
 
 export function applyTemplate(tmpl: string, vars: TemplateVars = {}): string {
   const date = vars.date ?? new Date();

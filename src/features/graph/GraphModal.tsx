@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { X, Maximize2 } from 'lucide-react';
+import { SlidersHorizontal, X, Maximize2 } from 'lucide-react';
 import { Kbd } from '@/shared/components/Kbd';
 import {
   applyLocalFilter,
@@ -19,27 +19,29 @@ import { GraphControls, type GraphControlsState } from './GraphControls';
 import { GraphLegend } from './GraphLegend';
 import { layoutGraph } from '@/core/graph/layout';
 import { useNavStore } from '@/shared/state/nav';
+import { useTagFilter } from '@/shared/state/tag-filter';
 
 const SIDEBAR_WIDTH = 280;
 
 export function GraphModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const activePageId = useNavStore((s) => s.activeTab);
   const data = useGraphData();
+  const sidebarTag = useTagFilter((state) => state.activeTag);
 
   const fullGraph = data?.fullGraph ?? null;
 
   // Filter / display / physics state.
   const [query, setQuery] = useState('');
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState<string | null>(sidebarTag);
   const [orphansOnly, setOrphansOnly] = useState(false);
   const [colorMode, setColorMode] = useState<ColorMode>('community');
   const [linkThickness, setLinkThickness] = useState(1);
   const [showArrows, setShowArrows] = useState(true);
-  const [textFadeThreshold, setTextFadeThreshold] = useState(20);
   const [physics, setPhysics] = useState<PhysicsSettings>(DEFAULT_PHYSICS);
   const [localEnabled, setLocalEnabled] = useState(false);
   const [localDepth, setLocalDepth] = useState(2);
   const [hiddenCommunities, setHiddenCommunities] = useState<Set<number>>(new Set());
+  const [controlsOpen, setControlsOpen] = useState(() => window.matchMedia('(min-width: 768px)').matches);
 
   // Esc to close.
   useEffect(() => {
@@ -91,8 +93,6 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
     setLinkThickness,
     showArrows,
     setShowArrows,
-    textFadeThreshold,
-    setTextFadeThreshold,
     physics,
     setPhysics,
     localEnabled,
@@ -122,11 +122,13 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
           <Maximize2 size={14} className="text-muted-foreground" />
           <span className="text-body font-semibold">Graph view</span>
           {stats.pageCount > 0 && (
-            <span className="text-meta text-muted-foreground">
+            <span className="hidden text-meta text-muted-foreground sm:inline">
               — {stats.pageCount} pages · {stats.edgeCount} edges · {stats.communityCount} clusters
             </span>
           )}
         </div>
+        <div className="flex items-center gap-2">
+        <button type="button" onClick={() => setControlsOpen((value) => !value)} className="flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-meta text-muted-foreground md:hidden"><SlidersHorizontal size={12} />Controls</button>
         <button
           type="button"
           onClick={onClose}
@@ -136,12 +138,14 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
           Close
           <Kbd>esc</Kbd>
         </button>
+        </div>
       </header>
 
       {/* Body: sidebar + canvas */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="relative flex flex-1 overflow-hidden">
+        {controlsOpen && <button type="button" onClick={() => setControlsOpen(false)} className="absolute inset-0 z-10 bg-background/55 backdrop-blur-sm md:hidden" aria-label="Close graph controls" />}
         <aside
-          className="shrink-0 overflow-hidden border-r border-border bg-surface-1"
+          className={`absolute inset-y-0 left-0 z-20 shrink-0 overflow-hidden border-r border-border bg-surface-1 transition-transform md:static md:translate-x-0 ${controlsOpen ? 'translate-x-0' : '-translate-x-full'}`}
           style={{ width: SIDEBAR_WIDTH }}
         >
           <GraphControls state={controlsState} stats={stats} />
@@ -168,15 +172,7 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
           )}
         </aside>
 
-        <main
-          className="relative min-w-0 flex-1"
-          style={{
-            // Subtle radial vignette makes the dense graph center feel
-            // more "screen-like" without going pure black.
-            background:
-              'radial-gradient(ellipse at center, hsl(220 14% 11%) 0%, hsl(220 14% 7%) 100%)',
-          }}
-        >
+        <main className="relative min-w-0 flex-1 bg-background">
           {filteredGraph ? (
             <GraphCanvas
               graph={filteredGraph}

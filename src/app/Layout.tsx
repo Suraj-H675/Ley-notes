@@ -4,7 +4,7 @@
  */
 
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { PanelLeft, PanelRight, Search, CalendarPlus, Settings as SettingsIcon, Network } from 'lucide-react';
+import { PanelLeft, PanelRight, Search, CalendarPlus, FilePlus2, Settings as SettingsIcon, LayoutDashboard, Network } from 'lucide-react';
 import { useUIStore } from '@/shared/state/ui';
 import { useNavStore } from '@/shared/state/nav';
 import { usePages, usePageById } from '@/features/notes/usePages';
@@ -35,6 +35,7 @@ const GraphView = lazy(() => import('@/features/graph/GraphView').then((module) 
 const GraphModal = lazy(() => import('@/features/graph/GraphModal').then((module) => ({ default: module.GraphModal })));
 const SettingsModal = lazy(() => import('@/features/settings/SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const NoteWorkspace = lazy(() => import('@/features/editor/NoteWorkspace').then((module) => ({ default: module.NoteWorkspace })));
+const CanvasModal = lazy(() => import('@/features/canvas/CanvasModal').then((module) => ({ default: module.CanvasModal })));
 
 export function Layout() {
   const theme = useUIStore((s) => s.theme);
@@ -53,6 +54,7 @@ export function Layout() {
   const [commandOpen, setCommandOpen] = useCommandPaletteHotkey();
   const [newNoteOpen, setNewNoteOpen] = useState(false);
   const [newNoteFolder, setNewNoteFolder] = useState('');
+  const [canvasOpen, setCanvasOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -97,7 +99,7 @@ export function Layout() {
       {/* Title bar */}
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-surface-1 px-3">
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={toggleSidebar} aria-label="Toggle sidebar">
+          <Button size="sm" variant="ghost" onClick={toggleSidebar} aria-label="Toggle sidebar" title="Toggle sidebar">
             <PanelLeft size={14} />
           </Button>
           <span className="text-body font-semibold tracking-tight">Ley</span>
@@ -106,12 +108,17 @@ export function Layout() {
           <button
             type="button"
             onClick={() => setSearchOpen(true)}
+            aria-label="Open note"
+            title="Open note (⌘O)"
             className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-meta text-muted-foreground hover:bg-surface-3"
           >
             <Search size={12} />
             <span className="hidden sm:inline">Open note</span>
             <span className="hidden sm:flex"><Kbd>⌘</Kbd><Kbd>O</Kbd></span>
           </button>
+          <Button size="sm" variant="ghost" onClick={() => { setNewNoteFolder(''); setNewNoteOpen(true); }} aria-label="New note" title="New note (⌘N)">
+            <FilePlus2 size={14} /><span className="hidden xl:inline"><Kbd>⌘N</Kbd></span>
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -121,6 +128,9 @@ export function Layout() {
           >
             <CalendarPlus size={14} />
             <span className="hidden md:inline"><Kbd>⌘D</Kbd></span>
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setCanvasOpen(true)} aria-label="Canvas" title="Canvas">
+            <LayoutDashboard size={14} />
           </Button>
           <Button
             size="sm"
@@ -203,7 +213,7 @@ export function Layout() {
               ) : rightDockTab === 'history' ? (
                 <RevisionPanel pageId={activeTab} />
               ) : (
-                <Suspense fallback={<PanelLoading label="Building local graph…" />}><GraphView activePageId={activeTab} /></Suspense>
+                <Suspense fallback={<PanelLoading label="Building local graph…" />}><GraphView activePageId={activeTab} onOpenFullGraph={() => setGraphOpen(true)} /></Suspense>
               )}
             </div>
           </aside>
@@ -219,12 +229,14 @@ export function Layout() {
         onQuickSwitcher={() => setSearchOpen(true)}
         onDailyNote={openDailyNote}
         onGraph={() => setGraphOpen(true)}
+        onCanvas={() => setCanvasOpen(true)}
         onSettings={() => setSettingsOpen(true)}
         onToggleSidebar={toggleSidebar}
         onToggleRightDock={toggleRightDock}
         onSetTheme={(nextTheme) => { useUIStore.getState().setTheme(nextTheme); void db.settings.put({ key: 'theme', value: nextTheme }); }}
       />
       <NewNoteModal open={newNoteOpen} initialFolder={newNoteFolder} onClose={() => setNewNoteOpen(false)} />
+      {canvasOpen && <Suspense fallback={null}><CanvasModal open onClose={() => setCanvasOpen(false)} /></Suspense>}
     </div>
   );
 }

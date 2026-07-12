@@ -36,7 +36,7 @@ Writes follow this order:
 3. Update the local page projection.
 4. Rebuild backlinks, tags, search, and graph-derived state.
 
-Renames move the file and retarget incoming wiki links. Deletes move filesystem notes into `.trash`; browser-local notes use a soft-delete marker. All native relative paths reject absolute paths and traversal segments.
+Renames move the file and retarget incoming wiki links. Deletes move filesystem notes into `.trash`; browser-local notes use a soft-delete marker. Binary attachments live under `attachments/` and are constrained by extension, size, and safe relative paths. Interoperable JSON Canvas documents live under `canvases/` and use the same atomic-write and trash lifecycle. All native relative paths reject absolute paths and traversal segments.
 
 ## Derived state
 

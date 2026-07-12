@@ -4,6 +4,7 @@ import {
   FilePlus2,
   FolderSearch,
   Moon,
+  LayoutDashboard,
   Network,
   PanelLeft,
   PanelRight,
@@ -30,6 +31,7 @@ export function CommandPalette({
   onQuickSwitcher,
   onDailyNote,
   onGraph,
+  onCanvas,
   onSettings,
   onToggleSidebar,
   onToggleRightDock,
@@ -41,6 +43,7 @@ export function CommandPalette({
   onQuickSwitcher: () => void;
   onDailyNote: () => void | Promise<void>;
   onGraph: () => void;
+  onCanvas: () => void;
   onSettings: () => void;
   onToggleSidebar: () => void;
   onToggleRightDock: () => void;
@@ -56,13 +59,14 @@ export function CommandPalette({
       { id: 'quick-switcher', label: 'Open quick switcher', detail: 'Find a note by title or content', icon: <FolderSearch size={15} />, shortcut: '⌘O', keywords: 'search find note', run: onQuickSwitcher },
       { id: 'daily', label: "Open today's daily note", detail: 'Capture thoughts and activity for today', icon: <CalendarDays size={15} />, shortcut: '⌘D', run: onDailyNote },
       { id: 'graph', label: 'Open graph view', detail: 'Explore the connections in this vault', icon: <Network size={15} />, shortcut: '⌘G', run: onGraph },
+      { id: 'canvas', label: 'Open canvas', detail: 'Arrange notes and thoughts on a spatial board', icon: <LayoutDashboard size={15} />, keywords: 'board spatial json canvas', run: onCanvas },
       { id: 'toggle-left', label: 'Toggle left sidebar', detail: 'Show or hide the file explorer', icon: <PanelLeft size={15} />, run: onToggleSidebar },
       { id: 'toggle-right', label: 'Toggle right sidebar', detail: 'Show or hide contextual panels', icon: <PanelRight size={15} />, run: onToggleRightDock },
       { id: 'light', label: 'Use light theme', detail: 'Switch the workspace appearance', icon: <Sun size={15} />, run: () => onSetTheme('light') },
       { id: 'dark', label: 'Use dark theme', detail: 'Switch the workspace appearance', icon: <Moon size={15} />, run: () => onSetTheme('dark') },
       { id: 'settings', label: 'Open settings', detail: 'Configure Ley and this vault', icon: <Settings size={15} />, shortcut: '⌘,', run: onSettings },
     ],
-    [onDailyNote, onGraph, onNewNote, onQuickSwitcher, onSetTheme, onSettings, onToggleRightDock, onToggleSidebar],
+    [onCanvas, onDailyNote, onGraph, onNewNote, onQuickSwitcher, onSetTheme, onSettings, onToggleRightDock, onToggleSidebar],
   );
 
   const matches = useMemo(() => {

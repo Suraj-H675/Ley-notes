@@ -32,7 +32,8 @@ export async function importVaultFromFile(file: File): Promise<number> {
   // Pass 1: insert all pages (without rebuilding cross-links yet).
   const newPages: Page[] = [];
   for (const f of mdFiles) {
-    const path = f.name;
+    const path = safeZipPath(f.name);
+    if (!path) continue;
     const text = await f.async('string');
     const { frontmatter, body } = parseFrontmatter(text);
 
@@ -62,9 +63,7 @@ export async function importVaultFromFile(file: File): Promise<number> {
     titleToId.set(lc, page.id);
   }
 
-  if (newPages.length === 0) return 0;
-
-  await db.pages.bulkAdd(newPages);
+  if (newPages.length > 0) await db.pages.bulkAdd(newPages);
 
   // Pass 2: rebuild link rows + tag rows for each new page.
   for (const p of newPages) {
@@ -102,5 +101,26 @@ export async function importVaultFromFile(file: File): Promise<number> {
     if (tagRows.length > 0) await db.tags.bulkAdd(tagRows);
   }
 
+  const existingAssets = new Set((await db.assets.toArray()).map((asset) => asset.filename));
+  const ownerPageId = newPages[0]?.id ?? existing[0]?.id ?? '';
+  const assetFiles = Object.values(zip.files).filter((entry) => !entry.dir && /^attachments\/.+\.(png|jpe?g|gif|webp|pdf|mp3|wav|mp4|webm)$/i.test(entry.name));
+  for (const assetFile of assetFiles) {
+    const filename = safeZipPath(assetFile.name);
+    if (!filename || existingAssets.has(filename)) continue;
+    const blob = await assetFile.async('blob');
+    await db.assets.add({ id: nanoid(), pageId: ownerPageId, filename, mimeType: mimeTypeForPath(filename), blob, createdAt: now() });
+    existingAssets.add(filename);
+  }
+
   return newPages.length;
+}
+
+function safeZipPath(path: string): string | null {
+  const normalized = path.replace(/\\/g, '/').replace(/^\/+/, '');
+  return normalized.split('/').some((part) => !part || part === '.' || part === '..') ? null : normalized;
+}
+
+function mimeTypeForPath(path: string): string {
+  const extension = path.split('.').at(-1)?.toLowerCase();
+  return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf', mp3: 'audio/mpeg', wav: 'audio/wav', mp4: 'video/mp4', webm: 'video/webm' } as Record<string, string>)[extension ?? ''] ?? 'application/octet-stream';
 }

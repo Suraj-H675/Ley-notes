@@ -23,6 +23,12 @@ export interface VaultFileSnapshot {
   updatedAt: number;
 }
 
+export interface CanvasFileSnapshot {
+  path: string;
+  content: string;
+  updatedAt: number;
+}
+
 export interface DesktopVault {
   path: string;
   name: string;
@@ -208,20 +214,108 @@ export async function writeActiveVaultFile(relativePath: string, content: string
   if (activeVaultPath) {
     await invoke('write_vault_file', { vaultPath: activeVaultPath, relativePath, content });
   } else if (activeBrowserHandle) {
-    const file = await browserFileHandle(activeBrowserHandle, relativePath, true);
+    const file = await browserFileHandle(activeBrowserHandle, relativePath, true, true);
     const writer = await file.createWritable();
     await writer.write(content);
     await writer.close();
   }
 }
 
+export async function writeActiveVaultAttachment(relativePath: string, data: ArrayBuffer): Promise<boolean> {
+  if (activeVaultPath) {
+    await invoke('write_vault_attachment', { vaultPath: activeVaultPath, relativePath, bytes: Array.from(new Uint8Array(data)) });
+    return true;
+  }
+  if (activeBrowserHandle) {
+    const file = await browserFileHandle(activeBrowserHandle, relativePath, true, false);
+    const writer = await file.createWritable();
+    await writer.write(data);
+    await writer.close();
+    return true;
+  }
+  return false;
+}
+
+export async function readActiveVaultAttachment(relativePath: string): Promise<ArrayBuffer | null> {
+  if (activeVaultPath) {
+    const bytes = await invoke<number[]>('read_vault_attachment', { vaultPath: activeVaultPath, relativePath });
+    return Uint8Array.from(bytes).buffer;
+  }
+  if (activeBrowserHandle) {
+    const handle = await browserFileHandle(activeBrowserHandle, relativePath, false, false);
+    return (await handle.getFile()).arrayBuffer();
+  }
+  return null;
+}
+
+export async function listActiveCanvasFiles(): Promise<CanvasFileSnapshot[] | null> {
+  if (activeVaultPath) return invoke<CanvasFileSnapshot[]>('scan_canvases', { vaultPath: activeVaultPath });
+  if (!activeBrowserHandle) return null;
+  try {
+    const root = await activeBrowserHandle.getDirectoryHandle('canvases');
+    const snapshots: CanvasFileSnapshot[] = [];
+    for await (const [name, handle] of root.entries()) {
+      if (handle.kind !== 'file' || !name.toLowerCase().endsWith('.canvas')) continue;
+      const file = await handle.getFile();
+      snapshots.push({ path: `canvases/${name}`, content: await file.text(), updatedAt: file.lastModified });
+    }
+    return snapshots.sort((left, right) => left.path.localeCompare(right.path));
+  } catch {
+    return [];
+  }
+}
+
+export async function writeActiveCanvasFile(relativePath: string, content: string): Promise<boolean> {
+  JSON.parse(content);
+  if (activeVaultPath) {
+    await invoke('write_canvas_file', { vaultPath: activeVaultPath, relativePath, content });
+    return true;
+  }
+  if (activeBrowserHandle) {
+    const parts = relativePath.split('/').filter(Boolean);
+    const filename = parts.pop();
+    if (parts.join('/') !== 'canvases' || !filename?.toLowerCase().endsWith('.canvas')) throw new Error('Canvas files must use canvases/*.canvas');
+    const directory = await browserDirectoryHandle(activeBrowserHandle, parts, true);
+    const file = await directory.getFileHandle(filename, { create: true });
+    const writer = await file.createWritable();
+    await writer.write(content);
+    await writer.close();
+    return true;
+  }
+  return false;
+}
+
+export async function trashActiveCanvasFile(relativePath: string): Promise<boolean> {
+  if (activeVaultPath) {
+    await invoke('trash_canvas_file', { vaultPath: activeVaultPath, relativePath });
+    return true;
+  }
+  if (activeBrowserHandle) {
+    const parts = relativePath.split('/').filter(Boolean);
+    const filename = parts.pop();
+    if (parts.join('/') !== 'canvases' || !filename?.endsWith('.canvas')) throw new Error('Invalid canvas path');
+    const sourceDirectory = await browserDirectoryHandle(activeBrowserHandle, parts, false);
+    const source = await sourceDirectory.getFileHandle(filename);
+    const content = await (await source.getFile()).text();
+    const trash = await browserDirectoryHandle(activeBrowserHandle, ['.trash'], true);
+    const stem = filename.replace(/\.canvas$/i, '');
+    const target = await trash.getFileHandle(`${stem}-${Date.now()}.canvas`, { create: true });
+    const writer = await target.createWritable();
+    await writer.write(content);
+    await writer.close();
+    await sourceDirectory.removeEntry(filename);
+    return true;
+  }
+  return false;
+}
+
 export async function renameActiveVaultFile(from: string, to: string): Promise<void> {
   if (activeVaultPath) {
     await invoke('rename_vault_file', { vaultPath: activeVaultPath, from, to });
   } else if (activeBrowserHandle) {
-    const source = await browserFileHandle(activeBrowserHandle, from, false);
+    const source = await browserFileHandle(activeBrowserHandle, from, false, true);
     const content = await (await source.getFile()).text();
-    const target = await browserFileHandle(activeBrowserHandle, to, true);
+    const target = await browserFileHandle(activeBrowserHandle, to, true, true);
     const writer = await target.createWritable();
     await writer.write(content);
     await writer.close();
@@ -233,22 +327,14 @@ export async function trashActiveVaultFile(relativePath: string): Promise<void> 
   if (activeVaultPath) {
     await invoke('trash_vault_file', { vaultPath: activeVaultPath, relativePath });
   } else if (activeBrowserHandle) {
-    const source = await browserFileHandle(activeBrowserHandle, relativePath, false);
+    const source = await browserFileHandle(activeBrowserHandle, relativePath, false, true);
     const content = await (await source.getFile()).text();
     const filename = relativePath.split('/').at(-1) ?? 'Untitled.md';
-    const target = await browserFileHandle(activeBrowserHandle, `.trash/${filename}`, true);
+    const target = await browserFileHandle(activeBrowserHandle, `.trash/${filename}`, true, true);
     const writer = await target.createWritable();
     await writer.write(content);
     await writer.close();
     await removeBrowserPath(activeBrowserHandle, relativePath);
-  }
-}
-
-export async function createActiveVaultFolder(relativePath: string): Promise<void> {
-  if (activeVaultPath) {
-    await invoke('create_vault_folder', { vaultPath: activeVaultPath, relativePath });
-  } else if (activeBrowserHandle) {
-    await browserDirectoryHandle(activeBrowserHandle, relativePath.split('/').filter(Boolean), true);
   }
 }
 
@@ -261,10 +347,11 @@ async function browserDirectoryHandle(root: LeyDirectoryHandle, parts: string[],
   return directory;
 }
 
-async function browserFileHandle(root: LeyDirectoryHandle, relativePath: string, create: boolean): Promise<LeyFileHandle> {
+async function browserFileHandle(root: LeyDirectoryHandle, relativePath: string, create: boolean, markdownOnly: boolean): Promise<LeyFileHandle> {
   const parts = relativePath.split('/').filter(Boolean);
   const filename = parts.pop();
-  if (!filename || !filename.toLowerCase().endsWith('.md')) throw new Error('Ley note paths must end in .md');
+  if (!filename || (markdownOnly && !filename.toLowerCase().endsWith('.md'))) throw new Error('Ley note paths must end in .md');
+  if (!markdownOnly && parts[0] !== 'attachments') throw new Error('Attachments must be stored inside the attachments folder');
   const directory = await browserDirectoryHandle(root, parts, create);
   return directory.getFileHandle(filename, { create });
 }

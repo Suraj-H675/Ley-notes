@@ -1,7 +1,7 @@
 /**
  * GraphControls — sidebar with all the knobs from Obsidian's graph view:
  *   Filters: search, tag filter, orphans toggle
- *   Display: color mode, link thickness, arrows toggle, text fade threshold
+ *   Display: color mode, link thickness, arrows toggle
  *   Physics: center force, repel force, link force, link distance, iterations
  *   Local graph: enable + depth slider
  *
@@ -29,8 +29,6 @@ export interface GraphControlsState {
   setLinkThickness: (v: number) => void;
   showArrows: boolean;
   setShowArrows: (v: boolean) => void;
-  textFadeThreshold: number;
-  setTextFadeThreshold: (v: number) => void;
   physics: PhysicsSettings;
   setPhysics: (v: PhysicsSettings) => void;
   localEnabled: boolean;
@@ -90,18 +88,6 @@ export function GraphControls({ state, stats }: GraphControlsProps) {
           </div>
         </Field>
         <Slider
-          label="Node size"
-          min={0.5}
-          max={3}
-          step={0.1}
-          value={1}
-          display={`${1}×`}
-          onChange={() => {
-            /* node size is derived from degree; this is reserved for a multiplier in v2 */
-          }}
-          disabled
-        />
-        <Slider
           label="Link thickness"
           min={0.5}
           max={4}
@@ -109,15 +95,6 @@ export function GraphControls({ state, stats }: GraphControlsProps) {
           value={state.linkThickness}
           display={`${state.linkThickness}px`}
           onChange={state.setLinkThickness}
-        />
-        <Slider
-          label="Text fade threshold"
-          min={0}
-          max={50}
-          step={1}
-          value={state.textFadeThreshold}
-          display={`${state.textFadeThreshold}°`}
-          onChange={state.setTextFadeThreshold}
         />
         <Checkbox
           checked={state.showArrows}

@@ -6,7 +6,6 @@
 import { db } from './db';
 import { nanoid } from '@/shared/lib/nanoid';
 import { now } from '@/shared/lib/time';
-import { seedDemoContent } from './demo-content';
 
 const WELCOME_MARKDOWN = `# Welcome to Ley
 
@@ -22,7 +21,7 @@ Ley is a local-first knowledge graph for your notes. Everything lives in your br
 
 **Workspace first.** You should be productive without ever opening the graph. The graph is a view, not the point.
 
-**Markdown is the source of truth.** Notes are stored as plain markdown so they round-trip to Obsidian, diff in git, and survive a rebuild.
+**Markdown stays portable.** This compatibility vault lives in your browser and exports to ordinary Markdown. Open a folder vault or use desktop when files should be authoritative immediately.
 
 **Backlinks are derived.** Every \`[[link]]\` you write is indexed automatically — open the right panel to see what points to this note.
 
@@ -81,8 +80,4 @@ export async function seedIfEmpty(): Promise<void> {
     await db.settings.put({ key: 'local-graph-depth', value: 2 });
   });
 
-  // After the Welcome page is in place, seed the full demo content (idempotent).
-  // We do this outside the transaction because demo pages have wiki links that
-  // resolve against each other; createPage rebuilds indexes per insert.
-  await seedDemoContent();
 }

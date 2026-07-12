@@ -40,6 +40,7 @@ export interface EditorController {
   view: EditorView;
   getValue: () => string;
   setValue: (value: string) => void;
+  insertText: (value: string) => void;
   focus: () => void;
   destroy: () => void;
 }
@@ -152,6 +153,14 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: value },
       });
+    },
+    insertText: (value) => {
+      const selection = view.state.selection.main;
+      view.dispatch({
+        changes: { from: selection.from, to: selection.to, insert: value },
+        selection: { anchor: selection.from + value.length },
+      });
+      view.focus();
     },
     focus: () => view.focus(),
     destroy: () => view.destroy(),

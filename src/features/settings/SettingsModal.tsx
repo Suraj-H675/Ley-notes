@@ -5,25 +5,36 @@
 
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { X, Download, Upload, Sparkles } from 'lucide-react';
+import { X, Download, FolderOpen, Upload } from 'lucide-react';
 import { db } from '@/infrastructure/database/db';
 import { useUIStore, type Theme } from '@/shared/state/ui';
 import { exportVault } from '@/core/vault/export';
 import { importVaultFromFile } from '@/core/vault/import';
-import { seedDemoContent } from '@/infrastructure/database/demo-content';
 import { Kbd } from '@/shared/components/Kbd';
 import { cn } from '@/shared/lib/classnames';
 import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
+import { listVaultTemplates } from '@/core/vault/templates';
+import { format as formatDate } from 'date-fns';
 
 export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
   const [importing, setImporting] = useState(false);
-  const [demoStatus, setDemoStatus] = useState<string | null>(null);
   const [transferStatus, setTransferStatus] = useState<string | null>(null);
+  const [dailyFormatError, setDailyFormatError] = useState<string | null>(null);
+  const filesystemVault = Boolean(getActiveVaultKind());
 
   const dailyFormat = useLiveQuery(
     async () => (await db.settings.get('daily-note-format'))?.value as string | undefined,
+    [],
+  );
+  const templateFolder = useLiveQuery(
+    async () => (await db.settings.get('template-folder'))?.value as string | undefined,
+    [],
+  );
+  const vaultTemplates = useLiveQuery(listVaultTemplates, [], []);
+  const dailyTemplatePath = useLiveQuery(
+    async () => (await db.settings.get('daily-note-template-path'))?.value as string | undefined,
     [],
   );
 
@@ -42,7 +53,13 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   if (!open) return null;
 
   async function saveFormat(value: string) {
-    await db.settings.put({ key: 'daily-note-format', value });
+    try {
+      formatDate(new Date(), value);
+      await db.settings.put({ key: 'daily-note-format', value });
+      setDailyFormatError(null);
+    } catch {
+      setDailyFormatError('That date format is not valid. Try yyyy-MM-dd.');
+    }
   }
 
   async function handleExport() {
@@ -85,7 +102,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
       onClick={onClose}
     >
       <div
-        className="flex w-[480px] max-w-[92vw] flex-col overflow-hidden rounded-lg border border-border bg-surface-1"
+        className="flex max-h-[min(760px,92vh)] w-[520px] max-w-[92vw] flex-col overflow-hidden rounded-xl border border-border bg-surface-1"
         style={{ boxShadow: 'var(--shadow-menu)' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -100,7 +117,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           </button>
         </div>
 
-        <div className="flex flex-col gap-6 p-4">
+        <div className="flex flex-col gap-6 overflow-y-auto p-4">
           <section>
             <div className="mb-2 text-meta font-medium text-foreground">Appearance</div>
             <div className="flex gap-2">
@@ -129,6 +146,22 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           </section>
 
           <section>
+            <div className="mb-2 text-meta font-medium text-foreground">Templates</div>
+            <label className="flex flex-col gap-1 text-meta text-muted-foreground-strong">
+              Template folder
+              <input
+                type="text"
+                defaultValue={templateFolder ?? 'templates'}
+                key={templateFolder ?? 'templates'}
+                onBlur={(event) => void db.settings.put({ key: 'template-folder', value: event.target.value.trim() || 'templates' })}
+                className="h-8 rounded-md border border-border bg-surface-1 px-2 font-mono text-meta text-foreground focus:border-primary focus:outline-none"
+                placeholder="templates"
+              />
+              <span className="text-micro text-muted-foreground">Markdown files in this vault folder appear in the new-note dialog.</span>
+            </label>
+          </section>
+
+          <section>
             <div className="mb-2 text-meta font-medium text-foreground">Daily notes</div>
             <label className="flex flex-col gap-1 text-meta text-muted-foreground-strong">
               File name format
@@ -136,19 +169,32 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                 type="text"
                 defaultValue={dailyFormat ?? 'yyyy-MM-dd'}
                 key={dailyFormat ?? 'default'}
-                onBlur={(e) => saveFormat(e.target.value)}
+                onBlur={(e) => void saveFormat(e.target.value)}
                 className="h-8 rounded-md border border-border bg-surface-1 px-2 text-meta text-foreground focus:border-primary focus:outline-none"
                 placeholder="yyyy-MM-dd"
               />
               <span className="text-micro text-muted-foreground">
-                date-fns format tokens: yyyy-MM-dd, yyyy/MM/dd, etc.
+                date-fns format tokens, for example yyyy-MM-dd or EEEE, MMMM do.
               </span>
+              {dailyFormatError && <span className="text-micro text-destructive" role="alert">{dailyFormatError}</span>}
+            </label>
+            <label className="mt-3 flex flex-col gap-1 text-meta text-muted-foreground-strong">
+              Daily note template
+              <select value={dailyTemplatePath ?? ''} onChange={(event) => void db.settings.put({ key: 'daily-note-template-path', value: event.target.value })} className="h-8 rounded-md border border-border bg-surface-1 px-2 text-meta text-foreground focus:border-primary focus:outline-none">
+                <option value="">Built-in daily note</option>
+                {vaultTemplates.map((template) => <option key={template.id} value={template.path}>{template.title}</option>)}
+              </select>
             </label>
           </section>
 
           <section>
             <div className="mb-2 text-meta font-medium text-foreground">Vault</div>
-            <div className="flex gap-2">
+            {filesystemVault ? (
+              <div className="rounded-lg border border-border bg-surface-2 p-3 text-meta text-muted-foreground">
+                <div className="flex items-center gap-2 font-medium text-foreground"><FolderOpen size={14} className="text-secondary" />Already portable</div>
+                <p className="mt-1 leading-relaxed">This vault is an ordinary folder. Back it up, sync it, zip it, or commit it with your normal filesystem tools.</p>
+              </div>
+            ) : <><div className="flex gap-2">
               <button
                 type="button"
                 onClick={handleExport}
@@ -177,33 +223,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
               Exports use Obsidian-compatible folders (.md files). Imports accept any Obsidian vault ZIP.
             </div>
             {transferStatus && <div className="mt-1 text-meta text-secondary" role="status">{transferStatus}</div>}
-          </section>
-
-          <section>
-            <div className="mb-2 text-meta font-medium text-foreground">Demo content</div>
-            <button
-              type="button"
-              onClick={async () => {
-                setDemoStatus('Adding…');
-                try {
-                  const added = await seedDemoContent();
-                  setDemoStatus(added > 0 ? `Added ${added} pages.` : 'All demo pages already present.');
-                } catch (err) {
-                  setDemoStatus(`Failed: ${err instanceof Error ? err.message : String(err)}`);
-                }
-              }}
-              className="flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-surface-2 px-3 py-2 text-meta text-foreground hover:bg-surface-3"
-            >
-              <Sparkles size={13} />
-              Add demo vault
-            </button>
-            <div className="mt-1 text-micro text-muted-foreground">
-              Adds ~25 sample notes (productivity, engineering, learning, daily notes) for trying out the
-              graph. Idempotent — skips pages that already exist.
-            </div>
-            {demoStatus && (
-              <div className="mt-1 text-meta text-secondary">{demoStatus}</div>
-            )}
+            </>}
           </section>
         </div>
 
