@@ -17,6 +17,7 @@ import { usePages } from '@/features/notes/usePages';
 import { useNavStore } from '@/shared/state/nav';
 import { nanoid } from '@/shared/lib/nanoid';
 import { useUIStore } from '@/shared/state/ui';
+import * as Dialog from '@radix-ui/react-dialog';
 
 export function CanvasModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queriedPages = usePages();
@@ -185,7 +186,10 @@ export function CanvasModal({ open, onClose }: { open: boolean; onClose: () => v
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Canvas" className="fixed inset-0 z-[85] flex flex-col bg-background text-foreground">
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) void closeCanvas(); }}>
+      <Dialog.Portal>
+        <Dialog.Content aria-describedby={undefined} className="fixed inset-0 z-[85] flex flex-col bg-background text-foreground outline-none">
+      <Dialog.Title className="sr-only">Canvas</Dialog.Title>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-surface-1 px-2 sm:px-3">
         <LayoutDashboard size={16} className="text-primary" />
         <span className="font-semibold">Canvas</span>
@@ -220,7 +224,9 @@ export function CanvasModal({ open, onClose }: { open: boolean; onClose: () => v
           {activePath ? <ReactFlow className="bg-background" nodes={flowNodes} edges={flowEdges} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={connect} fitView colorMode={theme} deleteKeyCode={['Backspace', 'Delete']} proOptions={{ hideAttribution: true }}><Background gap={22} size={1} color="hsl(var(--border))" /><Controls /></ReactFlow> : <div className="flex h-full items-center justify-center p-6"><div className="max-w-sm rounded-2xl border border-border bg-surface-1 p-7 text-center shadow-sm"><LayoutDashboard size={28} className="mx-auto mb-3 text-primary" /><h2 className="text-body font-semibold text-foreground">Make space for an idea</h2><p className="mt-1 text-meta leading-relaxed text-muted-foreground">Create a canvas, then arrange notes and freeform thoughts without changing their place in your vault.</p></div></div>}
         </main>
       </div>
-    </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 

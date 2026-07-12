@@ -43,6 +43,8 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Tabs and tab close | Keep | Multiple working notes are a desktop knowledge-work expectation. Unsaved content is persisted by the editor lifecycle. |
 | Editable title | Keep | Renames the filesystem note and retargets incoming wiki links. |
 | Edit / Read modes | Keep | Editing and composed reading are materially different tasks; note embeds resolve only in reading mode. |
+| Formatting toolbelt | Add | Bold, italic, note-link, code, and task actions remain reachable on touch and short screens; desktop shortcuts use the same underlying Markdown transactions. |
+| Wiki-link completion | Improve | Official CodeMirror completion now owns positioning, keyboard precedence, and accessibility. Selecting a result inserts without navigating; normal click edits and Ctrl/Cmd-click follows. |
 | Attach | Improve | Now writes real binary files via desktop, browser-folder, or browser-local adapters; paste and drag/drop share the same path. |
 | Properties | Keep | YAML frontmatter remains portable and visible rather than hidden in proprietary metadata. |
 | Backlinks, outgoing, unlinked mentions | Keep | Each answers a different relationship question and is computed from the vault index. |
@@ -58,6 +60,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Full-text search | Keep | Content-oriented retrieval with snippets and keyboard navigation. |
 | Command palette | Keep | Action-oriented control surface; note results do not replace commands. |
 | Keyboard shortcuts | Improve | One owner per global shortcut; duplicate graph listeners were removed. Buttons retain visible or tooltip discovery paths. |
+| Modal focus | Improve | Search, commands, new-note, settings, graph, and canvas surfaces use an accessible dialog lifecycle with focus entry, trapping, Escape dismissal, and restoration. |
 
 ## Graph
 

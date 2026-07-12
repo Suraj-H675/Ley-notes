@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { SlidersHorizontal, X, Maximize2 } from 'lucide-react';
 import { Kbd } from '@/shared/components/Kbd';
+import * as Dialog from '@radix-ui/react-dialog';
 import {
   applyLocalFilter,
   applyNodeFilter,
@@ -110,12 +111,10 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
     : { pageCount: 0, edgeCount: 0, communityCount: 0 };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Graph view"
-      className="fixed inset-0 z-50 flex flex-col bg-background"
-    >
+    <Dialog.Root open onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Content aria-describedby={undefined} className="fixed inset-0 z-50 flex flex-col bg-background outline-none">
+      <Dialog.Title className="sr-only">Graph view</Dialog.Title>
       {/* Header */}
       <header className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-surface-1 px-3">
         <div className="flex items-center gap-2">
@@ -191,6 +190,8 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
           )}
         </main>
       </div>
-    </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

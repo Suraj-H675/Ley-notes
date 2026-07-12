@@ -14,9 +14,9 @@ export function WebVaultLauncher({
   onBrowserLocal: () => void;
 }) {
   return (
-    <main className="relative flex min-h-full items-center justify-center overflow-y-auto bg-background px-5 py-12 text-foreground">
+    <main data-page="web-vault-launcher" className="relative flex h-full flex-col items-center overflow-y-auto overscroll-y-contain bg-background px-5 py-8 text-foreground sm:py-12">
       <div className="pointer-events-none absolute inset-0 [background:radial-gradient(circle_at_50%_15%,hsl(var(--primary)/0.17),transparent_43%)]" />
-      <section className="relative w-full max-w-2xl">
+      <section className="relative my-auto w-full max-w-2xl">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex size-11 items-center justify-center rounded-xl bg-primary text-lg font-semibold text-primary-foreground">L</div>
           <h1 className="text-3xl font-semibold tracking-[-0.035em]">Where should your knowledge live?</h1>

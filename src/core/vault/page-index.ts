@@ -19,6 +19,7 @@ interface IndexEntry {
   display: string;
   lcTitle: string;
   aliases: string[];
+  updatedAt: number;
 }
 
 let entries: IndexEntry[] = [];
@@ -45,6 +46,7 @@ export function startPageIndex(): () => void {
             display: p.title,
             lcTitle: p.lcTitle,
             aliases: p.aliases,
+            updatedAt: p.updatedAt,
           }));
         notify();
       },

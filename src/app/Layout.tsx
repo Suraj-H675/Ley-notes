@@ -30,6 +30,7 @@ import { getOrCreateDailyNote } from '@/core/vault/daily-notes';
 import { db } from '@/infrastructure/database/db';
 import { OutlinePanel } from '@/features/outline/OutlinePanel';
 import { RevisionPanel } from '@/features/history/RevisionPanel';
+import { FeatureErrorBoundary } from '@/shared/components/FeatureErrorBoundary';
 
 const GraphView = lazy(() => import('@/features/graph/GraphView').then((module) => ({ default: module.GraphView })));
 const GraphModal = lazy(() => import('@/features/graph/GraphModal').then((module) => ({ default: module.GraphModal })));
@@ -172,7 +173,7 @@ export function Layout() {
         <main className="flex min-w-0 flex-1 flex-col">
           <EditorTabs />
           {activeTab && activePage?.id === activeTab ? (
-            <Suspense fallback={<PanelLoading label="Opening note…" />}><NoteWorkspace key={activeTab} page={activePage} /></Suspense>
+            <FeatureErrorBoundary feature="Editor" resetKey={activeTab}><Suspense fallback={<PanelLoading label="Opening note…" />}><NoteWorkspace key={activeTab} page={activePage} /></Suspense></FeatureErrorBoundary>
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <EmptyState
@@ -220,8 +221,8 @@ export function Layout() {
         )}
       </div>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
-      {settingsOpen && <Suspense fallback={null}><SettingsModal open onClose={() => setSettingsOpen(false)} /></Suspense>}
-      {graphOpen && <Suspense fallback={null}><GraphModal open onClose={() => setGraphOpen(false)} /></Suspense>}
+      {settingsOpen && <FeatureErrorBoundary feature="Settings" overlay><Suspense fallback={null}><SettingsModal open onClose={() => setSettingsOpen(false)} /></Suspense></FeatureErrorBoundary>}
+      {graphOpen && <FeatureErrorBoundary feature="Graph" overlay><Suspense fallback={null}><GraphModal open onClose={() => setGraphOpen(false)} /></Suspense></FeatureErrorBoundary>}
       <CommandPalette
         open={commandOpen}
         onClose={() => setCommandOpen(false)}
@@ -236,7 +237,7 @@ export function Layout() {
         onSetTheme={(nextTheme) => { useUIStore.getState().setTheme(nextTheme); void db.settings.put({ key: 'theme', value: nextTheme }); }}
       />
       <NewNoteModal open={newNoteOpen} initialFolder={newNoteFolder} onClose={() => setNewNoteOpen(false)} />
-      {canvasOpen && <Suspense fallback={null}><CanvasModal open onClose={() => setCanvasOpen(false)} /></Suspense>}
+      {canvasOpen && <FeatureErrorBoundary feature="Canvas" overlay><Suspense fallback={null}><CanvasModal open onClose={() => setCanvasOpen(false)} /></Suspense></FeatureErrorBoundary>}
     </div>
   );
 }

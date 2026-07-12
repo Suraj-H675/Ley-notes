@@ -27,11 +27,11 @@ import {
 import { tags as t } from '@lezer/highlight';
 
 import { wikiLinkDecoration, wikiLinkAutocomplete } from './extensions/wiki-links';
+import { applyEditorFormat, editorFormattingKeymap, type EditorFormat } from './formatting';
 
 export interface MountOptions {
   initialDoc: string;
   onChange: (value: string) => void;
-  onWikiLinkFollow?: (target: string) => void;
   /** When true, hide line numbers (used in compact cards). */
   compact?: boolean;
 }
@@ -41,6 +41,7 @@ export interface EditorController {
   getValue: () => string;
   setValue: (value: string) => void;
   insertText: (value: string) => void;
+  format: (format: EditorFormat) => void;
   focus: () => void;
   destroy: () => void;
 }
@@ -86,6 +87,28 @@ const cmTheme = EditorView.theme({
   '&.cm-focused .cm-selectionBackground': {
     backgroundColor: 'hsl(var(--primary) / 0.3)',
   },
+  '.cm-tooltip-autocomplete': {
+    overflow: 'hidden',
+    border: '1px solid hsl(var(--border))',
+    borderRadius: '8px',
+    backgroundColor: 'hsl(var(--surface-2))',
+    color: 'hsl(var(--foreground))',
+    boxShadow: 'var(--shadow-popover)',
+    fontFamily: 'var(--font-sans)',
+  },
+  '.cm-tooltip-autocomplete > ul': {
+    maxHeight: '240px',
+    padding: '4px',
+  },
+  '.cm-tooltip-autocomplete > ul > li': {
+    borderRadius: '5px',
+    padding: '5px 8px',
+    fontSize: '13px',
+  },
+  '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+    backgroundColor: 'hsl(var(--surface-3))',
+    color: 'hsl(var(--foreground))',
+  },
 });
 
 /**
@@ -129,15 +152,13 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       indentOnInput(),
       bracketMatching(),
       EditorView.lineWrapping,
-      keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+      keymap.of([...editorFormattingKeymap(), ...defaultKeymap, ...historyKeymap, indentWithTab]),
       markdown(),
       syntaxHighlighting(cmHighlight),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       cmTheme,
       wikiLinkDecoration(),
-      wikiLinkAutocomplete({
-        onSelect: (target) => opts.onWikiLinkFollow?.(target),
-      }),
+      wikiLinkAutocomplete(),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) opts.onChange(update.state.doc.toString());
       }),
@@ -162,6 +183,7 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       });
       view.focus();
     },
+    format: (format) => { applyEditorFormat(view, format); },
     focus: () => view.focus(),
     destroy: () => view.destroy(),
   };

@@ -4,14 +4,16 @@
  * listen for it once here and resolve-or-create the target.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { EditorView } from '@codemirror/view';
+import { Bold, Braces, Italic, Link2, ListChecks } from 'lucide-react';
 import { mountEditor, type EditorController } from '@/features/editor/lib/mount';
 import { useNavStore } from '@/shared/state/nav';
 import { useDebouncedCallback } from '@/shared/hooks/useDebounce';
 import { updatePageContent, createPage } from '@/core/vault/pages';
 import { resolveTitle } from '@/core/vault/page-index';
 import { attachmentInsertion, saveAttachment } from '@/core/vault/attachments';
+import type { EditorFormat } from './lib/formatting';
 
 interface CodeMirrorEditorProps {
   pageId: string;
@@ -46,14 +48,6 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
     const controller = mountEditor(containerRef.current, {
       initialDoc: initialContent,
       onChange: debouncedSave,
-      // Autocomplete-panel Enter/Tab accept. Not called on click — clicks
-      // dispatch the `ley:follow-link` event handled below.
-      onWikiLinkFollow: (target) => {
-        followOrCreate(target).then((id) => {
-          openPage(id);
-          pushRecent(id);
-        });
-      },
     });
 
     controllerRef.current = controller;
@@ -132,9 +126,21 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
   }, []);
 
   return (
-    <div className="relative h-full w-full">
-      <div ref={containerRef} className="h-full w-full overflow-auto bg-background" data-testid="cm-editor" />
-      {attachmentStatus && <div className="absolute bottom-4 right-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-meta text-foreground shadow-menu" role="status">{attachmentStatus}</div>}
+    <div className="relative flex h-full w-full flex-col">
+      <div ref={containerRef} className="min-h-0 w-full flex-1 overflow-hidden bg-background" data-testid="cm-editor" />
+      <div className="flex shrink-0 items-center justify-center gap-0.5 border-t border-border bg-surface-1/95 p-1 backdrop-blur" role="toolbar" aria-label="Markdown formatting">
+        <FormatButton label="Bold" shortcut="⌘B" format="bold" controller={controllerRef}><Bold size={13} /></FormatButton>
+        <FormatButton label="Italic" shortcut="⌘I" format="italic" controller={controllerRef}><Italic size={13} /></FormatButton>
+        <FormatButton label="Link note" shortcut="⌘K" format="wiki-link" controller={controllerRef}><Link2 size={13} /></FormatButton>
+        <FormatButton label="Inline code" shortcut="⌘⇧`" format="code" controller={controllerRef}><Braces size={13} /></FormatButton>
+        <span className="mx-0.5 h-4 w-px bg-border" />
+        <FormatButton label="Cycle task" format="task" controller={controllerRef}><ListChecks size={13} /></FormatButton>
+      </div>
+      {attachmentStatus && <div className="absolute bottom-12 right-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-meta text-foreground shadow-menu" role="status">{attachmentStatus}</div>}
     </div>
   );
+}
+
+function FormatButton({ label, shortcut, format, controller, children }: { label: string; shortcut?: string; format: EditorFormat; controller: RefObject<EditorController | null>; children: ReactNode }) {
+  return <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => controller.current?.format(format)} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label={label} title={shortcut ? `${label} (${shortcut})` : label}>{children}<span className="hidden sm:inline">{label}</span></button>;
 }

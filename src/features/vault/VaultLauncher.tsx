@@ -11,9 +11,9 @@ export function VaultLauncher({
   onOpen: () => Promise<DesktopVault | null>;
 }) {
   return (
-    <main className="relative flex h-full min-h-[560px] items-center justify-center overflow-hidden bg-background px-6 text-foreground">
+    <main data-page="desktop-vault-launcher" className="relative flex h-full flex-col items-center overflow-y-auto overscroll-y-contain bg-background px-6 py-6 text-foreground">
       <div className="pointer-events-none absolute inset-0 opacity-60 [background:radial-gradient(circle_at_50%_20%,hsl(var(--primary)/0.16),transparent_42%)]" />
-      <section className="relative w-full max-w-xl rounded-xl border border-border bg-surface-1 p-8 shadow-popover">
+      <section className="relative my-auto w-full max-w-xl rounded-xl border border-border bg-surface-1 p-8 shadow-popover">
         <div className="mb-8 flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <span className="text-lg font-semibold">L</span>

@@ -11,6 +11,7 @@ import { db } from '@/infrastructure/database/db';
 import { useNavStore } from '@/shared/state/nav';
 import { Kbd } from '@/shared/components/Kbd';
 import { cn } from '@/shared/lib/classnames';
+import * as Dialog from '@radix-ui/react-dialog';
 
 interface SearchResult {
   id: string;
@@ -53,19 +54,6 @@ export function SearchModal({
     wasOpen.current = open;
   }, [open]);
 
-  // Global Cmd+P / Ctrl+P to open.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
   // Search debounced.
   useEffect(() => {
     if (!open) return;
@@ -102,18 +90,11 @@ export function SearchModal({
   if (!open) return null;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-start justify-center pt-20"
-      style={{ backgroundColor: 'hsl(var(--background) / 0.6)' }}
-      onClick={onClose}
-    >
-      <div
-        className="flex w-[520px] max-w-[92vw] flex-col overflow-hidden rounded-lg border border-border bg-surface-1"
-        style={{ boxShadow: 'var(--shadow-menu)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-background/60 backdrop-blur-sm" />
+        <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-20 z-[51] flex w-[520px] max-w-[92vw] -translate-x-1/2 flex-col overflow-hidden rounded-lg border border-border bg-surface-1 shadow-menu outline-none">
+        <Dialog.Title className="sr-only">Open a note</Dialog.Title>
         <div className="flex items-center gap-2 border-b border-border px-3 py-2">
           <Search size={14} className="text-muted-foreground" />
           <input
@@ -126,14 +107,12 @@ export function SearchModal({
             className="flex-1 bg-transparent text-body text-foreground placeholder:text-subtle-foreground focus:outline-none"
           />
           <Kbd>esc</Kbd>
-          <button
-            type="button"
-            onClick={onClose}
+          <Dialog.Close
             className="rounded-sm p-1 text-muted-foreground hover:bg-surface-3 hover:text-foreground"
             aria-label="Close search"
           >
             <X size={14} />
-          </button>
+          </Dialog.Close>
         </div>
 
         <div className="max-h-[60vh] overflow-y-auto">
@@ -182,7 +161,8 @@ export function SearchModal({
             <span>tag:foo</span>
           </div>
         </div>
-      </div>
-    </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

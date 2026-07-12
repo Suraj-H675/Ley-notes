@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import * as Dialog from '@radix-ui/react-dialog';
 import { X, Download, FolderOpen, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { db } from '@/infrastructure/database/db';
 import { useUIStore, type Theme } from '@/shared/state/ui';
@@ -42,18 +43,6 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     [],
   );
   const deletedPages = useLiveQuery(listDeletedPages, [], []);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
 
   useEffect(() => () => {
     if (eraseTimer.current !== null) window.clearTimeout(eraseTimer.current);
@@ -128,28 +117,18 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ backgroundColor: 'hsl(var(--background) / 0.6)' }}
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-[min(760px,92vh)] w-[520px] max-w-[92vw] flex-col overflow-hidden rounded-xl border border-border bg-surface-1"
-        style={{ boxShadow: 'var(--shadow-menu)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-background/60 backdrop-blur-sm" />
+        <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[51] flex max-h-[min(760px,92vh)] w-[520px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-surface-1 shadow-menu outline-none">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <span className="text-body font-semibold">Settings</span>
-          <button
-            type="button"
-            onClick={onClose}
+          <Dialog.Title className="text-body font-semibold">Settings</Dialog.Title>
+          <Dialog.Close
             aria-label="Close settings"
             className="rounded-sm p-1 text-muted-foreground hover:bg-surface-3 hover:text-foreground"
           >
             <X size={14} />
-          </button>
+          </Dialog.Close>
         </div>
 
         <div className="flex flex-col gap-6 overflow-y-auto p-4">
@@ -288,7 +267,8 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           <span>Local-first — {getActiveVaultKind() ? 'Markdown stays in your chosen folder.' : 'notes stay on this device.'}</span>
           <Kbd>esc</Kbd>
         </div>
-      </div>
-    </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

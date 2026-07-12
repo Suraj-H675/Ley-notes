@@ -64,8 +64,8 @@ export function NoteWorkspace({ page }: { page: Page }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2">
-        <FileText size={14} className="text-muted-foreground" />
+      <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-2 sm:gap-3 sm:px-4">
+        <FileText size={14} className="hidden shrink-0 text-muted-foreground sm:block" />
         <div className="min-w-0 flex-1">
           <input
             value={title}
@@ -78,18 +78,18 @@ export function NoteWorkspace({ page }: { page: Page }) {
           <div className={`truncate font-mono text-micro ${titleError ? 'text-destructive' : 'text-subtle-foreground'}`}>{titleError ?? page.path}</div>
         </div>
         <input ref={attachmentInput} type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,audio/mpeg,audio/wav,video/mp4,video/webm" className="hidden" onChange={(event) => { void attachFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
-        <button type="button" onClick={() => attachmentInput.current?.click()} className="flex items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-2 hover:text-foreground" title="Attach files">
-          <Paperclip size={12} /> {attachmentStatus ?? 'Attach'}
+        <button type="button" onClick={() => attachmentInput.current?.click()} className="flex shrink-0 items-center gap-1 rounded-md p-1.5 text-micro text-muted-foreground hover:bg-surface-2 hover:text-foreground sm:px-2 sm:py-1" title={attachmentStatus ?? 'Attach files'} aria-label={attachmentStatus ?? 'Attach files'}>
+          <Paperclip size={12} /> <span className="hidden sm:inline">{attachmentStatus ?? 'Attach'}</span>
         </button>
         <div className="flex rounded-md border border-border bg-surface-1 p-0.5">
           <ModeButton active={mode === 'edit'} onClick={() => changeMode('edit')} icon={<Edit3 size={12} />} label="Edit" />
           <ModeButton active={mode === 'read'} onClick={() => changeMode('read')} icon={<BookOpen size={12} />} label="Read" />
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <PropertiesPanel key={JSON.stringify(page.frontmatter)} pageId={page.id} frontmatter={page.frontmatter} />
         {mode === 'edit'
-          ? <div className="mx-auto h-[calc(100vh-175px)] min-h-[500px] w-full max-w-[900px]"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} initialContent={page.content} /></Suspense></div>
+          ? <div className="mx-auto min-h-[240px] w-full max-w-[900px] flex-1"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} initialContent={page.content} /></Suspense></div>
           : <Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Rendering note…</div>}><MarkdownReadingView content={page.content} /></Suspense>}
       </div>
     </div>
@@ -97,5 +97,5 @@ export function NoteWorkspace({ page }: { page: Page }) {
 }
 
 function ModeButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: ReactNode; label: string }) {
-  return <button type="button" onClick={onClick} className={`flex items-center gap-1 rounded px-2 py-1 text-micro ${active ? 'bg-surface-3 text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>{icon}{label}</button>;
+  return <button type="button" onClick={onClick} aria-label={`${label} mode`} title={`${label} mode`} className={`flex items-center gap-1 rounded p-1.5 text-micro sm:px-2 sm:py-1 ${active ? 'bg-surface-3 text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>{icon}<span className="hidden sm:inline">{label}</span></button>;
 }

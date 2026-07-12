@@ -6,6 +6,7 @@ import { useNavStore } from '@/shared/state/nav';
 import { Kbd } from '@/shared/components/Kbd';
 import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
 import { applyTemplate, listVaultTemplates, templateFrontmatter } from '@/core/vault/templates';
+import * as Dialog from '@radix-ui/react-dialog';
 
 export function NewNoteModal({
   open,
@@ -62,9 +63,12 @@ export function NewNoteModal({
   }
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Create new note" className="fixed inset-0 z-[75] flex items-start justify-center bg-background/65 pt-[16vh]" onMouseDown={onClose}>
-      <form className="w-[460px] max-w-[calc(100vw-24px)] rounded-xl border border-border bg-surface-1 shadow-menu" onMouseDown={(event) => event.stopPropagation()} onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-        <div className="flex items-center gap-2 border-b border-border px-4 py-3 font-medium"><FilePlus2 size={16} className="text-primary" />New note</div>
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[75] bg-background/65 backdrop-blur-sm" />
+        <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-[16vh] z-[76] w-[460px] max-w-[calc(100vw-24px)] -translate-x-1/2 rounded-xl border border-border bg-surface-1 shadow-menu outline-none">
+      <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+        <Dialog.Title className="flex items-center gap-2 border-b border-border px-4 py-3 font-medium"><FilePlus2 size={16} className="text-primary" />New note</Dialog.Title>
         <div className="space-y-4 p-4">
           <label className="block text-meta text-muted-foreground-strong">
             Title
@@ -89,6 +93,8 @@ export function NewNoteModal({
           <div className="flex items-center gap-2"><button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-meta text-muted-foreground hover:bg-surface-2">Cancel</button><button type="submit" disabled={busy} className="rounded-md bg-primary px-3 py-1.5 text-meta font-medium text-primary-foreground disabled:opacity-50">{busy ? 'Creating…' : 'Create note'} <Kbd>↵</Kbd></button></div>
         </div>
       </form>
-    </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
