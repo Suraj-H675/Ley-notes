@@ -33,6 +33,8 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Settings | Keep | Contains durable product configuration only; transfer controls appear only in browser-local mode. |
 | Right dock toggle | Keep | Backlinks and outline are core second-brain context, while the dock remains dismissible. |
 | Recent and Tags panels | Improve | Both are collapsible to prevent the sidebar becoming a permanently crowded stack. Tags now truly filter the page tree. |
+| Explorer context menu | Improve | Rename, move, duplicate, copy-wiki-link, and trash now operate on real vault state. Moving is also available through drag/drop, with the dialog retained as the keyboard-accessible path. |
+| Folder organization | Improve | Existing folders are first-class destinations and nested paths can be created by moving or creating notes. Empty-folder controls remain absent because they add no durable information to browser-local storage. |
 
 ## Note workspace
 
@@ -89,6 +91,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Templates folder | Keep | Discovers ordinary Markdown templates; new-note and daily-note creation use them. |
 | Daily-note format | Improve | Invalid date patterns are surfaced before they create bad filenames. |
 | ZIP import/export | Relocate | Visible only for browser-local storage. Filesystem vault folders are already the portable source of truth. |
+| Browser-local recycle bin | Add | Soft-deleted notes can be restored or permanently erased with a two-step destructive action. Filesystem vaults continue to use their ordinary `.trash` directory. |
 | Legacy demo controls and generator | Remove | Product-demo state was not user knowledge. |
 | Unused block parser and result helper | Remove | Neither powered a reachable feature; keeping them implied a capability the product did not have. |
 | Empty-folder creation gateway | Remove | No reachable workflow used it; note paths already create required parent folders. |

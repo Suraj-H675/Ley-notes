@@ -4,18 +4,19 @@
  * rename/delete via the context menu.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type DragEvent } from 'react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ChevronRight, ChevronDown, FileText, FolderClosed, FolderOpen, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, Copy, FileText, FolderClosed, FolderInput, FolderOpen, Link2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { usePages } from '@/features/notes/usePages';
 import { useNavStore } from '@/shared/state/nav';
-import { deletePage, renamePage } from '@/core/vault/pages';
+import { deletePage, duplicatePage, movePage, renamePage } from '@/core/vault/pages';
 import { cn } from '@/shared/lib/classnames';
 import { useUIStore } from '@/shared/state/ui';
 import { useTagFilter } from '@/shared/state/tag-filter';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/infrastructure/database/db';
+import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
 
 interface TreeNode {
   name: string;
@@ -42,7 +43,7 @@ function buildTree(pages: Array<{ id: string; title: string; path: string }>): T
     cur.pages.push({ id: p.id, title: p.title, path: p.path });
   }
 
-  // Sort: pages first, then folders alphabetically within each level.
+  // Match familiar vault explorers: folders first, then pages, alphabetically.
   function sortNode(node: TreeNode) {
     node.children.sort((a, b) => a.name.localeCompare(b.name));
     node.pages.sort((a, b) => a.title.localeCompare(b.title));
@@ -66,10 +67,27 @@ export function FileTree({ onNewPage }: { onNewPage: (folder?: string) => void }
     () => buildTree(visiblePages.map((p) => ({ id: p.id, title: p.title, path: p.path }))),
     [visiblePages],
   );
+  const folders = useMemo(() => collectFolders(tree), [tree]);
+  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
+
+  async function handleMove(pageId: string, folder: string) {
+    try {
+      const moved = await movePage(pageId, folder);
+      setNotice({ kind: 'success', message: `Moved “${moved.title}” to ${folder || 'the vault root'}.` });
+    } catch (cause) {
+      setNotice({ kind: 'error', message: cause instanceof Error ? cause.message : String(cause) });
+      throw cause;
+    }
+  }
 
   return (
     <div className="flex flex-col gap-1 px-2">
-      <div className="flex items-center justify-between px-2 py-1">
+      <div
+        className="flex items-center justify-between rounded-md px-2 py-1"
+        onDragOver={(event) => { if (hasDraggedPage(event)) event.preventDefault(); }}
+        onDrop={(event) => { event.preventDefault(); const pageId = draggedPageId(event); if (pageId) void handleMove(pageId, '').catch(() => undefined); }}
+        title="Drop a note here to move it to the vault root"
+      >
         <span className="truncate text-meta font-medium text-muted-foreground">{activeTag ? `Pages · #${activeTag}` : 'Pages'}</span>
         <button
           type="button"
@@ -80,7 +98,8 @@ export function FileTree({ onNewPage }: { onNewPage: (folder?: string) => void }
           <Plus size={14} />
         </button>
       </div>
-      <Node node={tree} depth={0} onNewPage={onNewPage} />
+      <Node node={tree} depth={0} folders={folders} onNewPage={onNewPage} onMovePage={handleMove} />
+      {notice && <div className={`mx-2 flex items-start gap-2 rounded-md px-2 py-1.5 text-micro leading-relaxed ${notice.kind === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-muted-foreground-strong'}`} role="status"><span className="min-w-0 flex-1">{notice.message}</span><button type="button" onClick={() => setNotice(null)} aria-label="Dismiss message" className="shrink-0 rounded-sm opacity-70 hover:opacity-100"><X size={11} /></button></div>}
       {activeTag && visiblePages.length === 0 && <p className="px-2 py-3 text-micro leading-relaxed text-muted-foreground">No notes currently use #{activeTag}.</p>}
     </div>
   );
@@ -89,11 +108,15 @@ export function FileTree({ onNewPage }: { onNewPage: (folder?: string) => void }
 function Node({
   node,
   depth,
+  folders,
   onNewPage,
+  onMovePage,
 }: {
   node: TreeNode;
   depth: number;
+  folders: string[];
   onNewPage: (folder?: string) => void;
+  onMovePage: (pageId: string, folder: string) => Promise<void>;
 }) {
   return (
     <div>
@@ -102,11 +125,13 @@ function Node({
           key={child.path}
           node={child}
           depth={depth}
+          folders={folders}
           onNewPage={(folder) => onNewPage(folder)}
+          onMovePage={onMovePage}
         />
       ))}
       {node.pages.map((page) => (
-        <PageNode key={page.id} page={page} depth={depth} />
+        <PageNode key={page.id} page={page} depth={depth} folders={folders} onMovePage={onMovePage} />
       ))}
     </div>
   );
@@ -115,16 +140,27 @@ function Node({
 function FolderNode({
   node,
   depth,
+  folders,
   onNewPage,
+  onMovePage,
 }: {
   node: TreeNode;
   depth: number;
+  folders: string[];
   onNewPage: (folder?: string) => void;
+  onMovePage: (pageId: string, folder: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(depth < 1);
+  const [dragOver, setDragOver] = useState(false);
   return (
     <div>
-      <div className="group flex items-center rounded-sm hover:bg-surface-2" style={{ paddingLeft: 8 + depth * 12 }}>
+      <div
+        className={cn('group flex items-center rounded-sm hover:bg-surface-2', dragOver && 'bg-primary/15 ring-1 ring-inset ring-primary/40')}
+        style={{ paddingLeft: 8 + depth * 12 }}
+        onDragOver={(event) => { if (!hasDraggedPage(event)) return; event.preventDefault(); event.stopPropagation(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(event) => { event.preventDefault(); event.stopPropagation(); setDragOver(false); const pageId = draggedPageId(event); if (pageId) void onMovePage(pageId, node.path).catch(() => undefined); }}
+      >
         <button
           type="button"
           onClick={() => setOpen((value) => !value)}
@@ -140,7 +176,7 @@ function FolderNode({
         </button>
       </div>
       {open && (
-        <Node node={node} depth={depth + 1} onNewPage={onNewPage} />
+        <Node node={node} depth={depth + 1} folders={folders} onNewPage={onNewPage} onMovePage={onMovePage} />
       )}
     </div>
   );
@@ -149,9 +185,13 @@ function FolderNode({
 function PageNode({
   page,
   depth,
+  folders,
+  onMovePage,
 }: {
   page: { id: string; title: string; path: string };
   depth: number;
+  folders: string[];
+  onMovePage: (pageId: string, folder: string) => Promise<void>;
 }) {
   const activeTab = useNavStore((s) => s.activeTab);
   const openPage = useNavStore((s) => s.openPage);
@@ -159,7 +199,10 @@ function PageNode({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(page.title);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [destination, setDestination] = useState(page.path.includes('/') ? page.path.split('/').slice(0, -1).join('/') : '');
   const [error, setError] = useState<string | null>(null);
+  const filesystemVault = Boolean(getActiveVaultKind());
 
   async function handleRename() {
     const trimmed = draft.trim();
@@ -182,6 +225,28 @@ function PageNode({
     await deletePage(page.id);
     useNavStore.getState().closeTab(page.id);
     setDeleteOpen(false);
+  }
+
+  async function handleMove() {
+    try {
+      await onMovePage(page.id, destination);
+      setMoveOpen(false);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function handleDuplicate() {
+    try {
+      const copy = await duplicatePage(page.id);
+      const nav = useNavStore.getState();
+      nav.openPage(copy.id);
+      nav.pushRecent(copy.id);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   const isActive = activeTab === page.id;
@@ -213,6 +278,8 @@ function PageNode({
         <ContextMenu.Trigger asChild>
           <button
             type="button"
+            draggable
+            onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-ley-page-id', page.id); }}
             onClick={() => {
               openPage(page.id);
               pushRecent(page.id);
@@ -236,6 +303,15 @@ function PageNode({
             <ContextMenu.Item onSelect={() => setEditing(true)} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
               <Pencil size={13} /> Rename
             </ContextMenu.Item>
+            <ContextMenu.Item onSelect={() => { setDestination(page.path.includes('/') ? page.path.split('/').slice(0, -1).join('/') : ''); setMoveOpen(true); }} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
+              <FolderInput size={13} /> Move to…
+            </ContextMenu.Item>
+            <ContextMenu.Item onSelect={() => void handleDuplicate()} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
+              <Copy size={13} /> Duplicate
+            </ContextMenu.Item>
+            <ContextMenu.Item onSelect={() => void navigator.clipboard.writeText(`[[${page.title}]]`).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
+              <Link2 size={13} /> Copy wiki link
+            </ContextMenu.Item>
             <ContextMenu.Separator className="my-1 h-px bg-border" />
             <ContextMenu.Item onSelect={() => setDeleteOpen(true)} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-destructive outline-none data-[highlighted]:bg-destructive/10">
               <Trash2 size={13} /> Move to trash
@@ -243,6 +319,30 @@ function PageNode({
           </ContextMenu.Content>
         </ContextMenu.Portal>
       </ContextMenu.Root>
+      {error && !moveOpen && !deleteOpen && <div className="mx-2 my-1 flex items-start gap-2 rounded-md bg-destructive/10 px-2 py-1.5 text-micro text-destructive" role="alert"><span className="min-w-0 flex-1">{error}</span><button type="button" onClick={() => setError(null)} aria-label="Dismiss error"><X size={11} /></button></div>}
+
+      <Dialog.Root open={moveOpen} onOpenChange={(open) => { setMoveOpen(open); if (!open) setError(null); }}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[90] bg-background/70 backdrop-blur-sm" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] w-[420px] max-w-[calc(100vw-24px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface-1 p-5 shadow-menu outline-none">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Dialog.Title className="text-body font-semibold text-foreground">Move “{page.title}”</Dialog.Title>
+                <Dialog.Description className="mt-1 text-meta leading-relaxed text-muted-foreground">Choose an existing folder or type a new nested path. Leave it empty for the vault root.</Dialog.Description>
+              </div>
+              <Dialog.Close aria-label="Close move dialog" className="rounded-md p-1 text-muted-foreground hover:bg-surface-3"><X size={14} /></Dialog.Close>
+            </div>
+            <label className="mt-4 block text-meta font-medium text-muted-foreground-strong" htmlFor={`move-${page.id}`}>Destination folder</label>
+            <input id={`move-${page.id}`} autoFocus value={destination} list={`folders-${page.id}`} onChange={(event) => setDestination(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void handleMove(); }} placeholder="Vault root" className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 font-mono text-meta text-foreground outline-none focus:border-primary" />
+            <datalist id={`folders-${page.id}`}>{folders.map((folder) => <option key={folder} value={folder} />)}</datalist>
+            {error && <p className="mt-3 text-meta text-destructive" role="alert">{error}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <Dialog.Close className="rounded-md border border-border px-3 py-1.5 text-meta text-foreground hover:bg-surface-2">Cancel</Dialog.Close>
+              <button type="button" onClick={() => void handleMove()} className="rounded-md bg-primary px-3 py-1.5 text-meta font-medium text-primary-foreground hover:opacity-90">Move note</button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <Dialog.Root open={deleteOpen} onOpenChange={setDeleteOpen}>
         <Dialog.Portal>
@@ -252,10 +352,10 @@ function PageNode({
               <div>
                 <Dialog.Title className="text-body font-semibold text-foreground">Move note to trash?</Dialog.Title>
                 <Dialog.Description className="mt-1 text-meta leading-relaxed text-muted-foreground">
-                  “{page.title}” will be moved to the vault’s <span className="font-mono">.trash</span> folder when a filesystem vault is active.
+                  {filesystemVault ? <>“{page.title}” will be moved to the vault’s <span className="font-mono">.trash</span> folder.</> : <>“{page.title}” will move to the recycle bin in Settings, where it can be restored.</>}
                 </Dialog.Description>
               </div>
-              <Dialog.Close className="rounded-md p-1 text-muted-foreground hover:bg-surface-3"><X size={14} /></Dialog.Close>
+              <Dialog.Close aria-label="Close delete dialog" className="rounded-md p-1 text-muted-foreground hover:bg-surface-3"><X size={14} /></Dialog.Close>
             </div>
             {error && <p className="mt-3 text-meta text-destructive">{error}</p>}
             <div className="mt-5 flex justify-end gap-2">
@@ -267,4 +367,24 @@ function PageNode({
       </Dialog.Root>
     </>
   );
+}
+
+function collectFolders(root: TreeNode): string[] {
+  const folders: string[] = [];
+  const visit = (node: TreeNode) => {
+    for (const child of node.children) {
+      folders.push(child.path);
+      visit(child);
+    }
+  };
+  visit(root);
+  return folders;
+}
+
+function hasDraggedPage(event: DragEvent): boolean {
+  return event.dataTransfer.types.includes('application/x-ley-page-id');
+}
+
+function draggedPageId(event: DragEvent): string {
+  return event.dataTransfer.getData('application/x-ley-page-id');
 }

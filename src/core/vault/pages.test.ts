@@ -3,9 +3,14 @@ import { db } from '@/infrastructure/database/db';
 import {
   createPage,
   deletePage,
+  duplicatePage,
   getPageByTitle,
+  listDeletedPages,
   listPages,
+  movePage,
+  permanentlyDeletePage,
   renamePage,
+  restorePage,
   updatePageContent,
 } from './pages';
 import { resetDb } from '@/test/helpers';
@@ -79,6 +84,41 @@ describe('pages CRUD', () => {
     await expect(renamePage(bar.id, 'Foo')).rejects.toThrow(/already exists/);
   });
 
+  it('moves a page between folders without changing its identity', async () => {
+    const page = await createPage({ title: 'Roadmap', folder: 'projects/ley' });
+    const moved = await movePage(page.id, 'archive/2026');
+    expect(moved.id).toBe(page.id);
+    expect(moved.title).toBe('Roadmap');
+    expect(moved.path).toBe('archive/2026/roadmap.md');
+    expect((await db.pages.get(page.id))?.path).toBe('archive/2026/roadmap.md');
+  });
+
+  it('moves a nested page back to the vault root', async () => {
+    const page = await createPage({ title: 'Inbox', folder: 'capture' });
+    expect((await movePage(page.id, '')).path).toBe('inbox.md');
+  });
+
+  it('rejects unsafe move destinations and path collisions', async () => {
+    await createPage({ title: 'One', folder: 'target' });
+    const another = await createPage({ title: 'One!', folder: 'source' });
+    await expect(movePage(another.id, '../outside')).rejects.toThrow(/safe folder/);
+    await expect(movePage(another.id, 'target')).rejects.toThrow(/already exists/);
+  });
+
+  it('duplicates content and properties but removes ambiguous aliases', async () => {
+    const page = await createPage({
+      title: 'Project brief',
+      folder: 'projects',
+      content: 'Links to [[Welcome]].',
+      frontmatter: { status: 'active', aliases: ['Brief'] },
+    });
+    const copy = await duplicatePage(page.id);
+    expect(copy.title).toBe('Project brief copy');
+    expect(copy.path).toBe('projects/project-brief-copy.md');
+    expect(copy.content).toBe(page.content);
+    expect(copy.frontmatter).toEqual({ status: 'active' });
+  });
+
   it('soft-deletes a page and removes its link/tag rows', async () => {
     const p = await createPage({ title: 'Foo', content: 'see [[Bar]]', folder: 'x' });
     await createPage({ title: 'Bar' });
@@ -98,6 +138,36 @@ describe('pages CRUD', () => {
     await deletePage(b.id);
     const live = await listPages();
     expect(live.map((p) => p.id).sort()).toEqual([a.id].sort());
+  });
+
+  it('lists and restores browser-local deleted notes with rebuilt indexes', async () => {
+    const target = await createPage({ title: 'Target' });
+    const page = await createPage({ title: 'Recover me', content: 'See [[Target]] and #recovered.' });
+    await deletePage(page.id);
+    expect((await listDeletedPages()).map((candidate) => candidate.id)).toEqual([page.id]);
+    const restored = await restorePage(page.id);
+    expect(restored.deletedAt).toBeNull();
+    expect((await db.links.where('sourcePageId').equals(page.id).first())?.targetPageId).toBe(target.id);
+    expect(await db.tags.get([page.id, 'recovered'])).toBeTruthy();
+  });
+
+  it('allows a title to be recreated but prevents restoring over it', async () => {
+    const deleted = await createPage({ title: 'Reusable title' });
+    await deletePage(deleted.id);
+    const replacement = await createPage({ title: 'Reusable title' });
+    expect(replacement.id).not.toBe(deleted.id);
+    await expect(restorePage(deleted.id)).rejects.toThrow(/current note/);
+  });
+
+  it('permanently deletes only recycled notes and their private data', async () => {
+    const page = await createPage({ title: 'Disposable' });
+    const source = await createPage({ title: 'Source', content: 'Still references [[Disposable]].' });
+    await db.revisions.add({ id: 'revision', pageId: page.id, content: 'old', createdAt: Date.now() });
+    await deletePage(page.id);
+    await permanentlyDeletePage(page.id);
+    expect(await db.pages.get(page.id)).toBeUndefined();
+    expect(await db.revisions.where('pageId').equals(page.id).count()).toBe(0);
+    expect((await db.links.where('sourcePageId').equals(source.id).first())?.targetPageId).toBeNull();
   });
 
   it('getPageByTitle is case-insensitive', async () => {

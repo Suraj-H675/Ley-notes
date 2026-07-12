@@ -3,9 +3,9 @@
  * the `settings` table; theme also flips the document attribute live.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { X, Download, FolderOpen, Upload } from 'lucide-react';
+import { X, Download, FolderOpen, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { db } from '@/infrastructure/database/db';
 import { useUIStore, type Theme } from '@/shared/state/ui';
 import { exportVault } from '@/core/vault/export';
@@ -15,6 +15,7 @@ import { cn } from '@/shared/lib/classnames';
 import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
 import { listVaultTemplates } from '@/core/vault/templates';
 import { format as formatDate } from 'date-fns';
+import { listDeletedPages, permanentlyDeletePage, restorePage } from '@/core/vault/pages';
 
 export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const theme = useUIStore((s) => s.theme);
@@ -22,6 +23,9 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
   const [importing, setImporting] = useState(false);
   const [transferStatus, setTransferStatus] = useState<string | null>(null);
   const [dailyFormatError, setDailyFormatError] = useState<string | null>(null);
+  const [trashStatus, setTrashStatus] = useState<string | null>(null);
+  const [eraseArmed, setEraseArmed] = useState<string | null>(null);
+  const eraseTimer = useRef<number | null>(null);
   const filesystemVault = Boolean(getActiveVaultKind());
 
   const dailyFormat = useLiveQuery(
@@ -37,6 +41,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     async () => (await db.settings.get('daily-note-template-path'))?.value as string | undefined,
     [],
   );
+  const deletedPages = useLiveQuery(listDeletedPages, [], []);
 
   useEffect(() => {
     if (!open) return;
@@ -49,6 +54,10 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+
+  useEffect(() => () => {
+    if (eraseTimer.current !== null) window.clearTimeout(eraseTimer.current);
+  }, []);
 
   if (!open) return null;
 
@@ -93,6 +102,31 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     }
   }
 
+  async function handleRestore(pageId: string) {
+    try {
+      const page = await restorePage(pageId);
+      setTrashStatus(`Restored “${page.title}”.`);
+    } catch (cause) {
+      setTrashStatus(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function handleErase(pageId: string) {
+    if (eraseArmed !== pageId) {
+      setEraseArmed(pageId);
+      if (eraseTimer.current !== null) window.clearTimeout(eraseTimer.current);
+      eraseTimer.current = window.setTimeout(() => setEraseArmed((current) => current === pageId ? null : current), 4000);
+      return;
+    }
+    try {
+      await permanentlyDeletePage(pageId);
+      setEraseArmed(null);
+      setTrashStatus('The note was permanently deleted.');
+    } catch (cause) {
+      setTrashStatus(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   return (
     <div
       role="dialog"
@@ -111,6 +145,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close settings"
             className="rounded-sm p-1 text-muted-foreground hover:bg-surface-3 hover:text-foreground"
           >
             <X size={14} />
@@ -225,6 +260,28 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
             {transferStatus && <div className="mt-1 text-meta text-secondary" role="status">{transferStatus}</div>}
             </>}
           </section>
+
+          {!filesystemVault && <section>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="text-meta font-medium text-foreground">Recycle bin</div>
+              <span className="text-micro text-muted-foreground">{deletedPages.length} {deletedPages.length === 1 ? 'note' : 'notes'}</span>
+            </div>
+            {deletedPages.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-meta text-muted-foreground">Deleted browser-local notes can be restored here.</div>
+            ) : (
+              <div className="max-h-44 divide-y divide-border overflow-y-auto rounded-lg border border-border bg-surface-2">
+                {deletedPages.map((page) => <div key={page.id} className="flex items-center gap-2 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-meta font-medium text-foreground">{page.title}</div>
+                    <div className="truncate font-mono text-micro text-muted-foreground">{page.path}</div>
+                  </div>
+                  <button type="button" onClick={() => void handleRestore(page.id)} className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label={`Restore ${page.title}`} title="Restore"><RotateCcw size={13} /></button>
+                  <button type="button" onClick={() => void handleErase(page.id)} className={cn('flex items-center gap-1 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive', eraseArmed === page.id && 'bg-destructive text-white hover:bg-destructive hover:text-white')} aria-label={`Permanently delete ${page.title}`} title={eraseArmed === page.id ? 'Click again to permanently delete' : 'Permanently delete'}><Trash2 size={13} />{eraseArmed === page.id && <span className="text-micro">Confirm</span>}</button>
+                </div>)}
+              </div>
+            )}
+            {trashStatus && <button type="button" onClick={() => setTrashStatus(null)} className="mt-2 text-left text-micro text-secondary" role="status">{trashStatus}</button>}
+          </section>}
         </div>
 
         <div className="flex items-center justify-between border-t border-border px-4 py-2 text-micro text-muted-foreground">

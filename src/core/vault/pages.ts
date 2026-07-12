@@ -43,7 +43,11 @@ export async function listPages(): Promise<Page[]> {
  */
 export async function getPageByTitle(title: string): Promise<Page | null> {
   const lc = title.toLowerCase();
-  return (await db.pages.where('lcTitle').equals(lc).first()) ?? null;
+  return (await db.pages.where('lcTitle').equals(lc).filter((page) => page.deletedAt === null).first()) ?? null;
+}
+
+export async function listDeletedPages(): Promise<Page[]> {
+  return (await db.pages.where('deletedAt').above(0).toArray()).sort((left, right) => (right.deletedAt ?? 0) - (left.deletedAt ?? 0));
 }
 
 export async function getPageById(pageId: string): Promise<Page | null> {
@@ -192,6 +196,53 @@ export async function renamePage(pageId: string, newTitle: string): Promise<Page
   return { ...page, ...updated } as Page;
 }
 
+/** Move a note without changing its title or breaking wiki links. */
+export async function movePage(pageId: string, destinationFolder: string): Promise<Page> {
+  const page = await db.pages.get(pageId);
+  if (!page || page.deletedAt !== null) throw new Error(`movePage: page ${pageId} not found`);
+
+  const folder = normalizeFolder(destinationFolder);
+  const filename = page.path.split('/').at(-1) ?? `${slugify(page.title)}.md`;
+  const path = folder ? `${folder}/${filename}` : filename;
+  if (path === page.path) return page;
+
+  const collision = await db.pages.where('path').equals(path).first();
+  if (collision && collision.id !== pageId && collision.deletedAt === null) {
+    throw new Error(`A note named "${filename.replace(/\.md$/i, '')}" already exists in that folder`);
+  }
+
+  await renameActiveVaultFile(page.path, path);
+  const updatedAt = now();
+  await db.pages.update(pageId, { path, updatedAt });
+  return { ...page, path, updatedAt };
+}
+
+/** Create an independent Markdown copy while avoiding duplicate aliases. */
+export async function duplicatePage(pageId: string): Promise<Page> {
+  const page = await db.pages.get(pageId);
+  if (!page || page.deletedAt !== null) throw new Error(`duplicatePage: page ${pageId} not found`);
+
+  let suffix = 1;
+  let title = `${page.title} copy`;
+  while (await getPageByTitle(title)) {
+    suffix += 1;
+    title = `${page.title} copy ${suffix}`;
+  }
+  const folder = page.path.includes('/') ? page.path.split('/').slice(0, -1).join('/') : undefined;
+  const frontmatter = { ...page.frontmatter };
+  delete frontmatter.alias;
+  delete frontmatter.aliases;
+  return createPage({ title, folder, content: page.content, frontmatter });
+}
+
+function normalizeFolder(value: string): string {
+  const folder = value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!folder) return '';
+  const segments = folder.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) throw new Error('Choose a safe folder inside the vault');
+  return segments.join('/');
+}
+
 /**
  * Soft-delete a page. Links and tags remain so other pages' backlinks
  * resolve gracefully until they're rebuilt on next save.
@@ -203,4 +254,37 @@ export async function deletePage(pageId: string): Promise<void> {
   await db.pages.update(pageId, { deletedAt: now() });
   await db.links.where('sourcePageId').equals(pageId).delete();
   await db.tags.where('pageId').equals(pageId).delete();
+}
+
+/** Restore a browser-local soft-deleted note and rebuild all derived indexes. */
+export async function restorePage(pageId: string): Promise<Page> {
+  const page = await db.pages.get(pageId);
+  if (!page || page.deletedAt === null) throw new Error('That deleted note no longer exists');
+  const collision = await getPageByTitle(page.title);
+  if (collision) throw new Error(`A current note named "${page.title}" already exists`);
+  const pathCollision = await db.pages.where('path').equals(page.path).filter((candidate) => candidate.deletedAt === null).first();
+  if (pathCollision) throw new Error(`A current note already uses ${page.path}`);
+  const updatedAt = now();
+  await db.pages.update(pageId, { deletedAt: null, updatedAt });
+  const restored = { ...page, deletedAt: null, updatedAt };
+  await rebuildPageLinks(pageId, page.content);
+  await rebuildPageTags(pageId, page.content, page.frontmatter);
+  await resolveGhostLinksForPage(restored);
+  return restored;
+}
+
+/** Irreversibly remove a browser-local deleted note and its private history/assets. */
+export async function permanentlyDeletePage(pageId: string): Promise<void> {
+  const page = await db.pages.get(pageId);
+  if (!page || page.deletedAt === null) throw new Error('Only notes in the recycle bin can be permanently deleted');
+  await db.transaction('rw', db.pages, db.links, db.tags, db.revisions, db.assets, async () => {
+    await db.links.where('targetPageId').equals(pageId).modify({ targetPageId: null });
+    await Promise.all([
+      db.links.where('sourcePageId').equals(pageId).delete(),
+      db.tags.where('pageId').equals(pageId).delete(),
+      db.revisions.where('pageId').equals(pageId).delete(),
+      db.assets.where('pageId').equals(pageId).delete(),
+      db.pages.delete(pageId),
+    ]);
+  });
 }
