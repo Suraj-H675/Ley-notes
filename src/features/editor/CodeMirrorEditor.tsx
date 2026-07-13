@@ -13,13 +13,16 @@ import { updatePageContent } from '@/core/vault/pages';
 import { attachmentInsertion, saveAttachment } from '@/core/vault/attachments';
 import type { EditorFormat } from './lib/formatting';
 import { openWikiDestination, type WikiDestination } from './lib/open-wiki-destination';
+import { openMarkdownDestination } from './lib/open-wiki-destination';
+import type { InternalMarkdownLink } from '@/core/parser/markdown-links';
 
 interface CodeMirrorEditorProps {
   pageId: string;
+  pagePath: string;
   initialContent: string;
 }
 
-export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ pageId, pagePath, initialContent }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<EditorController | null>(null);
   const dirtyRef = useRef(false);
@@ -60,6 +63,12 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
       await openWikiDestination(destination);
     };
     controller.view.contentDOM.addEventListener('ley:follow-link', onFollow);
+    const onFollowMarkdown = async (event: Event) => {
+      const link = (event as CustomEvent<InternalMarkdownLink>).detail;
+      if (!link) return;
+      await openMarkdownDestination(pagePath, link.path, link.heading, link.blockId);
+    };
+    controller.view.contentDOM.addEventListener('ley:follow-markdown-link', onFollowMarkdown);
 
     const insertFiles = async (files: File[]) => {
       if (files.length === 0) return;
@@ -96,6 +105,7 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
 
     return () => {
       controller.view.contentDOM.removeEventListener('ley:follow-link', onFollow);
+      controller.view.contentDOM.removeEventListener('ley:follow-markdown-link', onFollowMarkdown);
       controller.view.contentDOM.removeEventListener('paste', onPaste);
       controller.view.contentDOM.removeEventListener('drop', onDrop);
       window.removeEventListener('ley:editor-insert', onInsert);
@@ -109,7 +119,7 @@ export function CodeMirrorEditor({ pageId, initialContent }: CodeMirrorEditorPro
     // navigation and debouncing are stable, so
     // re-binding on every change is unnecessary churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageId]);
+  }, [pageId, pagePath]);
 
   useEffect(() => {
     const controller = controllerRef.current;

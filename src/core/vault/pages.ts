@@ -18,6 +18,7 @@ import { rebuildPageTags } from '@/core/index/tag-index';
 import { now } from '@/shared/lib/time';
 import type { Page } from '@/infrastructure/database/schema';
 import { retargetWikiLinks } from '@/core/parser/wiki-links';
+import { retargetInternalMarkdownLinks } from '@/core/parser/markdown-links';
 import { serializeFrontmatter } from '@/core/parser/frontmatter';
 import {
   renameActiveVaultFile,
@@ -184,14 +185,7 @@ export async function renamePage(pageId: string, newTitle: string): Promise<Page
   await renameActiveVaultFile(page.path, path);
   await db.pages.update(pageId, updated);
 
-  // Obsidian-style automatic link maintenance. Each affected source is also
-  // persisted to disk through updatePageContent.
-  for (const sourceId of affectedSourceIds) {
-    const source = await db.pages.get(sourceId);
-    if (!source || source.deletedAt !== null) continue;
-    const nextContent = retargetWikiLinks(source.content, page.title, newTitle);
-    if (nextContent !== source.content) await updatePageContent(source.id, nextContent);
-  }
+  await maintainLinksAfterPathChange(page.id, page.path, path, affectedSourceIds, page.title, newTitle);
 
   return { ...page, ...updated } as Page;
 }
@@ -211,10 +205,32 @@ export async function movePage(pageId: string, destinationFolder: string): Promi
     throw new Error(`A note named "${filename.replace(/\.md$/i, '')}" already exists in that folder`);
   }
 
+  const inbound = await db.links.where('targetPageId').equals(pageId).toArray();
+  const affectedSourceIds = [...new Set([...inbound.map((link) => link.sourcePageId), pageId])];
   await renameActiveVaultFile(page.path, path);
   const updatedAt = now();
   await db.pages.update(pageId, { path, updatedAt });
+  await maintainLinksAfterPathChange(page.id, page.path, path, affectedSourceIds);
   return { ...page, path, updatedAt };
+}
+
+async function maintainLinksAfterPathChange(
+  pageId: string,
+  oldPath: string,
+  newPath: string,
+  sourceIds: string[],
+  oldTitle?: string,
+  newTitle?: string,
+): Promise<void> {
+  const pathChanges = new Map([[oldPath.toLowerCase(), newPath]]);
+  for (const sourceId of new Set([...sourceIds, pageId])) {
+    const source = await db.pages.get(sourceId);
+    if (!source || source.deletedAt !== null) continue;
+    const oldSourcePath = sourceId === pageId ? oldPath : source.path;
+    let nextContent = retargetInternalMarkdownLinks(source.content, oldSourcePath, source.path, pathChanges);
+    if (oldTitle && newTitle) nextContent = retargetWikiLinks(nextContent, oldTitle, newTitle);
+    if (nextContent !== source.content) await updatePageContent(source.id, nextContent);
+  }
 }
 
 /** Create an independent Markdown copy while avoiding duplicate aliases. */

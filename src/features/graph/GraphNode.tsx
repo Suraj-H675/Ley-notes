@@ -15,6 +15,7 @@
 
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import type { LinkKind } from '@/infrastructure/database/schema';
 
 export interface GraphNodeData extends Record<string, unknown> {
   label: string;
@@ -123,7 +124,8 @@ export const COMMUNITY_PALETTE = [
 /**
  * Edge colors keyed by link kind.
  */
-export const EDGE_COLOR: Record<'wiki' | 'embed', string> = {
+export const EDGE_COLOR: Record<LinkKind, string> = {
   wiki: 'hsl(217 50% 70%)',
   embed: 'hsl(280 50% 75%)',
+  markdown: 'hsl(190 55% 68%)',
 };

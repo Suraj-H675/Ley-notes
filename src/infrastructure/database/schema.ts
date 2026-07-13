@@ -58,10 +58,12 @@ export interface Link {
   targetTitle: string;
   /** null when the link points to an uncreated page (ghost link). */
   targetPageId: string | null;
-  kind: 'wiki' | 'embed';
+  kind: LinkKind;
   /** Char offset in the source page's raw content. */
   position: number;
 }
+
+export type LinkKind = 'wiki' | 'embed' | 'markdown';
 
 export interface Tag {
   pageId: string;

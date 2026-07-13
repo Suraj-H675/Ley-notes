@@ -9,6 +9,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/infrastructure/database/db';
 import type { Link, Page } from '@/infrastructure/database/schema';
 import { extractWikiLinks } from '@/core/parser/wiki-links';
+import { extractInternalMarkdownLinks } from '@/core/parser/markdown-links';
 
 export interface BacklinkEntry {
   link: Link;
@@ -82,7 +83,10 @@ export function useUnlinkedMentions(pageId: string | null): UnlinkedMention[] | 
     const mentions: UnlinkedMention[] = [];
 
     for (const source of pages) {
-      const ranges = extractWikiLinks(source.content).map((link) => [link.position, link.position + link.raw.length] as const);
+      const ranges = [
+        ...extractWikiLinks(source.content).map((link) => [link.position, link.position + link.raw.length] as const),
+        ...extractInternalMarkdownLinks(source.content).map((link) => [link.position, link.position + link.raw.length] as const),
+      ];
       const haystack = source.content.toLowerCase();
       let position = haystack.indexOf(needle);
       while (position >= 0) {

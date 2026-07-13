@@ -44,6 +44,9 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - `Cmd/Ctrl+F` and the editor Find button open the same focused in-note search panel; next/previous, replace, replace-all, case, regular-expression, and whole-word controls operate on source Markdown.
 - Replacements persist after the normal editor debounce and reload. Escape closes the panel without invoking browser page search.
 - At 320×568, the search panel remains fully reachable without horizontal overflow and stays beneath the mobile sidebar overlay.
+- Relative Markdown links between nested folders appear in outgoing links, backlinks, and the graph. Reading-mode clicks and editor Ctrl/Cmd-clicks honor heading and block anchors.
+- Renaming or moving a Markdown-link target rewrites incoming destinations; moving the source rebases its outgoing relative paths. Navigation is repeated after both changes.
+- Missing `.md` destinations remain visible as missing files and never create a title-based ghost note.
 - The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.
 - An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.
 

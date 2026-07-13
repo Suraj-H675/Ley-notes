@@ -14,6 +14,7 @@
 
 import { db } from '@/infrastructure/database/db';
 import { extractWikiLinks } from '@/core/parser/wiki-links';
+import { extractInternalMarkdownLinks, resolveInternalMarkdownPath } from '@/core/parser/markdown-links';
 import { resolveTitle } from '@/core/vault/page-index';
 import type { Link, Page } from '@/infrastructure/database/schema';
 import { nanoid } from '@/shared/lib/nanoid';
@@ -26,6 +27,10 @@ export async function rebuildPageLinks(
   sourceContent: string,
 ): Promise<void> {
   const links = extractWikiLinks(sourceContent);
+  const markdownLinks = extractInternalMarkdownLinks(sourceContent);
+  const sourcePage = await db.pages.get(sourcePageId);
+  const livePages = markdownLinks.length > 0 ? await db.pages.filter((page) => page.deletedAt === null).toArray() : [];
+  const byPath = new Map(livePages.map((page) => [page.path.toLowerCase(), page]));
   // Resolve targets one by one against Dexie. This is async but fast (indexed
   // lookups). Sequential keeps order deterministic for debuggability.
   const nowRows: Link[] = [];
@@ -40,6 +45,22 @@ export async function rebuildPageLinks(
       position: l.position,
     });
   }
+  if (sourcePage) {
+    for (const link of markdownLinks) {
+      const targetPath = resolveInternalMarkdownPath(sourcePage.path, link.path);
+      if (!targetPath) continue;
+      const target = byPath.get(targetPath.toLowerCase());
+      nowRows.push({
+        id: nanoid(),
+        sourcePageId,
+        sourceBlockId: null,
+        targetTitle: target?.title ?? targetPath.split('/').at(-1)?.replace(/\.md$/i, '') ?? targetPath,
+        targetPageId: target?.id ?? null,
+        kind: 'markdown',
+        position: link.position,
+      });
+    }
+  }
 
   await db.transaction('rw', db.links, async () => {
     await db.links.where('sourcePageId').equals(sourcePageId).delete();
@@ -51,7 +72,18 @@ export async function rebuildPageLinks(
 export async function resolveGhostLinksForPage(page: Page): Promise<void> {
   const names = new Set([page.title, ...page.aliases].map((value) => value.toLowerCase()));
   const unresolved = await db.links.filter((link) => link.targetPageId === null).toArray();
-  const matching = unresolved.filter((link) => names.has(link.targetTitle.toLowerCase()));
+  const matching: Link[] = [];
+  for (const link of unresolved) {
+    if (link.kind !== 'markdown') {
+      if (names.has(link.targetTitle.toLowerCase())) matching.push(link);
+      continue;
+    }
+    const source = await db.pages.get(link.sourcePageId);
+    if (!source) continue;
+    const parsed = extractInternalMarkdownLinks(source.content).find((candidate) => candidate.position === link.position);
+    const targetPath = parsed ? resolveInternalMarkdownPath(source.path, parsed.path) : null;
+    if (targetPath?.toLowerCase() === page.path.toLowerCase()) matching.push(link);
+  }
   if (matching.length === 0) return;
   await db.links.bulkPut(matching.map((link) => ({ ...link, targetPageId: page.id })));
 }

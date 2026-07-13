@@ -64,6 +64,20 @@ describe('pages CRUD', () => {
     expect(links[0].targetTitle).toBe('Foo');
   });
 
+  it('indexes relative Markdown links by resolved vault path', async () => {
+    const target = await createPage({ title: 'Design', folder: 'docs' });
+    const source = await createPage({ title: 'Source', folder: 'projects', content: '[Design](../docs/design.md#API)' });
+    const link = await db.links.where('sourcePageId').equals(source.id).first();
+    expect(link).toMatchObject({ targetPageId: target.id, targetTitle: 'Design', kind: 'markdown' });
+  });
+
+  it('resolves a missing relative Markdown link when its file is later created at that path', async () => {
+    const source = await createPage({ title: 'Source', folder: 'projects', content: '[Future](../docs/future.md)' });
+    expect((await db.links.where('sourcePageId').equals(source.id).first())?.targetPageId).toBeNull();
+    const target = await createPage({ title: 'Future', folder: 'docs' });
+    expect((await db.links.where('sourcePageId').equals(source.id).first())?.targetPageId).toBe(target.id);
+  });
+
   it('extracts frontmatter aliases on save', async () => {
     const p = await createPage({ title: 'Foo' });
     await updatePageContent(p.id, '---\naliases: [FooBar, The F]\n---\nbody');
@@ -91,6 +105,23 @@ describe('pages CRUD', () => {
     expect(moved.title).toBe('Roadmap');
     expect(moved.path).toBe('archive/2026/roadmap.md');
     expect((await db.pages.get(page.id))?.path).toBe('archive/2026/roadmap.md');
+  });
+
+  it('retargets incoming Markdown links when their target moves or is renamed', async () => {
+    const target = await createPage({ title: 'Design', folder: 'docs' });
+    const source = await createPage({ title: 'Source', folder: 'projects', content: '[Design](../docs/design.md#API)' });
+    await movePage(target.id, 'archive');
+    expect((await db.pages.get(source.id))?.content).toBe('[Design](../archive/design.md#API)');
+    await renamePage(target.id, 'Design System');
+    expect((await db.pages.get(source.id))?.content).toBe('[Design](../archive/design-system.md#API)');
+  });
+
+  it('rebases outgoing Markdown links when their source moves', async () => {
+    await createPage({ title: 'Design', folder: 'docs' });
+    const source = await createPage({ title: 'Source', folder: 'projects', content: '[Design](../docs/design.md)' });
+    await movePage(source.id, 'projects/active');
+    expect((await db.pages.get(source.id))?.content).toBe('[Design](../../docs/design.md)');
+    expect((await db.links.where('sourcePageId').equals(source.id).first())?.targetTitle).toBe('Design');
   });
 
   it('moves a nested page back to the vault root', async () => {

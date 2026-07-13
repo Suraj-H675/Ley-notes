@@ -4,7 +4,7 @@
  * Visual style matches Obsidian / Graphify:
  *   - Tiny dots (handled by GraphNode)
  *   - Community halos (handled by GraphHalo, rendered below nodes)
- *   - Edge colors by kind (wiki=blue, embed=purple)
+ *   - Edge colors by kind (wiki=blue, embed=purple, Markdown=cyan)
  *   - Dim non-hovered nodes + edges
  *   - Glowing active page
  *   - Hover info chip in the corner showing the focused node's details
@@ -29,11 +29,12 @@ import { GraphHalo as GraphHaloComponent } from './GraphHalo';
 import type { GraphNodeAttrs } from '@/core/graph/builder';
 import { useNavStore } from '@/shared/state/nav';
 import { cn } from '@/shared/lib/classnames';
+import type { LinkKind } from '@/infrastructure/database/schema';
 
 export type ColorMode = 'community' | 'tag' | 'folder' | 'degree';
 
 export interface GraphCanvasProps {
-  graph: Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>;
+  graph: Graph<GraphNodeAttrs, { kind: LinkKind }>;
   positions: Map<string, { x: number; y: number }>;
   activePageId: string | null;
   colorMode?: ColorMode;
@@ -203,7 +204,7 @@ export function GraphCanvas({
     for (const e of graph.edges()) {
       const s = graph.source(e);
       const t = graph.target(e);
-      const kind = (graph.getEdgeAttribute(e, 'kind') ?? 'wiki') as 'wiki' | 'embed';
+      const kind = (graph.getEdgeAttribute(e, 'kind') ?? 'wiki') as LinkKind;
       const dimmed =
         enableHoverHighlight && hoveredId !== null && s !== hoveredId && t !== hoveredId;
       const animated = hoveredId !== null && (s === hoveredId || t === hoveredId);

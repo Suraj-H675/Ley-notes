@@ -11,8 +11,8 @@ import {
   parseFrontmatter,
   getAliases,
 } from '@/core/parser/frontmatter';
-import { extractWikiLinks } from '@/core/parser/wiki-links';
 import { extractInlineTags } from '@/core/parser/tags';
+import { rebuildPageLinks } from '@/core/index/backlink';
 import { now } from '@/shared/lib/time';
 import type { Page } from '@/infrastructure/database/schema';
 
@@ -67,29 +67,7 @@ export async function importVaultFromFile(file: File): Promise<number> {
 
   // Pass 2: rebuild link rows + tag rows for each new page.
   for (const p of newPages) {
-    const links = extractWikiLinks(p.content);
-    const linkRows: Array<{
-      id: string;
-      sourcePageId: string;
-      sourceBlockId: null;
-      targetTitle: string;
-      targetPageId: string | null;
-      kind: 'wiki' | 'embed';
-      position: number;
-    }> = [];
-    for (const l of links) {
-      const targetId = titleToId.get(l.target.toLowerCase()) ?? null;
-      linkRows.push({
-        id: nanoid(),
-        sourcePageId: p.id,
-        sourceBlockId: null,
-        targetTitle: l.target,
-        targetPageId: targetId,
-        kind: l.isEmbed ? 'embed' : 'wiki',
-        position: l.position,
-      });
-    }
-    if (linkRows.length > 0) await db.links.bulkAdd(linkRows);
+    await rebuildPageLinks(p.id, p.content);
 
     const inlineTags = extractInlineTags(p.content);
     const fmTags = Array.isArray(p.frontmatter.tags)

@@ -1,4 +1,4 @@
-import { ArrowDownLeft, ArrowUpRight, FilePlus2, Link2, Unlink } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, FileQuestion, FilePlus2, Link2, Unlink } from 'lucide-react';
 import {
   excerptAround,
   useBacklinks,
@@ -62,6 +62,10 @@ export function BacklinksPanel({ pageId }: { pageId: string | null }) {
           <button key={link.id} type="button" onClick={() => navigate(target.id)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-meta hover:bg-surface-2">
             <Link2 size={13} className="shrink-0 text-secondary" /><span className="truncate">{target.title}</span>
           </button>
+        ) : link.kind === 'markdown' ? (
+          <div key={link.id} className="flex w-full items-center gap-2 rounded-md border border-dashed border-border px-2 py-1.5 text-left text-meta text-muted-foreground" title="The linked Markdown file is not in this vault">
+            <FileQuestion size={13} className="shrink-0" /><span className="truncate">{link.targetTitle}</span><span className="ml-auto text-micro">Missing</span>
+          </div>
         ) : (
           <button key={link.id} type="button" onClick={() => void createGhost(link.targetTitle)} className="flex w-full items-center gap-2 rounded-md border border-dashed border-border px-2 py-1.5 text-left text-meta hover:border-secondary hover:bg-surface-2">
             <FilePlus2 size={13} className="shrink-0 text-secondary" /><span className="truncate">{link.targetTitle}</span><span className="ml-auto text-micro text-muted-foreground">Create</span>

@@ -10,12 +10,13 @@ import Graph from 'graphology';
 import { db } from '@/infrastructure/database/db';
 import { buildGraph, localGraph, type GraphNodeAttrs } from '@/core/graph/builder';
 import { DEFAULT_PHYSICS, type PhysicsSettings } from '@/core/graph/layout';
+import type { LinkKind } from '@/infrastructure/database/schema';
 
 export interface GraphData {
   /** The base graph (full vault). null until first load. */
-  fullGraph: Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }> | null;
+  fullGraph: Graph<GraphNodeAttrs, { kind: LinkKind }> | null;
   /** The graph we're actually rendering (local or full). */
-  graph: Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }> | null;
+  graph: Graph<GraphNodeAttrs, { kind: LinkKind }> | null;
   /** Map: node id → community id. Stable. */
   communities: Map<string, number>;
   /** Number of distinct communities. */
@@ -73,11 +74,11 @@ function countByCommunity(communities: Map<string, number>): Map<number, number>
  * Apply local-graph filtering to the base graph. Returns a derived graph.
  */
 export function applyLocalFilter(
-  base: Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>,
+  base: Graph<GraphNodeAttrs, { kind: LinkKind }>,
   activePageId: string | null,
   enabled: boolean,
   depth: number,
-): Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }> {
+): Graph<GraphNodeAttrs, { kind: LinkKind }> {
   if (!enabled || !activePageId || !base.hasNode(activePageId)) return base;
   return localGraph(base, activePageId, depth);
 }
@@ -87,14 +88,14 @@ export function applyLocalFilter(
  * Returns a new graph with only the matching nodes + their incident edges.
  */
 export function applyNodeFilter(
-  base: Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>,
+  base: Graph<GraphNodeAttrs, { kind: LinkKind }>,
   opts: {
     query: string;
     tagFilter: string | null;
     orphansOnly: boolean;
     hiddenCommunities: Set<number>;
   },
-): Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }> {
+): Graph<GraphNodeAttrs, { kind: LinkKind }> {
   const q = opts.query.trim().toLowerCase();
   const keep = new Set<string>();
   for (const id of base.nodes()) {
@@ -106,7 +107,7 @@ export function applyNodeFilter(
     if (opts.orphansOnly && attrs.degree > 0) continue;
     keep.add(id);
   }
-  const sub = new Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>({
+  const sub = new Graph<GraphNodeAttrs, { kind: LinkKind }>({
     type: 'directed',
     allowSelfLoops: false,
   });

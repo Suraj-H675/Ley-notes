@@ -27,7 +27,7 @@ import {
 import { tags as t } from '@lezer/highlight';
 import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from '@codemirror/search';
 
-import { wikiLinkDecoration, wikiLinkAutocomplete } from './extensions/wiki-links';
+import { markdownLinkNavigation, wikiLinkDecoration, wikiLinkAutocomplete } from './extensions/wiki-links';
 import { applyEditorFormat, editorFormattingKeymap, type EditorFormat } from './formatting';
 
 export interface MountOptions {
@@ -252,6 +252,7 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       cmTheme,
       wikiLinkDecoration(),
+      markdownLinkNavigation(),
       wikiLinkAutocomplete(),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) opts.onChange(update.state.doc.toString());

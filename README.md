@@ -11,11 +11,11 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Browser folder vaults through the File System Access API, plus an explicit browser-local mode
 - Folder-aware file explorer with safe move, drag/drop, duplicate, rename, trash, and browser-local restore workflows
 - Safe vault switching and rescanning without mixing browser-local authority with filesystem cache data
-- Markdown editing and reading views with interactive tasks, `[[wiki links]]`, aliases, precise heading/block navigation, and properties
+- Markdown editing and reading views with interactive tasks, `[[wiki links]]`, portable relative `[Markdown](note.md)` links, precise heading/block navigation, and properties
 - Keyboard and touch-accessible Markdown formatting with vault-aware, accessible link completion
 - First-class in-note find/replace with match navigation, case, regular-expression, and whole-word controls
 - Full and heading/block-scoped note embeds, pasted or dropped attachments, and safe vault-relative media rendering
-- Automatic backlinks, outgoing links, unlinked mentions, tags, and ghost-link resolution
+- Automatic backlinks and graph edges for wiki and relative Markdown links, plus outgoing links, unlinked mentions, tags, and ghost-link resolution
 - Full-text search, quick switcher, command palette, daily notes, and keyboard navigation
 - Vault-scoped favorites with workspace, sidebar, explorer, and command-palette access
 - Global and contextual knowledge graphs with deterministic layouts and community coloring

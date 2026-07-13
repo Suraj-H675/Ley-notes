@@ -95,8 +95,8 @@ export function NoteWorkspace({ page }: { page: Page }) {
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <PropertiesPanel key={JSON.stringify(page.frontmatter)} pageId={page.id} frontmatter={page.frontmatter} />
         {mode === 'edit'
-          ? <div className="mx-auto min-h-[240px] w-full max-w-[900px] flex-1"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} initialContent={page.content} /></Suspense></div>
-          : <Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Rendering note…</div>}><MarkdownReadingView pageId={page.id} content={page.content} /></Suspense>}
+          ? <div className="mx-auto min-h-[240px] w-full max-w-[900px] flex-1"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} pagePath={page.path} initialContent={page.content} /></Suspense></div>
+          : <Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Rendering note…</div>}><MarkdownReadingView pageId={page.id} pagePath={page.path} content={page.content} /></Suspense>}
       </div>
     </div>
   );

@@ -29,6 +29,7 @@ The minimum coherent loop is:
 - Pages are the initial unit of composition. Block IDs may support references later without replacing Markdown as the source.
 - Search, quick switching, backlinks, and daily notes have higher priority than decorative graph complexity.
 - Unresolved links are first-class and resolve automatically when their target is created.
+- Both wiki links and ordinary relative Markdown links are first-class; portable path links must keep their meaning when source or target files move.
 - Rename operations update incoming links because broken knowledge structures are worse than surprising automation.
 - Recovery is visible to users and uses the normal save pipeline.
 - Canvas, embeds, templates, attachments, and extensibility should build on the same vault contract rather than introducing parallel storage systems.

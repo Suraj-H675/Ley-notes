@@ -9,7 +9,7 @@
  *   - tags (frontmatter + inline)
  *
  * Edges have:
- *   - kind: 'wiki' | 'embed'
+ *   - kind: wiki, embed, or portable Markdown link
  *
  * Auto-aggregation: when node count exceeds `nodeLimit`, we collapse to a
  * community-level meta-graph (per the Graphify pattern at 5000 nodes).
@@ -17,7 +17,7 @@
 
 import Graph from 'graphology';
 import louvain from 'graphology-communities-louvain';
-import type { Link, Page } from '@/infrastructure/database/schema';
+import type { Link, LinkKind, Page } from '@/infrastructure/database/schema';
 import type { Tag } from '@/infrastructure/database/schema';
 
 export interface GraphNodeAttrs {
@@ -33,7 +33,7 @@ export interface GraphNodeAttrs {
 }
 
 export interface GraphBuildResult {
-  graph: Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>;
+  graph: Graph<GraphNodeAttrs, { kind: LinkKind }>;
   /** Community id per node. Same as graph.getNodeAttribute(id, 'community'). */
   communities: Map<string, number>;
   /** True if collapsed to community-level meta-graph. */
@@ -59,7 +59,7 @@ export function buildGraph(
   }
 
   const byId = new Map(live.map((p) => [p.id, p]));
-  const g = new Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>({
+  const g = new Graph<GraphNodeAttrs, { kind: LinkKind }>({
     type: 'directed',
     multi: true,
     allowSelfLoops: false,
@@ -135,9 +135,9 @@ interface MetaNodeAttrs {
 }
 
 function aggregateToCommunities(
-  g: Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>,
-): Graph<MetaNodeAttrs, { weight: number; kind: 'wiki' | 'embed' }> {
-  const meta = new Graph<MetaNodeAttrs, { weight: number; kind: 'wiki' | 'embed' }>({
+  g: Graph<GraphNodeAttrs, { kind: LinkKind }>,
+): Graph<MetaNodeAttrs, { weight: number; kind: LinkKind }> {
+  const meta = new Graph<MetaNodeAttrs, { weight: number; kind: LinkKind }>({
     type: 'directed',
     allowSelfLoops: false,
   });
@@ -181,12 +181,12 @@ function aggregateToCommunities(
  * are followed so backlinks appear in the local view.
  */
 export function localGraph(
-  g: Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>,
+  g: Graph<GraphNodeAttrs, { kind: LinkKind }>,
   centerId: string,
   hops = 2,
-): Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }> {
+): Graph<GraphNodeAttrs, { kind: LinkKind }> {
   if (!g.hasNode(centerId)) {
-    return new Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>({
+    return new Graph<GraphNodeAttrs, { kind: LinkKind }>({
       type: 'directed',
       allowSelfLoops: false,
     });
@@ -211,7 +211,7 @@ export function localGraph(
     }
     frontier = next;
   }
-  const sub = new Graph<GraphNodeAttrs, { kind: 'wiki' | 'embed' }>({
+  const sub = new Graph<GraphNodeAttrs, { kind: LinkKind }>({
     type: 'directed',
     allowSelfLoops: false,
   });

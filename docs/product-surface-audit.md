@@ -47,6 +47,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Formatting toolbelt | Add | Bold, italic, note-link, code, and task actions remain reachable on touch and short screens; desktop shortcuts use the same underlying Markdown transactions. |
 | In-note find and replace | Add | CodeMirror owns scoped search, next/previous match navigation, replace/replace-all, case, regular-expression, and whole-word behavior. `Cmd/Ctrl+F` and the touch toolbelt open the same accessible panel. |
 | Wiki-link completion | Improve | Official CodeMirror completion now owns positioning, keyboard precedence, and accessibility. Selecting a result inserts without navigating; normal click edits and Ctrl/Cmd-click follows. |
+| Relative Markdown note links | Add | Portable `[label](../note.md#Heading)` and block links participate in reading/editor navigation, backlinks, outgoing links, graph edges, ZIP import, and automatic path maintenance across source/target moves. Missing files are reported without creating an unrelated title-based note. |
 | Attach | Improve | Now writes real binary files via desktop, browser-folder, or browser-local adapters; paste and drag/drop share the same path. |
 | Properties | Keep | YAML frontmatter remains portable and visible rather than hidden in proprietary metadata. |
 | Backlinks, outgoing, unlinked mentions | Keep | Each answers a different relationship question and is computed from the vault index. |

@@ -5,6 +5,7 @@ import { RangeSetBuilder, type Extension } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet } from '@codemirror/view';
 import { extractWikiLinks } from '@/core/parser/wiki-links';
 import { getPageIndex, resolveTitleSync } from '@/core/vault/page-index';
+import { extractInternalMarkdownLinks } from '@/core/parser/markdown-links';
 
 const WIKI_LINK_DECO = Decoration.mark({ class: 'cm-wikilink' });
 const WIKI_LINK_GHOST = Decoration.mark({ class: 'cm-wikilink cm-wikilink-ghost' });
@@ -43,6 +44,21 @@ export function wikiLinkDecoration(): Extension {
       },
     },
   );
+}
+
+export function markdownLinkNavigation(): Extension {
+  return EditorView.domEventHandlers({
+    click(event, view) {
+      if (!event.metaKey && !event.ctrlKey) return false;
+      const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (position === null) return false;
+      const link = extractInternalMarkdownLinks(view.state.doc.toString()).find((candidate) => position >= candidate.position && position <= candidate.position + candidate.raw.length);
+      if (!link) return false;
+      event.preventDefault();
+      view.contentDOM.dispatchEvent(new CustomEvent('ley:follow-markdown-link', { detail: link, bubbles: true }));
+      return true;
+    },
+  });
 }
 
 function rebuild(view: EditorView): DecorationSet {
