@@ -6,13 +6,14 @@ import { PropertiesPanel } from './PropertiesPanel';
 import { attachmentInsertion, saveAttachment } from '@/core/vault/attachments';
 import { toggleFavoritePage } from '@/core/vault/favorites';
 import { useIsFavoritePage } from '@/features/favorites/useFavorites';
+import type { EditorPane } from '@/shared/state/nav';
 
 const MarkdownReadingView = lazy(() => import('./MarkdownReadingView').then((module) => ({ default: module.MarkdownReadingView })));
 const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor').then((module) => ({ default: module.CodeMirrorEditor })));
 
 type EditorMode = 'edit' | 'read';
 
-export function NoteWorkspace({ page }: { page: Page }) {
+export function NoteWorkspace({ page, pane }: { page: Page; pane: EditorPane }) {
   const [mode, setMode] = useState<EditorMode>(() => (localStorage.getItem('ley:editor-mode') as EditorMode) || 'edit');
   const [title, setTitle] = useState(page.title);
   const [titleError, setTitleError] = useState<string | null>(null);
@@ -45,7 +46,7 @@ export function NoteWorkspace({ page }: { page: Page }) {
       setMode('edit');
       localStorage.setItem('ley:editor-mode', 'edit');
       window.setTimeout(() => window.dispatchEvent(new CustomEvent('ley:editor-insert', {
-        detail: { text: attachmentInsertion(saved) },
+        detail: { text: attachmentInsertion(saved), pageId: page.id },
       })), 80);
       setAttachmentStatus(saved.length === 1 ? 'Added' : `${saved.length} added`);
       window.setTimeout(() => setAttachmentStatus(null), 1800);
@@ -56,14 +57,15 @@ export function NoteWorkspace({ page }: { page: Page }) {
 
   useEffect(() => {
     const jump = (event: Event) => {
-      const detail = (event as CustomEvent<{ line: number }>).detail;
+      const detail = (event as CustomEvent<{ line: number; pageId?: string }>).detail;
+      if (detail.pageId && detail.pageId !== page.id) return;
       setMode('edit');
       localStorage.setItem('ley:editor-mode', 'edit');
-      window.setTimeout(() => window.dispatchEvent(new CustomEvent('ley:editor-jump', { detail })), 80);
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent('ley:editor-jump', { detail: { ...detail, pageId: page.id } })), 80);
     };
     window.addEventListener('ley:outline-jump', jump);
     return () => window.removeEventListener('ley:outline-jump', jump);
-  }, []);
+  }, [page.id]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
@@ -95,8 +97,8 @@ export function NoteWorkspace({ page }: { page: Page }) {
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <PropertiesPanel key={JSON.stringify(page.frontmatter)} pageId={page.id} frontmatter={page.frontmatter} />
         {mode === 'edit'
-          ? <div className="mx-auto min-h-[240px] w-full max-w-[900px] flex-1"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} pagePath={page.path} initialContent={page.content} /></Suspense></div>
-          : <Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Rendering note…</div>}><MarkdownReadingView pageId={page.id} pagePath={page.path} content={page.content} /></Suspense>}
+          ? <div className="mx-auto min-h-[240px] w-full max-w-[900px] flex-1"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} pagePath={page.path} initialContent={page.content} pane={pane} /></Suspense></div>
+          : <Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Rendering note…</div>}><MarkdownReadingView pageId={page.id} pagePath={page.path} content={page.content} pane={pane} /></Suspense>}
       </div>
     </div>
   );

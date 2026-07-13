@@ -3,7 +3,7 @@
  * or × button to close.
  */
 
-import { X } from 'lucide-react';
+import { Columns2, X } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/infrastructure/database/db';
 import { useNavStore } from '@/shared/state/nav';
@@ -12,8 +12,11 @@ import { cn } from '@/shared/lib/classnames';
 export function EditorTabs() {
   const openTabs = useNavStore((s) => s.openTabs);
   const activeTab = useNavStore((s) => s.activeTab);
+  const primaryTab = useNavStore((s) => s.primaryTab);
+  const secondaryTab = useNavStore((s) => s.secondaryTab);
   const setActiveTab = useNavStore((s) => s.setActiveTab);
   const closeTab = useNavStore((s) => s.closeTab);
+  const openInSplit = useNavStore((s) => s.openInSplit);
 
   const tabs = useLiveQuery(
     async () => {
@@ -41,13 +44,26 @@ export function EditorTabs() {
           className={cn(
             'group flex h-8 shrink-0 items-center border-r border-border text-meta',
             activeTab === t.id
-              ? 'bg-background text-foreground'
+              ? 'bg-background text-foreground shadow-[inset_0_-2px_0_var(--color-primary)]'
+              : t.id === primaryTab || t.id === secondaryTab
+                ? 'bg-surface-2 text-foreground'
               : 'bg-surface-1 text-muted-foreground hover:bg-surface-2',
           )}
         >
           <button type="button" onClick={() => setActiveTab(t.id)} onAuxClick={(event) => { if (event.button === 1) closeTab(t.id); }} className="h-full max-w-44 truncate pl-3 pr-1 text-left">
             {t.title}
           </button>
+          {t.id !== primaryTab && (
+            <button
+              type="button"
+              onClick={(event) => { event.stopPropagation(); openInSplit(t.id); }}
+              className="rounded-sm p-0.5 text-muted-foreground opacity-0 hover:bg-surface-3 hover:text-foreground focus:opacity-100 group-hover:opacity-100"
+              aria-label={`Open ${t.title} in split`}
+              title="Open in split"
+            >
+              <Columns2 size={12} />
+            </button>
+          )}
           <button
             type="button"
             onClick={(e) => {

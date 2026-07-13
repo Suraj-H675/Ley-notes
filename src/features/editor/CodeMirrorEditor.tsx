@@ -15,14 +15,16 @@ import type { EditorFormat } from './lib/formatting';
 import { openWikiDestination, type WikiDestination } from './lib/open-wiki-destination';
 import { openMarkdownDestination } from './lib/open-wiki-destination';
 import type { InternalMarkdownLink } from '@/core/parser/markdown-links';
+import type { EditorPane } from '@/shared/state/nav';
 
 interface CodeMirrorEditorProps {
   pageId: string;
   pagePath: string;
   initialContent: string;
+  pane: EditorPane;
 }
 
-export function CodeMirrorEditor({ pageId, pagePath, initialContent }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<EditorController | null>(null);
   const dirtyRef = useRef(false);
@@ -60,13 +62,13 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent }: CodeMirro
     const onFollow = async (e: Event) => {
       const destination = (e as CustomEvent<WikiDestination>).detail;
       if (!destination?.target) return;
-      await openWikiDestination(destination);
+      await openWikiDestination(destination, pane);
     };
     controller.view.contentDOM.addEventListener('ley:follow-link', onFollow);
     const onFollowMarkdown = async (event: Event) => {
       const link = (event as CustomEvent<InternalMarkdownLink>).detail;
       if (!link) return;
-      await openMarkdownDestination(pagePath, link.path, link.heading, link.blockId);
+      await openMarkdownDestination(pagePath, link.path, link.heading, link.blockId, pane);
     };
     controller.view.contentDOM.addEventListener('ley:follow-markdown-link', onFollowMarkdown);
 
@@ -95,7 +97,9 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent }: CodeMirro
       void insertFiles(files);
     };
     const onInsert = (event: Event) => {
-      const text = (event as CustomEvent<{ text?: string }>).detail?.text;
+      const detail = (event as CustomEvent<{ text?: string; pageId?: string }>).detail;
+      if (detail?.pageId && detail.pageId !== pageId) return;
+      const text = detail?.text;
       if (text) controller.insertText(text);
     };
     controller.view.contentDOM.addEventListener('paste', onPaste);
@@ -148,7 +152,8 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent }: CodeMirro
 
   useEffect(() => {
     const jump = (event: Event) => {
-      const { line } = (event as CustomEvent<{ line: number }>).detail;
+      const { line, pageId: targetPageId } = (event as CustomEvent<{ line: number; pageId?: string }>).detail;
+      if (targetPageId && targetPageId !== pageId) return;
       const view = controllerRef.current?.view;
       if (!view || !line || line > view.state.doc.lines) return;
       const target = view.state.doc.line(line);
@@ -157,7 +162,7 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent }: CodeMirro
     };
     window.addEventListener('ley:editor-jump', jump);
     return () => window.removeEventListener('ley:editor-jump', jump);
-  }, []);
+  }, [pageId]);
 
   function reloadExternalContent() {
     const controller = controllerRef.current;

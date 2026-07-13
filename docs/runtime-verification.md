@@ -49,6 +49,8 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Renaming or moving a Markdown-link target rewrites incoming destinations; moving the source rebases its outgoing relative paths. Navigation is repeated after both changes.
 - Missing `.md` destinations remain visible as missing files and never create a title-based ghost note.
 - Open multiple tabs, close one, activate a non-final tab, and reload: exact tab order, active note, and recent order restore for that vault.
+- Open a second note from its tab or explorer context menu into a split: both panes edit independently, link navigation stays in its source pane, a destination already visible opposite receives focus, and the keyboard/pointer divider persists its width.
+- At 390px, only the focused split pane is visible, selecting the opposite pane's tab reveals it, and the document has no horizontal overflow. Reload restores both pane notes and the focused side.
 - Rename an open note and reload; its session survives by stable ID. Trash an open note and reload; the stale tab and recent entry are removed safely.
 - Enter the vault chooser and return to the current vault; the complete session restores rather than falling back to the most recently edited page.
 - The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.

@@ -14,7 +14,7 @@ The minimum coherent loop is:
 4. Refine properties and connections without migrating out of Markdown.
 5. Trust that the files remain usable without Ley.
 
-The workspace itself should also feel continuous: reopening a vault must restore the user's working set, not merely choose whichever file was edited most recently.
+The workspace itself should also feel continuous: reopening a vault must restore the user's working set, including side-by-side source/reference context, not merely choose whichever file was edited most recently.
 
 ## Comparable projects
 

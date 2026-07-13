@@ -3,8 +3,8 @@
  * right dock (backlinks). Toggles via the UI store.
  */
 
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { PanelLeft, PanelRight, Search, CalendarPlus, FilePlus2, Settings as SettingsIcon, LayoutDashboard, Network } from 'lucide-react';
+import { lazy, Suspense, useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { PanelLeft, PanelRight, Search, CalendarPlus, FilePlus2, Settings as SettingsIcon, LayoutDashboard, Network, X } from 'lucide-react';
 import { useUIStore } from '@/shared/state/ui';
 import { useNavStore } from '@/shared/state/nav';
 import { usePages, usePageById } from '@/features/notes/usePages';
@@ -65,8 +65,15 @@ export function Layout({
   const rightDockTab = useUIStore((s) => s.rightDockTab);
   const setRightDockTab = useUIStore((s) => s.setRightDockTab);
   const activeTab = useNavStore((s) => s.activeTab);
+  const primaryTab = useNavStore((s) => s.primaryTab);
+  const secondaryTab = useNavStore((s) => s.secondaryTab);
+  const activePane = useNavStore((s) => s.activePane);
+  const focusPane = useNavStore((s) => s.focusPane);
+  const closeSplit = useNavStore((s) => s.closeSplit);
   const pages = usePages();
   const activePage = usePageById(activeTab);
+  const primaryPage = usePageById(primaryTab);
+  const secondaryPage = usePageById(secondaryTab);
   const activePageFavorite = useIsFavoritePage(activeTab);
   const [searchOpen, setSearchOpen] = useSearchHotkey();
   const [settingsOpen, setSettingsOpen] = useSettingsHotkey();
@@ -75,6 +82,10 @@ export function Layout({
   const [newNoteOpen, setNewNoteOpen] = useState(false);
   const [newNoteFolder, setNewNoteFolder] = useState('');
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const [splitPercent, setSplitPercent] = useState(() => {
+    const saved = Number(localStorage.getItem('ley:split-percent'));
+    return Number.isFinite(saved) && saved >= 28 && saved <= 72 ? saved : 50;
+  });
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -206,8 +217,32 @@ export function Layout({
 
         <main className="flex min-w-0 flex-1 flex-col">
           <EditorTabs />
-          {activeTab && activePage?.id === activeTab ? (
-            <FeatureErrorBoundary feature="Editor" resetKey={activeTab}><Suspense fallback={<PanelLoading label="Opening note…" />}><NoteWorkspace key={activeTab} page={activePage} /></Suspense></FeatureErrorBoundary>
+          {primaryTab && primaryPage?.id === primaryTab ? (
+            <div className="flex min-h-0 flex-1">
+              <section
+                className={`${secondaryTab && activePane !== 'primary' ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col ${secondaryTab ? 'lg:flex-none' : ''}`}
+                style={secondaryTab ? { flexBasis: `${splitPercent}%` } : undefined}
+                aria-label="Primary note pane"
+                onPointerDownCapture={() => focusPane('primary')}
+              >
+                {secondaryTab && <PaneHeader label="Primary" active={activePane === 'primary'} />}
+                <FeatureErrorBoundary feature="Primary editor" resetKey={primaryTab}><Suspense fallback={<PanelLoading label="Opening note…" />}><NoteWorkspace key={`primary:${primaryTab}`} page={primaryPage} pane="primary" /></Suspense></FeatureErrorBoundary>
+              </section>
+              {secondaryTab && secondaryPage?.id === secondaryTab && (
+                <>
+                  <SplitDivider value={splitPercent} onChange={setSplitPercent} />
+                  <section
+                    className={`${activePane !== 'secondary' ? 'hidden lg:flex' : 'flex'} min-w-0 flex-1 flex-col lg:flex-none`}
+                    style={{ flexBasis: `${100 - splitPercent}%` }}
+                    aria-label="Secondary note pane"
+                    onPointerDownCapture={() => focusPane('secondary')}
+                  >
+                    <PaneHeader label="Reference" active={activePane === 'secondary'} onClose={closeSplit} />
+                    <FeatureErrorBoundary feature="Secondary editor" resetKey={secondaryTab}><Suspense fallback={<PanelLoading label="Opening reference…" />}><NoteWorkspace key={`secondary:${secondaryTab}`} page={secondaryPage} pane="secondary" /></Suspense></FeatureErrorBoundary>
+                  </section>
+                </>
+              )}
+            </div>
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <EmptyState
@@ -280,4 +315,47 @@ export function Layout({
 
 function PanelLoading({ label }: { label: string }) {
   return <div className="flex h-full items-center justify-center text-micro text-muted-foreground">{label}</div>;
+}
+
+function PaneHeader({ label, active, onClose }: { label: string; active: boolean; onClose?: () => void }) {
+  return (
+    <div className={`flex h-7 shrink-0 items-center justify-between border-b px-3 text-micro ${active ? 'border-primary/40 bg-primary/5 text-foreground' : 'border-border bg-surface-1 text-muted-foreground'}`}>
+      <span className="font-medium">{label}</span>
+      {onClose && <button type="button" onClick={onClose} className="rounded p-0.5 hover:bg-surface-3 hover:text-foreground" aria-label="Close split" title="Close split"><X size={12} /></button>}
+    </div>
+  );
+}
+
+function SplitDivider({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  function commit(next: number) {
+    const clamped = Math.max(28, Math.min(72, next));
+    onChange(clamped);
+    localStorage.setItem('ley:split-percent', String(clamped));
+  }
+
+  function startResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const container = event.currentTarget.parentElement;
+    if (!container) return;
+    const divider = event.currentTarget;
+    divider.setPointerCapture(event.pointerId);
+    let latest = value;
+    const move = (moveEvent: PointerEvent) => {
+      const bounds = container.getBoundingClientRect();
+      if (bounds.width > 0) {
+        latest = Math.max(28, Math.min(72, ((moveEvent.clientX - bounds.left) / bounds.width) * 100));
+        onChange(latest);
+      }
+    };
+    const stop = () => {
+      divider.removeEventListener('pointermove', move);
+      divider.removeEventListener('pointerup', stop);
+      divider.removeEventListener('pointercancel', stop);
+      localStorage.setItem('ley:split-percent', String(latest));
+    };
+    divider.addEventListener('pointermove', move);
+    divider.addEventListener('pointerup', stop);
+    divider.addEventListener('pointercancel', stop);
+  }
+
+  return <div role="separator" aria-label="Resize note panes" aria-orientation="vertical" aria-valuemin={28} aria-valuemax={72} aria-valuenow={Math.round(value)} tabIndex={0} onPointerDown={startResize} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') event.preventDefault(); if (event.key === 'ArrowLeft') commit(value - 2); if (event.key === 'ArrowRight') commit(value + 2); }} className="relative z-10 hidden w-px shrink-0 cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-1 before:w-2 hover:bg-primary focus:bg-primary lg:block" />;
 }

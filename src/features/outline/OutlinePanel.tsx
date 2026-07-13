@@ -13,7 +13,7 @@ export function OutlinePanel({ page }: { page: Page | undefined }) {
         <button
           key={`${heading.line}:${heading.title}`}
           type="button"
-          onClick={() => window.dispatchEvent(new CustomEvent('ley:outline-jump', { detail: heading }))}
+          onClick={() => window.dispatchEvent(new CustomEvent('ley:outline-jump', { detail: { ...heading, pageId: page?.id } }))}
           className="flex w-full items-center gap-1.5 rounded py-1.5 pr-2 text-left text-meta text-muted-foreground-strong hover:bg-surface-2 hover:text-foreground"
           style={{ paddingLeft: 4 + (heading.level - 1) * 12 }}
         >

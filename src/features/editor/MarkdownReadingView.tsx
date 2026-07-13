@@ -13,8 +13,9 @@ import { extractMarkdownDestination } from '@/core/parser/destinations';
 import { openWikiDestination, type WikiDestination } from './lib/open-wiki-destination';
 import { openMarkdownDestination } from './lib/open-wiki-destination';
 import { parseInternalMarkdownDestination } from '@/core/parser/markdown-links';
+import type { EditorPane } from '@/shared/state/nav';
 
-export function MarkdownReadingView({ pageId, pagePath, content }: { pageId: string; pagePath: string; content: string }) {
+export function MarkdownReadingView({ pageId, pagePath, content, pane }: { pageId: string; pagePath: string; content: string; pane: EditorPane }) {
   async function toggleTask(taskIndex: number, checked: boolean) {
     const next = toggleMarkdownTask(content, taskIndex, checked);
     if (next !== content) await updatePageContent(pageId, next);
@@ -25,25 +26,25 @@ export function MarkdownReadingView({ pageId, pagePath, content }: { pageId: str
     <article className="markdown-reading mx-auto w-full max-w-[820px] px-4 pb-32 pt-6 sm:px-10 sm:pt-8">
       {parts.map((part, index) => {
         if (part.kind === 'embed') {
-          return <EmbeddedNoteCard key={`${part.target}-${part.heading ?? part.blockId ?? ''}-${index}`} destination={part} />;
+          return <EmbeddedNoteCard key={`${part.target}-${part.heading ?? part.blockId ?? ''}-${index}`} destination={part} pane={pane} />;
         }
-        return <MarkdownBody key={`markdown-${index}`} content={part.content} sourcePath={pagePath} taskOffset={part.taskOffset} onToggleTask={toggleTask} />;
+        return <MarkdownBody key={`markdown-${index}`} content={part.content} sourcePath={pagePath} taskOffset={part.taskOffset} onToggleTask={toggleTask} pane={pane} />;
       })}
     </article>
   );
 }
 
-function MarkdownBody({ content, sourcePath, taskOffset = 0, onToggleTask }: { content: string; sourcePath: string; taskOffset?: number; onToggleTask: (taskIndex: number, checked: boolean) => Promise<void> }) {
+function MarkdownBody({ content, sourcePath, taskOffset = 0, onToggleTask, pane }: { content: string; sourcePath: string; taskOffset?: number; onToggleTask: (taskIndex: number, checked: boolean) => Promise<void>; pane: EditorPane }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => url.startsWith('ley:') ? url : defaultUrlTransform(url)} components={{
     a: ({ href, children }) => {
       if (href && isSafeAttachmentPath(href)) return <AttachmentLink path={href}>{children}</AttachmentLink>;
       if (href?.startsWith('ley:')) {
         const destination = parseLeyDestination(href);
-        return <button type="button" className="wiki-reading-link" onClick={() => void openWikiDestination(destination)}>{children}</button>;
+        return <button type="button" className="wiki-reading-link" onClick={() => void openWikiDestination(destination, pane)}>{children}</button>;
       }
       if (href) {
         const destination = parseInternalMarkdownDestination(href);
-        if (destination) return <button type="button" className="wiki-reading-link" onClick={() => void openMarkdownDestination(sourcePath, destination.path, destination.heading, destination.blockId)}>{children}</button>;
+        if (destination) return <button type="button" className="wiki-reading-link" onClick={() => void openMarkdownDestination(sourcePath, destination.path, destination.heading, destination.blockId, pane)}>{children}</button>;
       }
       return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
     },
@@ -79,7 +80,7 @@ function AttachmentLink({ path, children }: { path: string; children: ReactNode 
   return <button type="button" disabled={busy} onClick={() => void openAttachment()} className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-secondary hover:bg-surface-3 disabled:opacity-60"><Paperclip size={11} />{children}</button>;
 }
 
-function EmbeddedNoteCard({ destination }: { destination: Extract<ReadingPart, { kind: 'embed' }> }) {
+function EmbeddedNoteCard({ destination, pane }: { destination: Extract<ReadingPart, { kind: 'embed' }>; pane: EditorPane }) {
   const { target, heading, blockId } = destination;
   const page = useLiveQuery(async () => {
     const id = await resolveTitle(target);
@@ -97,8 +98,8 @@ function EmbeddedNoteCard({ destination }: { destination: Extract<ReadingPart, {
   }
   return (
     <section className="my-5 overflow-hidden rounded-xl border border-border bg-surface-1 shadow-sm">
-      <button type="button" onClick={() => void openWikiDestination(destination)} className="flex w-full items-center justify-between border-b border-border px-4 py-2 text-left text-meta font-medium text-foreground hover:bg-surface-2"><span>{page.title}{heading ? ` › ${heading}` : blockId ? ` › ^${blockId}` : ''}</span><span className="font-mono text-micro text-muted-foreground">{page.path}</span></button>
-      <div className="max-h-[420px] overflow-auto px-4 py-3"><MarkdownBody content={replaceEmbedsWithLinks(embeddedContent)} sourcePath={embeddedPage.path} onToggleTask={toggleEmbeddedTask} /></div>
+      <button type="button" onClick={() => void openWikiDestination(destination, pane)} className="flex w-full items-center justify-between border-b border-border px-4 py-2 text-left text-meta font-medium text-foreground hover:bg-surface-2"><span>{page.title}{heading ? ` › ${heading}` : blockId ? ` › ^${blockId}` : ''}</span><span className="font-mono text-micro text-muted-foreground">{page.path}</span></button>
+      <div className="max-h-[420px] overflow-auto px-4 py-3"><MarkdownBody content={replaceEmbedsWithLinks(embeddedContent)} sourcePath={embeddedPage.path} onToggleTask={toggleEmbeddedTask} pane={pane} /></div>
     </section>
   );
 }

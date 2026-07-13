@@ -35,6 +35,29 @@ describe('navigation sessions', () => {
     expect(useNavStore.getState()).toMatchObject({ openTabs: [first.id, second.id], activeTab: first.id, recentPages: [second.id, first.id] });
   });
 
+  it('restores both sides of a split workspace and its focused pane', async () => {
+    await markActiveDataKind('browser-local');
+    const source = await createPage({ title: 'Source' });
+    const reference = await createPage({ title: 'Reference' });
+    useNavStore.getState().hydrate({
+      openTabs: [source.id, reference.id],
+      activeTab: reference.id,
+      primaryTab: source.id,
+      secondaryTab: reference.id,
+      activePane: 'secondary',
+      recentPages: [reference.id, source.id],
+    });
+    await saveNavigationSession();
+    useNavStore.getState().reset();
+    await restoreNavigationSession();
+    expect(useNavStore.getState()).toMatchObject({
+      primaryTab: source.id,
+      secondaryTab: reference.id,
+      activePane: 'secondary',
+      activeTab: reference.id,
+    });
+  });
+
   it('treats activating an existing tab as a recent visit', async () => {
     const first = await createPage({ title: 'First' });
     const second = await createPage({ title: 'Second' });

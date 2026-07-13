@@ -7,7 +7,7 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ChevronRight, ChevronDown, Copy, FileText, FolderClosed, FolderInput, FolderOpen, Link2, Pencil, Plus, Star, Trash2, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, Columns2, Copy, FileText, FolderClosed, FolderInput, FolderOpen, Link2, Pencil, Plus, Star, Trash2, X } from 'lucide-react';
 import { usePages } from '@/features/notes/usePages';
 import { useNavStore } from '@/shared/state/nav';
 import { deletePage, duplicatePage, movePage, renamePage } from '@/core/vault/pages';
@@ -205,7 +205,9 @@ function PageNode({
   onMovePage: (pageId: string, folder: string) => Promise<void>;
 }) {
   const activeTab = useNavStore((s) => s.activeTab);
+  const primaryTab = useNavStore((s) => s.primaryTab);
   const openPage = useNavStore((s) => s.openPage);
+  const openInSplit = useNavStore((s) => s.openInSplit);
   const pushRecent = useNavStore((s) => s.pushRecent);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(page.title);
@@ -311,6 +313,10 @@ function PageNode({
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content className="z-[80] min-w-44 rounded-lg border border-border bg-surface-1 p-1 shadow-menu">
+            {page.id !== primaryTab && <ContextMenu.Item onSelect={() => openInSplit(page.id)} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
+              <Columns2 size={13} /> Open in split
+            </ContextMenu.Item>}
+            {page.id !== primaryTab && <ContextMenu.Separator className="my-1 h-px bg-border" />}
             <ContextMenu.Item onSelect={() => setEditing(true)} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
               <Pencil size={13} /> Rename
             </ContextMenu.Item>

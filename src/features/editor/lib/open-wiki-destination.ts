@@ -4,6 +4,7 @@ import { createPage, getPageById } from '@/core/vault/pages';
 import { useNavStore } from '@/shared/state/nav';
 import { resolveInternalMarkdownPath } from '@/core/parser/markdown-links';
 import { db } from '@/infrastructure/database/db';
+import type { EditorPane } from '@/shared/state/nav';
 
 export interface WikiDestination {
   target: string;
@@ -11,29 +12,29 @@ export interface WikiDestination {
   blockId?: string | null;
 }
 
-export async function openWikiDestination({ target, heading, blockId }: WikiDestination): Promise<void> {
+export async function openWikiDestination({ target, heading, blockId }: WikiDestination, pane?: EditorPane): Promise<void> {
   const id = await resolveTitle(target) ?? (await createPage({ title: target })).id;
-  await openPageDestination(id, heading, blockId);
+  await openPageDestination(id, heading, blockId, pane);
 }
 
-export async function openMarkdownDestination(sourcePath: string, path: string, heading?: string | null, blockId?: string | null): Promise<boolean> {
+export async function openMarkdownDestination(sourcePath: string, path: string, heading?: string | null, blockId?: string | null, pane?: EditorPane): Promise<boolean> {
   const targetPath = resolveInternalMarkdownPath(sourcePath, path);
   if (!targetPath) return false;
   const page = await db.pages.filter((candidate) => candidate.deletedAt === null && candidate.path.toLowerCase() === targetPath.toLowerCase()).first();
   if (!page) return false;
-  await openPageDestination(page.id, heading, blockId);
+  await openPageDestination(page.id, heading, blockId, pane);
   return true;
 }
 
-async function openPageDestination(id: string, heading?: string | null, blockId?: string | null): Promise<void> {
+async function openPageDestination(id: string, heading?: string | null, blockId?: string | null, pane?: EditorPane): Promise<void> {
   const nav = useNavStore.getState();
-  nav.openPage(id);
+  nav.openPage(id, pane);
   nav.pushRecent(id);
   if (!heading && !blockId) return;
   const page = await getPageById(id);
   const line = page ? findMarkdownDestinationLine(page.content, heading, blockId) : null;
   if (!line) return;
   window.setTimeout(() => {
-    window.dispatchEvent(new CustomEvent('ley:outline-jump', { detail: { line } }));
+    window.dispatchEvent(new CustomEvent('ley:outline-jump', { detail: { line, pageId: id } }));
   }, 100);
 }
