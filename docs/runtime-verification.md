@@ -34,6 +34,7 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Formatting buttons preserve the editor selection; Ctrl/Cmd+B, Ctrl/Cmd+I, Ctrl/Cmd+K, and Ctrl/Cmd+Shift+backtick invoke the same transactions.
 - Typing `[[` exposes recent note suggestions; typing a partial title filters them.
 - Enter and Tab accept a completion and keep the current note open.
+- `[[Note#` offers that note's real headings with level and line context; `[[Note#^` offers block IDs with source previews, excluding fenced code examples.
 - Normal click inside a wiki link positions the cursor; Ctrl/Cmd-click opens its target without creating an ID-named note.
 - Read-mode task clicks persist to Markdown, including tasks after an embed and tasks inside a partial-note embed.
 - Read-mode and Ctrl/Cmd-click wiki links honor both `#Heading` and `#^block-id` destinations and focus the exact source line.

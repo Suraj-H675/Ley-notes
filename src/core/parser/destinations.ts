@@ -4,6 +4,12 @@ export interface MarkdownHeading {
   line: number;
 }
 
+export interface MarkdownBlockReference {
+  id: string;
+  line: number;
+  preview: string;
+}
+
 export function extractMarkdownHeadings(content: string): MarkdownHeading[] {
   const headings: MarkdownHeading[] = [];
   let fence: string | null = null;
@@ -18,6 +24,23 @@ export function extractMarkdownHeadings(content: string): MarkdownHeading[] {
     if (match) headings.push({ level: match[1].length, title: match[2], line: index + 1 });
   });
   return headings;
+}
+
+export function extractMarkdownBlockReferences(content: string): MarkdownBlockReference[] {
+  const references: MarkdownBlockReference[] = [];
+  let fence: string | null = null;
+  content.split('\n').forEach((line, index) => {
+    const marker = /^\s*(```|~~~)/.exec(line)?.[1] ?? null;
+    if (marker) {
+      fence = fence === null ? marker : fence === marker ? null : fence;
+      return;
+    }
+    if (fence) return;
+    const match = /(?:^|\s)\^([\p{L}\p{N}-]+)\s*$/u.exec(line);
+    if (!match) return;
+    references.push({ id: match[1], line: index + 1, preview: line.slice(0, match.index).trim() || `Block on line ${index + 1}` });
+  });
+  return references;
 }
 
 export function findMarkdownDestinationLine(content: string, heading?: string | null, blockId?: string | null): number | null {

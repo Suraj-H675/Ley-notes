@@ -4,8 +4,10 @@ import { autocompletion, type CompletionContext, type CompletionResult } from '@
 import { RangeSetBuilder, type Extension } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, type DecorationSet } from '@codemirror/view';
 import { extractWikiLinks } from '@/core/parser/wiki-links';
-import { getPageIndex, resolveTitleSync } from '@/core/vault/page-index';
+import { getPageIndex, resolveTitle, resolveTitleSync } from '@/core/vault/page-index';
 import { extractInternalMarkdownLinks } from '@/core/parser/markdown-links';
+import { extractMarkdownBlockReferences, extractMarkdownHeadings } from '@/core/parser/destinations';
+import { db } from '@/infrastructure/database/db';
 
 const WIKI_LINK_DECO = Decoration.mark({ class: 'cm-wikilink' });
 const WIKI_LINK_GHOST = Decoration.mark({ class: 'cm-wikilink cm-wikilink-ghost' });
@@ -83,9 +85,33 @@ export function wikiLinkAutocomplete(): Extension {
   });
 }
 
-function wikiLinkCompletions(context: CompletionContext): CompletionResult | null {
+async function wikiLinkCompletions(context: CompletionContext): Promise<CompletionResult | null> {
   const line = context.state.doc.lineAt(context.pos);
   const before = context.state.doc.sliceString(line.from, context.pos);
+  const anchorMatch = /\[\[([^[\]\n|#]+)#(\^?)([^[\]\n|]*)$/.exec(before);
+  if (anchorMatch) {
+    const target = anchorMatch[1].trim();
+    const blockMode = anchorMatch[2] === '^';
+    const query = anchorMatch[3].toLocaleLowerCase();
+    const pageId = await resolveTitle(target);
+    if (context.aborted || !pageId) return null;
+    const page = await db.pages.get(pageId);
+    if (!page || page.deletedAt !== null) return null;
+    const options = blockMode
+      ? extractMarkdownBlockReferences(page.content)
+        .filter((reference) => !query || reference.id.toLocaleLowerCase().includes(query) || reference.preview.toLocaleLowerCase().includes(query))
+        .sort((left, right) => anchorRelevance(left.id, left.preview, query) - anchorRelevance(right.id, right.preview, query) || left.line - right.line)
+        .map((reference) => ({ label: `^${reference.id}`, detail: `${reference.preview} · line ${reference.line}`, apply: `${reference.id}]]`, type: 'text' }))
+      : extractMarkdownHeadings(page.content)
+        .filter((heading) => !query || heading.title.toLocaleLowerCase().includes(query))
+        .sort((left, right) => anchorRelevance(left.title, '', query) - anchorRelevance(right.title, '', query) || left.line - right.line)
+        .map((heading) => ({ label: heading.title, detail: `H${heading.level} · line ${heading.line}`, apply: `${heading.title}]]`, type: 'text' }));
+    return {
+      from: context.pos - anchorMatch[3].length,
+      options,
+      validFor: blockMode ? /^[\p{L}\p{N}-]*$/u : /^[^[\]\n|]*$/,
+    };
+  }
   const match = /\[\[([^[\]\n|#^]*)$/.exec(before);
   if (!match) return null;
 
@@ -106,6 +132,13 @@ function wikiLinkCompletions(context: CompletionContext): CompletionResult | nul
     options,
     validFor: /^[^[\]\n|#^]*$/,
   };
+}
+
+function anchorRelevance(value: string, preview: string, query: string): number {
+  if (!query || value.toLocaleLowerCase() === query) return 0;
+  if (value.toLocaleLowerCase().startsWith(query)) return 1;
+  if (value.toLocaleLowerCase().includes(query)) return 2;
+  return preview.toLocaleLowerCase().includes(query) ? 3 : 4;
 }
 
 function relevance(entry: { lcTitle: string; aliases: string[] }, query: string): number {

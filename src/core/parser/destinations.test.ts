@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractMarkdownDestination, extractMarkdownHeadings, findMarkdownDestinationLine } from './destinations';
+import { extractMarkdownBlockReferences, extractMarkdownDestination, extractMarkdownHeadings, findMarkdownDestinationLine } from './destinations';
 
 describe('Markdown destinations', () => {
   const content = ['# Overview', '', '## Design & API', 'Paragraph with an identity ^block-42', '```md', '# Not real', 'fake ^ignored', '```'].join('\n');
@@ -19,6 +19,10 @@ describe('Markdown destinations', () => {
   it('finds block identifiers and ignores fenced examples', () => {
     expect(findMarkdownDestinationLine(content, null, 'block-42')).toBe(4);
     expect(findMarkdownDestinationLine(content, null, 'ignored')).toBeNull();
+  });
+
+  it('extracts block identifiers with useful previews outside fences', () => {
+    expect(extractMarkdownBlockReferences(content)).toEqual([{ id: 'block-42', line: 4, preview: 'Paragraph with an identity' }]);
   });
 
   it('extracts a heading section or a single referenced block', () => {
