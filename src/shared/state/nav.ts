@@ -15,6 +15,7 @@ interface NavState {
   setActiveTab: (pageId: string) => void;
   pushRecent: (pageId: string) => void;
   reconcile: (pageIds: Set<string>) => void;
+  hydrate: (state: Pick<NavState, 'openTabs' | 'activeTab' | 'recentPages'>) => void;
   reset: () => void;
 }
 
@@ -38,7 +39,10 @@ export const useNavStore = create<NavState>((set) => ({
       return { openTabs: next, activeTab: active };
     }),
 
-  setActiveTab: (pageId) => set({ activeTab: pageId }),
+  setActiveTab: (pageId) => set((state) => ({
+    activeTab: pageId,
+    recentPages: [pageId, ...state.recentPages.filter((id) => id !== pageId)].slice(0, MAX_RECENT),
+  })),
 
   pushRecent: (pageId) =>
     set((s) => {
@@ -53,5 +57,6 @@ export const useNavStore = create<NavState>((set) => ({
       recentPages: state.recentPages.filter((id) => pageIds.has(id)),
     };
   }),
+  hydrate: ({ openTabs, activeTab, recentPages }) => set({ openTabs, activeTab, recentPages }),
   reset: () => set({ openTabs: [], activeTab: null, recentPages: [] }),
 }));

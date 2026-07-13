@@ -14,6 +14,8 @@ The minimum coherent loop is:
 4. Refine properties and connections without migrating out of Markdown.
 5. Trust that the files remain usable without Ley.
 
+The workspace itself should also feel continuous: reopening a vault must restore the user's working set, not merely choose whichever file was edited most recently.
+
 ## Comparable projects
 
 - Logseq demonstrates the power of journal-first capture, block references, and local files. Its outliner model is valuable, but forcing every note into blocks would make Ley less Markdown-native.

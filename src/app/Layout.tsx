@@ -34,6 +34,7 @@ import { RevisionPanel } from '@/features/history/RevisionPanel';
 import { FeatureErrorBoundary } from '@/shared/components/FeatureErrorBoundary';
 import { useIsFavoritePage } from '@/features/favorites/useFavorites';
 import { toggleFavoritePage } from '@/core/vault/favorites';
+import { startNavigationSession } from '@/core/vault/navigation-session';
 
 const GraphView = lazy(() => import('@/features/graph/GraphView').then((module) => ({ default: module.GraphView })));
 const GraphModal = lazy(() => import('@/features/graph/GraphModal').then((module) => ({ default: module.GraphModal })));
@@ -43,12 +44,14 @@ const CanvasModal = lazy(() => import('@/features/canvas/CanvasModal').then((mod
 
 export function Layout({
   vaultMode,
+  vaultKey,
   vaultName,
   watcherStatus,
   onRefreshVault,
   onSwitchVault,
 }: {
   vaultMode: 'desktop' | 'browser-folder' | 'browser-local';
+  vaultKey: string;
   vaultName: string;
   watcherStatus: 'inactive' | 'starting' | 'watching' | 'error';
   onRefreshVault: () => Promise<{ noteCount: number } | null>;
@@ -86,6 +89,19 @@ export function Layout({
       stopSearchIndex();
     };
   }, []);
+
+  useEffect(() => {
+    let current = true;
+    let dispose: () => void = () => undefined;
+    void startNavigationSession(() => current).then((stop) => {
+      if (!current) { stop(); return; }
+      dispose = stop;
+    }).catch((error) => console.error('[navigation] Could not restore workspace session', error));
+    return () => {
+      current = false;
+      dispose();
+    };
+  }, [vaultKey]);
 
   // Global hotkeys not already owned by their modal hooks.
   useDailyNoteHotkey();

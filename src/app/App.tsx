@@ -8,7 +8,6 @@ import { db } from '@/infrastructure/database/db';
 import { seedIfEmpty } from '@/infrastructure/database/seed';
 import { useUIStore, type Theme } from '@/shared/state/ui';
 import { useNavStore } from '@/shared/state/nav';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { VaultLauncher } from '@/features/vault/VaultLauncher';
 import { WebVaultLauncher } from '@/features/vault/WebVaultLauncher';
 import {
@@ -32,6 +31,7 @@ import {
   restoreBrowserLocalVault,
   stashBrowserLocalVault,
 } from '@/infrastructure/database/browser-local-vault';
+import { startNavigationSession, stopNavigationSession } from '@/core/vault/navigation-session';
 
 type VaultMode = 'desktop' | 'browser-folder' | 'browser-local';
 const WEB_VAULT_MODE_KEY = 'ley:web-vault-mode';
@@ -66,15 +66,6 @@ export function App() {
   const [returnVault, setReturnVault] = useState<{ mode: Exclude<VaultMode, 'desktop'>; name: string } | null>(null);
   const [watcherStatus, setWatcherStatus] = useState<'inactive' | 'starting' | 'watching' | 'error'>('inactive');
   const desktopVaultPath = desktopVault?.path;
-
-  // Auto-open the most recently updated page on first launch, so the user
-  // lands somewhere useful. If the vault is empty, the welcome page will be
-  // the first result from seedIfEmpty.
-  const firstPage = useLiveQuery(async () => {
-    const pages = (await db.pages.filter((page) => page.deletedAt === null).toArray())
-      .sort((left, right) => right.updatedAt - left.updatedAt);
-    return pages[0] ?? null;
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,11 +163,20 @@ export function App() {
   async function openDesktopVault(): Promise<DesktopVault | null> {
     setVaultBusy(true);
     setVaultError(null);
+    const switching = vaultMode === 'desktop';
     try {
+      if (switching) await stopNavigationSession();
       const vault = await chooseDesktopVault();
-      if (vault) { useNavStore.getState().reset(); setDesktopVault(vault); setVaultMode('desktop'); }
+      if (vault) {
+        useNavStore.getState().reset();
+        setDesktopVault(vault);
+        setVaultMode('desktop');
+      } else if (switching) {
+        void startNavigationSession().catch((error) => console.error('[navigation] Could not resume workspace session', error));
+      }
       return vault;
     } catch (error) {
+      if (switching) void startNavigationSession().catch((cause) => console.error('[navigation] Could not resume workspace session', cause));
       setVaultError(error instanceof Error ? error.message : String(error));
       return null;
     } finally {
@@ -239,6 +239,7 @@ export function App() {
       await openDesktopVault();
       return;
     }
+    await stopNavigationSession();
     if (vaultMode === 'browser-local') await stashBrowserLocalVault();
     setReturnVault({ mode: vaultMode, name: desktopVault?.name ?? 'Browser-local vault' });
     localStorage.removeItem(WEB_VAULT_MODE_KEY);
@@ -249,29 +250,27 @@ export function App() {
 
   async function returnToCurrentVault(): Promise<void> {
     if (!returnVault) return;
-    localStorage.setItem(WEB_VAULT_MODE_KEY, returnVault.mode === 'browser-folder' ? 'browser-folder' : 'browser-local');
-    setVaultMode(returnVault.mode);
-    const pages = (await db.pages.filter((page) => page.deletedAt === null).toArray()).sort((left, right) => right.updatedAt - left.updatedAt);
-    const first = pages[0];
-    if (first) {
-      const nav = useNavStore.getState();
-      nav.openPage(first.id);
-      nav.pushRecent(first.id);
+    setVaultBusy(true);
+    setVaultError(null);
+    try {
+      localStorage.setItem(WEB_VAULT_MODE_KEY, returnVault.mode === 'browser-folder' ? 'browser-folder' : 'browser-local');
+      useNavStore.getState().reset();
+      if (returnVault.mode === 'browser-folder') {
+        const vault = await refreshBrowserFolderVault();
+        if (!vault) throw new Error('The browser folder is no longer available. Choose it again to continue.');
+        setDesktopVault(vault);
+      } else {
+        setDesktopVault(null);
+      }
+      setVaultMode(returnVault.mode);
+      setReturnVault(null);
+    } catch (error) {
+      localStorage.removeItem(WEB_VAULT_MODE_KEY);
+      setVaultError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setVaultBusy(false);
     }
-    setReturnVault(null);
   }
-
-  // Open the first page once it loads. Only fires once per app session.
-  useEffect(() => {
-    if (!firstPage) return;
-    const nav = useNavStore.getState();
-    if (nav.openTabs.length === 0) {
-      nav.openPage(firstPage.id);
-      nav.pushRecent(firstPage.id);
-    }
-    // Intentionally only run when firstPage.id changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firstPage?.id]);
 
   if (!ready) return null;
   if (isDesktopApp() && !desktopVault) {
@@ -281,5 +280,5 @@ export function App() {
     return <WebVaultLauncher folderSupported={isBrowserFolderSupported()} busy={vaultBusy} error={vaultError} returnLabel={returnVault?.name} onReturn={returnVault ? () => void returnToCurrentVault() : undefined} onOpenFolder={() => void openBrowserFolder()} onBrowserLocal={() => void activateBrowserLocalVault()} />;
   }
   if (!vaultMode) return null;
-  return <Layout vaultMode={vaultMode} vaultName={desktopVault?.name ?? 'Browser-local vault'} watcherStatus={watcherStatus} onRefreshVault={refreshActiveVault} onSwitchVault={switchVault} />;
+  return <Layout vaultMode={vaultMode} vaultKey={desktopVault?.path ?? BROWSER_LOCAL_KIND} vaultName={desktopVault?.name ?? 'Browser-local vault'} watcherStatus={watcherStatus} onRefreshVault={refreshActiveVault} onSwitchVault={switchVault} />;
 }

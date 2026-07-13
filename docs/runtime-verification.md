@@ -47,6 +47,9 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Relative Markdown links between nested folders appear in outgoing links, backlinks, and the graph. Reading-mode clicks and editor Ctrl/Cmd-clicks honor heading and block anchors.
 - Renaming or moving a Markdown-link target rewrites incoming destinations; moving the source rebases its outgoing relative paths. Navigation is repeated after both changes.
 - Missing `.md` destinations remain visible as missing files and never create a title-based ghost note.
+- Open multiple tabs, close one, activate a non-final tab, and reload: exact tab order, active note, and recent order restore for that vault.
+- Rename an open note and reload; its session survives by stable ID. Trash an open note and reload; the stale tab and recent entry are removed safely.
+- Enter the vault chooser and return to the current vault; the complete session restores rather than falling back to the most recently edited page.
 - The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.
 - An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.
 

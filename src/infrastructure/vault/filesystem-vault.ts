@@ -185,7 +185,7 @@ async function loadBrowserFolderVault(handle: LeyDirectoryHandle, vaultId: strin
   activeBrowserVaultId = vaultId;
   activeVaultPath = null;
   await projectFilesIntoCache(`browser-folder:${vaultId}`, snapshots);
-  return { path: handle.name, name: handle.name, noteCount: snapshots.length };
+  return { path: vaultId, name: handle.name, noteCount: snapshots.length };
 }
 
 async function resolveBrowserVaultId(handle: LeyDirectoryHandle, preferredId?: string): Promise<string> {

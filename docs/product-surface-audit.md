@@ -41,7 +41,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 
 | Surface | Decision | Result |
 | --- | --- | --- |
-| Tabs and tab close | Keep | Multiple working notes are a desktop knowledge-work expectation. Unsaved content is persisted by the editor lifecycle. |
+| Tabs and tab close | Keep | Multiple working notes are a desktop knowledge-work expectation. Unsaved content is persisted by the editor lifecycle, while tab order, active note, and recents restore per vault after reload or a vault round trip. |
 | Editable title | Keep | Renames the filesystem note and retargets incoming wiki links. |
 | Edit / Read modes | Keep | Editing and composed reading are materially different tasks; note embeds resolve only in reading mode. |
 | Formatting toolbelt | Add | Bold, italic, note-link, code, and task actions remain reachable on touch and short screens; desktop shortcuts use the same underlying Markdown transactions. |
