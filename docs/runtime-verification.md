@@ -47,6 +47,8 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - At 320×568, the search panel remains fully reachable without horizontal overflow and stays beneath the mobile sidebar overlay.
 - Quick-switcher filters compose with AND: nested `tag:`, quoted `path:`, `title:`, `property:key=value`/`[key:value]`, and `-` exclusions return the expected live-index results. Filter-only searches work without free text.
 - Filter chips insert valid syntax, the syntax guide is keyboard-accessible, Enter opens the selected result in the focused pane, and Shift+Enter opens it in split. At 390px the chip row scrolls without widening the document.
+- Save a structured query with a custom name: it appears reactively under Saved searches, reopens the exact query, supports Enter/blur rename and deletion, survives reload, and is absent after switching to a different vault identity. Duplicate query saves update one entry.
+- At 390px, saved-search rows and their rename/delete actions remain reachable while the sidebar overlay produces no horizontal document overflow.
 - Relative Markdown links between nested folders appear in outgoing links, backlinks, and the graph. Reading-mode clicks and editor Ctrl/Cmd-clicks honor heading and block anchors.
 - Renaming or moving a Markdown-link target rewrites incoming destinations; moving the source rebases its outgoing relative paths. Navigation is repeated after both changes.
 - Missing `.md` destinations remain visible as missing files and never create a title-based ghost note.

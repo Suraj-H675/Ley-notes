@@ -16,6 +16,7 @@ import { useCommandPaletteHotkey } from '@/features/commands/useCommandPaletteHo
 import { FileTree } from '@/features/sidebar/FileTree';
 import { RecentPane } from '@/features/sidebar/RecentPane';
 import { FavoritesPane } from '@/features/favorites/FavoritesPane';
+import { SavedSearchesPane } from '@/features/search/SavedSearchesPane';
 import { TagPane } from '@/features/sidebar/TagPane';
 import { EditorTabs } from '@/features/editor/EditorTabs';
 import { BacklinksPanel } from '@/features/backlinks/BacklinksPanel';
@@ -76,6 +77,7 @@ export function Layout({
   const secondaryPage = usePageById(secondaryTab);
   const activePageFavorite = useIsFavoritePage(activeTab);
   const [searchOpen, setSearchOpen] = useSearchHotkey();
+  const [searchInitialQuery, setSearchInitialQuery] = useState('');
   const [settingsOpen, setSettingsOpen] = useSettingsHotkey();
   const [graphOpen, setGraphOpen] = useGraphHotkey();
   const [commandOpen, setCommandOpen] = useCommandPaletteHotkey();
@@ -136,6 +138,16 @@ export function Layout({
     nav.pushRecent(note.pageId);
   }
 
+  function openSearch(query = '') {
+    setSearchInitialQuery(query);
+    setSearchOpen(true);
+  }
+
+  function closeSearch() {
+    setSearchOpen(false);
+    setSearchInitialQuery('');
+  }
+
   const isEmpty = (pages?.length ?? 0) === 0;
 
   return (
@@ -151,7 +163,7 @@ export function Layout({
         <div className="flex items-center gap-1">
           <button
             type="button"
-            onClick={() => setSearchOpen(true)}
+            onClick={() => openSearch()}
             aria-label="Open note"
             title="Open note (⌘O)"
             className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-meta text-muted-foreground hover:bg-surface-3"
@@ -208,6 +220,8 @@ export function Layout({
             <FileTree onNewPage={(folder) => { setNewNoteFolder(folder ?? ''); setNewNoteOpen(true); }} />
             <div className="mx-2 border-t border-border" />
             <FavoritesPane />
+            <div className="mx-2 border-t border-border" />
+            <SavedSearchesPane onOpen={openSearch} />
             <div className="mx-2 border-t border-border" />
             <RecentPane />
             <div className="mx-2 border-t border-border" />
@@ -289,14 +303,14 @@ export function Layout({
           </aside>
         )}
       </div>
-      <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <SearchModal open={searchOpen} initialQuery={searchInitialQuery} onClose={closeSearch} />
       {settingsOpen && <FeatureErrorBoundary feature="Settings" overlay><Suspense fallback={null}><SettingsModal open vaultMode={vaultMode} vaultName={vaultName} watcherStatus={watcherStatus} onRefreshVault={onRefreshVault} onSwitchVault={onSwitchVault} onClose={() => setSettingsOpen(false)} /></Suspense></FeatureErrorBoundary>}
       {graphOpen && <FeatureErrorBoundary feature="Graph" overlay><Suspense fallback={null}><GraphModal open onClose={() => setGraphOpen(false)} /></Suspense></FeatureErrorBoundary>}
       <CommandPalette
         open={commandOpen}
         onClose={() => setCommandOpen(false)}
         onNewNote={() => { setNewNoteFolder(''); setNewNoteOpen(true); }}
-        onQuickSwitcher={() => setSearchOpen(true)}
+        onQuickSwitcher={() => openSearch()}
         onDailyNote={openDailyNote}
         onGraph={() => setGraphOpen(true)}
         onCanvas={() => setCanvasOpen(true)}

@@ -34,6 +34,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Right dock toggle | Keep | Backlinks and outline are core second-brain context, while the dock remains dismissible. |
 | Recent and Tags panels | Improve | Both are collapsible to prevent the sidebar becoming a permanently crowded stack. Tags now truly filter the page tree. |
 | Favorites panel | Add | Important notes can be starred from the workspace, explorer, or command palette and remain one click away without changing Markdown or folder structure. Favorites are isolated per vault and survive trash/restore. |
+| Saved searches panel | Add | Structured queries can be named from the quick switcher, reopened into the editable query surface, renamed, or deleted. The panel is collapsible, touch-accessible, and scoped to the active vault so recurring retrieval workflows become durable without altering Markdown. |
 | Explorer context menu | Improve | Rename, move, duplicate, copy-wiki-link, and trash now operate on real vault state. Moving is also available through drag/drop, with the dialog retained as the keyboard-accessible path. |
 | Folder organization | Improve | Existing folders are first-class destinations and nested paths can be created by moving or creating notes. Empty-folder controls remain absent because they add no durable information to browser-local storage. |
 
@@ -62,6 +63,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | --- | --- | --- |
 | Quick switcher | Keep | Title/path-oriented navigation. |
 | Full-text search | Improve | Content-oriented retrieval now composes free text with repeated `tag:`, quoted `path:`, `title:`, YAML `property:key=value`/`[key:value]`, and negative filters. Filter chips and an inline syntax guide make the language discoverable; Enter opens normally and Shift+Enter preserves context by opening in split. |
+| Saved queries | Add | Non-empty searches can be named without leaving the switcher. Saving the same query updates its existing bookmark instead of creating duplicates, and opening one restores the exact editable query. |
 | Command palette | Keep | Action-oriented control surface; note results do not replace commands. |
 | Keyboard shortcuts | Improve | One owner per global shortcut; duplicate graph listeners were removed. Buttons retain visible or tooltip discovery paths. |
 | Modal focus | Improve | Search, commands, new-note, settings, graph, and canvas surfaces use an accessible dialog lifecycle with focus entry, trapping, Escape dismissal, and restoration. |

@@ -5,13 +5,14 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Search, FileText, Hash, X, Columns2, Folder, HelpCircle, ListFilter, Tags } from 'lucide-react';
+import { Search, FileText, Hash, X, BookmarkPlus, Columns2, Folder, HelpCircle, ListFilter, Tags } from 'lucide-react';
 import { searchPages } from '@/core/index/search';
 import { db } from '@/infrastructure/database/db';
 import { useNavStore } from '@/shared/state/nav';
 import { Kbd } from '@/shared/components/Kbd';
 import { cn } from '@/shared/lib/classnames';
 import * as Dialog from '@radix-ui/react-dialog';
+import { saveSearch } from '@/core/vault/saved-searches';
 
 interface SearchResult {
   id: string;
@@ -22,15 +23,20 @@ interface SearchResult {
 
 export function SearchModal({
   open,
+  initialQuery = '',
   onClose,
 }: {
   open: boolean;
+  initialQuery?: string;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [syntaxOpen, setSyntaxOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [saveError, setSaveError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const openPage = useNavStore((s) => s.openPage);
   const openInSplit = useNavStore((s) => s.openInSplit);
@@ -47,15 +53,17 @@ export function SearchModal({
       // Open transition: schedule state updates on the next microtask so the
       // effect body doesn't synchronously call setState.
       queueMicrotask(() => {
-        setQuery('');
+        setQuery(initialQuery);
         setResults([]);
         setSelectedIndex(0);
         setSyntaxOpen(false);
+        setSaveOpen(false);
+        setSaveError(null);
         inputRef.current?.focus();
       });
     }
     wasOpen.current = open;
-  }, [open]);
+  }, [initialQuery, open]);
 
   // Search debounced.
   useEffect(() => {
@@ -85,6 +93,23 @@ export function SearchModal({
   function addFilter(filter: string) {
     setQuery((current) => `${current.trim()}${current.trim() ? ' ' : ''}${filter}`);
     queueMicrotask(() => inputRef.current?.focus());
+  }
+
+  function startSave() {
+    if (!query.trim()) return;
+    setSaveName(suggestSearchName(query));
+    setSaveError(null);
+    setSaveOpen(true);
+  }
+
+  async function commitSave() {
+    try {
+      await saveSearch(saveName, query);
+      setSaveOpen(false);
+      setSaveError(null);
+    } catch (cause) {
+      setSaveError(cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -134,8 +159,16 @@ export function SearchModal({
           <FilterChip icon={<FileText size={11} />} label="Title" title="Add title:roadmap" onClick={() => addFilter('title:')} />
           <FilterChip icon={<ListFilter size={11} />} label="Property" title="Add property:status=active" onClick={() => addFilter('property:')} />
           <FilterChip icon={<X size={11} />} label="Exclude" title="Prefix any filter with - to exclude it" onClick={() => addFilter('-tag:')} />
-          <button type="button" onClick={() => setSyntaxOpen((value) => !value)} className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground" aria-expanded={syntaxOpen} aria-controls="search-syntax"><HelpCircle size={11} />Syntax</button>
+          <button type="button" onClick={startSave} disabled={!query.trim()} className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40" title="Save this query"><BookmarkPlus size={11} />Save</button>
+          <button type="button" onClick={() => setSyntaxOpen((value) => !value)} className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground" aria-expanded={syntaxOpen} aria-controls="search-syntax"><HelpCircle size={11} />Syntax</button>
         </div>
+        {saveOpen && <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-1 px-3 py-2">
+          <BookmarkPlus size={13} className="text-secondary" />
+          <input autoFocus value={saveName} onChange={(event) => setSaveName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void commitSave(); if (event.key === 'Escape') setSaveOpen(false); }} aria-label="Saved search name" placeholder="Saved search name" className="h-8 min-w-40 flex-1 rounded-md border border-border bg-background px-2 text-meta text-foreground outline-none focus:border-primary" />
+          <button type="button" onClick={() => void commitSave()} className="h-8 rounded-md bg-primary px-3 text-micro font-medium text-primary-foreground">Save query</button>
+          <button type="button" onClick={() => setSaveOpen(false)} className="h-8 rounded-md px-2 text-micro text-muted-foreground hover:bg-surface-2">Cancel</button>
+          {saveError && <p className="w-full text-micro text-destructive" role="alert">{saveError}</p>}
+        </div>}
         {syntaxOpen && <div id="search-syntax" role="note" className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-b border-border bg-surface-1 px-4 py-3 text-micro text-muted-foreground">
           <code className="text-secondary">tag:work</code><span>Matches that tag and nested tags.</span>
           <code className="text-secondary">path:&quot;Project Alpha&quot;</code><span>Quotes preserve spaces.</span>
@@ -200,4 +233,9 @@ export function SearchModal({
 
 function FilterChip({ icon, label, title, onClick }: { icon: ReactNode; label: string; title: string; onClick: () => void }) {
   return <button type="button" onClick={onClick} title={title} className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-1 px-2 py-1 text-micro text-muted-foreground hover:border-primary/30 hover:text-foreground">{icon}{label}</button>;
+}
+
+function suggestSearchName(query: string): string {
+  const clean = query.trim().replace(/\s+/g, ' ');
+  return clean.length <= 48 ? clean : `${clean.slice(0, 47).trimEnd()}…`;
 }

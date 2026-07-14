@@ -11,7 +11,7 @@ export function useSearchHotkey(): [boolean, (b: boolean) => void] {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') {
         e.preventDefault();
-        setOpen((v) => !v);
+        setOpen(true);
       }
     };
     window.addEventListener('keydown', onKey);
