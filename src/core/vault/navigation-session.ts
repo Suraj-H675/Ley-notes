@@ -4,17 +4,20 @@ import type { Page } from '@/infrastructure/database/schema';
 import { useNavStore } from '@/shared/state/nav';
 import type { EditorPane } from '@/shared/state/nav';
 
-interface PageReference {
+export interface PageReference {
   id: string;
   path: string;
 }
 
-interface NavigationSession {
+export interface NavigationLayout {
   openTabs: PageReference[];
   activeTab: PageReference | null;
   primaryTab: PageReference | null;
   secondaryTab: PageReference | null;
   activePane: EditorPane;
+}
+
+interface NavigationSession extends NavigationLayout {
   recentPages: PageReference[];
 }
 
@@ -63,6 +66,62 @@ export async function saveNavigationSession(key?: string): Promise<void> {
     activePane: state.activePane,
     recentPages,
   } satisfies NavigationSession });
+}
+
+export async function captureNavigationLayout(): Promise<NavigationLayout> {
+  const state = useNavStore.getState();
+  const ids = [...new Set([
+    ...state.openTabs,
+    ...[state.activeTab, state.primaryTab, state.secondaryTab].filter((id): id is string => Boolean(id)),
+  ])];
+  const pages = ids.length > 0 ? await db.pages.where('id').anyOf(ids).toArray() : [];
+  const byId = new Map(pages.filter((page) => page.deletedAt === null).map((page) => [page.id, page]));
+  const reference = (id: string | null): PageReference | null => {
+    if (!id) return null;
+    const page = byId.get(id);
+    return page ? { id: page.id, path: page.path } : null;
+  };
+  return {
+    openTabs: state.openTabs.map(reference).filter((item): item is PageReference => Boolean(item)),
+    activeTab: reference(state.activeTab),
+    primaryTab: reference(state.primaryTab),
+    secondaryTab: reference(state.secondaryTab),
+    activePane: state.activePane,
+  };
+}
+
+export async function applyNavigationLayout(layout: NavigationLayout): Promise<boolean> {
+  const pages = await db.pages.filter((page) => page.deletedAt === null).toArray();
+  const byId = new Map(pages.map((page) => [page.id, page]));
+  const byPath = new Map(pages.map((page) => [page.path.toLowerCase(), page]));
+  const resolve = (reference: PageReference | null): Page | null => reference
+    ? byId.get(reference.id) ?? byPath.get(reference.path.toLowerCase()) ?? null
+    : null;
+  const openTabs = uniquePages(layout.openTabs.map(resolve).filter((page): page is Page => Boolean(page)));
+  if (openTabs.length === 0) return false;
+  const primary = resolve(layout.primaryTab ?? layout.activeTab);
+  const secondary = resolve(layout.secondaryTab);
+  const primaryTab = primary && openTabs.some((page) => page.id === primary.id)
+    ? primary.id
+    : openTabs.at(-1)?.id ?? null;
+  const secondaryTab = secondary && secondary.id !== primaryTab && openTabs.some((page) => page.id === secondary.id)
+    ? secondary.id
+    : null;
+  const activePane = secondaryTab && layout.activePane === 'secondary' ? 'secondary' : 'primary';
+  const activeTab = activePane === 'secondary' ? secondaryTab : primaryTab;
+  const recentPages = [
+    ...(activeTab ? [activeTab] : []),
+    ...useNavStore.getState().recentPages.filter((id) => id !== activeTab && byId.has(id)),
+  ].slice(0, 20);
+  useNavStore.getState().hydrate({
+    openTabs: openTabs.map((page) => page.id),
+    activeTab,
+    primaryTab,
+    secondaryTab,
+    activePane,
+    recentPages,
+  });
+  return true;
 }
 
 export async function startNavigationSession(isCurrent: () => boolean = () => true): Promise<() => void> {

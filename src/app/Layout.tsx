@@ -4,7 +4,7 @@
  */
 
 import { lazy, Suspense, useEffect, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { PanelLeft, PanelRight, Search, CalendarPlus, FilePlus2, Settings as SettingsIcon, LayoutDashboard, Network, X } from 'lucide-react';
+import { PanelLeft, PanelRight, PanelsTopLeft, Search, CalendarPlus, FilePlus2, Settings as SettingsIcon, LayoutDashboard, Network, X } from 'lucide-react';
 import { useUIStore } from '@/shared/state/ui';
 import { useNavStore } from '@/shared/state/nav';
 import { usePages, usePageById } from '@/features/notes/usePages';
@@ -44,6 +44,7 @@ const SettingsModal = lazy(() => import('@/features/settings/SettingsModal').the
 const NoteWorkspace = lazy(() => import('@/features/editor/NoteWorkspace').then((module) => ({ default: module.NoteWorkspace })));
 const CanvasModal = lazy(() => import('@/features/canvas/CanvasModal').then((module) => ({ default: module.CanvasModal })));
 const CollectionModal = lazy(() => import('@/features/collections/CollectionModal').then((module) => ({ default: module.CollectionModal })));
+const WorkspaceModal = lazy(() => import('@/features/workspaces/WorkspaceModal').then((module) => ({ default: module.WorkspaceModal })));
 
 export function Layout({
   vaultMode,
@@ -87,6 +88,7 @@ export function Layout({
   const [newNoteFolder, setNewNoteFolder] = useState('');
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [collectionRequest, setCollectionRequest] = useState<CollectionRequest | null>(null);
+  const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [splitPercent, setSplitPercent] = useState(() => {
     const saved = Number(localStorage.getItem('ley:split-percent'));
     return Number.isFinite(saved) && saved >= 28 && saved <= 72 ? saved : 50;
@@ -151,6 +153,11 @@ export function Layout({
     setSearchInitialQuery('');
   }
 
+  function changeSplitPercent(value: number) {
+    setSplitPercent(value);
+    localStorage.setItem('ley:split-percent', String(value));
+  }
+
   const isEmpty = (pages?.length ?? 0) === 0;
 
   return (
@@ -190,6 +197,9 @@ export function Layout({
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setCanvasOpen(true)} aria-label="Canvas" title="Canvas">
             <LayoutDashboard size={14} />
+          </Button>
+          <Button size="sm" variant="ghost" className="hidden sm:inline-flex" onClick={() => setWorkspacesOpen(true)} aria-label="Workspace layouts" title="Workspace layouts">
+            <PanelsTopLeft size={14} />
           </Button>
           <Button
             size="sm"
@@ -318,6 +328,7 @@ export function Layout({
         onGraph={() => setGraphOpen(true)}
         onCanvas={() => setCanvasOpen(true)}
         onCollection={() => setCollectionRequest({ query: '', title: 'All notes' })}
+        onWorkspaces={() => setWorkspacesOpen(true)}
         onSettings={() => setSettingsOpen(true)}
         onToggleSidebar={toggleSidebar}
         onToggleRightDock={toggleRightDock}
@@ -328,6 +339,7 @@ export function Layout({
       <NewNoteModal open={newNoteOpen} initialFolder={newNoteFolder} onClose={() => setNewNoteOpen(false)} />
       {canvasOpen && <FeatureErrorBoundary feature="Canvas" overlay><Suspense fallback={null}><CanvasModal open onClose={() => setCanvasOpen(false)} /></Suspense></FeatureErrorBoundary>}
       {collectionRequest && <FeatureErrorBoundary feature="Collection" overlay><Suspense fallback={null}><CollectionModal key={`${collectionRequest.savedSearchId ?? 'query'}:${collectionRequest.query}`} request={collectionRequest} onClose={() => setCollectionRequest(null)} /></Suspense></FeatureErrorBoundary>}
+      {workspacesOpen && <FeatureErrorBoundary feature="Workspace layouts" overlay><Suspense fallback={null}><WorkspaceModal open splitPercent={splitPercent} onSplitPercentChange={changeSplitPercent} onClose={() => setWorkspacesOpen(false)} /></Suspense></FeatureErrorBoundary>}
     </div>
   );
 }

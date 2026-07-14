@@ -21,7 +21,7 @@ const FEATURES = [
 
 export function LandingPage() {
   return (
-    <div data-page="website" className="h-full overflow-y-auto overscroll-y-contain bg-[#0d0f12] text-[#f3f1eb] selection:bg-[#9b87f5]/30">
+    <div data-page="website" className="min-h-screen bg-[#0d0f12] text-[#f3f1eb] selection:bg-[#9b87f5]/30">
       <header className="sticky top-0 z-30 border-b border-white/8 bg-[#0d0f12]/85 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
           <a href="/" className="flex items-center gap-2.5 font-semibold tracking-tight">

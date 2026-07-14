@@ -30,7 +30,7 @@ Obsidian's current [Bases](https://obsidian.md/help/bases) core plugin confirms 
 
 Ley's first collection surface therefore composes the retrieval language it already exposes. A query selects Markdown files, the table discovers their YAML keys, and cell edits use the same filesystem write path as the note properties panel. Saved searches may remember column visibility and sorting as vault-scoped workspace metadata, but that metadata never contains note values. Ley deliberately does not emit an Obsidian `.base` file until it can support that format faithfully rather than create a misleading partial dialect.
 
-Obsidian's [Bookmarks](https://obsidian.md/help/plugins/bookmarks) and [Workspaces](https://obsidian.md/help/plugins/workspaces) also clarify two later gaps. Ley favorites currently address files, and saved searches address queries, but heading/block bookmarks and named task-specific workspace layouts remain distinct future workflows. Automatic session restoration is valuable, but it is not a substitute for intentionally named layouts.
+Obsidian's [Bookmarks](https://obsidian.md/help/plugins/bookmarks) and [Workspaces](https://obsidian.md/help/plugins/workspaces) clarify two distinct retrieval needs. Ley favorites currently address files and saved searches address queries; heading/block bookmarks remain a future workflow. Named task-specific layouts are now separate from automatic session restoration: a user can deliberately capture writing, research, or review arrangements including open tabs, split context, focus, sidebars, dock context, and divider width. They remain vault-scoped presentation metadata and tolerate renamed or missing notes through stable ID/path references.
 
 ## Decisions for Ley
 
@@ -40,6 +40,7 @@ Obsidian's [Bookmarks](https://obsidian.md/help/plugins/bookmarks) and [Workspac
 - Search, quick switching, backlinks, and daily notes have higher priority than decorative graph complexity. Retrieval must continue scaling through composable path, tag, title, and portable YAML-property filters rather than requiring a proprietary object database.
 - Recurring retrieval patterns should be saveable as vault-scoped workspace metadata. They should reopen as transparent, editable queries rather than becoming opaque database views.
 - Structured collection views should project those same queries over portable YAML properties; inline changes must immediately rewrite Markdown rather than mutate a parallel object database.
+- Task-specific workspace layouts should be explicitly named and restorable; automatic last-session recovery solves continuity but not deliberate context switching.
 - Unresolved links are first-class and resolve automatically when their target is created.
 - Both wiki links and ordinary relative Markdown links are first-class; portable path links must keep their meaning when source or target files move.
 - Rename operations update incoming links because broken knowledge structures are worse than surprising automation.

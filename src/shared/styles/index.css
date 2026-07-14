@@ -52,6 +52,17 @@ body,
   overflow: hidden;
 }
 
+/* The editor is a fixed application shell, while the public website should
+   participate in native document scrolling. Keeping this route distinction
+   here prevents the app's viewport lock from trapping the landing page. */
+html[data-surface='website'],
+html[data-surface='website'] body,
+html[data-surface='website'] #root {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
+}
+
 body {
   font-family: var(--font-sans);
   background-color: hsl(var(--background));

@@ -4,8 +4,8 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 
 ## Public website
 
-- The website owns a constrained `h-full` scrolling root because the shared document is intentionally locked for the workspace.
-- At 1440×900, 390×844, and 320×568, `scrollHeight > clientHeight`, `scrollTop` can change, and `scrollWidth === clientWidth`.
+- The website opts the shared document into native page flow; the workspace route alone owns the fixed viewport lock.
+- At 1440×900, 390×844, and 320×568, document `scrollHeight > innerHeight`, `scrollY` can change through ordinary page scrolling, and `scrollWidth === clientWidth`.
 - Hero, premise, features, desktop, and footer regions are reachable.
 - `#why`, `#features`, and `#desktop` links move the website scroll root to a visible target.
 - Both web-app calls to action reach `/app`.
@@ -63,6 +63,9 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - At 390px, only the focused split pane is visible, selecting the opposite pane's tab reveals it, and the document has no horizontal overflow. Reload restores both pane notes and the focused side.
 - Rename an open note and reload; its session survives by stable ID. Trash an open note and reload; the stale tab and recent entry are removed safely.
 - Enter the vault chooser and return to the current vault; the complete session restores rather than falling back to the most recently edited page.
+- Save a distraction-free single-pane workspace and a research workspace with two notes, a non-default divider width, visible sidebars, and a selected dock tab. Loading each restores that complete arrangement; saved layouts remain after reload and never appear in another vault.
+- Rename a workspace, update it from the current arrangement, and delete it through the two-step destructive action. If some referenced notes have moved or disappeared, valid notes still load by stable ID/path; an entirely stale layout reports an error without replacing the current workspace.
+- At 390px the workspace manager stays inside the viewport, all save/load/update/rename/delete controls remain reachable, its list scrolls internally, and neither it nor the underlying document widens.
 - The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.
 - Rapid consecutive autosaves are serialized per note, navigation flushes the pending edit, and the newest Markdown, backlinks, and tag rows agree after the save settles.
 - An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.

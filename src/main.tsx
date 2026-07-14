@@ -10,6 +10,7 @@ import './shared/styles/index.css';
 
 const isNative = '__TAURI_INTERNALS__' in window;
 const isLanding = !isNative && window.location.pathname === '/';
+if (isLanding) document.documentElement.dataset.surface = 'website';
 const Root = lazy(() => isLanding
   ? import('./website/LandingPage').then((module) => ({ default: module.LandingPage }))
   : import('./app/App').then((module) => ({ default: module.App })));

@@ -19,6 +19,7 @@ interface UIState {
 
   rightDockOpen: boolean;
   toggleRightDock: () => void;
+  setRightDockOpen: (open: boolean) => void;
 
   /** Context panel currently shown in the right dock. */
   rightDockTab: 'graph' | 'backlinks' | 'outline' | 'history';
@@ -36,6 +37,7 @@ export const useUIStore = create<UIState>((set) => ({
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   rightDockOpen: typeof window === 'undefined' || window.matchMedia('(min-width: 1024px)').matches,
   toggleRightDock: () => set((s) => ({ rightDockOpen: !s.rightDockOpen })),
+  setRightDockOpen: (rightDockOpen) => set({ rightDockOpen }),
   rightDockTab: 'backlinks',
   setRightDockTab: (rightDockTab) => set({ rightDockTab }),
 }));

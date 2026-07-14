@@ -32,6 +32,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Global graph | Keep | Valuable for exploration, not promoted as the primary editor. Duplicate ownership and shortcuts were removed. |
 | Settings | Keep | Contains durable product configuration only; transfer controls appear only in browser-local mode. |
 | Right dock toggle | Keep | Backlinks and outline are core second-brain context, while the dock remains dismissible. |
+| Named workspaces | Add | Task-specific layouts preserve tab order, primary/reference panes, focus, sidebar and dock visibility, dock context, and divider width. The vault-scoped manager supports save, load, update, rename, and confirmed deletion without writing proprietary metadata into notes. |
 | Recent and Tags panels | Improve | Both are collapsible to prevent the sidebar becoming a permanently crowded stack. Tags now truly filter the page tree. |
 | Favorites panel | Add | Important notes can be starred from the workspace, explorer, or command palette and remain one click away without changing Markdown or folder structure. Favorites are isolated per vault and survive trash/restore. |
 | Saved searches panel | Add | Structured queries can be named from the quick switcher, reopened into the editable query surface, renamed, or deleted. The panel is collapsible, touch-accessible, and scoped to the active vault so recurring retrieval workflows become durable without altering Markdown. |

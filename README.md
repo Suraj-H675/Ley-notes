@@ -21,6 +21,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Live query-backed property tables with typed sorting, configurable columns, inline YAML editing, split-note opening, and saved per-query layouts
 - Vault-scoped favorites with workspace, sidebar, explorer, and command-palette access
 - Resizable side-by-side note panes with pane-local linking, responsive focus, and vault-scoped restoration of tabs, panes, focus, and recents
+- Named, vault-scoped workspace layouts that restore tabs, split panes, focus, sidebars, dock context, and divider width
 - Global and contextual knowledge graphs with deterministic layouts and community coloring
 - Interoperable JSON Canvas files with text cards, note cards, connections, and trash recovery
 - Vault-native templates for new notes and daily notes

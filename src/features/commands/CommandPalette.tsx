@@ -8,6 +8,7 @@ import {
   Network,
   PanelLeft,
   PanelRight,
+  PanelsTopLeft,
   Search,
   Settings,
   Star,
@@ -36,6 +37,7 @@ export function CommandPalette({
   onGraph,
   onCanvas,
   onCollection,
+  onWorkspaces,
   onSettings,
   onToggleSidebar,
   onToggleRightDock,
@@ -51,6 +53,7 @@ export function CommandPalette({
   onGraph: () => void;
   onCanvas: () => void;
   onCollection: () => void;
+  onWorkspaces: () => void;
   onSettings: () => void;
   onToggleSidebar: () => void;
   onToggleRightDock: () => void;
@@ -70,6 +73,7 @@ export function CommandPalette({
       { id: 'graph', label: 'Open graph view', detail: 'Explore the connections in this vault', icon: <Network size={15} />, shortcut: '⌘G', run: onGraph },
       { id: 'canvas', label: 'Open canvas', detail: 'Arrange notes and thoughts on a spatial board', icon: <LayoutDashboard size={15} />, keywords: 'board spatial json canvas', run: onCanvas },
       { id: 'collection', label: 'Open notes as a table', detail: 'Sort and edit Markdown properties across the vault', icon: <TableProperties size={15} />, keywords: 'base database collection properties table', run: onCollection },
+      { id: 'workspaces', label: 'Manage workspace layouts', detail: 'Save or restore tabs, split panes, and sidebars', icon: <PanelsTopLeft size={15} />, keywords: 'workspace layout panes tabs writing research', run: onWorkspaces },
       ...(favoriteActiveNote === null ? [] : [{ id: 'favorite', label: favoriteActiveNote ? 'Remove active note from favorites' : 'Add active note to favorites', detail: 'Keep important notes one click away in the sidebar', icon: <Star size={15} className={favoriteActiveNote ? 'fill-current' : undefined} />, keywords: 'star bookmark pin', run: onToggleFavorite }]),
       { id: 'toggle-left', label: 'Toggle left sidebar', detail: 'Show or hide the file explorer', icon: <PanelLeft size={15} />, run: onToggleSidebar },
       { id: 'toggle-right', label: 'Toggle right sidebar', detail: 'Show or hide contextual panels', icon: <PanelRight size={15} />, run: onToggleRightDock },
@@ -77,7 +81,7 @@ export function CommandPalette({
       { id: 'dark', label: 'Use dark theme', detail: 'Switch the workspace appearance', icon: <Moon size={15} />, run: () => onSetTheme('dark') },
       { id: 'settings', label: 'Open settings', detail: 'Configure Ley and this vault', icon: <Settings size={15} />, shortcut: '⌘,', run: onSettings },
     ],
-    [favoriteActiveNote, onCanvas, onCollection, onDailyNote, onGraph, onNewNote, onQuickSwitcher, onSetTheme, onSettings, onToggleFavorite, onToggleRightDock, onToggleSidebar],
+    [favoriteActiveNote, onCanvas, onCollection, onDailyNote, onGraph, onNewNote, onQuickSwitcher, onSetTheme, onSettings, onToggleFavorite, onToggleRightDock, onToggleSidebar, onWorkspaces],
   );
 
   const matches = useMemo(() => {

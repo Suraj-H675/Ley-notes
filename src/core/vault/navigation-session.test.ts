@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '@/test/helpers';
 import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
 import { createPage, deletePage, renamePage } from './pages';
-import { restoreNavigationSession, saveNavigationSession, startNavigationSession, stopNavigationSession } from './navigation-session';
+import { applyNavigationLayout, captureNavigationLayout, restoreNavigationSession, saveNavigationSession, startNavigationSession, stopNavigationSession } from './navigation-session';
 import { useNavStore } from '@/shared/state/nav';
 
 describe('navigation sessions', () => {
@@ -90,5 +90,42 @@ describe('navigation sessions', () => {
     expect(await restoreNavigationSession()).toBe(false);
     expect(useNavStore.getState().openTabs).toHaveLength(1);
     expect(useNavStore.getState().openTabs).not.toEqual([first.id, second.id]);
+  });
+
+  it('captures and reapplies a split navigation layout without replacing recents', async () => {
+    const source = await createPage({ title: 'Source' });
+    const reference = await createPage({ title: 'Reference' });
+    const later = await createPage({ title: 'Later' });
+    useNavStore.getState().hydrate({
+      openTabs: [source.id, reference.id],
+      activeTab: reference.id,
+      primaryTab: source.id,
+      secondaryTab: reference.id,
+      activePane: 'secondary',
+      recentPages: [reference.id, source.id],
+    });
+    const layout = await captureNavigationLayout();
+    useNavStore.getState().hydrate({ openTabs: [later.id], activeTab: later.id, recentPages: [later.id] });
+    expect(await applyNavigationLayout(layout)).toBe(true);
+    expect(useNavStore.getState()).toMatchObject({
+      openTabs: [source.id, reference.id],
+      primaryTab: source.id,
+      secondaryTab: reference.id,
+      activePane: 'secondary',
+      activeTab: reference.id,
+      recentPages: [reference.id, later.id],
+    });
+  });
+
+  it('drops missing layout references and refuses an entirely stale layout', async () => {
+    const keep = await createPage({ title: 'Keep' });
+    const remove = await createPage({ title: 'Remove' });
+    useNavStore.getState().hydrate({ openTabs: [keep.id, remove.id], activeTab: keep.id, recentPages: [] });
+    const layout = await captureNavigationLayout();
+    await deletePage(remove.id);
+    expect(await applyNavigationLayout(layout)).toBe(true);
+    expect(useNavStore.getState().openTabs).toEqual([keep.id]);
+    await deletePage(keep.id);
+    expect(await applyNavigationLayout(layout)).toBe(false);
   });
 });
