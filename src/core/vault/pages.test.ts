@@ -64,6 +64,22 @@ describe('pages CRUD', () => {
     expect(links[0].targetTitle).toBe('Foo');
   });
 
+  it('keeps the newest content and derived indexes during rapid saves', async () => {
+    const page = await createPage({ title: 'Rapid capture' });
+    await Promise.all([
+      updatePageContent(page.id, '#project/ley'),
+      updatePageContent(page.id, '#project/ley #project/research #status/active'),
+    ]);
+    expect((await db.pages.get(page.id))?.content).toBe(
+      '#project/ley #project/research #status/active',
+    );
+    expect(
+      (await db.tags.where('pageId').equals(page.id).toArray())
+        .map((row) => row.tag)
+        .sort(),
+    ).toEqual(['project/ley', 'project/research', 'status/active']);
+  });
+
   it('indexes relative Markdown links by resolved vault path', async () => {
     const target = await createPage({ title: 'Design', folder: 'docs' });
     const source = await createPage({ title: 'Source', folder: 'projects', content: '[Design](../docs/design.md#API)' });

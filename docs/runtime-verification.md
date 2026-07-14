@@ -35,6 +35,8 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Typing `[[` exposes recent note suggestions; typing a partial title filters them.
 - Enter and Tab accept a completion and keep the current note open.
 - `[[Note#` offers that note's real headings with level and line context; `[[Note#^` offers block IDs with source previews, excluding fenced code examples.
+- Typing `#` at a Markdown boundary offers the vault's existing flat and nested tags, ranked by match and usage count. Headings, frontmatter, inline/fenced code, URL fragments, and attribute fragments do not trigger tag completion or enter the tag index.
+- Accepting a tag replaces only the text after the existing `#`; the touch toolbelt's tag action inserts `#` and opens the same completion list. At 390px the popup and compact action remain reachable with no document overflow.
 - Normal click inside a wiki link positions the cursor; Ctrl/Cmd-click opens its target without creating an ID-named note.
 - Read-mode task clicks persist to Markdown, including tasks after an embed and tasks inside a partial-note embed.
 - Read-mode and Ctrl/Cmd-click wiki links honor both `#Heading` and `#^block-id` destinations and focus the exact source line.
@@ -58,6 +60,7 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Rename an open note and reload; its session survives by stable ID. Trash an open note and reload; the stale tab and recent entry are removed safely.
 - Enter the vault chooser and return to the current vault; the complete session restores rather than falling back to the most recently edited page.
 - The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.
+- Rapid consecutive autosaves are serialized per note, navigation flushes the pending edit, and the newest Markdown, backlinks, and tag rows agree after the save settles.
 - An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.
 
 ## Release evidence

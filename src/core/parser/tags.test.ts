@@ -14,6 +14,11 @@ describe('extractInlineTags', () => {
 
   it('extracts multiple tags on one line', () => {
     expect(extractInlineTags('#a #b #c')).toEqual(['a', 'b', 'c']);
+    expect(extractInlineTags('#project/ley #project/research #status/active')).toEqual([
+      'project/ley',
+      'project/research',
+      'status/active',
+    ]);
   });
 
   it('dedupes', () => {
@@ -34,8 +39,19 @@ describe('extractInlineTags', () => {
   });
 
   it('does not match headings (## heading)', () => {
-    // `## Foo` should not produce `foo` — the boundary requires non-word.
     expect(extractInlineTags('## Heading\nbody')).toEqual([]);
+  });
+
+  it('does not index URL fragments or HTML-style attribute values', () => {
+    expect(extractInlineTags('Visit https://example.com/#route')).toEqual([]);
+    expect(extractInlineTags('<a href=#anchor>Jump</a>')).toEqual([]);
+  });
+
+  it('recognizes tags beside ordinary punctuation', () => {
+    expect(extractInlineTags('Keep (#project/ley), then “#status/active”.')).toEqual([
+      'project/ley',
+      'status/active',
+    ]);
   });
 });
 

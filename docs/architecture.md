@@ -38,6 +38,8 @@ Writes follow this order:
 3. Update the local page projection.
 4. Rebuild backlinks, tags, search, and graph-derived state.
 
+Editor content writes are serialized per note. A rapid later save cannot be overtaken by an earlier filesystem/index rebuild, and leaving an editor flushes its pending debounced value before teardown. This keeps authoritative Markdown and every derived row on the same newest revision.
+
 Renames move the file and retarget incoming wiki links. Ordinary relative Markdown links are resolved by vault path, indexed as backlinks and graph edges, and rewritten when either their source or target moves so their filesystem meaning remains stable. Folder moves preserve note identity and titles, so links and favorites remain valid; duplicates receive an independent title/path and intentionally drop aliases to avoid ambiguous resolution. Deletes move filesystem notes into `.trash`; browser-local notes use a recoverable soft-delete marker and expose restore/permanent-delete controls. Binary attachments live under `attachments/` and are constrained by extension, size, and safe relative paths. Interoperable JSON Canvas documents live under `canvases/` and use the same atomic-write and trash lifecycle. All native relative paths reject absolute paths and traversal segments.
 
 Workspace metadata is namespaced by the active vault identity. Desktop vaults use their full path, browser-local uses a dedicated identity, and browser directory handles receive a persisted random ID rather than relying on a potentially colliding folder name. Favorites, saved searches, and navigation sessions therefore never cross vault boundaries. Saved searches are validated setting records rather than hidden note files, because they describe Ley workspace retrieval rather than user-authored knowledge. Navigation sessions store both stable page IDs and paths, restore tab order, primary and secondary panes, focused pane, and recents, and discard references to deleted or unavailable notes. Editor insert/jump events carry their page identity, and link opens carry their source pane, so two mounted editors cannot receive one another's commands.
@@ -46,7 +48,7 @@ The desktop runtime owns one recursive native watcher for the active vault. It e
 
 ## Derived state
 
-Dexie tables for pages, blocks, links, tags, and settings support reactive UI queries. FlexSearch and the synchronous title resolver subscribe to Dexie and are disposable. The search projection indexes title, aliases, content, tags, paths, and flattened YAML properties; structured operators are parsed separately and applied as composable post-filters so filter-only queries and exclusions remain exact. Revisions are sparse checkpoints rather than keystroke logs and are restored through the same normal save path.
+Dexie tables for pages, blocks, links, tags, and settings support reactive UI queries. FlexSearch and the synchronous title resolver subscribe to Dexie and are disposable. CodeMirror's shared completion lifecycle reads the derived tag table on demand, so tag authoring reuses the current vault taxonomy without making the index authoritative. The search projection indexes title, aliases, content, tags, paths, and flattened YAML properties; structured operators are parsed separately and applied as composable post-filters so filter-only queries and exclusions remain exact. Revisions are sparse checkpoints rather than keystroke logs and are restored through the same normal save path.
 
 ## Design system
 

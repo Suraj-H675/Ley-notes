@@ -34,6 +34,8 @@ export interface CreatePageInput {
   frontmatter?: Record<string, unknown>;
 }
 
+const contentUpdateQueues = new Map<string, Promise<void>>();
+
 export async function listPages(): Promise<Page[]> {
   const rows = await db.pages.toArray();
   return rows.filter((p) => p.deletedAt === null);
@@ -101,10 +103,21 @@ export async function createPage(input: CreatePageInput): Promise<Page> {
  * Update the body and frontmatter of a page. Re-parses frontmatter and
  * aliases, rebuilds the backlink and tag indexes.
  */
-export async function updatePageContent(
+export function updatePageContent(
   pageId: string,
   content: string,
 ): Promise<void> {
+  const previous = contentUpdateQueues.get(pageId) ?? Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(() => performPageContentUpdate(pageId, content));
+  contentUpdateQueues.set(pageId, next);
+  return next.finally(() => {
+    if (contentUpdateQueues.get(pageId) === next) contentUpdateQueues.delete(pageId);
+  });
+}
+
+async function performPageContentUpdate(pageId: string, content: string): Promise<void> {
   const page = await db.pages.get(pageId);
   if (!page) throw new Error(`updatePageContent: page ${pageId} not found`);
 

@@ -8,6 +8,7 @@ import { getPageIndex, resolveTitle, resolveTitleSync } from '@/core/vault/page-
 import { extractInternalMarkdownLinks } from '@/core/parser/markdown-links';
 import { extractMarkdownBlockReferences, extractMarkdownHeadings } from '@/core/parser/destinations';
 import { db } from '@/infrastructure/database/db';
+import { tagCompletions } from './tag-completion';
 
 const WIKI_LINK_DECO = Decoration.mark({ class: 'cm-wikilink' });
 const WIKI_LINK_GHOST = Decoration.mark({ class: 'cm-wikilink cm-wikilink-ghost' });
@@ -74,11 +75,11 @@ function rebuild(view: EditorView): DecorationSet {
 }
 
 // CodeMirror's official completion lifecycle owns positioning, keyboard
-// precedence, screen-reader semantics, and dismissal. Ley only supplies the
-// vault-specific trigger and options.
+// precedence, screen-reader semantics, and dismissal. Ley supplies vault-aware
+// note, destination, and tag sources through one lifecycle.
 export function wikiLinkAutocomplete(): Extension {
   return autocompletion({
-    override: [wikiLinkCompletions],
+    override: [wikiLinkCompletions, tagCompletions],
     activateOnTyping: true,
     icons: false,
     maxRenderedOptions: 8,

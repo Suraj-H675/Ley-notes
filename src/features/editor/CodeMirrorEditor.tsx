@@ -6,7 +6,8 @@
 
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { EditorView } from '@codemirror/view';
-import { Bold, Braces, Italic, Link2, ListChecks, Search } from 'lucide-react';
+import { Bold, Braces, Hash, Italic, Link2, ListChecks, Search } from 'lucide-react';
+import { startCompletion } from '@codemirror/autocomplete';
 import { mountEditor, type EditorController } from '@/features/editor/lib/mount';
 import { useDebouncedCallback } from '@/shared/hooks/useDebounce';
 import { updatePageContent } from '@/core/vault/pages';
@@ -114,6 +115,7 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane }: Cod
       controller.view.contentDOM.removeEventListener('drop', onDrop);
       window.removeEventListener('ley:editor-insert', onInsert);
       window.removeEventListener('blur', debouncedSave.flush);
+      debouncedSave.flush();
       controller.destroy();
       controllerRef.current = null;
     };
@@ -199,6 +201,7 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane }: Cod
         <FormatButton label="Bold" shortcut="⌘B" format="bold" controller={controllerRef}><Bold size={13} /></FormatButton>
         <FormatButton label="Italic" shortcut="⌘I" format="italic" controller={controllerRef}><Italic size={13} /></FormatButton>
         <FormatButton label="Link note" shortcut="⌘K" format="wiki-link" controller={controllerRef}><Link2 size={13} /></FormatButton>
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { const controller = controllerRef.current; if (!controller) return; controller.insertText('#'); startCompletion(controller.view); }} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Add tag" title="Add tag"><Hash size={13} /><span className="hidden sm:inline">Tag</span></button>
         <FormatButton label="Inline code" shortcut="⌘⇧`" format="code" controller={controllerRef}><Braces size={13} /></FormatButton>
         <span className="mx-0.5 h-4 w-px bg-border" />
         <FormatButton label="Cycle task" format="task" controller={controllerRef}><ListChecks size={13} /></FormatButton>

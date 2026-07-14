@@ -7,13 +7,13 @@
  *  - Length 1-100 characters
  *  - Skips inline code (`...`) and fenced code (```...```)
  *
- * Does NOT match `#` inside URLs or HTML attributes. We use a lookbehind for
- * the boundary to avoid `##` headings from being read as `#heading`.
+ * Does NOT match `#` inside URLs or HTML attributes. The boundary excludes
+ * URL slashes, assignments, and a preceding hash so headings stay headings.
  *
  * Returns a deduped set of full tag paths.
  */
 
-const TAG_RE = /(?:^|[^\w`])#([a-z0-9_][a-z0-9_\-/]{0,99})/g;
+const TAG_RE = /(?:^|[^\w`/#=])#([a-z0-9_][a-z0-9_\-/]{0,99})/g;
 
 export function extractInlineTags(source: string): string[] {
   const out = new Set<string>();
