@@ -12,6 +12,8 @@ import {
   renamePage,
   restorePage,
   updatePageContent,
+  updatePageFrontmatter,
+  updatePageProperty,
 } from './pages';
 import { resetDb } from '@/test/helpers';
 
@@ -78,6 +80,28 @@ describe('pages CRUD', () => {
         .map((row) => row.tag)
         .sort(),
     ).toEqual(['project/ley', 'project/research', 'status/active']);
+  });
+
+  it('serializes content and property edits without losing either revision', async () => {
+    const page = await createPage({ title: 'Concurrent edits' });
+    await Promise.all([
+      updatePageContent(page.id, 'New body #active'),
+      updatePageFrontmatter(page.id, { status: 'active', priority: 2 }),
+    ]);
+    expect(await db.pages.get(page.id)).toMatchObject({
+      content: 'New body #active',
+      frontmatter: { status: 'active', priority: 2 },
+    });
+    expect(await db.tags.get([page.id, 'active'])).toBeTruthy();
+  });
+
+  it('merges rapid cell-level property edits against the newest frontmatter', async () => {
+    const page = await createPage({ title: 'Property table' });
+    await Promise.all([
+      updatePageProperty(page.id, 'status', 'active'),
+      updatePageProperty(page.id, 'priority', 2),
+    ]);
+    expect((await db.pages.get(page.id))?.frontmatter).toEqual({ status: 'active', priority: 2 });
   });
 
   it('indexes relative Markdown links by resolved vault path', async () => {

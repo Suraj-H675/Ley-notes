@@ -34,7 +34,16 @@ export interface CreatePageInput {
   frontmatter?: Record<string, unknown>;
 }
 
-const contentUpdateQueues = new Map<string, Promise<void>>();
+const pageMutationQueues = new Map<string, Promise<void>>();
+
+function queuePageMutation(pageId: string, mutation: () => Promise<void>): Promise<void> {
+  const previous = pageMutationQueues.get(pageId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(mutation);
+  pageMutationQueues.set(pageId, next);
+  return next.finally(() => {
+    if (pageMutationQueues.get(pageId) === next) pageMutationQueues.delete(pageId);
+  });
+}
 
 export async function listPages(): Promise<Page[]> {
   const rows = await db.pages.toArray();
@@ -107,14 +116,7 @@ export function updatePageContent(
   pageId: string,
   content: string,
 ): Promise<void> {
-  const previous = contentUpdateQueues.get(pageId) ?? Promise.resolve();
-  const next = previous
-    .catch(() => undefined)
-    .then(() => performPageContentUpdate(pageId, content));
-  contentUpdateQueues.set(pageId, next);
-  return next.finally(() => {
-    if (contentUpdateQueues.get(pageId) === next) contentUpdateQueues.delete(pageId);
-  });
+  return queuePageMutation(pageId, () => performPageContentUpdate(pageId, content));
 }
 
 async function performPageContentUpdate(pageId: string, content: string): Promise<void> {
@@ -141,7 +143,32 @@ async function performPageContentUpdate(pageId: string, content: string): Promis
 }
 
 /** Update YAML properties without rewriting editor-visible Markdown. */
-export async function updatePageFrontmatter(
+export function updatePageFrontmatter(
+  pageId: string,
+  frontmatter: Record<string, unknown>,
+): Promise<void> {
+  return queuePageMutation(pageId, () => performPageFrontmatterUpdate(pageId, frontmatter));
+}
+
+export function updatePageProperty(pageId: string, key: string, value: unknown): Promise<void> {
+  return queuePageMutation(pageId, async () => {
+    const page = await db.pages.get(pageId);
+    if (!page) throw new Error(`updatePageProperty: page ${pageId} not found`);
+    await performPageFrontmatterUpdate(pageId, { ...page.frontmatter, [key]: value });
+  });
+}
+
+export function removePageProperty(pageId: string, key: string): Promise<void> {
+  return queuePageMutation(pageId, async () => {
+    const page = await db.pages.get(pageId);
+    if (!page) throw new Error(`removePageProperty: page ${pageId} not found`);
+    const next = { ...page.frontmatter };
+    delete next[key];
+    await performPageFrontmatterUpdate(pageId, next);
+  });
+}
+
+async function performPageFrontmatterUpdate(
   pageId: string,
   frontmatter: Record<string, unknown>,
 ): Promise<void> {

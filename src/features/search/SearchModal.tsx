@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Search, FileText, Hash, X, BookmarkPlus, Columns2, Folder, HelpCircle, ListFilter, Tags } from 'lucide-react';
+import { Search, FileText, Hash, X, BookmarkPlus, Columns2, Folder, HelpCircle, ListFilter, TableProperties, Tags } from 'lucide-react';
 import { searchPages } from '@/core/index/search';
 import { db } from '@/infrastructure/database/db';
 import { useNavStore } from '@/shared/state/nav';
@@ -25,10 +25,12 @@ export function SearchModal({
   open,
   initialQuery = '',
   onClose,
+  onOpenCollection,
 }: {
   open: boolean;
   initialQuery?: string;
   onClose: () => void;
+  onOpenCollection: (query: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -159,7 +161,8 @@ export function SearchModal({
           <FilterChip icon={<FileText size={11} />} label="Title" title="Add title:roadmap" onClick={() => addFilter('title:')} />
           <FilterChip icon={<ListFilter size={11} />} label="Property" title="Add property:status=active" onClick={() => addFilter('property:')} />
           <FilterChip icon={<X size={11} />} label="Exclude" title="Prefix any filter with - to exclude it" onClick={() => addFilter('-tag:')} />
-          <button type="button" onClick={startSave} disabled={!query.trim()} className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40" title="Save this query"><BookmarkPlus size={11} />Save</button>
+          <button type="button" onClick={() => { onClose(); onOpenCollection(query); }} className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground" title="View matching notes as a property table"><TableProperties size={11} />Table</button>
+          <button type="button" onClick={startSave} disabled={!query.trim()} className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40" title="Save this query"><BookmarkPlus size={11} />Save</button>
           <button type="button" onClick={() => setSyntaxOpen((value) => !value)} className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground" aria-expanded={syntaxOpen} aria-controls="search-syntax"><HelpCircle size={11} />Syntax</button>
         </div>
         {saveOpen && <div className="flex flex-wrap items-center gap-2 border-b border-border bg-surface-1 px-3 py-2">

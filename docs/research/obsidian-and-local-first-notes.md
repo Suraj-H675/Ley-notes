@@ -24,6 +24,14 @@ The workspace itself should also feel continuous: reopening a vault must restore
 - Foam shows how far ordinary Markdown, wiki links, and editor-native workflows can go with a small conceptual surface.
 - Capacities demonstrates polished object-oriented retrieval and presentation, but a mandatory object schema would weaken Ley’s flexible file-first core.
 
+## Structured views without a second source of truth
+
+Obsidian's current [Bases](https://obsidian.md/help/bases) core plugin confirms that database-style resurfacing belongs in a mature second brain: it filters, sorts, and edits note properties through table, list, card, and map views while keeping the underlying data in local Markdown files. Logseq's query builder and SiYuan's table database point in the same direction from block-first systems. The durable product lesson is the view, not a proprietary object store.
+
+Ley's first collection surface therefore composes the retrieval language it already exposes. A query selects Markdown files, the table discovers their YAML keys, and cell edits use the same filesystem write path as the note properties panel. Saved searches may remember column visibility and sorting as vault-scoped workspace metadata, but that metadata never contains note values. Ley deliberately does not emit an Obsidian `.base` file until it can support that format faithfully rather than create a misleading partial dialect.
+
+Obsidian's [Bookmarks](https://obsidian.md/help/plugins/bookmarks) and [Workspaces](https://obsidian.md/help/plugins/workspaces) also clarify two later gaps. Ley favorites currently address files, and saved searches address queries, but heading/block bookmarks and named task-specific workspace layouts remain distinct future workflows. Automatic session restoration is valuable, but it is not a substitute for intentionally named layouts.
+
 ## Decisions for Ley
 
 - Desktop-first, real filesystem vaults; browser folder access where the platform supports it.
@@ -31,6 +39,7 @@ The workspace itself should also feel continuous: reopening a vault must restore
 - Pages are the initial unit of composition. Block IDs may support references later without replacing Markdown as the source.
 - Search, quick switching, backlinks, and daily notes have higher priority than decorative graph complexity. Retrieval must continue scaling through composable path, tag, title, and portable YAML-property filters rather than requiring a proprietary object database.
 - Recurring retrieval patterns should be saveable as vault-scoped workspace metadata. They should reopen as transparent, editable queries rather than becoming opaque database views.
+- Structured collection views should project those same queries over portable YAML properties; inline changes must immediately rewrite Markdown rather than mutate a parallel object database.
 - Unresolved links are first-class and resolve automatically when their target is created.
 - Both wiki links and ordinary relative Markdown links are first-class; portable path links must keep their meaning when source or target files move.
 - Rename operations update incoming links because broken knowledge structures are worse than surprising automation.

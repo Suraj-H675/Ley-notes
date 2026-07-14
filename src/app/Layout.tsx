@@ -36,12 +36,14 @@ import { FeatureErrorBoundary } from '@/shared/components/FeatureErrorBoundary';
 import { useIsFavoritePage } from '@/features/favorites/useFavorites';
 import { toggleFavoritePage } from '@/core/vault/favorites';
 import { startNavigationSession } from '@/core/vault/navigation-session';
+import type { CollectionRequest } from '@/features/collections/CollectionModal';
 
 const GraphView = lazy(() => import('@/features/graph/GraphView').then((module) => ({ default: module.GraphView })));
 const GraphModal = lazy(() => import('@/features/graph/GraphModal').then((module) => ({ default: module.GraphModal })));
 const SettingsModal = lazy(() => import('@/features/settings/SettingsModal').then((module) => ({ default: module.SettingsModal })));
 const NoteWorkspace = lazy(() => import('@/features/editor/NoteWorkspace').then((module) => ({ default: module.NoteWorkspace })));
 const CanvasModal = lazy(() => import('@/features/canvas/CanvasModal').then((module) => ({ default: module.CanvasModal })));
+const CollectionModal = lazy(() => import('@/features/collections/CollectionModal').then((module) => ({ default: module.CollectionModal })));
 
 export function Layout({
   vaultMode,
@@ -84,6 +86,7 @@ export function Layout({
   const [newNoteOpen, setNewNoteOpen] = useState(false);
   const [newNoteFolder, setNewNoteFolder] = useState('');
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const [collectionRequest, setCollectionRequest] = useState<CollectionRequest | null>(null);
   const [splitPercent, setSplitPercent] = useState(() => {
     const saved = Number(localStorage.getItem('ley:split-percent'));
     return Number.isFinite(saved) && saved >= 28 && saved <= 72 ? saved : 50;
@@ -221,7 +224,7 @@ export function Layout({
             <div className="mx-2 border-t border-border" />
             <FavoritesPane />
             <div className="mx-2 border-t border-border" />
-            <SavedSearchesPane onOpen={openSearch} />
+            <SavedSearchesPane onOpen={openSearch} onOpenCollection={(search) => setCollectionRequest({ query: search.query, title: search.name, savedSearchId: search.id, table: search.table })} />
             <div className="mx-2 border-t border-border" />
             <RecentPane />
             <div className="mx-2 border-t border-border" />
@@ -303,7 +306,7 @@ export function Layout({
           </aside>
         )}
       </div>
-      <SearchModal open={searchOpen} initialQuery={searchInitialQuery} onClose={closeSearch} />
+      <SearchModal open={searchOpen} initialQuery={searchInitialQuery} onClose={closeSearch} onOpenCollection={(query) => setCollectionRequest({ query, title: query.trim() ? 'Query collection' : 'All notes' })} />
       {settingsOpen && <FeatureErrorBoundary feature="Settings" overlay><Suspense fallback={null}><SettingsModal open vaultMode={vaultMode} vaultName={vaultName} watcherStatus={watcherStatus} onRefreshVault={onRefreshVault} onSwitchVault={onSwitchVault} onClose={() => setSettingsOpen(false)} /></Suspense></FeatureErrorBoundary>}
       {graphOpen && <FeatureErrorBoundary feature="Graph" overlay><Suspense fallback={null}><GraphModal open onClose={() => setGraphOpen(false)} /></Suspense></FeatureErrorBoundary>}
       <CommandPalette
@@ -314,6 +317,7 @@ export function Layout({
         onDailyNote={openDailyNote}
         onGraph={() => setGraphOpen(true)}
         onCanvas={() => setCanvasOpen(true)}
+        onCollection={() => setCollectionRequest({ query: '', title: 'All notes' })}
         onSettings={() => setSettingsOpen(true)}
         onToggleSidebar={toggleSidebar}
         onToggleRightDock={toggleRightDock}
@@ -323,6 +327,7 @@ export function Layout({
       />
       <NewNoteModal open={newNoteOpen} initialFolder={newNoteFolder} onClose={() => setNewNoteOpen(false)} />
       {canvasOpen && <FeatureErrorBoundary feature="Canvas" overlay><Suspense fallback={null}><CanvasModal open onClose={() => setCanvasOpen(false)} /></Suspense></FeatureErrorBoundary>}
+      {collectionRequest && <FeatureErrorBoundary feature="Collection" overlay><Suspense fallback={null}><CollectionModal key={`${collectionRequest.savedSearchId ?? 'query'}:${collectionRequest.query}`} request={collectionRequest} onClose={() => setCollectionRequest(null)} /></Suspense></FeatureErrorBoundary>}
     </div>
   );
 }

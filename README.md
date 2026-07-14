@@ -18,6 +18,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Automatic backlinks and graph edges for wiki and relative Markdown links, plus outgoing links, unlinked mentions, tags, and ghost-link resolution
 - Full-text search with composable tag, path, title, YAML-property, quoted, and exclusion filters; quick switcher, command palette, daily notes, and keyboard navigation
 - Vault-scoped saved searches with one-click reopening, rename, deletion, and responsive sidebar access
+- Live query-backed property tables with typed sorting, configurable columns, inline YAML editing, split-note opening, and saved per-query layouts
 - Vault-scoped favorites with workspace, sidebar, explorer, and command-palette access
 - Resizable side-by-side note panes with pane-local linking, responsive focus, and vault-scoped restoration of tabs, panes, focus, and recents
 - Global and contextual knowledge graphs with deterministic layouts and community coloring

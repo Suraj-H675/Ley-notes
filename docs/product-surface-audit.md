@@ -65,6 +65,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Quick switcher | Keep | Title/path-oriented navigation. |
 | Full-text search | Improve | Content-oriented retrieval now composes free text with repeated `tag:`, quoted `path:`, `title:`, YAML `property:key=value`/`[key:value]`, and negative filters. Filter chips and an inline syntax guide make the language discoverable; Enter opens normally and Shift+Enter preserves context by opening in split. |
 | Saved queries | Add | Non-empty searches can be named without leaving the switcher. Saving the same query updates its existing bookmark instead of creating duplicates, and opening one restores the exact editable query. |
+| Collection table | Add | Any query—including an empty all-notes query—can open as a live property table. The first column remains navigable, YAML columns are discovered by coverage, typed values sort correctly with blanks last, and cells write through the normal Markdown pipeline. Saved queries retain visible columns and sort order; ad-hoc views remain ephemeral. |
 | Command palette | Keep | Action-oriented control surface; note results do not replace commands. |
 | Keyboard shortcuts | Improve | One owner per global shortcut; duplicate graph listeners were removed. Buttons retain visible or tooltip discovery paths. |
 | Modal focus | Improve | Search, commands, new-note, settings, graph, and canvas surfaces use an accessible dialog lifecycle with focus entry, trapping, Escape dismissal, and restoration. |
