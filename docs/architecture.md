@@ -46,7 +46,7 @@ The desktop runtime owns one recursive native watcher for the active vault. It e
 
 ## Derived state
 
-Dexie tables for pages, blocks, links, tags, and settings support reactive UI queries. FlexSearch and the synchronous title resolver subscribe to Dexie and are disposable. Revisions are sparse checkpoints rather than keystroke logs and are restored through the same normal save path.
+Dexie tables for pages, blocks, links, tags, and settings support reactive UI queries. FlexSearch and the synchronous title resolver subscribe to Dexie and are disposable. The search projection indexes title, aliases, content, tags, paths, and flattened YAML properties; structured operators are parsed separately and applied as composable post-filters so filter-only queries and exclusions remain exact. Revisions are sparse checkpoints rather than keystroke logs and are restored through the same normal save path.
 
 ## Design system
 

@@ -29,7 +29,7 @@ The workspace itself should also feel continuous: reopening a vault must restore
 - Desktop-first, real filesystem vaults; browser folder access where the platform supports it.
 - Markdown and YAML frontmatter are authoritative. Databases are indexes, caches, and recovery aids.
 - Pages are the initial unit of composition. Block IDs may support references later without replacing Markdown as the source.
-- Search, quick switching, backlinks, and daily notes have higher priority than decorative graph complexity.
+- Search, quick switching, backlinks, and daily notes have higher priority than decorative graph complexity. Retrieval must continue scaling through composable path, tag, title, and portable YAML-property filters rather than requiring a proprietary object database.
 - Unresolved links are first-class and resolve automatically when their target is created.
 - Both wiki links and ordinary relative Markdown links are first-class; portable path links must keep their meaning when source or target files move.
 - Rename operations update incoming links because broken knowledge structures are worse than surprising automation.

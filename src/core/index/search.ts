@@ -19,6 +19,7 @@ interface SearchDoc {
   tags: string;
   path: string;
   aliases: string;
+  properties: string;
   updatedAt: number;
 }
 
@@ -40,8 +41,9 @@ function createIndex() {
         { field: 'content', tokenize: 'forward' },
         { field: 'tags', tokenize: 'forward' },
         { field: 'path', tokenize: 'forward' },
+        { field: 'properties', tokenize: 'forward' },
       ],
-      store: ['title', 'content', 'tags', 'path', 'aliases', 'updatedAt'],
+      store: ['title', 'content', 'tags', 'path', 'aliases', 'properties', 'updatedAt'],
     },
     tokenize: 'forward',
   });
@@ -49,6 +51,7 @@ function createIndex() {
 
 let index = createIndex();
 let docs = new Map<string, SearchDoc>();
+let propertiesByPage = new Map<string, Map<string, string[]>>();
 let subscription: Subscription | null = null;
 let consumers = 0;
 let rebuildVersion = 0;
@@ -92,8 +95,10 @@ async function rebuildIndex(pages: Page[], tags: Tag[]): Promise<void> {
 
   const nextIndex = createIndex();
   const nextDocs = new Map<string, SearchDoc>();
+  const nextProperties = new Map<string, Map<string, string[]>>();
   for (const page of pages) {
     if (page.deletedAt !== null) continue;
+    const properties = normalizeProperties(page.frontmatter);
     const doc: SearchDoc = {
       id: page.id,
       title: page.title,
@@ -101,9 +106,11 @@ async function rebuildIndex(pages: Page[], tags: Tag[]): Promise<void> {
       tags: (tagsByPage.get(page.id) ?? []).join(' '),
       path: page.path,
       aliases: page.aliases.join(' '),
+      properties: [...properties.entries()].flatMap(([key, values]) => [key, ...values]).join(' '),
       updatedAt: page.updatedAt,
     };
     nextDocs.set(page.id, doc);
+    nextProperties.set(page.id, properties);
     await nextIndex.addAsync(doc);
   }
 
@@ -111,6 +118,7 @@ async function rebuildIndex(pages: Page[], tags: Tag[]): Promise<void> {
   if (version !== rebuildVersion) return;
   index = nextIndex;
   docs = nextDocs;
+  propertiesByPage = nextProperties;
   ready = true;
 }
 
@@ -123,8 +131,9 @@ async function ensureReady(): Promise<void> {
 /**
  * Search titles, aliases, content, tags, and paths.
  *
- * Operators are post-filters and work with or without free text:
- * `tag:research`, `path:projects/`.
+ * Operators are composable post-filters and work with or without free text:
+ * `tag:research`, `-tag:archive`, `path:"project alpha"`,
+ * `title:roadmap`, `property:status=active`, and `[status:active]`.
  */
 export async function searchPages(query: string, limit = 20): Promise<PageSearchResult[]> {
   await ensureReady();
@@ -162,29 +171,116 @@ export async function searchPages(query: string, limit = 20): Promise<PageSearch
     .slice(0, limit);
 }
 
-interface ParsedFilter {
+export interface SearchValueFilter {
+  value: string;
+  exclude: boolean;
+}
+
+export interface SearchPropertyFilter {
+  key: string;
+  value?: string;
+  exclude: boolean;
+}
+
+export interface ParsedFilter {
   terms: string;
-  tag?: string;
-  pathPrefix?: string;
+  tags: SearchValueFilter[];
+  paths: SearchValueFilter[];
+  titles: SearchValueFilter[];
+  properties: SearchPropertyFilter[];
+}
+
+export function parseSearchQuery(query: string): ParsedFilter {
+  const terms: string[] = [];
+  const tags: SearchValueFilter[] = [];
+  const paths: SearchValueFilter[] = [];
+  const titles: SearchValueFilter[] = [];
+  const properties: SearchPropertyFilter[] = [];
+  for (const rawPart of tokenizeQuery(query)) {
+    const exclude = rawPart.startsWith('-');
+    const part = exclude ? rawPart.slice(1) : rawPart;
+    const bracket = /^\[([^:\]]+)(?::([^\]]+))?\]$/.exec(part);
+    if (bracket) {
+      const key = cleanFilterValue(bracket[1]);
+      const value = bracket[2] ? cleanFilterValue(bracket[2]) : undefined;
+      if (key) properties.push({ key, value, exclude });
+      continue;
+    }
+    const separator = part.indexOf(':');
+    if (separator < 1) { terms.push(cleanTerm(rawPart)); continue; }
+    const operator = part.slice(0, separator).toLowerCase();
+    const rawValue = part.slice(separator + 1);
+    if (operator === 'property') {
+      const equals = rawValue.indexOf('=');
+      const key = cleanFilterValue(equals >= 0 ? rawValue.slice(0, equals) : rawValue);
+      const value = equals >= 0 ? cleanFilterValue(rawValue.slice(equals + 1)) : undefined;
+      if (key) properties.push({ key, value, exclude });
+    } else {
+      const cleaned = cleanFilterValue(rawValue);
+      const value = operator === 'tag' ? cleaned.replace(/^#/, '') : cleaned;
+      const target = operator === 'tag' ? tags : operator === 'path' ? paths : operator === 'title' || operator === 'file' ? titles : null;
+      if (target && value) target.push({ value, exclude });
+      else terms.push(cleanTerm(rawPart));
+    }
+  }
+  return { terms: terms.filter(Boolean).join(' '), tags, paths, titles, properties };
 }
 
 function parseFilter(query: string): ParsedFilter {
-  const terms: string[] = [];
-  let tag: string | undefined;
-  let pathPrefix: string | undefined;
-  for (const part of query.split(/\s+/).filter(Boolean)) {
-    if (part.toLowerCase().startsWith('tag:')) tag = part.slice(4).replace(/^#/, '').toLowerCase();
-    else if (part.toLowerCase().startsWith('path:')) pathPrefix = part.slice(5).toLowerCase();
-    else terms.push(part);
+  return parseSearchQuery(query);
+}
+
+export function matchesSearchFilters(doc: Pick<SearchDoc, 'id' | 'title' | 'path' | 'tags'>, filter: ParsedFilter, properties = propertiesByPage.get(doc.id) ?? new Map<string, string[]>()): boolean {
+  const tags = String(doc.tags).toLowerCase().split(/\s+/);
+  if (!matchesEvery(filter.tags, (needle) => tags.some((tag) => tag === needle || tag.startsWith(`${needle}/`)))) return false;
+  const path = String(doc.path).toLowerCase();
+  if (!matchesEvery(filter.paths, (needle) => path.includes(needle))) return false;
+  const title = String(doc.title).toLowerCase();
+  if (!matchesEvery(filter.titles, (needle) => title.includes(needle))) return false;
+  for (const property of filter.properties) {
+    const values = properties.get(property.key);
+    const match = Boolean(values && (property.value === undefined || values.some((value) => value.includes(property.value!))));
+    if (property.exclude ? match : !match) return false;
   }
-  return { terms: terms.join(' '), tag, pathPrefix };
+  return true;
 }
 
 function matchesFilters(doc: SearchDoc, filter: ParsedFilter): boolean {
-  const tags = String(doc.tags).toLowerCase().split(/\s+/);
-  if (filter.tag && !tags.some((tag) => tag === filter.tag || tag.startsWith(`${filter.tag}/`))) return false;
-  if (filter.pathPrefix && !String(doc.path).toLowerCase().startsWith(filter.pathPrefix)) return false;
-  return true;
+  return matchesSearchFilters(doc, filter);
+}
+
+function matchesEvery(filters: SearchValueFilter[], predicate: (value: string) => boolean): boolean {
+  return filters.every((filter) => filter.exclude ? !predicate(filter.value) : predicate(filter.value));
+}
+
+function tokenizeQuery(query: string): string[] {
+  return query.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+}
+
+function cleanFilterValue(value: string): string {
+  return value.trim().replace(/^["']|["']$/g, '').toLowerCase();
+}
+
+function cleanTerm(value: string): string {
+  return value.replace(/["']/g, '').trim();
+}
+
+function normalizeProperties(frontmatter: Record<string, unknown>): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  for (const [rawKey, rawValue] of Object.entries(frontmatter)) {
+    const key = rawKey.trim().toLowerCase();
+    if (!key) continue;
+    const values = flattenPropertyValue(rawValue);
+    if (values.length > 0) result.set(key, values);
+  }
+  return result;
+}
+
+function flattenPropertyValue(value: unknown): string[] {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) return value.flatMap(flattenPropertyValue);
+  if (typeof value === 'object') return Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) => [key.toLowerCase(), ...flattenPropertyValue(nested)]);
+  return [String(value).toLowerCase()];
 }
 
 function toResult(doc: SearchDoc, terms: string, score: number): PageSearchResult {

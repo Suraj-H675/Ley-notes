@@ -61,7 +61,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Surface | Decision | Result |
 | --- | --- | --- |
 | Quick switcher | Keep | Title/path-oriented navigation. |
-| Full-text search | Keep | Content-oriented retrieval with snippets and keyboard navigation. |
+| Full-text search | Improve | Content-oriented retrieval now composes free text with repeated `tag:`, quoted `path:`, `title:`, YAML `property:key=value`/`[key:value]`, and negative filters. Filter chips and an inline syntax guide make the language discoverable; Enter opens normally and Shift+Enter preserves context by opening in split. |
 | Command palette | Keep | Action-oriented control surface; note results do not replace commands. |
 | Keyboard shortcuts | Improve | One owner per global shortcut; duplicate graph listeners were removed. Buttons retain visible or tooltip discovery paths. |
 | Modal focus | Improve | Search, commands, new-note, settings, graph, and canvas surfaces use an accessible dialog lifecycle with focus entry, trapping, Escape dismissal, and restoration. |
