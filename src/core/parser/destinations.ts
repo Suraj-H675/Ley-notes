@@ -10,6 +10,11 @@ export interface MarkdownBlockReference {
   preview: string;
 }
 
+export interface EnsuredMarkdownBlockReference extends MarkdownBlockReference {
+  content: string;
+  changed: boolean;
+}
+
 export function extractMarkdownHeadings(content: string): MarkdownHeading[] {
   const headings: MarkdownHeading[] = [];
   let fence: string | null = null;
@@ -41,6 +46,33 @@ export function extractMarkdownBlockReferences(content: string): MarkdownBlockRe
     references.push({ id: match[1], line: index + 1, preview: line.slice(0, match.index).trim() || `Block on line ${index + 1}` });
   });
   return references;
+}
+
+export function ensureMarkdownBlockReference(content: string, lineNumber: number, generatedId: string): EnsuredMarkdownBlockReference {
+  const lines = content.split('\n');
+  if (!Number.isInteger(lineNumber) || lineNumber < 1 || lineNumber > lines.length) throw new Error('Place the cursor inside a Markdown block first.');
+  if (lines[0]?.trim() === '---') {
+    const frontmatterEnd = lines.findIndex((line, index) => index > 0 && line.trim() === '---');
+    if (frontmatterEnd >= 0 && lineNumber <= frontmatterEnd + 1) throw new Error('YAML properties cannot be bookmarked as Markdown blocks.');
+  }
+  let fence: string | null = null;
+  for (let index = 0; index < lineNumber; index += 1) {
+    const marker = /^\s*(```|~~~)/.exec(lines[index])?.[1] ?? null;
+    if (marker) {
+      fence = fence === null ? marker : fence === marker ? null : fence;
+    }
+    if (index === lineNumber - 1 && (marker || fence)) throw new Error('Code fences cannot be bookmarked as Markdown blocks.');
+  }
+  const index = lineNumber - 1;
+  const line = lines[index];
+  if (!line.trim()) throw new Error('Blank lines cannot be bookmarked.');
+  if (/^\s*#{1,6}\s+/.test(line)) throw new Error('Use the Outline bookmark action for headings.');
+  const existing = /(?:^|\s)\^([\p{L}\p{N}-]+)\s*$/u.exec(line);
+  if (existing) return { id: existing[1], line: lineNumber, preview: line.slice(0, existing.index).trim() || `Block on line ${lineNumber}`, content, changed: false };
+  if (!/^[\p{L}\p{N}-]+$/u.test(generatedId)) throw new Error('Generated block IDs may contain only letters, numbers, and hyphens.');
+  const preview = line.trim();
+  lines[index] = `${line} ^${generatedId}`;
+  return { id: generatedId, line: lineNumber, preview, content: lines.join('\n'), changed: true };
 }
 
 export function findMarkdownDestinationLine(content: string, heading?: string | null, blockId?: string | null): number | null {

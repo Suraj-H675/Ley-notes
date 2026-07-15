@@ -11,7 +11,7 @@ import {
   PanelsTopLeft,
   Search,
   Settings,
-  Star,
+  Bookmark,
   Sun,
   TableProperties,
 } from 'lucide-react';
@@ -42,8 +42,8 @@ export function CommandPalette({
   onToggleSidebar,
   onToggleRightDock,
   onSetTheme,
-  favoriteActiveNote,
-  onToggleFavorite,
+  activeNoteBookmarked,
+  onToggleBookmark,
 }: {
   open: boolean;
   onClose: () => void;
@@ -58,8 +58,8 @@ export function CommandPalette({
   onToggleSidebar: () => void;
   onToggleRightDock: () => void;
   onSetTheme: (theme: 'light' | 'dark') => void;
-  favoriteActiveNote: boolean | null;
-  onToggleFavorite: () => void | Promise<void>;
+  activeNoteBookmarked: boolean | null;
+  onToggleBookmark: () => void | Promise<void>;
 }) {
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState(0);
@@ -74,14 +74,14 @@ export function CommandPalette({
       { id: 'canvas', label: 'Open canvas', detail: 'Arrange notes and thoughts on a spatial board', icon: <LayoutDashboard size={15} />, keywords: 'board spatial json canvas', run: onCanvas },
       { id: 'collection', label: 'Open notes as a table', detail: 'Sort and edit Markdown properties across the vault', icon: <TableProperties size={15} />, keywords: 'base database collection properties table', run: onCollection },
       { id: 'workspaces', label: 'Manage workspace layouts', detail: 'Save or restore tabs, split panes, and sidebars', icon: <PanelsTopLeft size={15} />, keywords: 'workspace layout panes tabs writing research', run: onWorkspaces },
-      ...(favoriteActiveNote === null ? [] : [{ id: 'favorite', label: favoriteActiveNote ? 'Remove active note from favorites' : 'Add active note to favorites', detail: 'Keep important notes one click away in the sidebar', icon: <Star size={15} className={favoriteActiveNote ? 'fill-current' : undefined} />, keywords: 'star bookmark pin', run: onToggleFavorite }]),
+      ...(activeNoteBookmarked === null ? [] : [{ id: 'note-bookmark', label: activeNoteBookmarked ? 'Remove active note bookmark' : 'Bookmark active note', detail: 'Keep this note one click away in Bookmarks', icon: <Bookmark size={15} className={activeNoteBookmarked ? 'fill-current' : undefined} />, keywords: 'star favorite bookmark pin', run: onToggleBookmark }]),
       { id: 'toggle-left', label: 'Toggle left sidebar', detail: 'Show or hide the file explorer', icon: <PanelLeft size={15} />, run: onToggleSidebar },
       { id: 'toggle-right', label: 'Toggle right sidebar', detail: 'Show or hide contextual panels', icon: <PanelRight size={15} />, run: onToggleRightDock },
       { id: 'light', label: 'Use light theme', detail: 'Switch the workspace appearance', icon: <Sun size={15} />, run: () => onSetTheme('light') },
       { id: 'dark', label: 'Use dark theme', detail: 'Switch the workspace appearance', icon: <Moon size={15} />, run: () => onSetTheme('dark') },
       { id: 'settings', label: 'Open settings', detail: 'Configure Ley and this vault', icon: <Settings size={15} />, shortcut: '⌘,', run: onSettings },
     ],
-    [favoriteActiveNote, onCanvas, onCollection, onDailyNote, onGraph, onNewNote, onQuickSwitcher, onSetTheme, onSettings, onToggleFavorite, onToggleRightDock, onToggleSidebar, onWorkspaces],
+    [activeNoteBookmarked, onCanvas, onCollection, onDailyNote, onGraph, onNewNote, onQuickSwitcher, onSetTheme, onSettings, onToggleBookmark, onToggleRightDock, onToggleSidebar, onWorkspaces],
   );
 
   const matches = useMemo(() => {

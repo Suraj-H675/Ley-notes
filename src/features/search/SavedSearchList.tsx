@@ -1,27 +1,13 @@
 import { useRef, useState } from 'react';
-import { Bookmark, ChevronDown, ChevronRight, Pencil, Search, TableProperties, Trash2 } from 'lucide-react';
+import { Pencil, Search, TableProperties, Trash2 } from 'lucide-react';
 import { deleteSavedSearch, renameSavedSearch, type SavedSearch } from '@/core/vault/saved-searches';
 import { useUIStore } from '@/shared/state/ui';
-import { useSavedSearches } from './useSavedSearches';
 
-export function SavedSearchesPane({ onOpen, onOpenCollection }: { onOpen: (query: string) => void; onOpenCollection: (search: SavedSearch) => void }) {
-  const [expanded, setExpanded] = useState(true);
-  const searches = useSavedSearches();
-
-  function open(query: string) {
-    onOpen(query);
+export function SavedSearchList({ searches, onOpen, onOpenCollection }: { searches: SavedSearch[]; onOpen: (query: string) => void; onOpenCollection: (search: SavedSearch) => void }) {
+  function closeMobileSidebar() {
     if (window.matchMedia('(max-width: 767px)').matches) useUIStore.getState().setSidebarOpen(false);
   }
-
-  return (
-    <div className="flex flex-col gap-1 px-2">
-      <button type="button" onClick={() => setExpanded((value) => !value)} className="flex items-center gap-1.5 rounded px-2 py-1 text-meta font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground" aria-expanded={expanded}>
-        {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<Bookmark size={12} /><span>Saved searches</span><span className="ml-auto text-micro text-subtle-foreground">{searches.length}</span>
-      </button>
-      {expanded && searches.map((search) => <SavedSearchRow key={search.id} search={search} onOpen={() => open(search.query)} onOpenCollection={() => { onOpenCollection(search); if (window.matchMedia('(max-width: 767px)').matches) useUIStore.getState().setSidebarOpen(false); }} />)}
-      {expanded && searches.length === 0 && <p className="px-2 py-1 text-micro leading-relaxed text-muted-foreground">Save a useful query from the quick switcher.</p>}
-    </div>
-  );
+  return <>{searches.map((search) => <SavedSearchRow key={search.id} search={search} onOpen={() => { onOpen(search.query); closeMobileSidebar(); }} onOpenCollection={() => { onOpenCollection(search); closeMobileSidebar(); }} />)}</>;
 }
 
 function SavedSearchRow({ search, onOpen, onOpenCollection }: { search: SavedSearch; onOpen: () => void; onOpenCollection: () => void }) {

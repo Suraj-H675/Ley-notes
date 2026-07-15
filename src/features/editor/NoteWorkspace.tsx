@@ -1,11 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import { BookOpen, Edit3, FileText, Paperclip, Star } from 'lucide-react';
+import { BookOpen, Bookmark, Edit3, FileText, Paperclip } from 'lucide-react';
 import type { Page } from '@/infrastructure/database/schema';
 import { renamePage } from '@/core/vault/pages';
 import { PropertiesPanel } from './PropertiesPanel';
 import { attachmentInsertion, saveAttachment } from '@/core/vault/attachments';
-import { toggleFavoritePage } from '@/core/vault/favorites';
-import { useIsFavoritePage } from '@/features/favorites/useFavorites';
+import { togglePageBookmark } from '@/core/vault/note-bookmarks';
+import { useIsPageBookmarked } from '@/features/bookmarks/useNoteBookmarks';
 import type { EditorPane } from '@/shared/state/nav';
 
 const MarkdownReadingView = lazy(() => import('./MarkdownReadingView').then((module) => ({ default: module.MarkdownReadingView })));
@@ -19,7 +19,7 @@ export function NoteWorkspace({ page, pane }: { page: Page; pane: EditorPane }) 
   const [titleError, setTitleError] = useState<string | null>(null);
   const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
   const attachmentInput = useRef<HTMLInputElement>(null);
-  const favorite = useIsFavoritePage(page.id);
+  const bookmarked = useIsPageBookmarked(page.id);
 
   async function commitTitle() {
     const next = title.trim();
@@ -83,8 +83,8 @@ export function NoteWorkspace({ page, pane }: { page: Page; pane: EditorPane }) 
           <div className={`truncate font-mono text-micro ${titleError ? 'text-destructive' : 'text-subtle-foreground'}`}>{titleError ?? page.path}</div>
         </div>
         <input ref={attachmentInput} type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,audio/mpeg,audio/wav,video/mp4,video/webm" className="hidden" onChange={(event) => { void attachFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
-        <button type="button" onClick={() => void toggleFavoritePage(page.id)} className={`rounded-md p-1.5 ${favorite ? 'text-secondary' : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'}`} aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'} title={favorite ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={favorite}>
-          <Star size={13} className={favorite ? 'fill-current' : undefined} />
+        <button type="button" onClick={() => void togglePageBookmark(page.id)} className={`rounded-md p-1.5 ${bookmarked ? 'text-secondary' : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'}`} aria-label={bookmarked ? 'Remove note bookmark' : 'Bookmark note'} title={bookmarked ? 'Remove note bookmark' : 'Bookmark note'} aria-pressed={bookmarked}>
+          <Bookmark size={13} className={bookmarked ? 'fill-current' : undefined} />
         </button>
         <button type="button" onClick={() => attachmentInput.current?.click()} className="flex shrink-0 items-center gap-1 rounded-md p-1.5 text-micro text-muted-foreground hover:bg-surface-2 hover:text-foreground sm:px-2 sm:py-1" title={attachmentStatus ?? 'Attach files'} aria-label={attachmentStatus ?? 'Attach files'}>
           <Paperclip size={12} /> <span className="hidden sm:inline">{attachmentStatus ?? 'Attach'}</span>

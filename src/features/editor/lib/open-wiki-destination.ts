@@ -26,7 +26,7 @@ export async function openMarkdownDestination(sourcePath: string, path: string, 
   return true;
 }
 
-async function openPageDestination(id: string, heading?: string | null, blockId?: string | null, pane?: EditorPane): Promise<void> {
+export async function openPageDestination(id: string, heading?: string | null, blockId?: string | null, pane?: EditorPane): Promise<void> {
   const nav = useNavStore.getState();
   nav.openPage(id, pane);
   nav.pushRecent(id);

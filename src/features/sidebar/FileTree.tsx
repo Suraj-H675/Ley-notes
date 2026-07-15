@@ -7,7 +7,7 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import * as ContextMenu from '@radix-ui/react-context-menu';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ChevronRight, ChevronDown, Columns2, Copy, FileText, FolderClosed, FolderInput, FolderOpen, Link2, Pencil, Plus, Star, Trash2, X } from 'lucide-react';
+import { Bookmark, ChevronRight, ChevronDown, Columns2, Copy, FileText, FolderClosed, FolderInput, FolderOpen, Link2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { usePages } from '@/features/notes/usePages';
 import { useNavStore } from '@/shared/state/nav';
 import { deletePage, duplicatePage, movePage, renamePage } from '@/core/vault/pages';
@@ -17,8 +17,8 @@ import { useTagFilter } from '@/shared/state/tag-filter';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '@/infrastructure/database/db';
 import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
-import { toggleFavoritePage } from '@/core/vault/favorites';
-import { useFavoritePageIds } from '@/features/favorites/useFavorites';
+import { togglePageBookmark } from '@/core/vault/note-bookmarks';
+import { useBookmarkedPageIds } from '@/features/bookmarks/useNoteBookmarks';
 
 interface TreeNode {
   name: string;
@@ -71,8 +71,8 @@ export function FileTree({ onNewPage }: { onNewPage: (folder?: string) => void }
   );
   const folders = useMemo(() => collectFolders(tree), [tree]);
   const [notice, setNotice] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
-  const favoriteIds = useFavoritePageIds();
-  const favorites = useMemo(() => new Set(favoriteIds), [favoriteIds]);
+  const bookmarkedPageIds = useBookmarkedPageIds();
+  const bookmarkedPages = useMemo(() => new Set(bookmarkedPageIds), [bookmarkedPageIds]);
 
   async function handleMove(pageId: string, folder: string) {
     try {
@@ -102,7 +102,7 @@ export function FileTree({ onNewPage }: { onNewPage: (folder?: string) => void }
           <Plus size={14} />
         </button>
       </div>
-      <Node node={tree} depth={0} folders={folders} favorites={favorites} onNewPage={onNewPage} onMovePage={handleMove} />
+      <Node node={tree} depth={0} folders={folders} bookmarks={bookmarkedPages} onNewPage={onNewPage} onMovePage={handleMove} />
       {notice && <div className={`mx-2 flex items-start gap-2 rounded-md px-2 py-1.5 text-micro leading-relaxed ${notice.kind === 'error' ? 'bg-destructive/10 text-destructive' : 'bg-primary/10 text-muted-foreground-strong'}`} role="status"><span className="min-w-0 flex-1">{notice.message}</span><button type="button" onClick={() => setNotice(null)} aria-label="Dismiss message" className="shrink-0 rounded-sm opacity-70 hover:opacity-100"><X size={11} /></button></div>}
       {activeTag && visiblePages.length === 0 && <p className="px-2 py-3 text-micro leading-relaxed text-muted-foreground">No notes currently use #{activeTag}.</p>}
     </div>
@@ -113,14 +113,14 @@ function Node({
   node,
   depth,
   folders,
-  favorites,
+  bookmarks,
   onNewPage,
   onMovePage,
 }: {
   node: TreeNode;
   depth: number;
   folders: string[];
-  favorites: Set<string>;
+  bookmarks: Set<string>;
   onNewPage: (folder?: string) => void;
   onMovePage: (pageId: string, folder: string) => Promise<void>;
 }) {
@@ -132,13 +132,13 @@ function Node({
           node={child}
           depth={depth}
           folders={folders}
-          favorites={favorites}
+          bookmarks={bookmarks}
           onNewPage={(folder) => onNewPage(folder)}
           onMovePage={onMovePage}
         />
       ))}
       {node.pages.map((page) => (
-        <PageNode key={page.id} page={page} depth={depth} folders={folders} favorite={favorites.has(page.id)} onMovePage={onMovePage} />
+        <PageNode key={page.id} page={page} depth={depth} folders={folders} bookmarked={bookmarks.has(page.id)} onMovePage={onMovePage} />
       ))}
     </div>
   );
@@ -148,14 +148,14 @@ function FolderNode({
   node,
   depth,
   folders,
-  favorites,
+  bookmarks,
   onNewPage,
   onMovePage,
 }: {
   node: TreeNode;
   depth: number;
   folders: string[];
-  favorites: Set<string>;
+  bookmarks: Set<string>;
   onNewPage: (folder?: string) => void;
   onMovePage: (pageId: string, folder: string) => Promise<void>;
 }) {
@@ -185,7 +185,7 @@ function FolderNode({
         </button>
       </div>
       {open && (
-        <Node node={node} depth={depth + 1} folders={folders} favorites={favorites} onNewPage={onNewPage} onMovePage={onMovePage} />
+        <Node node={node} depth={depth + 1} folders={folders} bookmarks={bookmarks} onNewPage={onNewPage} onMovePage={onMovePage} />
       )}
     </div>
   );
@@ -195,13 +195,13 @@ function PageNode({
   page,
   depth,
   folders,
-  favorite,
+  bookmarked,
   onMovePage,
 }: {
   page: { id: string; title: string; path: string };
   depth: number;
   folders: string[];
-  favorite: boolean;
+  bookmarked: boolean;
   onMovePage: (pageId: string, folder: string) => Promise<void>;
 }) {
   const activeTab = useNavStore((s) => s.activeTab);
@@ -329,8 +329,8 @@ function PageNode({
             <ContextMenu.Item onSelect={() => void navigator.clipboard.writeText(`[[${page.title}]]`).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
               <Link2 size={13} /> Copy wiki link
             </ContextMenu.Item>
-            <ContextMenu.Item onSelect={() => void toggleFavoritePage(page.id)} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
-              <Star size={13} className={favorite ? 'fill-current text-secondary' : undefined} /> {favorite ? 'Remove from favorites' : 'Add to favorites'}
+            <ContextMenu.Item onSelect={() => void togglePageBookmark(page.id)} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
+              <Bookmark size={13} className={bookmarked ? 'fill-current text-secondary' : undefined} /> {bookmarked ? 'Remove bookmark' : 'Bookmark note'}
             </ContextMenu.Item>
             <ContextMenu.Separator className="my-1 h-px bg-border" />
             <ContextMenu.Item onSelect={() => setDeleteOpen(true)} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-destructive outline-none data-[highlighted]:bg-destructive/10">

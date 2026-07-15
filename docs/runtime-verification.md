@@ -41,9 +41,12 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Read-mode task clicks persist to Markdown, including tasks after an embed and tasks inside a partial-note embed.
 - Read-mode and Ctrl/Cmd-click wiki links honor both `#Heading` and `#^block-id` destinations and focus the exact source line.
 - Heading-scoped embeds stop at the next sibling heading; block embeds render only the referenced block.
-- Starring a note updates the workspace button and Favorites sidebar immediately; the state survives reload and is also reachable through the explorer context menu and command palette.
-- Trashing a favorite hides it without discarding the preference; restoring the note restores its place in Favorites.
-- At 320×568, Favorites remains readable and reachable with no horizontal document overflow.
+- Bookmarking a note updates the workspace button and unified Bookmarks hub immediately; the state survives reload and is also reachable through the explorer context menu and command palette. Trashing it hides the note row without discarding the preference; restoring it restores the row.
+- Bookmark a heading from Outline, move the editor elsewhere, and open the bookmark: the exact heading becomes CodeMirror's active line. Rename the bookmark to a custom title, then clear that title to recover the live note/heading label.
+- Place the cursor on a prose/list block and bookmark it: Ley appends a valid `^block-id` to authoritative Markdown, shows a text-preview label, and reuses the ID on a second capture. Opening it returns to that exact block. Blank lines, YAML, headings, and fenced code report a useful refusal without creating metadata.
+- Save a search and confirm it appears reactively in the same Bookmarks hub with open, property-table, rename, and delete actions rather than creating another sidebar panel.
+- Rename or rescan a bookmarked note and verify ID/path fallback keeps anchors usable. Trash it and verify the unavailable row can be deleted but remains non-navigable until restore.
+- At 390px, Bookmarks rows and hover-equivalent actions remain reachable, the editor toolbar fits without horizontal scrolling, the sidebar scrolls independently, and the document has no horizontal overflow.
 - `Cmd/Ctrl+F` and the editor Find button open the same focused in-note search panel; next/previous, replace, replace-all, case, regular-expression, and whole-word controls operate on source Markdown.
 - Replacements persist after the normal editor debounce and reload. Escape closes the panel without invoking browser page search.
 - At 320×568, the search panel remains fully reachable without horizontal overflow and stays beneath the mobile sidebar overlay.

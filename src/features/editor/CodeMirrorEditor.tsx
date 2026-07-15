@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { EditorView } from '@codemirror/view';
-import { Bold, Braces, Hash, Italic, Link2, ListChecks, Search } from 'lucide-react';
+import { Bold, BookmarkPlus, Braces, Hash, Italic, Link2, ListChecks, Search } from 'lucide-react';
 import { startCompletion } from '@codemirror/autocomplete';
 import { mountEditor, type EditorController } from '@/features/editor/lib/mount';
 import { useDebouncedCallback } from '@/shared/hooks/useDebounce';
@@ -17,6 +17,9 @@ import { openWikiDestination, type WikiDestination } from './lib/open-wiki-desti
 import { openMarkdownDestination } from './lib/open-wiki-destination';
 import type { InternalMarkdownLink } from '@/core/parser/markdown-links';
 import type { EditorPane } from '@/shared/state/nav';
+import { ensureMarkdownBlockReference } from '@/core/parser/destinations';
+import { addDestinationBookmark } from '@/core/vault/bookmarks';
+import { nanoid } from '@/shared/lib/nanoid';
 
 interface CodeMirrorEditorProps {
   pageId: string;
@@ -193,6 +196,24 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane }: Cod
     }
   }
 
+  async function bookmarkBlockAtCursor() {
+    const view = controllerRef.current?.view;
+    if (!view) return;
+    try {
+      const line = view.state.doc.lineAt(view.state.selection.main.head);
+      const result = ensureMarkdownBlockReference(view.state.doc.toString(), line.number, nanoid().slice(0, 8));
+      if (result.changed) {
+        const nextLine = result.content.split('\n')[line.number - 1];
+        view.dispatch({ changes: { from: line.to, insert: nextLine.slice(line.text.length) } });
+      }
+      await addDestinationBookmark({ kind: 'block', pageId, path: pagePath, anchor: result.id });
+      setSyncStatus(result.changed ? `Block bookmarked · added ^${result.id} to Markdown` : `Block ^${result.id} bookmarked`);
+      window.setTimeout(() => setSyncStatus(null), 2400);
+    } catch (cause) {
+      setSyncStatus(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   return (
     <div className="relative flex h-full w-full flex-col">
       <div ref={containerRef} className="min-h-0 w-full flex-1 overflow-hidden bg-background" data-testid="cm-editor" />
@@ -205,6 +226,7 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane }: Cod
         <FormatButton label="Inline code" shortcut="⌘⇧`" format="code" controller={controllerRef}><Braces size={13} /></FormatButton>
         <span className="mx-0.5 h-4 w-px bg-border" />
         <FormatButton label="Cycle task" format="task" controller={controllerRef}><ListChecks size={13} /></FormatButton>
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => void bookmarkBlockAtCursor()} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Bookmark block at cursor" title="Bookmark block at cursor"><BookmarkPlus size={13} /><span className="hidden lg:inline">Bookmark</span></button>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => controllerRef.current?.openSearch()} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Find and replace" title="Find and replace (⌘F)"><Search size={13} /><span className="hidden sm:inline">Find</span></button>
       </div>
       {attachmentStatus && <div className="absolute bottom-12 right-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-meta text-foreground shadow-menu" role="status">{attachmentStatus}</div>}
