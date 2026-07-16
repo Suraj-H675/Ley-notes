@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ley:schema:agent-memory:project:1",
+  "title": "Ley project identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "name", "createdAtUnixMs"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "projectId": {
+      "type": "string",
+      "pattern": "^prj_[0-9a-f]{32}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "createdAtUnixMs": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

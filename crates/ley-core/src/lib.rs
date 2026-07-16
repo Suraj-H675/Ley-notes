@@ -1,0 +1,554 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::fs;
+use std::path::Component;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+use thiserror::Error;
+use uuid::Uuid;
+
+pub const LEY_DIRECTORY: &str = ".ley";
+pub const PROJECT_FILE: &str = "project.json";
+pub const CAPTURE_FILE: &str = "capture.json";
+pub const IGNORE_FILE: &str = ".leyignore";
+pub const PROJECT_SCHEMA_VERSION: u32 = 1;
+pub const METADATA_FILE_LIMIT_BYTES: u64 = 1_048_576;
+
+pub const DEFAULT_IGNORE_RULES: &str = r#"# Ley project capture exclusions
+# Git ignore rules are applied separately. These rules are always local to this project.
+.ley/
+.git/
+node_modules/
+target/
+dist/
+build/
+coverage/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+.npmrc
+.pypirc
+credentials.json
+"#;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CaptureMode {
+    Minimal,
+    Structured,
+    FullEvidence,
+}
+
+impl CaptureMode {
+    pub fn parse(value: &str) -> Result<Self, LeyCoreError> {
+        match value {
+            "minimal" => Ok(Self::Minimal),
+            "structured" => Ok(Self::Structured),
+            "full" | "full-evidence" => Ok(Self::FullEvidence),
+            _ => Err(LeyCoreError::InvalidCaptureMode(value.to_owned())),
+        }
+    }
+}
+
+impl std::fmt::Display for CaptureMode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Minimal => "minimal",
+            Self::Structured => "structured",
+            Self::FullEvidence => "full-evidence",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectIdentity {
+    pub schema_version: u32,
+    pub project_id: String,
+    pub name: String,
+    pub created_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CapturePolicy {
+    pub schema_version: u32,
+    pub mode: CaptureMode,
+    pub approved_roots: Vec<String>,
+    pub respect_gitignore: bool,
+    pub max_file_bytes: u64,
+    pub max_total_bytes: u64,
+    pub store_raw_transcripts: bool,
+}
+
+impl CapturePolicy {
+    pub fn for_mode(mode: CaptureMode) -> Self {
+        Self {
+            schema_version: PROJECT_SCHEMA_VERSION,
+            mode,
+            approved_roots: vec![".".to_owned()],
+            respect_gitignore: true,
+            max_file_bytes: 1_048_576,
+            max_total_bytes: 536_870_912,
+            store_raw_transcripts: mode == CaptureMode::FullEvidence,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectInitialization {
+    pub root: PathBuf,
+    pub identity: ProjectIdentity,
+    pub capture: CapturePolicy,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDiagnostic {
+    pub root: PathBuf,
+    pub identity: ProjectIdentity,
+    pub capture: CapturePolicy,
+    pub ignore_file_present: bool,
+}
+
+#[derive(Debug, Error)]
+pub enum LeyCoreError {
+    #[error("project path is not a directory: {0}")]
+    NotDirectory(PathBuf),
+    #[error("no initialized Ley project found from: {0}")]
+    ProjectNotFound(PathBuf),
+    #[error("project name must be between 1 and 128 visible characters")]
+    InvalidProjectName,
+    #[error("unsupported capture mode '{0}'; use minimal, structured, or full")]
+    InvalidCaptureMode(String),
+    #[error("invalid Ley project identity: {0}")]
+    InvalidProjectIdentity(String),
+    #[error("invalid Ley capture policy: {0}")]
+    InvalidCapturePolicy(String),
+    #[error("unsafe Ley project layout at {0}")]
+    UnsafeProjectLayout(PathBuf),
+    #[error("Ley metadata exceeds the {limit_bytes}-byte limit: {path}")]
+    MetadataTooLarge { path: PathBuf, limit_bytes: u64 },
+    #[error("could not access {path}: {source}")]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("could not parse {path}: {source}")]
+    Json {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
+pub fn initialize_project(
+    root: impl AsRef<Path>,
+    requested_name: Option<&str>,
+    mode: CaptureMode,
+) -> Result<ProjectInitialization, LeyCoreError> {
+    let root = canonical_directory(root.as_ref())?;
+    let ley_directory = root.join(LEY_DIRECTORY);
+    match fs::symlink_metadata(&ley_directory) {
+        Ok(_) => {
+            let diagnostic = diagnose_project(&root)?;
+            return Ok(ProjectInitialization {
+                root,
+                identity: diagnostic.identity,
+                capture: diagnostic.capture,
+                created: false,
+            });
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(LeyCoreError::Io {
+                path: ley_directory,
+                source,
+            })
+        }
+    }
+
+    let name = validated_project_name(requested_name, &root)?;
+    let identity = ProjectIdentity {
+        schema_version: PROJECT_SCHEMA_VERSION,
+        project_id: format!("prj_{}", Uuid::new_v4().simple()),
+        name,
+        created_at_unix_ms: unix_time_ms(),
+    };
+    let capture = CapturePolicy::for_mode(mode);
+
+    let staging = root.join(format!(".ley.tmp-{}", Uuid::new_v4().simple()));
+    fs::create_dir(&staging).map_err(|source| LeyCoreError::Io {
+        path: staging.clone(),
+        source,
+    })?;
+    let staged = (|| {
+        write_json_atomic(&staging.join(PROJECT_FILE), &identity)?;
+        write_json_atomic(&staging.join(CAPTURE_FILE), &capture)?;
+        write_new_file(&staging.join(IGNORE_FILE), DEFAULT_IGNORE_RULES.as_bytes())?;
+        fs::rename(&staging, &ley_directory).map_err(|source| LeyCoreError::Io {
+            path: ley_directory.clone(),
+            source,
+        })
+    })();
+    if staged.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    staged?;
+
+    Ok(ProjectInitialization {
+        root,
+        identity,
+        capture,
+        created: true,
+    })
+}
+
+pub fn diagnose_project(start: impl AsRef<Path>) -> Result<ProjectDiagnostic, LeyCoreError> {
+    let root = find_project_root(start.as_ref())?;
+    let ley_directory = root.join(LEY_DIRECTORY);
+    let identity: ProjectIdentity = read_json(&ley_directory.join(PROJECT_FILE))?;
+    validate_identity(&identity)?;
+    let capture: CapturePolicy = read_json(&ley_directory.join(CAPTURE_FILE))?;
+    validate_capture(&capture)?;
+    let ignore_file_present = optional_regular_metadata_file(&ley_directory.join(IGNORE_FILE))?;
+
+    Ok(ProjectDiagnostic {
+        root,
+        identity,
+        capture,
+        ignore_file_present,
+    })
+}
+
+pub fn find_project_root(start: &Path) -> Result<PathBuf, LeyCoreError> {
+    let canonical = if start.is_dir() {
+        canonical_directory(start)?
+    } else if let Some(parent) = start.parent() {
+        canonical_directory(parent)?
+    } else {
+        return Err(LeyCoreError::ProjectNotFound(start.to_path_buf()));
+    };
+    for candidate in canonical.ancestors() {
+        let ley_directory = candidate.join(LEY_DIRECTORY);
+        match fs::symlink_metadata(&ley_directory) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(LeyCoreError::Io {
+                    path: ley_directory,
+                    source,
+                })
+            }
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(LeyCoreError::UnsafeProjectLayout(ley_directory))
+            }
+            Ok(_) => {}
+        }
+        ensure_regular_metadata_file(&ley_directory.join(PROJECT_FILE))?;
+        return Ok(candidate.to_path_buf());
+    }
+    Err(LeyCoreError::ProjectNotFound(canonical))
+}
+
+fn canonical_directory(path: &Path) -> Result<PathBuf, LeyCoreError> {
+    if !path.is_dir() {
+        return Err(LeyCoreError::NotDirectory(path.to_path_buf()));
+    }
+    path.canonicalize().map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn validated_project_name(requested: Option<&str>, root: &Path) -> Result<String, LeyCoreError> {
+    let fallback = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Project");
+    let name = requested.unwrap_or(fallback).trim();
+    if name.is_empty() || name.chars().count() > 128 || name.chars().any(char::is_control) {
+        return Err(LeyCoreError::InvalidProjectName);
+    }
+    Ok(name.to_owned())
+}
+
+fn validate_identity(identity: &ProjectIdentity) -> Result<(), LeyCoreError> {
+    if identity.schema_version != PROJECT_SCHEMA_VERSION {
+        return Err(LeyCoreError::InvalidProjectIdentity(format!(
+            "unsupported schema version {}",
+            identity.schema_version
+        )));
+    }
+    let Some(uuid) = identity.project_id.strip_prefix("prj_") else {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "projectId must start with prj_".to_owned(),
+        ));
+    };
+    if Uuid::parse_str(uuid).is_err() {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "projectId is not a UUID".to_owned(),
+        ));
+    }
+    validated_project_name(Some(&identity.name), Path::new("."))?;
+    Ok(())
+}
+
+fn validate_capture(capture: &CapturePolicy) -> Result<(), LeyCoreError> {
+    if capture.schema_version != PROJECT_SCHEMA_VERSION {
+        return Err(LeyCoreError::InvalidCapturePolicy(format!(
+            "unsupported schema version {}",
+            capture.schema_version
+        )));
+    }
+    let unique_roots = capture.approved_roots.iter().collect::<HashSet<_>>();
+    if capture.approved_roots.is_empty()
+        || unique_roots.len() != capture.approved_roots.len()
+        || capture.approved_roots.iter().any(|root| {
+            root.is_empty()
+                || Path::new(root)
+                    .components()
+                    .any(|part| !matches!(part, Component::CurDir | Component::Normal(_)))
+        })
+    {
+        return Err(LeyCoreError::InvalidCapturePolicy(
+            "approvedRoots must contain safe project-relative paths".to_owned(),
+        ));
+    }
+    if capture.max_file_bytes == 0 || capture.max_total_bytes < capture.max_file_bytes {
+        return Err(LeyCoreError::InvalidCapturePolicy(
+            "capture byte limits are inconsistent".to_owned(),
+        ));
+    }
+    if capture.store_raw_transcripts && capture.mode != CaptureMode::FullEvidence {
+        return Err(LeyCoreError::InvalidCapturePolicy(
+            "raw transcripts require full-evidence mode".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, LeyCoreError> {
+    let metadata = ensure_regular_metadata_file(path)?;
+    if metadata.len() > METADATA_FILE_LIMIT_BYTES {
+        return Err(LeyCoreError::MetadataTooLarge {
+            path: path.to_path_buf(),
+            limit_bytes: METADATA_FILE_LIMIT_BYTES,
+        });
+    }
+    let bytes = fs::read(path).map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    serde_json::from_slice(&bytes).map_err(|source| LeyCoreError::Json {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn ensure_regular_metadata_file(path: &Path) -> Result<fs::Metadata, LeyCoreError> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(LeyCoreError::UnsafeProjectLayout(path.to_path_buf()));
+    }
+    Ok(metadata)
+}
+
+fn optional_regular_metadata_file(path: &Path) -> Result<bool, LeyCoreError> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(LeyCoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            Err(LeyCoreError::UnsafeProjectLayout(path.to_path_buf()))
+        }
+        Ok(_) => Ok(true),
+    }
+}
+
+fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), LeyCoreError> {
+    let mut body =
+        serde_json::to_vec_pretty(value).expect("serializing project metadata cannot fail");
+    body.push(b'\n');
+    let temporary = path.with_extension(format!("tmp-{}", Uuid::new_v4().simple()));
+    write_new_file(&temporary, &body)?;
+    fs::rename(&temporary, path).map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn write_new_file(path: &Path, body: &[u8]) -> Result<(), LeyCoreError> {
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(path)
+        .map_err(|source| LeyCoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    file.write_all(body).map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    file.sync_all().map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must be after the Unix epoch")
+        .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn initializes_only_the_approved_project_metadata() {
+        let directory = tempdir().unwrap();
+        let initialized =
+            initialize_project(directory.path(), Some("Example"), CaptureMode::Structured).unwrap();
+
+        assert!(initialized.created);
+        assert_eq!(initialized.identity.name, "Example");
+        assert!(initialized.identity.project_id.starts_with("prj_"));
+        assert_eq!(initialized.capture.mode, CaptureMode::Structured);
+        assert!(!initialized.capture.store_raw_transcripts);
+
+        let mut entries = fs::read_dir(directory.path().join(LEY_DIRECTORY))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        entries.sort();
+        assert_eq!(entries, vec![IGNORE_FILE, CAPTURE_FILE, PROJECT_FILE]);
+        assert!(
+            fs::read_to_string(directory.path().join(LEY_DIRECTORY).join(PROJECT_FILE))
+                .unwrap()
+                .contains("\"projectId\"")
+        );
+    }
+
+    #[test]
+    fn initialization_is_idempotent_and_does_not_change_capture_consent() {
+        let directory = tempdir().unwrap();
+        let first = initialize_project(directory.path(), None, CaptureMode::Minimal).unwrap();
+        let second =
+            initialize_project(directory.path(), Some("Renamed"), CaptureMode::FullEvidence)
+                .unwrap();
+
+        assert!(!second.created);
+        assert_eq!(second.identity, first.identity);
+        assert_eq!(second.capture.mode, CaptureMode::Minimal);
+        assert!(!second.capture.store_raw_transcripts);
+    }
+
+    #[test]
+    fn doctor_discovers_parent_project_and_rejects_unsafe_policy() {
+        let directory = tempdir().unwrap();
+        initialize_project(directory.path(), None, CaptureMode::FullEvidence).unwrap();
+        let nested = directory.path().join("src/feature");
+        fs::create_dir_all(&nested).unwrap();
+        let diagnostic = diagnose_project(&nested).unwrap();
+        assert_eq!(diagnostic.capture.mode, CaptureMode::FullEvidence);
+        assert!(diagnostic.capture.store_raw_transcripts);
+
+        let capture_path = directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE);
+        let mut capture: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&capture_path).unwrap()).unwrap();
+        capture["approvedRoots"] = serde_json::json!(["../outside"]);
+        fs::write(&capture_path, serde_json::to_vec_pretty(&capture).unwrap()).unwrap();
+        assert!(matches!(
+            diagnose_project(&nested),
+            Err(LeyCoreError::InvalidCapturePolicy(_))
+        ));
+    }
+
+    #[test]
+    fn doctor_rejects_duplicate_roots_and_oversized_metadata() {
+        let directory = tempdir().unwrap();
+        initialize_project(directory.path(), None, CaptureMode::Structured).unwrap();
+        let capture_path = directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE);
+        let mut capture: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&capture_path).unwrap()).unwrap();
+        capture["approvedRoots"] = serde_json::json!([".", "."]);
+        fs::write(&capture_path, serde_json::to_vec_pretty(&capture).unwrap()).unwrap();
+        assert!(matches!(
+            diagnose_project(directory.path()),
+            Err(LeyCoreError::InvalidCapturePolicy(_))
+        ));
+
+        fs::write(
+            &capture_path,
+            vec![b' '; (METADATA_FILE_LIMIT_BYTES + 1) as usize],
+        )
+        .unwrap();
+        assert!(matches!(
+            diagnose_project(directory.path()),
+            Err(LeyCoreError::MetadataTooLarge { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_metadata_cannot_escape_through_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        initialize_project(outside.path(), Some("Outside"), CaptureMode::Structured).unwrap();
+        symlink(
+            outside.path().join(LEY_DIRECTORY),
+            directory.path().join(LEY_DIRECTORY),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            diagnose_project(directory.path()),
+            Err(LeyCoreError::UnsafeProjectLayout(_))
+        ));
+        assert!(matches!(
+            initialize_project(directory.path(), None, CaptureMode::Structured),
+            Err(LeyCoreError::UnsafeProjectLayout(_))
+        ));
+
+        let file_link_project = tempdir().unwrap();
+        initialize_project(
+            file_link_project.path(),
+            Some("File link"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let capture_path = file_link_project
+            .path()
+            .join(LEY_DIRECTORY)
+            .join(CAPTURE_FILE);
+        fs::remove_file(&capture_path).unwrap();
+        symlink(
+            outside.path().join(LEY_DIRECTORY).join(CAPTURE_FILE),
+            &capture_path,
+        )
+        .unwrap();
+        assert!(matches!(
+            diagnose_project(file_link_project.path()),
+            Err(LeyCoreError::UnsafeProjectLayout(_))
+        ));
+    }
+}

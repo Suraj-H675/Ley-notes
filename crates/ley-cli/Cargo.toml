@@ -1,0 +1,14 @@
+[package]
+name = "ley-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Local command-line interface for Ley project and agent memory"
+
+[[bin]]
+name = "ley"
+path = "src/main.rs"
+
+[dependencies]
+ley-core = { path = "../ley-core" }
+serde_json.workspace = true

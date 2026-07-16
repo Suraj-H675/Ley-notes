@@ -33,6 +33,9 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 
 ```text
 .
+├── crates/               # Shared local Rust core and the `ley` CLI
+├── docs/                 # Architecture, decisions, security, and product research
+├── schemas/              # Versioned open agent-memory contracts
 ├── src/
 │   ├── app/              # Application composition and workspace shell
 │   ├── core/             # Framework-free Markdown, graph, indexing, and vault domain logic
@@ -42,7 +45,6 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 │   ├── test/             # Shared test setup and fixtures
 │   └── website/          # Public marketing site
 ├── src-tauri/            # Rust desktop shell and confined filesystem commands
-├── docs/                 # Architecture and product research
 └── ref/                  # Local reference projects; intentionally not committed
 ```
 
@@ -60,9 +62,21 @@ npm run lint
 npm run test
 npm run build            # web/PWA production build
 npm run desktop:build    # native application bundle
+cargo test --workspace   # local core, CLI, and desktop Rust tests
 ```
 
 No account, backend, or environment file is required.
+
+### Initialize a project for agent memory
+
+The first agent-memory foundation is available through the local CLI:
+
+```bash
+cargo run -p ley-cli -- init /path/to/project --capture structured
+cargo run -p ley-cli -- doctor /path/to/project
+```
+
+Initialization creates a minimal `.ley/` project identity, capture policy, and additional ignore rules. Structured capture is the default and does not enable raw transcripts. Repeating `init` reads the existing identity without changing its name or capture consent. Session ingestion and retrieval are deliberately not claimed yet; they build on this reviewed boundary in subsequent slices. See [ADR 0001](docs/adr/0001-local-agent-project-boundary.md) and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
 
 ## Data model
 

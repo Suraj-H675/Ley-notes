@@ -1,0 +1,43 @@
+# Agent memory threat model
+
+Status: initial boundary for project initialization; expand before ingestion and MCP writes.
+
+## Assets
+
+- User notes, attachments, canvases, and agent memories in the selected vault
+- Project source, documentation, local Git state, and session evidence
+- Capture consent and ignore rules
+- Memory trust, provenance, corrections, and project isolation
+
+## Trust boundaries
+
+1. User-selected filesystem vault
+2. Explicitly initialized project root
+3. Local CLI/desktop/MCP process
+4. Agent host and its lifecycle adapter
+5. Cloud model provider when the user intentionally retrieves context
+
+Repository content, transcripts, tool output, generated summaries, MCP arguments, and imported memory are untrusted data. They are not agent policy or executable instructions.
+
+## Initial threats and required controls
+
+| Threat | Initial control | Required future proof |
+| --- | --- | --- |
+| Scanning outside the project | Only project-relative approved roots; reject root, prefix, and parent components; refuse symlinked `.ley` metadata | Scanner canonical-containment tests including content symlinks and Windows prefixes |
+| Metadata memory exhaustion | Regular metadata files are limited to 1 MiB before reading | Fuzz malformed and boundary-sized metadata |
+| Partial/corrupt initialization | Stage the complete `.ley/` directory and atomically rename | Crash/fault-injection test |
+| Capture escalation on repeat init | Existing identity and policy are read without rewriting | Explicit, reviewed policy-update command |
+| Raw transcript capture without consent | Only Full Evidence may enable it | UI/CLI confirmation and adapter enforcement |
+| Secret collection | Credential-container ignore defaults | Content redaction, entropy/signature detection, preview, audit |
+| Legitimate code hidden by broad ignores | No wildcard `secret`/`credential` terms | Git-compatible matcher conformance fixtures |
+| Project identity collision | Random UUID-backed `prj_` identifier | Collision test and duplicate-binding diagnosis |
+| Cross-project memory access | Project ID required at every future storage/query boundary | Multi-project adversarial tests |
+| Prompt injection in stored material | Stored text remains untrusted evidence | Typed context envelope and agent-facing injection warnings |
+| Memory poisoning | No inference becomes trusted automatically | Provenance, review, correction, corroboration, supersession |
+| Local MCP compromise | No MCP server in this phase | Exact-command consent, stdio default, scoped tools, no ambient home access |
+
+## Explicit non-claims
+
+- Local storage is not encryption at rest; device/vault encryption is a separate choice.
+- When a user intentionally supplies Ley context to a cloud agent, that context is visible to that provider.
+- Memory and citations can reduce unsupported guessing; no system can guarantee that an LLM never hallucinates.
