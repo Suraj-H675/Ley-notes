@@ -1,37 +1,91 @@
-import { describe, expect, it } from 'vitest';
-import { matchesSearchFilters, parseSearchQuery } from './search';
+import { describe, expect, it } from "vitest";
+import { matchesSearchFilters, parseSearchQuery } from "./search";
 
-describe('structured vault search', () => {
-  it('parses quoted, repeated, negative, and property filters', () => {
-    expect(parseSearchQuery('design system tag:#work tag:active -tag:archive path:"Projects Alpha" title:roadmap property:status=In-Progress [owner:Suraj] -[draft]')).toEqual({
-      terms: 'design system',
+describe("structured vault search", () => {
+  it("parses quoted, repeated, negative, and property filters", () => {
+    expect(
+      parseSearchQuery(
+        'design system tag:#work tag:active -tag:archive path:"Projects Alpha" title:roadmap property:status=In-Progress [owner:Suraj] -[draft] task-todo:"Call Alice" -task-done:obsolete',
+      ),
+    ).toEqual({
+      terms: "design system",
       tags: [
-        { value: 'work', exclude: false },
-        { value: 'active', exclude: false },
-        { value: 'archive', exclude: true },
+        { value: "work", exclude: false },
+        { value: "active", exclude: false },
+        { value: "archive", exclude: true },
       ],
-      paths: [{ value: 'projects alpha', exclude: false }],
-      titles: [{ value: 'roadmap', exclude: false }],
+      paths: [{ value: "projects alpha", exclude: false }],
+      titles: [{ value: "roadmap", exclude: false }],
       properties: [
-        { key: 'status', value: 'in-progress', exclude: false },
-        { key: 'owner', value: 'suraj', exclude: false },
-        { key: 'draft', value: undefined, exclude: true },
+        { key: "status", value: "in-progress", exclude: false },
+        { key: "owner", value: "suraj", exclude: false },
+        { key: "draft", value: undefined, exclude: true },
+      ],
+      tasks: [
+        { value: "call alice", exclude: false, state: "todo" },
+        { value: "obsolete", exclude: true, state: "done" },
       ],
     });
   });
 
-  it('applies nested tags, substring paths, titles, properties, and exclusions together', () => {
-    const doc = { id: 'page', title: 'Product Roadmap', path: 'Projects Alpha/roadmap.md', tags: 'work/research active' };
+  it("applies nested tags, substring paths, titles, properties, and exclusions together", () => {
+    const doc = {
+      id: "page",
+      title: "Product Roadmap",
+      path: "Projects Alpha/roadmap.md",
+      tags: "work/research active",
+      content:
+        "- [ ] Call Alice\n- [x] Ship release\n```md\n- [ ] Hidden example\n```",
+    };
     const properties = new Map([
-      ['status', ['in-progress']],
-      ['owner', ['suraj', 'team']],
+      ["status", ["in-progress"]],
+      ["owner", ["suraj", "team"]],
     ]);
-    expect(matchesSearchFilters(doc, parseSearchQuery('tag:work -tag:archive path:alpha title:road property:status=progress [owner:suraj] -[draft]'), properties)).toBe(true);
-    expect(matchesSearchFilters(doc, parseSearchQuery('tag:work tag:archive'), properties)).toBe(false);
-    expect(matchesSearchFilters(doc, parseSearchQuery('-property:status=progress'), properties)).toBe(false);
+    expect(
+      matchesSearchFilters(
+        doc,
+        parseSearchQuery(
+          "tag:work -tag:archive path:alpha title:road property:status=progress [owner:suraj] -[draft]",
+        ),
+        properties,
+      ),
+    ).toBe(true);
+    expect(
+      matchesSearchFilters(
+        doc,
+        parseSearchQuery("tag:work tag:archive"),
+        properties,
+      ),
+    ).toBe(false);
+    expect(
+      matchesSearchFilters(
+        doc,
+        parseSearchQuery("-property:status=progress"),
+        properties,
+      ),
+    ).toBe(false);
+    expect(
+      matchesSearchFilters(
+        doc,
+        parseSearchQuery("task-todo:alice task-done:ship"),
+        properties,
+      ),
+    ).toBe(true);
+    expect(
+      matchesSearchFilters(
+        doc,
+        parseSearchQuery("task-done:alice"),
+        properties,
+      ),
+    ).toBe(false);
+    expect(
+      matchesSearchFilters(doc, parseSearchQuery("task:hidden"), properties),
+    ).toBe(false);
   });
 
-  it('keeps unknown operators as searchable text instead of silently discarding them', () => {
-    expect(parseSearchQuery('meeting before:2026-01-01').terms).toBe('meeting before:2026-01-01');
+  it("keeps unknown operators as searchable text instead of silently discarding them", () => {
+    expect(parseSearchQuery("meeting before:2026-01-01").terms).toBe(
+      "meeting before:2026-01-01",
+    );
   });
 });

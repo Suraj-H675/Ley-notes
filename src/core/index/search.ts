@@ -6,10 +6,11 @@
  * never depends on callers remembering to manually index a write.
  */
 
-import FlexSearch from 'flexsearch';
-import { liveQuery, type Subscription } from 'dexie';
-import { db } from '@/infrastructure/database/db';
-import type { Page, Tag } from '@/infrastructure/database/schema';
+import FlexSearch from "flexsearch";
+import { liveQuery, type Subscription } from "dexie";
+import { db } from "@/infrastructure/database/db";
+import type { Page, Tag } from "@/infrastructure/database/schema";
+import { extractMarkdownTasks, type MarkdownTask } from "@/core/parser/tasks";
 
 interface SearchDoc {
   [key: string]: string | number;
@@ -34,18 +35,26 @@ export interface PageSearchResult {
 function createIndex() {
   return new FlexSearch.Document({
     document: {
-      id: 'id',
+      id: "id",
       index: [
-        { field: 'title', tokenize: 'forward' },
-        { field: 'aliases', tokenize: 'forward' },
-        { field: 'content', tokenize: 'forward' },
-        { field: 'tags', tokenize: 'forward' },
-        { field: 'path', tokenize: 'forward' },
-        { field: 'properties', tokenize: 'forward' },
+        { field: "title", tokenize: "forward" },
+        { field: "aliases", tokenize: "forward" },
+        { field: "content", tokenize: "forward" },
+        { field: "tags", tokenize: "forward" },
+        { field: "path", tokenize: "forward" },
+        { field: "properties", tokenize: "forward" },
       ],
-      store: ['title', 'content', 'tags', 'path', 'aliases', 'properties', 'updatedAt'],
+      store: [
+        "title",
+        "content",
+        "tags",
+        "path",
+        "aliases",
+        "properties",
+        "updatedAt",
+      ],
     },
-    tokenize: 'forward',
+    tokenize: "forward",
   });
 }
 
@@ -62,13 +71,17 @@ export function startSearchIndex(): () => void {
   consumers += 1;
   if (!subscription) {
     subscription = liveQuery(async () => {
-      const [pages, tags] = await Promise.all([db.pages.toArray(), db.tags.toArray()]);
+      const [pages, tags] = await Promise.all([
+        db.pages.toArray(),
+        db.tags.toArray(),
+      ]);
       return { pages, tags };
     }).subscribe({
       next: ({ pages, tags }) => {
         void rebuildIndex(pages, tags);
       },
-      error: (error) => console.error('[search-index] live query failed:', error),
+      error: (error) =>
+        console.error("[search-index] live query failed:", error),
     });
   }
 
@@ -103,10 +116,12 @@ async function rebuildIndex(pages: Page[], tags: Tag[]): Promise<void> {
       id: page.id,
       title: page.title,
       content: page.content.slice(0, 100_000),
-      tags: (tagsByPage.get(page.id) ?? []).join(' '),
+      tags: (tagsByPage.get(page.id) ?? []).join(" "),
       path: page.path,
-      aliases: page.aliases.join(' '),
-      properties: [...properties.entries()].flatMap(([key, values]) => [key, ...values]).join(' '),
+      aliases: page.aliases.join(" "),
+      properties: [...properties.entries()]
+        .flatMap(([key, values]) => [key, ...values])
+        .join(" "),
       updatedAt: page.updatedAt,
     };
     nextDocs.set(page.id, doc);
@@ -124,7 +139,10 @@ async function rebuildIndex(pages: Page[], tags: Tag[]): Promise<void> {
 
 async function ensureReady(): Promise<void> {
   if (ready) return;
-  const [pages, tags] = await Promise.all([db.pages.toArray(), db.tags.toArray()]);
+  const [pages, tags] = await Promise.all([
+    db.pages.toArray(),
+    db.tags.toArray(),
+  ]);
   await rebuildIndex(pages, tags);
 }
 
@@ -133,9 +151,13 @@ async function ensureReady(): Promise<void> {
  *
  * Operators are composable post-filters and work with or without free text:
  * `tag:research`, `-tag:archive`, `path:"project alpha"`,
- * `title:roadmap`, `property:status=active`, and `[status:active]`.
+ * `title:roadmap`, `property:status=active`, `[status:active]`,
+ * `task-todo:call`, and `task-done:ship`.
  */
-export async function searchPages(query: string, limit = 20): Promise<PageSearchResult[]> {
+export async function searchPages(
+  query: string,
+  limit = 20,
+): Promise<PageSearchResult[]> {
   await ensureReady();
   const filter = parseFilter(query.trim());
 
@@ -144,15 +166,23 @@ export async function searchPages(query: string, limit = 20): Promise<PageSearch
       .filter((doc) => matchesFilters(doc, filter))
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, limit)
-      .map((doc) => toResult(doc, '', 1));
+      .map((doc) => toResult(doc, "", 1, filter));
   }
 
-  const raw = await index.searchAsync(filter.terms, { limit: Math.max(limit * 4, 40), enrich: true });
+  const raw = await index.searchAsync(filter.terms, {
+    limit: Math.max(limit * 4, 40),
+    enrich: true,
+  });
   const ranked = new Map<string, number>();
   const queryLc = filter.terms.toLowerCase();
 
   for (const fieldResult of raw) {
-    const fieldBoost = fieldResult.field === 'title' ? 50 : fieldResult.field === 'aliases' ? 35 : 10;
+    const fieldBoost =
+      fieldResult.field === "title"
+        ? 50
+        : fieldResult.field === "aliases"
+          ? 35
+          : 10;
     fieldResult.result.forEach((item, position) => {
       const id = String(item.id);
       const doc = docs.get(id);
@@ -166,7 +196,7 @@ export async function searchPages(query: string, limit = 20): Promise<PageSearch
   }
 
   return [...ranked.entries()]
-    .map(([id, score]) => toResult(docs.get(id)!, filter.terms, score))
+    .map(([id, score]) => toResult(docs.get(id)!, filter.terms, score, filter))
     .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
     .slice(0, limit);
 }
@@ -182,12 +212,17 @@ export interface SearchPropertyFilter {
   exclude: boolean;
 }
 
+export interface SearchTaskFilter extends SearchValueFilter {
+  state: "any" | "todo" | "done";
+}
+
 export interface ParsedFilter {
   terms: string;
   tags: SearchValueFilter[];
   paths: SearchValueFilter[];
   titles: SearchValueFilter[];
   properties: SearchPropertyFilter[];
+  tasks: SearchTaskFilter[];
 }
 
 export function parseSearchQuery(query: string): ParsedFilter {
@@ -196,8 +231,9 @@ export function parseSearchQuery(query: string): ParsedFilter {
   const paths: SearchValueFilter[] = [];
   const titles: SearchValueFilter[] = [];
   const properties: SearchPropertyFilter[] = [];
+  const tasks: SearchTaskFilter[] = [];
   for (const rawPart of tokenizeQuery(query)) {
-    const exclude = rawPart.startsWith('-');
+    const exclude = rawPart.startsWith("-");
     const part = exclude ? rawPart.slice(1) : rawPart;
     const bracket = /^\[([^:\]]+)(?::([^\]]+))?\]$/.exec(part);
     if (bracket) {
@@ -206,41 +242,100 @@ export function parseSearchQuery(query: string): ParsedFilter {
       if (key) properties.push({ key, value, exclude });
       continue;
     }
-    const separator = part.indexOf(':');
-    if (separator < 1) { terms.push(cleanTerm(rawPart)); continue; }
+    const separator = part.indexOf(":");
+    if (separator < 1) {
+      terms.push(cleanTerm(rawPart));
+      continue;
+    }
     const operator = part.slice(0, separator).toLowerCase();
     const rawValue = part.slice(separator + 1);
-    if (operator === 'property') {
-      const equals = rawValue.indexOf('=');
-      const key = cleanFilterValue(equals >= 0 ? rawValue.slice(0, equals) : rawValue);
-      const value = equals >= 0 ? cleanFilterValue(rawValue.slice(equals + 1)) : undefined;
+    if (operator === "property") {
+      const equals = rawValue.indexOf("=");
+      const key = cleanFilterValue(
+        equals >= 0 ? rawValue.slice(0, equals) : rawValue,
+      );
+      const value =
+        equals >= 0 ? cleanFilterValue(rawValue.slice(equals + 1)) : undefined;
       if (key) properties.push({ key, value, exclude });
+    } else if (
+      operator === "task" ||
+      operator === "task-todo" ||
+      operator === "task-done"
+    ) {
+      tasks.push({
+        value: cleanFilterValue(rawValue),
+        exclude,
+        state:
+          operator === "task-todo"
+            ? "todo"
+            : operator === "task-done"
+              ? "done"
+              : "any",
+      });
     } else {
       const cleaned = cleanFilterValue(rawValue);
-      const value = operator === 'tag' ? cleaned.replace(/^#/, '') : cleaned;
-      const target = operator === 'tag' ? tags : operator === 'path' ? paths : operator === 'title' || operator === 'file' ? titles : null;
+      const value = operator === "tag" ? cleaned.replace(/^#/, "") : cleaned;
+      const target =
+        operator === "tag"
+          ? tags
+          : operator === "path"
+            ? paths
+            : operator === "title" || operator === "file"
+              ? titles
+              : null;
       if (target && value) target.push({ value, exclude });
       else terms.push(cleanTerm(rawPart));
     }
   }
-  return { terms: terms.filter(Boolean).join(' '), tags, paths, titles, properties };
+  return {
+    terms: terms.filter(Boolean).join(" "),
+    tags,
+    paths,
+    titles,
+    properties,
+    tasks,
+  };
 }
 
 function parseFilter(query: string): ParsedFilter {
   return parseSearchQuery(query);
 }
 
-export function matchesSearchFilters(doc: Pick<SearchDoc, 'id' | 'title' | 'path' | 'tags'>, filter: ParsedFilter, properties = propertiesByPage.get(doc.id) ?? new Map<string, string[]>()): boolean {
+export function matchesSearchFilters(
+  doc: Pick<SearchDoc, "id" | "title" | "path" | "tags"> & { content?: string },
+  filter: ParsedFilter,
+  properties = propertiesByPage.get(doc.id) ?? new Map<string, string[]>(),
+): boolean {
   const tags = String(doc.tags).toLowerCase().split(/\s+/);
-  if (!matchesEvery(filter.tags, (needle) => tags.some((tag) => tag === needle || tag.startsWith(`${needle}/`)))) return false;
+  if (
+    !matchesEvery(filter.tags, (needle) =>
+      tags.some((tag) => tag === needle || tag.startsWith(`${needle}/`)),
+    )
+  )
+    return false;
   const path = String(doc.path).toLowerCase();
-  if (!matchesEvery(filter.paths, (needle) => path.includes(needle))) return false;
+  if (!matchesEvery(filter.paths, (needle) => path.includes(needle)))
+    return false;
   const title = String(doc.title).toLowerCase();
-  if (!matchesEvery(filter.titles, (needle) => title.includes(needle))) return false;
+  if (!matchesEvery(filter.titles, (needle) => title.includes(needle)))
+    return false;
   for (const property of filter.properties) {
     const values = properties.get(property.key);
-    const match = Boolean(values && (property.value === undefined || values.some((value) => value.includes(property.value!))));
+    const match = Boolean(
+      values &&
+      (property.value === undefined ||
+        values.some((value) => value.includes(property.value!))),
+    );
     if (property.exclude ? match : !match) return false;
+  }
+  if (filter.tasks.length > 0) {
+    const tasks = extractMarkdownTasks(doc.content ?? "");
+    if (
+      !matchesEvery(filter.tasks, (needle, taskFilter) =>
+        tasks.some((task) => matchesTask(task, taskFilter.state, needle)),
+      )
+    )
+      return false;
   }
   return true;
 }
@@ -249,8 +344,15 @@ function matchesFilters(doc: SearchDoc, filter: ParsedFilter): boolean {
   return matchesSearchFilters(doc, filter);
 }
 
-function matchesEvery(filters: SearchValueFilter[], predicate: (value: string) => boolean): boolean {
-  return filters.every((filter) => filter.exclude ? !predicate(filter.value) : predicate(filter.value));
+function matchesEvery<T extends SearchValueFilter>(
+  filters: T[],
+  predicate: (value: string, filter: T) => boolean,
+): boolean {
+  return filters.every((filter) =>
+    filter.exclude
+      ? !predicate(filter.value, filter)
+      : predicate(filter.value, filter),
+  );
 }
 
 function tokenizeQuery(query: string): string[] {
@@ -258,14 +360,19 @@ function tokenizeQuery(query: string): string[] {
 }
 
 function cleanFilterValue(value: string): string {
-  return value.trim().replace(/^["']|["']$/g, '').toLowerCase();
+  return value
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .toLowerCase();
 }
 
 function cleanTerm(value: string): string {
-  return value.replace(/["']/g, '').trim();
+  return value.replace(/["']/g, "").trim();
 }
 
-function normalizeProperties(frontmatter: Record<string, unknown>): Map<string, string[]> {
+function normalizeProperties(
+  frontmatter: Record<string, unknown>,
+): Map<string, string[]> {
   const result = new Map<string, string[]>();
   for (const [rawKey, rawValue] of Object.entries(frontmatter)) {
     const key = rawKey.trim().toLowerCase();
@@ -279,29 +386,63 @@ function normalizeProperties(frontmatter: Record<string, unknown>): Map<string, 
 function flattenPropertyValue(value: unknown): string[] {
   if (value === null || value === undefined) return [];
   if (Array.isArray(value)) return value.flatMap(flattenPropertyValue);
-  if (typeof value === 'object') return Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) => [key.toLowerCase(), ...flattenPropertyValue(nested)]);
+  if (typeof value === "object")
+    return Object.entries(value as Record<string, unknown>).flatMap(
+      ([key, nested]) => [key.toLowerCase(), ...flattenPropertyValue(nested)],
+    );
   return [String(value).toLowerCase()];
 }
 
-function toResult(doc: SearchDoc, terms: string, score: number): PageSearchResult {
+function toResult(
+  doc: SearchDoc,
+  terms: string,
+  score: number,
+  filter: ParsedFilter,
+): PageSearchResult {
   return {
     id: doc.id,
     title: String(doc.title),
     path: String(doc.path),
-    snippet: makeSnippet(String(doc.content), terms),
+    snippet: makeSnippet(String(doc.content), terms, filter),
     score,
   };
 }
 
-function makeSnippet(content: string, terms: string): string {
-  const compact = content.replace(/[#>*_`[\]]/g, '').replace(/\s+/g, ' ').trim();
-  if (!compact) return 'Empty note';
+function makeSnippet(
+  content: string,
+  terms: string,
+  filter: ParsedFilter,
+): string {
+  if (!terms && filter.tasks.length > 0) {
+    const preferred = filter.tasks.find((task) => !task.exclude);
+    const task = extractMarkdownTasks(content).find(
+      (candidate) =>
+        !preferred || matchesTask(candidate, preferred.state, preferred.value),
+    );
+    if (task)
+      return `${task.checked ? "Done" : "To do"} · ${task.text || "Untitled task"}`;
+  }
+  const compact = content
+    .replace(/[#>*_`[\]]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!compact) return "Empty note";
   const needle = terms.split(/\s+/).find(Boolean)?.toLowerCase();
   const at = needle ? compact.toLowerCase().indexOf(needle) : -1;
   const start = at > 50 ? at - 40 : 0;
-  const prefix = start > 0 ? '…' : '';
-  const suffix = start + 150 < compact.length ? '…' : '';
+  const prefix = start > 0 ? "…" : "";
+  const suffix = start + 150 < compact.length ? "…" : "";
   return `${prefix}${compact.slice(start, start + 150)}${suffix}`;
+}
+
+function matchesTask(
+  task: MarkdownTask,
+  state: SearchTaskFilter["state"],
+  value: string,
+): boolean {
+  if (state === "todo" && task.checked) return false;
+  if (state === "done" && !task.checked) return false;
+  return !value || task.text.toLowerCase().includes(value);
 }
 
 export function getFilter(query: string): ParsedFilter {

@@ -59,6 +59,7 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Replacements persist after the normal editor debounce and reload. Escape closes the panel without invoking browser page search.
 - At 320×568, the search panel remains fully reachable without horizontal overflow and stays beneath the mobile sidebar overlay.
 - Quick-switcher filters compose with AND: nested `tag:`, quoted `path:`, `title:`, `property:key=value`/`[key:value]`, and `-` exclusions return the expected live-index results. Filter-only searches work without free text.
+- `task:`, `task-todo:`, and `task-done:` match text only inside real Markdown task blocks, compose with the other filters and negation, ignore fenced examples, and show the matched task/state as result context when no free-text term is present. The same query filters live collection rows and survives as a saved search.
 - Filter chips insert valid syntax, the syntax guide is keyboard-accessible, Enter opens the selected result in the focused pane, and Shift+Enter opens it in split. At 390px the chip row scrolls without widening the document.
 - Save a structured query with a custom name: it appears reactively under Saved searches, reopens the exact query, supports Enter/blur rename and deletion, survives reload, and is absent after switching to a different vault identity. Duplicate query saves update one entry.
 - At 390px, saved-search rows and their rename/delete actions remain reachable while the sidebar overlay produces no horizontal document overflow.
