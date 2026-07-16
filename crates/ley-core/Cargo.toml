@@ -6,6 +6,7 @@ authors.workspace = true
 description = "Local project identity and agent-memory primitives for Ley"
 
 [dependencies]
+ignore.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

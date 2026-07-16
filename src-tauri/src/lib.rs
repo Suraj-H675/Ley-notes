@@ -268,7 +268,7 @@ fn scan_vault(vault_path: String) -> Result<Vec<VaultFile>, String> {
         });
     }
 
-    files.sort_by(|left, right| left.path.to_lowercase().cmp(&right.path.to_lowercase()));
+    files.sort_by_cached_key(|file| file.path.to_lowercase());
     Ok(files)
 }
 
@@ -304,7 +304,7 @@ fn scan_canvases(vault_path: String) -> Result<Vec<CanvasFile>, String> {
             updated_at: unix_millis(metadata.modified()),
         });
     }
-    files.sort_by(|left, right| left.path.to_lowercase().cmp(&right.path.to_lowercase()));
+    files.sort_by_cached_key(|file| file.path.to_lowercase());
     Ok(files)
 }
 

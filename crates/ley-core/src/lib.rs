@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Component;
 use std::path::{Path, PathBuf};
@@ -117,6 +117,26 @@ pub struct ProjectDiagnostic {
     pub ignore_file_present: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureFile {
+    pub path: String,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapturePreview {
+    pub root: PathBuf,
+    pub project_id: String,
+    pub mode: CaptureMode,
+    pub files: Vec<CaptureFile>,
+    pub included_bytes: u64,
+    pub skipped_oversized: Vec<CaptureFile>,
+    pub skipped_total_limit: Vec<CaptureFile>,
+    pub skipped_symlinks: Vec<String>,
+}
+
 #[derive(Debug, Error)]
 pub enum LeyCoreError {
     #[error("project path is not a directory: {0}")]
@@ -135,6 +155,12 @@ pub enum LeyCoreError {
     UnsafeProjectLayout(PathBuf),
     #[error("Ley metadata exceeds the {limit_bytes}-byte limit: {path}")]
     MetadataTooLarge { path: PathBuf, limit_bytes: u64 },
+    #[error("invalid ignore rule in {path}: {message}")]
+    InvalidIgnoreRule { path: PathBuf, message: String },
+    #[error("could not scan project: {0}")]
+    CaptureWalk(String),
+    #[error("project path is not valid UTF-8: {0}")]
+    NonUtf8Path(PathBuf),
     #[error("could not access {path}: {source}")]
     Io {
         path: PathBuf,
@@ -226,6 +252,170 @@ pub fn diagnose_project(start: impl AsRef<Path>) -> Result<ProjectDiagnostic, Le
         capture,
         ignore_file_present,
     })
+}
+
+pub fn preview_capture(start: impl AsRef<Path>) -> Result<CapturePreview, LeyCoreError> {
+    use ignore::gitignore::GitignoreBuilder;
+    use ignore::WalkBuilder;
+
+    let diagnostic = diagnose_project(start)?;
+    let root = &diagnostic.root;
+    let ignore_path = root.join(LEY_DIRECTORY).join(IGNORE_FILE);
+    let ignore_metadata = ensure_regular_metadata_file(&ignore_path)?;
+    if ignore_metadata.len() > METADATA_FILE_LIMIT_BYTES {
+        return Err(LeyCoreError::MetadataTooLarge {
+            path: ignore_path.clone(),
+            limit_bytes: METADATA_FILE_LIMIT_BYTES,
+        });
+    }
+    let ignore_body = fs::read_to_string(&ignore_path).map_err(|source| LeyCoreError::Io {
+        path: ignore_path.clone(),
+        source,
+    })?;
+    let mut ignore_builder = GitignoreBuilder::new(root);
+    for line in ignore_body.lines() {
+        ignore_builder
+            .add_line(Some(ignore_path.clone()), line)
+            .map_err(|error| LeyCoreError::InvalidIgnoreRule {
+                path: ignore_path.clone(),
+                message: error.to_string(),
+            })?;
+    }
+    let ley_ignore = ignore_builder
+        .build()
+        .map_err(|error| LeyCoreError::InvalidIgnoreRule {
+            path: ignore_path,
+            message: error.to_string(),
+        })?;
+
+    let mut candidates = BTreeMap::<String, u64>::new();
+    let mut skipped_symlinks = Vec::new();
+    let approved_paths = diagnostic
+        .capture
+        .approved_roots
+        .iter()
+        .map(|approved_root| {
+            checked_capture_root(root, approved_root)?;
+            Ok(normalized_capture_relative(approved_root))
+        })
+        .collect::<Result<Vec<_>, LeyCoreError>>()?;
+    let filter_root = root.clone();
+    let filter = ley_ignore.clone();
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .parents(false)
+        .hidden(false)
+        .ignore(false)
+        .git_ignore(diagnostic.capture.respect_gitignore)
+        .git_global(false)
+        .git_exclude(false)
+        .require_git(false)
+        .follow_links(false)
+        .sort_by_file_path(|left, right| left.cmp(right))
+        .filter_entry(move |entry| {
+            let Ok(relative) = entry.path().strip_prefix(&filter_root) else {
+                return false;
+            };
+            let is_in_scope = approved_paths
+                .iter()
+                .any(|approved| relative.starts_with(approved) || approved.starts_with(relative));
+            let is_directory = entry
+                .file_type()
+                .map(|file_type| file_type.is_dir())
+                .unwrap_or(false);
+            is_in_scope && !filter.matched(entry.path(), is_directory).is_ignore()
+        });
+
+    for result in builder.build() {
+        let entry = result.map_err(|error| LeyCoreError::CaptureWalk(error.to_string()))?;
+        if entry.depth() == 0 {
+            continue;
+        }
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(path).map_err(|source| LeyCoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let relative = capture_relative_path(root, path)?;
+        if metadata.file_type().is_symlink() {
+            skipped_symlinks.push(relative);
+        } else if metadata.is_file() {
+            candidates.insert(relative, metadata.len());
+        }
+    }
+
+    skipped_symlinks.sort();
+    skipped_symlinks.dedup();
+    let mut files = Vec::new();
+    let mut skipped_oversized = Vec::new();
+    let mut skipped_total_limit = Vec::new();
+    let mut included_bytes = 0_u64;
+    for (path, bytes) in candidates {
+        let file = CaptureFile { path, bytes };
+        if bytes > diagnostic.capture.max_file_bytes {
+            skipped_oversized.push(file);
+        } else if included_bytes.saturating_add(bytes) > diagnostic.capture.max_total_bytes {
+            skipped_total_limit.push(file);
+        } else {
+            included_bytes += bytes;
+            files.push(file);
+        }
+    }
+
+    Ok(CapturePreview {
+        root: diagnostic.root,
+        project_id: diagnostic.identity.project_id,
+        mode: diagnostic.capture.mode,
+        files,
+        included_bytes,
+        skipped_oversized,
+        skipped_total_limit,
+        skipped_symlinks,
+    })
+}
+
+fn checked_capture_root(project_root: &Path, relative: &str) -> Result<PathBuf, LeyCoreError> {
+    let mut current = project_root.to_path_buf();
+    for component in Path::new(relative).components() {
+        if component == Component::CurDir {
+            continue;
+        }
+        let Component::Normal(segment) = component else {
+            return Err(LeyCoreError::InvalidCapturePolicy(
+                "approvedRoots must contain safe project-relative paths".to_owned(),
+            ));
+        };
+        current.push(segment);
+        let metadata = fs::symlink_metadata(&current).map_err(|source| LeyCoreError::Io {
+            path: current.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(LeyCoreError::UnsafeProjectLayout(current));
+        }
+    }
+    Ok(current)
+}
+
+fn normalized_capture_relative(relative: &str) -> PathBuf {
+    Path::new(relative)
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(segment) => Some(segment),
+            Component::CurDir => None,
+            _ => unreachable!("capture policy was validated before normalization"),
+        })
+        .collect()
+}
+
+fn capture_relative_path(root: &Path, path: &Path) -> Result<String, LeyCoreError> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| LeyCoreError::UnsafeProjectLayout(path.to_path_buf()))?;
+    let value = relative
+        .to_str()
+        .ok_or_else(|| LeyCoreError::NonUtf8Path(relative.to_path_buf()))?;
+    Ok(value.replace(std::path::MAIN_SEPARATOR, "/"))
 }
 
 pub fn find_project_root(start: &Path) -> Result<PathBuf, LeyCoreError> {
@@ -504,6 +694,86 @@ mod tests {
             diagnose_project(directory.path()),
             Err(LeyCoreError::MetadataTooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn capture_preview_is_sorted_hermetic_and_layers_ignore_rules() {
+        let directory = tempdir().unwrap();
+        initialize_project(directory.path(), None, CaptureMode::Structured).unwrap();
+        fs::create_dir_all(directory.path().join(".github/workflows")).unwrap();
+        fs::create_dir_all(directory.path().join("target")).unwrap();
+        fs::write(directory.path().join("b.rs"), b"b").unwrap();
+        fs::write(directory.path().join("a.rs"), b"a").unwrap();
+        fs::write(directory.path().join("ignored.txt"), b"ignored").unwrap();
+        fs::write(directory.path().join(".env"), b"TOKEN=value").unwrap();
+        fs::write(directory.path().join("target/generated.rs"), b"generated").unwrap();
+        fs::write(
+            directory.path().join(".github/workflows/check.yml"),
+            b"name: check",
+        )
+        .unwrap();
+        fs::write(directory.path().join(".gitignore"), b"ignored.txt\n").unwrap();
+
+        let preview = preview_capture(directory.path()).unwrap();
+        let paths = preview
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec![".github/workflows/check.yml", ".gitignore", "a.rs", "b.rs"]
+        );
+        assert!(preview.skipped_oversized.is_empty());
+        assert!(preview.skipped_total_limit.is_empty());
+    }
+
+    #[test]
+    fn capture_preview_reports_limits_without_reading_file_contents() {
+        let directory = tempdir().unwrap();
+        initialize_project(directory.path(), None, CaptureMode::Structured).unwrap();
+        fs::create_dir(directory.path().join("src")).unwrap();
+        fs::write(directory.path().join("src/a.txt"), b"aaa").unwrap();
+        fs::write(directory.path().join("src/b.txt"), b"bbb").unwrap();
+        fs::write(directory.path().join("src/c.txt"), b"ccccc").unwrap();
+        fs::write(directory.path().join("src/ignored.txt"), b"ignored").unwrap();
+        fs::write(directory.path().join(".gitignore"), b"src/ignored.txt\n").unwrap();
+
+        let capture_path = directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE);
+        let mut capture: CapturePolicy = read_json(&capture_path).unwrap();
+        capture.approved_roots = vec!["src".to_owned()];
+        capture.max_file_bytes = 4;
+        capture.max_total_bytes = 4;
+        fs::write(&capture_path, serde_json::to_vec_pretty(&capture).unwrap()).unwrap();
+
+        let preview = preview_capture(directory.path()).unwrap();
+        assert_eq!(
+            preview.files,
+            vec![CaptureFile {
+                path: "src/a.txt".to_owned(),
+                bytes: 3
+            }]
+        );
+        assert_eq!(
+            preview.skipped_total_limit,
+            vec![CaptureFile {
+                path: "src/b.txt".to_owned(),
+                bytes: 3
+            }]
+        );
+        assert_eq!(
+            preview.skipped_oversized,
+            vec![CaptureFile {
+                path: "src/c.txt".to_owned(),
+                bytes: 5
+            }]
+        );
+        assert!(!preview
+            .files
+            .iter()
+            .chain(&preview.skipped_oversized)
+            .chain(&preview.skipped_total_limit)
+            .any(|file| file.path == "src/ignored.txt"));
     }
 
     #[cfg(unix)]

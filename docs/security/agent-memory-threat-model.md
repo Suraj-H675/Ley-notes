@@ -23,13 +23,14 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 
 | Threat | Initial control | Required future proof |
 | --- | --- | --- |
-| Scanning outside the project | Only project-relative approved roots; reject root, prefix, and parent components; refuse symlinked `.ley` metadata | Scanner canonical-containment tests including content symlinks and Windows prefixes |
+| Scanning outside the project | Only project-relative approved roots; reject root, prefix, and parent components; refuse symlinked metadata/approved roots; never follow content symlinks | Windows-prefix and filesystem-race tests before content ingestion |
 | Metadata memory exhaustion | Regular metadata files are limited to 1 MiB before reading | Fuzz malformed and boundary-sized metadata |
 | Partial/corrupt initialization | Stage the complete `.ley/` directory and atomically rename | Crash/fault-injection test |
 | Capture escalation on repeat init | Existing identity and policy are read without rewriting | Explicit, reviewed policy-update command |
 | Raw transcript capture without consent | Only Full Evidence may enable it | UI/CLI confirmation and adapter enforcement |
 | Secret collection | Credential-container ignore defaults | Content redaction, entropy/signature detection, preview, audit |
 | Legitimate code hidden by broad ignores | No wildcard `secret`/`credential` terms | Git-compatible matcher conformance fixtures |
+| Machine-dependent capture | Parent/global Git excludes and generic `.ignore` files are disabled; output paths are sorted | Cross-platform golden preview fixtures |
 | Project identity collision | Random UUID-backed `prj_` identifier | Collision test and duplicate-binding diagnosis |
 | Cross-project memory access | Project ID required at every future storage/query boundary | Multi-project adversarial tests |
 | Prompt injection in stored material | Stored text remains untrusted evidence | Typed context envelope and agent-facing injection warnings |

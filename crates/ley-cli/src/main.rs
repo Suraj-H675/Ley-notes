@@ -1,4 +1,4 @@
-use ley_core::{diagnose_project, initialize_project, CaptureMode, LeyCoreError};
+use ley_core::{diagnose_project, initialize_project, preview_capture, CaptureMode, LeyCoreError};
 use std::env;
 use std::path::PathBuf;
 
@@ -17,6 +17,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
     match command {
         "init" => initialize(&arguments[1..]),
         "doctor" => doctor(&arguments[1..]),
+        "preview" => preview(&arguments[1..]),
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())
@@ -27,6 +28,44 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         }
         other => Err(CliError::Usage(format!("unknown command '{other}'"))),
     }
+}
+
+fn preview(arguments: &[String]) -> Result<(), CliError> {
+    let mut path = None;
+    let mut json = false;
+    for argument in arguments {
+        match argument.as_str() {
+            "--json" => json = true,
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown option '{value}'")))
+            }
+            value if path.is_none() => path = Some(PathBuf::from(value)),
+            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+        }
+    }
+    let start = path.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+    let result = preview_capture(start)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).expect("CLI result is serializable")
+        );
+    } else {
+        println!("Capture preview: {}", result.project_id);
+        println!("Mode: {}", result.mode);
+        println!(
+            "Included: {} files / {} bytes",
+            result.files.len(),
+            result.included_bytes
+        );
+        for file in &result.files {
+            println!("  {} ({} bytes)", file.path, file.bytes);
+        }
+        println!("Oversized: {}", result.skipped_oversized.len());
+        println!("Over total limit: {}", result.skipped_total_limit.len());
+        println!("Symlinks skipped: {}", result.skipped_symlinks.len());
+    }
+    Ok(())
 }
 
 fn initialize(arguments: &[String]) -> Result<(), CliError> {
@@ -140,6 +179,7 @@ fn print_help() {
     println!("Usage:");
     println!("  ley init [path] [--name NAME] [--capture minimal|structured|full] [--json]");
     println!("  ley doctor [path] [--json]");
+    println!("  ley preview [path] [--json]");
     println!();
     println!(
         "Structured capture is the default. Full evidence explicitly enables raw transcripts."
