@@ -28,6 +28,7 @@ import {
   BROWSER_LOCAL_KIND,
   clearActiveVaultData,
   markActiveDataKind,
+  requestBrowserStoragePersistence,
   restoreBrowserLocalVault,
   stashBrowserLocalVault,
 } from '@/infrastructure/database/browser-local-vault';
@@ -209,6 +210,7 @@ export function App() {
     setVaultError(null);
     try {
       deactivateFilesystemVault();
+      await requestBrowserStoragePersistence();
       await ensureBrowserLocalData();
       useNavStore.getState().reset();
       localStorage.setItem(WEB_VAULT_MODE_KEY, 'browser-local');

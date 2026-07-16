@@ -1,6 +1,6 @@
 # Agent memory as a local second brain
 
-Status: architecture proposal; product decisions marked **Open** must be confirmed before implementation.
+Status: approved architecture direction. The four product decisions were confirmed on 2026-07-16.
 
 ## Executive decision
 
@@ -8,6 +8,8 @@ Ley should become one local knowledge system with two authors:
 
 1. humans write durable notes, properties, links, canvases, and collections;
 2. agents append evidence-backed project and session memory through a local integration.
+
+In simple product language: **Ley remembers what happened across a user's agent sessions and gives future agents the relevant evidence, so they can continue the work instead of starting over or guessing.** Ley should reduce forgetting and unsupported hallucination through durable capture, citations, contradiction checks, freshness, and explicit uncertainty. It must not promise that any LLM can literally never forget or hallucinate; unsupported claims should instead be detectable and visibly unsupported.
 
 The correct integration is not “MCP or a plugin.” It is a layered package:
 
@@ -418,9 +420,9 @@ Measure recall@k, citation precision, answer key-fact coverage, stale/conflict a
 - [Mem0 long-term memory paper](https://arxiv.org/abs/2504.19413)
 - Local Graphify reference: `ref/graphify/README.md`, `BENCHMARKS.md`, `graphify/serve.py`, and `graphify/reflect.py`
 
-## Open product decisions
+## Confirmed product decisions
 
-1. **Cloud-agent boundary:** approve the rule “Ley never uploads; context is shared with Claude/Codex/etc. only when the user intentionally invokes that agent,” rather than requiring the entire model to run locally.
-2. **Capture default:** approve Structured capture as default, with Minimal and opt-in Full Evidence modes, rather than storing complete raw transcripts automatically.
-3. **Memory review:** approve a separate Agent Memory namespace with a review/promote workflow, rather than writing every agent inference directly into ordinary notes.
-4. **Project binding:** approve central durable memory in the chosen Ley filesystem vault plus a minimal `.ley/` identity/policy folder in each initialized repository.
+1. **Cloud-agent boundary:** Ley never uploads independently. Context is shared with Claude, Codex, or another cloud agent only when the user intentionally invokes that agent. Fully local model inference remains possible later, but is not required for ordinary cloud-agent integration.
+2. **Capture default:** Structured capture is the default, with Minimal and opt-in Full Evidence modes. Complete raw transcripts are not stored automatically.
+3. **Memory review:** agent-generated memory remains in a separate Agent Memory namespace with review and promotion into ordinary notes.
+4. **Project binding:** durable memory lives centrally in the chosen Ley filesystem vault; each initialized repository contains only a minimal `.ley/` identity and capture-policy folder.

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import { BookOpen, Bookmark, Edit3, FileText, Paperclip } from 'lucide-react';
+import { BookOpen, Bookmark, Code2, Eye, FileText, Paperclip } from 'lucide-react';
 import type { Page } from '@/infrastructure/database/schema';
 import { renamePage } from '@/core/vault/pages';
 import { PropertiesPanel } from './PropertiesPanel';
@@ -12,9 +12,19 @@ const MarkdownReadingView = lazy(() => import('./MarkdownReadingView').then((mod
 const CodeMirrorEditor = lazy(() => import('./CodeMirrorEditor').then((module) => ({ default: module.CodeMirrorEditor })));
 
 type EditorMode = 'edit' | 'read';
+type EditingStyle = 'live' | 'source';
+
+function storedEditorMode(): EditorMode {
+  return localStorage.getItem('ley:editor-mode') === 'read' ? 'read' : 'edit';
+}
+
+function storedEditingStyle(): EditingStyle {
+  return localStorage.getItem('ley:editor-style') === 'source' ? 'source' : 'live';
+}
 
 export function NoteWorkspace({ page, pane }: { page: Page; pane: EditorPane }) {
-  const [mode, setMode] = useState<EditorMode>(() => (localStorage.getItem('ley:editor-mode') as EditorMode) || 'edit');
+  const [mode, setMode] = useState<EditorMode>(storedEditorMode);
+  const [editingStyle, setEditingStyle] = useState<EditingStyle>(storedEditingStyle);
   const [title, setTitle] = useState(page.title);
   const [titleError, setTitleError] = useState<string | null>(null);
   const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
@@ -36,6 +46,12 @@ export function NoteWorkspace({ page, pane }: { page: Page; pane: EditorPane }) 
   function changeMode(next: EditorMode) {
     setMode(next);
     localStorage.setItem('ley:editor-mode', next);
+  }
+
+  function changeEditingStyle(next: EditingStyle) {
+    setEditingStyle(next);
+    localStorage.setItem('ley:editor-style', next);
+    changeMode('edit');
   }
 
   async function attachFiles(files: File[]) {
@@ -90,14 +106,15 @@ export function NoteWorkspace({ page, pane }: { page: Page; pane: EditorPane }) 
           <Paperclip size={12} /> <span className="hidden sm:inline">{attachmentStatus ?? 'Attach'}</span>
         </button>
         <div className="flex rounded-md border border-border bg-surface-1 p-0.5">
-          <ModeButton active={mode === 'edit'} onClick={() => changeMode('edit')} icon={<Edit3 size={12} />} label="Edit" />
+          <ModeButton active={mode === 'edit' && editingStyle === 'live'} onClick={() => changeEditingStyle('live')} icon={<Eye size={12} />} label="Live preview" />
+          <ModeButton active={mode === 'edit' && editingStyle === 'source'} onClick={() => changeEditingStyle('source')} icon={<Code2 size={12} />} label="Source" />
           <ModeButton active={mode === 'read'} onClick={() => changeMode('read')} icon={<BookOpen size={12} />} label="Read" />
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         <PropertiesPanel key={JSON.stringify(page.frontmatter)} pageId={page.id} frontmatter={page.frontmatter} />
         {mode === 'edit'
-          ? <div className="mx-auto min-h-[240px] w-full max-w-[900px] flex-1"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} pagePath={page.path} initialContent={page.content} pane={pane} /></Suspense></div>
+          ? <div className="mx-auto min-h-[240px] w-full max-w-[900px] flex-1"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} pagePath={page.path} initialContent={page.content} pane={pane} livePreview={editingStyle === 'live'} /></Suspense></div>
           : <Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Rendering note…</div>}><MarkdownReadingView pageId={page.id} pagePath={page.path} content={page.content} pane={pane} /></Suspense>}
       </div>
     </div>

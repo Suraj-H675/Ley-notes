@@ -20,6 +20,7 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Browser-local → folder → browser-local transitions preserve local pages, attachments, revisions, and deleted notes while folder data is active only as a disposable projection.
 - Rescanning the same folder preserves page IDs; changing folders does not preserve IDs or cache-only revision state.
 - A native external `.md` create/edit/delete emits a vault-change event; hidden files, unrelated extensions, and Ley's own atomic writes do not produce a user-visible refresh.
+- Selecting browser-local compatibility mode requests persistent browser storage without blocking startup when the browser declines or lacks the API. Settings describes persistent versus best-effort storage honestly and keeps ZIP backup controls visible.
 
 ## Workspace
 
@@ -39,6 +40,9 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 
 ## Authoring story
 
+- Live Preview is the default editing style. Inactive heading, emphasis, inline-code, wiki-link, Markdown-link, task, quote, and horizontal-rule syntax renders as readable content; the active line reveals its exact Markdown source.
+- Inactive Markdown tasks become accessible checkboxes. Toggling one updates authoritative `[ ]`/`[x]` text immediately; Source exposes the exact change, and both the Markdown and selected editing style survive reload.
+- Live Preview, Source, and Reading remain distinct at desktop and 390 px widths. The narrow workspace has no horizontal document overflow and the editor remains vertically scrollable.
 - Formatting buttons preserve the editor selection; Ctrl/Cmd+B, Ctrl/Cmd+I, Ctrl/Cmd+K, and Ctrl/Cmd+Shift+backtick invoke the same transactions.
 - Typing `[[` exposes recent note suggestions; typing a partial title filters them.
 - Enter and Tab accept a completion and keep the current note open.

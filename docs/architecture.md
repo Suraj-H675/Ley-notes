@@ -9,6 +9,8 @@ Ley ships one product through two runtimes:
 
 The public website and workspace share the same Vite build but have separate entry routes. `/` is the website and `/app` is the workspace; Tauri always mounts the workspace.
 
+All surfaces follow the [local storage and data boundaries](privacy-and-storage.md). Application assets may be delivered from the web, while knowledge data remains on-device. Context is shown to a cloud agent only when the user intentionally asks that agent to retrieve it.
+
 ## Source boundaries
 
 | Directory            | Responsibility                                                         | May depend on                               |

@@ -26,9 +26,10 @@ interface CodeMirrorEditorProps {
   pagePath: string;
   initialContent: string;
   pane: EditorPane;
+  livePreview: boolean;
 }
 
-export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, livePreview }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<EditorController | null>(null);
   const dirtyRef = useRef(false);
@@ -54,6 +55,7 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane }: Cod
 
     const controller = mountEditor(containerRef.current, {
       initialDoc: initialContent,
+      livePreview,
       onChange: (value) => {
         if (syncingRef.current) return;
         dirtyRef.current = true;
@@ -129,6 +131,10 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane }: Cod
     // re-binding on every change is unnecessary churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageId, pagePath]);
+
+  useEffect(() => {
+    controllerRef.current?.setLivePreview(livePreview);
+  }, [livePreview]);
 
   useEffect(() => {
     const controller = controllerRef.current;

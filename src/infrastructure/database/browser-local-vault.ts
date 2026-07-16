@@ -5,6 +5,25 @@ import type { Asset, Page, Revision } from './schema';
 
 const ACTIVE_DATA_KIND = 'active-data-kind';
 export const BROWSER_LOCAL_KIND = 'browser-local';
+export type BrowserStoragePersistence = 'persistent' | 'best-effort' | 'unavailable';
+
+export async function browserStoragePersistenceStatus(): Promise<BrowserStoragePersistence> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.persisted) return 'unavailable';
+  try {
+    return await navigator.storage.persisted() ? 'persistent' : 'best-effort';
+  } catch {
+    return 'unavailable';
+  }
+}
+
+export async function requestBrowserStoragePersistence(): Promise<BrowserStoragePersistence> {
+  if (typeof navigator === 'undefined' || !navigator.storage?.persist) return 'unavailable';
+  try {
+    return await navigator.storage.persist() ? 'persistent' : 'best-effort';
+  } catch {
+    return 'unavailable';
+  }
+}
 
 export async function activeDataKind(): Promise<string | null> {
   const value = (await db.settings.get(ACTIVE_DATA_KIND))?.value;

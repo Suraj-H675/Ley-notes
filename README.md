@@ -2,6 +2,8 @@
 
 Ley is a local-first knowledge workspace for durable Markdown notes, wiki links, backlinks, search, and visual graph exploration. It runs as a native desktop application and as an installable web app.
 
+Knowledge data stays on the user's device. Ley has no note backend, mandatory account, analytics, or telemetry. Context is shared with a cloud agent only when the user intentionally asks that agent to retrieve it. See [Local storage and data boundaries](docs/privacy-and-storage.md).
+
 The desktop app and supported browsers open a real folder as a vault. Markdown files remain the source of truth; the local database is a rebuildable index for search, links, tags, graph data, and recovery snapshots.
 
 ## Product capabilities

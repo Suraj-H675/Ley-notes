@@ -13,10 +13,11 @@
  * component so it can be reused in previews, the search modal, etc.
  */
 
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap, highlightActiveLine, drawSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
+import { GFM } from '@lezer/markdown';
 import {
   syntaxHighlighting,
   defaultHighlightStyle,
@@ -29,12 +30,15 @@ import { highlightSelectionMatches, openSearchPanel, search, searchKeymap } from
 
 import { markdownLinkNavigation, wikiLinkDecoration, wikiLinkAutocomplete } from './extensions/wiki-links';
 import { applyEditorFormat, editorFormattingKeymap, type EditorFormat } from './formatting';
+import { livePreviewExtension } from './extensions/live-preview';
 
 export interface MountOptions {
   initialDoc: string;
   onChange: (value: string) => void;
   /** When true, hide line numbers (used in compact cards). */
   compact?: boolean;
+  /** Conceal inactive Markdown syntax while retaining an editable source document. */
+  livePreview?: boolean;
 }
 
 export interface EditorController {
@@ -44,6 +48,7 @@ export interface EditorController {
   insertText: (value: string) => void;
   format: (format: EditorFormat) => void;
   openSearch: () => void;
+  setLivePreview: (value: boolean) => void;
   focus: () => void;
   destroy: () => void;
 }
@@ -78,6 +83,39 @@ const cmTheme = EditorView.theme({
   },
   '.cm-activeLine': {
     backgroundColor: 'hsl(var(--surface-1) / 0.4)',
+  },
+  '.cm-live-heading': {
+    fontWeight: '650',
+    lineHeight: '1.45',
+  },
+  '.cm-live-heading-1': { fontSize: '1.8em', paddingTop: '0.65em' },
+  '.cm-live-heading-2': { fontSize: '1.5em', paddingTop: '0.55em' },
+  '.cm-live-heading-3': { fontSize: '1.25em', paddingTop: '0.45em' },
+  '.cm-live-heading-4': { fontSize: '1.1em', paddingTop: '0.35em' },
+  '.cm-live-blockquote': {
+    borderLeft: '3px solid hsl(var(--secondary) / 0.55)',
+    color: 'hsl(var(--muted-foreground-strong))',
+    paddingLeft: '13px',
+  },
+  '.cm-live-horizontal-rule': {
+    minHeight: '1.5em',
+    margin: '0.6em 16px',
+    borderTop: '1px solid hsl(var(--border))',
+    padding: '0',
+  },
+  '.cm-live-task': {
+    display: 'inline-flex',
+    width: '1.45em',
+    alignItems: 'center',
+    justifyContent: 'center',
+    verticalAlign: 'middle',
+  },
+  '.cm-live-task input': {
+    width: '14px',
+    height: '14px',
+    margin: '0',
+    accentColor: 'hsl(var(--primary))',
+    cursor: 'pointer',
   },
   '.cm-cursor': {
     borderLeftColor: 'hsl(var(--foreground))',
@@ -226,6 +264,10 @@ const cmHighlight = HighlightStyle.define([
     fontStyle: 'italic',
   },
   {
+    tag: t.strikethrough,
+    textDecoration: 'line-through',
+  },
+  {
     tag: t.monospace,
     color: 'hsl(var(--secondary-foreground))',
     backgroundColor: 'hsl(var(--muted))',
@@ -235,6 +277,7 @@ const cmHighlight = HighlightStyle.define([
 ]);
 
 export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorController {
+  const livePreviewCompartment = new Compartment();
   const state = EditorState.create({
     doc: opts.initialDoc,
     extensions: [
@@ -247,7 +290,8 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       search({ top: true }),
       highlightSelectionMatches({ highlightWordAroundCursor: true }),
       keymap.of([...editorFormattingKeymap(), ...searchKeymap.filter((binding) => binding.key !== 'Mod-d'), ...defaultKeymap, ...historyKeymap, indentWithTab]),
-      markdown(),
+      markdown({ extensions: GFM }),
+      livePreviewCompartment.of(opts.livePreview === false ? [] : livePreviewExtension()),
       syntaxHighlighting(cmHighlight),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       cmTheme,
@@ -280,6 +324,9 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
     },
     format: (format) => { applyEditorFormat(view, format); },
     openSearch: () => { openSearchPanel(view); },
+    setLivePreview: (value) => {
+      view.dispatch({ effects: livePreviewCompartment.reconfigure(value ? livePreviewExtension() : []) });
+    },
     focus: () => view.focus(),
     destroy: () => view.destroy(),
   };

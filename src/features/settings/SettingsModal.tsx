@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, Download, FolderOpen, RefreshCw, Repeat2, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { X, Download, FolderOpen, RefreshCw, Repeat2, RotateCcw, ShieldCheck, Trash2, Upload } from 'lucide-react';
 import { db } from '@/infrastructure/database/db';
 import { useUIStore, type Theme } from '@/shared/state/ui';
 import { exportVault } from '@/core/vault/export';
@@ -17,6 +17,11 @@ import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
 import { listVaultTemplates } from '@/core/vault/templates';
 import { format as formatDate } from 'date-fns';
 import { listDeletedPages, permanentlyDeletePage, restorePage } from '@/core/vault/pages';
+import {
+  browserStoragePersistenceStatus,
+  requestBrowserStoragePersistence,
+  type BrowserStoragePersistence,
+} from '@/infrastructure/database/browser-local-vault';
 
 export function SettingsModal({
   open,
@@ -44,6 +49,7 @@ export function SettingsModal({
   const [eraseArmed, setEraseArmed] = useState<string | null>(null);
   const [vaultActionStatus, setVaultActionStatus] = useState<string | null>(null);
   const [vaultActionBusy, setVaultActionBusy] = useState(false);
+  const [storagePersistence, setStoragePersistence] = useState<BrowserStoragePersistence>('unavailable');
   const eraseTimer = useRef<number | null>(null);
   const filesystemVault = vaultMode !== 'browser-local';
 
@@ -65,6 +71,12 @@ export function SettingsModal({
   useEffect(() => () => {
     if (eraseTimer.current !== null) window.clearTimeout(eraseTimer.current);
   }, []);
+
+  useEffect(() => {
+    if (open && vaultMode === 'browser-local') {
+      void browserStoragePersistenceStatus().then(setStoragePersistence);
+    }
+  }, [open, vaultMode]);
 
   if (!open) return null;
 
@@ -268,6 +280,11 @@ export function SettingsModal({
             </div>
             <div className="mt-1 text-micro text-muted-foreground">
               Exports use Obsidian-compatible folders (.md files). Imports accept any Obsidian vault ZIP.
+            </div>
+            <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3 text-meta text-muted-foreground">
+              <div className="flex items-center gap-2 font-medium text-foreground"><ShieldCheck size={14} className="text-secondary" />On-device browser storage</div>
+              <p className="mt-1 leading-relaxed">Ley stores this vault on this device. {storagePersistence === 'persistent' ? 'This browser has protected Ley from automatic storage cleanup.' : 'Your browser may clear this vault under storage pressure or when site data is removed, so keep ZIP backups.'}</p>
+              {storagePersistence === 'best-effort' && <button type="button" onClick={() => void requestBrowserStoragePersistence().then(setStoragePersistence)} className="mt-3 rounded-md border border-border bg-background px-2.5 py-1.5 text-meta text-foreground hover:bg-surface-3">Protect local storage</button>}
             </div>
             {transferStatus && <div className="mt-1 text-meta text-secondary" role="status">{transferStatus}</div>}
             </>}
