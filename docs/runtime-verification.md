@@ -29,6 +29,14 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Every modal moves focus inside, traps Tab navigation, closes on Escape, and restores focus to its launcher.
 - A failure in editor, graph, canvas, or settings is contained by a feature recovery boundary and never invalidates vault data.
 
+## JSON Canvas
+
+- Create a canvas with a named group, two text cards, a note card, and an HTTP(S) link card. Rename/edit each applicable card and confirm note/link activation reaches the intended destination.
+- Connect two distinct handles with the two-click flow and with a drag gesture. The connection uses the chosen sides, renders an arrow, accepts a label and JSON Canvas preset color, remains keyboard-selectable, and deletes from its inspector.
+- Resize a card and group. Width and height never fall below the type-specific minimum or become non-finite, and connection endpoints continue to follow the document geometry.
+- Save, close, reload, and reopen: card types/content, positions, dimensions, group label, edge label/sides/endpoints/color, and array order remain unchanged. An imported JSON Canvas 1.0 file with `subpath`, group background metadata, and custom colors survives a save round-trip.
+- At 390×844, canvas tabs are horizontally reachable, the tool shelf scrolls independently, the graph area retains useful height, Fit View can zoom below 0.5×, every card is reachable, and the document has no horizontal overflow.
+
 ## Authoring story
 
 - Formatting buttons preserve the editor selection; Ctrl/Cmd+B, Ctrl/Cmd+I, Ctrl/Cmd+K, and Ctrl/Cmd+Shift+backtick invoke the same transactions.

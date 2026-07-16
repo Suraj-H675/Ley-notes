@@ -22,7 +22,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Resizable side-by-side note panes with pane-local linking, responsive focus, and vault-scoped restoration of tabs, panes, focus, and recents
 - Named, vault-scoped workspace layouts that restore tabs, split panes, focus, sidebars, dock context, and divider width
 - Global and contextual knowledge graphs with deterministic layouts and community coloring
-- Interoperable JSON Canvas files with text cards, note cards, connections, and trash recovery
+- Interoperable JSON Canvas files with text, note, link, and group cards; resizing, colors, labeled directional connections, and trash recovery
 - Vault-native templates for new notes and daily notes
 - Sparse local revision snapshots with a user-facing recovery panel
 - Offline-capable PWA and a separate public website

@@ -11,15 +11,15 @@ The public website and workspace share the same Vite build but have separate ent
 
 ## Source boundaries
 
-| Directory | Responsibility | May depend on |
-| --- | --- | --- |
-| `src/core` | Markdown parsing, links, graph construction, indexes, vault operations | data types and small shared utilities |
-| `src/features` | Complete user-facing capabilities | core, infrastructure gateways, shared |
-| `src/infrastructure` | Dexie persistence and native/browser filesystem integration | core parsers/index builders, shared |
-| `src/app` | Runtime initialization and feature composition | all application modules |
-| `src/shared` | Product-agnostic components, hooks, state, and utilities | third-party primitives only |
-| `src/website` | Public site | shared presentation primitives where useful |
-| `src-tauri` | Confined native filesystem operations and desktop packaging | Rust/Tauri only |
+| Directory            | Responsibility                                                         | May depend on                               |
+| -------------------- | ---------------------------------------------------------------------- | ------------------------------------------- |
+| `src/core`           | Markdown parsing, links, graph construction, indexes, vault operations | data types and small shared utilities       |
+| `src/features`       | Complete user-facing capabilities                                      | core, infrastructure gateways, shared       |
+| `src/infrastructure` | Dexie persistence and native/browser filesystem integration            | core parsers/index builders, shared         |
+| `src/app`            | Runtime initialization and feature composition                         | all application modules                     |
+| `src/shared`         | Product-agnostic components, hooks, state, and utilities               | third-party primitives only                 |
+| `src/website`        | Public site                                                            | shared presentation primitives where useful |
+| `src-tauri`          | Confined native filesystem operations and desktop packaging            | Rust/Tauri only                             |
 
 Feature-specific hooks are colocated with their feature. Only genuinely reusable hooks belong in `shared/hooks`. Tests for pure domain behavior remain beside the module they verify.
 
@@ -42,7 +42,7 @@ Editor content writes are serialized per note. A rapid later save cannot be over
 
 Cell-level property mutations also join the per-note mutation queue and merge against the newest projected frontmatter inside that queue. Two collection cells, the properties panel, and an editor autosave therefore cannot overwrite one another with stale object snapshots.
 
-Renames move the file and retarget incoming wiki links. Ordinary relative Markdown links are resolved by vault path, indexed as backlinks and graph edges, and rewritten when either their source or target moves so their filesystem meaning remains stable. Folder moves preserve note identity and titles, so links and note bookmarks remain valid; duplicates receive an independent title/path and intentionally drop aliases to avoid ambiguous resolution. Deletes move filesystem notes into `.trash`; browser-local notes use a recoverable soft-delete marker and expose restore/permanent-delete controls. Binary attachments live under `attachments/` and are constrained by extension, size, and safe relative paths. Interoperable JSON Canvas documents live under `canvases/` and use the same atomic-write and trash lifecycle. All native relative paths reject absolute paths and traversal segments.
+Renames move the file and retarget incoming wiki links. Ordinary relative Markdown links are resolved by vault path, indexed as backlinks and graph edges, and rewritten when either their source or target moves so their filesystem meaning remains stable. Folder moves preserve note identity and titles, so links and note bookmarks remain valid; duplicates receive an independent title/path and intentionally drop aliases to avoid ambiguous resolution. Deletes move filesystem notes into `.trash`; browser-local notes use a recoverable soft-delete marker and expose restore/permanent-delete controls. Binary attachments live under `attachments/` and are constrained by extension, size, and safe relative paths. Interoperable JSON Canvas documents live under `canvases/` and use the same atomic-write and trash lifecycle. Ley normalizes all JSON Canvas 1.0 text, file, link, and group nodes plus file subpaths, group background metadata, colors, edge sides, endpoint styles, and labels; malformed geometry and dangling edges are excluded before rendering or saving. Spatial edge paths are derived from document coordinates so resize, pan, zoom, reload, and cross-app imports do not depend on transient renderer measurements. All native relative paths reject absolute paths and traversal segments.
 
 Workspace metadata is namespaced by the active vault identity. Desktop vaults use their full path, browser-local uses a dedicated identity, and browser directory handles receive a persisted random ID rather than relying on a potentially colliding folder name. Note bookmarks, destination bookmarks, saved searches, named workspace layouts, and navigation sessions therefore never cross vault boundaries. Saved searches are validated setting records rather than hidden note files, because they describe Ley workspace retrieval rather than user-authored knowledge. Their optional collection configuration contains presentation-only column IDs and sort direction; every displayed value is still read from Markdown/YAML. Heading and block bookmarks resolve a note by stable page ID and then path; heading text and explicit `^block-id` anchors provide the durable in-note destination. Creating a block bookmark writes that portable identity into authoritative Markdown instead of storing a fragile line offset. Missing-note bookmarks remain visible and recover automatically if the note returns. Navigation sessions store both stable page IDs and paths, restore tab order, primary and secondary panes, focused pane, and recents, and discard references to deleted or unavailable notes. Named layouts reuse that resilient note-reference contract and add presentation-only sidebar visibility, right-dock context, and split width; loading drops missing notes and refuses to replace the live arrangement when every reference is stale. Editor insert/jump events carry their page identity, and link opens carry their source pane, so two mounted editors cannot receive one another's commands.
 

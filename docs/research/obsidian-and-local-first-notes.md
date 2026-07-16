@@ -48,6 +48,10 @@ Obsidian's [Bookmarks](https://obsidian.md/help/plugins/bookmarks) and [Workspac
 - Recovery is visible to users and uses the normal save pipeline.
 - Canvas, embeds, templates, attachments, and extensibility should build on the same vault contract rather than introducing parallel storage systems.
 
+### Canvas interoperability
+
+Obsidian Canvas is an infinite spatial surface for text, notes/files, web references, media, groups, and labeled directional connections. Ley follows the open [JSON Canvas 1.0 specification](https://jsoncanvas.org/spec/1.0/) for its persisted model rather than inventing a private board format. Standard group/background fields and file subpaths are preserved even where Ley intentionally delays rendering a capability until the native and browser vault layers can implement it safely.
+
 ## Product quality bar
 
 A feature is complete only when it performs real persistence, is reachable through the interface, handles an empty vault, and behaves consistently in the desktop and applicable web runtime. A passing unit test alone is not a product feature.
