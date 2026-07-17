@@ -44,4 +44,4 @@ The command-line interface (CLI) supports manual start, checkpoint, finish, list
 - Immutable history makes later correction and supersession explicit
 - Derived Markdown is reviewable in a filesystem vault but should not be edited as the source of truth
 - A filesystem vault is required for external agent capture; browser-local IndexedDB cannot serve a local agent process
-- Version 1 does not yet create trusted learnings or parse host sessions automatically; MCP writes require the explicit ADR 0008 startup opt-in
+- Session capture does not trust its own claims; the separate [ADR 0009](0009-evidence-backed-learning-ledger.md) review ledger creates project learnings, while automatic host parsing remains a later adapter concern

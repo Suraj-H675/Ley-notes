@@ -11,6 +11,7 @@ use uuid::Uuid;
 mod binding;
 mod graph;
 mod ingestion;
+mod learning;
 mod retrieval;
 mod session;
 mod session_context;
@@ -28,6 +29,15 @@ pub use ingestion::{
     ingest_project, read_project_graph, ArtifactKind, ArtifactRecord, ArtifactSkipReason,
     IngestionResult, RedactionFinding, RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY,
     ARTIFACT_MANIFEST_LIMIT_BYTES, ARTIFACT_MANIFEST_SCHEMA_VERSION,
+};
+pub use learning::{
+    correct_learning, generate_learning_request_id, learning_review_inbox, list_learnings,
+    propose_learning, read_learning, review_learning, CorrectLearningInput, LearningActor,
+    LearningEvidence, LearningEvidenceInput, LearningFeedbackAction, LearningFreshness,
+    LearningIndex, LearningKind, LearningMutation, LearningProvenance, LearningRecord,
+    LearningRedaction, LearningReviewEntry, LearningState, LearningSummary, LearningTrustState,
+    ProposeLearningInput, ReviewLearningInput, LEARNING_EVENT_LIMIT, LEARNING_EVENT_LIMIT_BYTES,
+    LEARNING_INDEX_LIMIT_BYTES, LEARNING_SCHEMA_VERSION,
 };
 pub use retrieval::{
     find_project_context, find_project_graph_path, project_memory_overview, read_project_evidence,
@@ -228,6 +238,14 @@ pub enum LeyCoreError {
     SessionNotFound(String),
     #[error("session request ID was reused with different content: {0}")]
     SessionIdempotencyConflict(String),
+    #[error("invalid Ley learning store: {0}")]
+    InvalidLearningStore(String),
+    #[error("invalid Ley learning request: {0}")]
+    InvalidLearningRequest(String),
+    #[error("Ley learning not found: {0}")]
+    LearningNotFound(String),
+    #[error("learning request ID was reused with different content: {0}")]
+    LearningIdempotencyConflict(String),
     #[error("unsafe Ley project layout at {0}")]
     UnsafeProjectLayout(PathBuf),
     #[error("Ley metadata exceeds the {limit_bytes}-byte limit: {path}")]

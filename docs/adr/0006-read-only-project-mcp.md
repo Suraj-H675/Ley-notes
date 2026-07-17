@@ -42,6 +42,6 @@ Read operations open existing capability-scoped store directories without creati
 
 - A host configuration is the user-visible authorization boundary: one command starts one project-scoped process.
 - The model never needs a vault path and cannot switch projects through prompt-controlled tool arguments.
-- Context is useful but deliberately incomplete. Session writes require the ADR 0008 startup opt-in; learnings, corrections, temporal reranking, and local embeddings remain later slices.
+- Context is useful but deliberately incomplete. Session writes require the ADR 0008 startup opt-in. The ADR 0009 learning ledger now exists behind the local core and CLI; bounded MCP learning retrieval/proposal, temporal reranking, and local embeddings remain later slices.
 - Lexical token counts are conservative estimates, not tokenizer-specific guarantees; retrieval evaluation remains follow-up hardening.
 - A cloud agent may send intentionally retrieved context to its provider even though Ley's own storage and server remain local.

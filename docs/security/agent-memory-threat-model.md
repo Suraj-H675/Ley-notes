@@ -1,6 +1,6 @@
 # Agent memory threat model
 
-Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project read-only MCP retrieval, and structured session lifecycle.
+Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project MCP retrieval, opt-in structured session capture, and evidence-backed learning review.
 
 ## Assets
 
@@ -61,7 +61,9 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Uncited session artifact claims | Touched paths become current-snapshot citations with post-redaction content hash and line range | Source-change and deleted-artifact scenarios |
 | Session history corruption | Strict schemas, IDs, request fingerprints, timestamps, record IDs, limits, and event ordering are verified on every read | Property tests and malformed-event fuzzing |
 | Stored session prompt injection | Session packs use an `untrusted-agent-memory` boundary and repeat a non-instruction warning; MCP never promotes memory into server instructions | Injection corpus across goals, decisions, problems, final responses, and handoffs |
-| Memory poisoning | No inference becomes trusted automatically | Provenance, review, correction, corroboration, supersession |
+| Memory poisoning | Every proposal cites an existing session record and starts review-required; actor/provenance must agree; only user confirmation grants trust; agent review authority is bounded | Provenance, review, correction, corroboration, supersession, forged-authority corpus |
+| Stale trusted lessons | Artifact citations pin post-redaction hashes; changed/deleted sources return trusted lessons to the review inbox | Modify, rename, and delete cited artifacts across ingestion |
+| Learning history loss or forgery | Immutable deterministic events, request fingerprints, contiguous replay, atomic projections, private file modes, symlink rejection, and a cross-process writer lock | Retry conflicts, corruption, interrupted projection, and concurrent-proposal tests |
 | Ambient MCP write authority | Session write routes are absent by default and require `--allow-session-writes` at process startup; stored content cannot enable them; writes are append-only and idempotent | Actual-host permission UX and adversarial injection tests |
 | Local MCP compromise | Local stdio only; exact host launch command; fixed project scope; no Roots, sampling, network listener, deletion tools, subscriptions, or ambient project discovery | Host-adapter sandbox profiles |
 

@@ -1,9 +1,13 @@
 use ley_core::{
-    checkpoint_session, diagnose_project, finish_session, generate_request_id, ingest_project,
-    initialize_project, list_sessions, preview_capture, read_project_graph, read_session,
-    start_session, BindingRegistry, CaptureMode, CheckpointInput, CommandInput, FinishSessionInput,
-    GraphNodeKind, LeyCoreError, SessionSource, SessionSourceKind, SessionStatus,
-    StartSessionInput, VerificationInput, VerificationStatus,
+    checkpoint_session, correct_learning, diagnose_project, finish_session,
+    generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
+    learning_review_inbox, list_learnings, list_sessions, preview_capture, propose_learning,
+    read_learning, read_project_graph, read_session, review_learning, start_session,
+    BindingRegistry, CaptureMode, CheckpointInput, CommandInput, CorrectLearningInput,
+    FinishSessionInput, GraphNodeKind, LearningActor, LearningEvidenceInput,
+    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
+    LeyCoreError, ProposeLearningInput, ReviewLearningInput, SessionSource, SessionSourceKind,
+    SessionStatus, StartSessionInput, VerificationInput, VerificationStatus,
 };
 use ley_mcp::run_stdio;
 use std::env;
@@ -30,6 +34,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "graph" => graph(&arguments[1..]),
         "mcp" => mcp(&arguments[1..]),
         "session" => session(&arguments[1..]),
+        "learning" => learning(&arguments[1..]),
         "doctor" => doctor(&arguments[1..]),
         "preview" => preview(&arguments[1..]),
         "help" | "--help" | "-h" => {
@@ -41,6 +46,547 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!("unknown command '{other}'"))),
+    }
+}
+
+fn learning(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "learning requires propose, correct, review, list, or show".to_owned(),
+        ));
+    };
+    match command {
+        "propose" => learning_propose(&arguments[1..]),
+        "correct" => learning_correct(&arguments[1..]),
+        "review" => learning_review(&arguments[1..]),
+        "list" => learning_list(&arguments[1..]),
+        "show" => learning_show(&arguments[1..]),
+        other => Err(CliError::Usage(format!(
+            "unknown learning command '{other}'"
+        ))),
+    }
+}
+
+fn learning_propose(arguments: &[String]) -> Result<(), CliError> {
+    let mut common = LearningArguments::default();
+    let mut request_id = None;
+    let mut actor = None;
+    let mut provenance = None;
+    let mut kind = None;
+    let mut title = None;
+    let mut guidance = None;
+    let mut confidence = None;
+    let mut evidence = Vec::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--request-id" => {
+                index += 1;
+                request_id = Some(required_value(arguments, index, "--request-id")?.to_owned());
+            }
+            "--actor" => {
+                index += 1;
+                actor = Some(parse_learning_actor(required_value(
+                    arguments, index, "--actor",
+                )?)?);
+            }
+            "--provenance" => {
+                index += 1;
+                provenance = Some(parse_learning_provenance(required_value(
+                    arguments,
+                    index,
+                    "--provenance",
+                )?)?);
+            }
+            "--kind" => {
+                index += 1;
+                kind = Some(parse_learning_kind(required_value(
+                    arguments, index, "--kind",
+                )?)?);
+            }
+            "--title" => {
+                index += 1;
+                title = Some(required_value(arguments, index, "--title")?.to_owned());
+            }
+            "--guidance" => {
+                index += 1;
+                guidance = Some(required_value(arguments, index, "--guidance")?.to_owned());
+            }
+            "--confidence" => {
+                index += 1;
+                confidence = Some(parse_confidence(required_value(
+                    arguments,
+                    index,
+                    "--confidence",
+                )?)?);
+            }
+            "--evidence" => {
+                index += 1;
+                evidence.push(parse_learning_evidence(required_value(
+                    arguments,
+                    index,
+                    "--evidence",
+                )?)?);
+            }
+            value => parse_learning_common(arguments, &mut index, value, &mut common)?,
+        }
+        index += 1;
+    }
+    let binding = resolve_learning_binding(&common)?;
+    let result = propose_learning(
+        common.project_path()?,
+        &binding.vault_path,
+        ProposeLearningInput {
+            request_id: request_id.unwrap_or_else(generate_learning_request_id),
+            actor: actor
+                .ok_or_else(|| CliError::Usage("learning propose requires --actor".to_owned()))?,
+            kind: kind
+                .ok_or_else(|| CliError::Usage("learning propose requires --kind".to_owned()))?,
+            title: title
+                .ok_or_else(|| CliError::Usage("learning propose requires --title".to_owned()))?,
+            guidance: guidance.ok_or_else(|| {
+                CliError::Usage("learning propose requires --guidance".to_owned())
+            })?,
+            confidence_percent: confidence.ok_or_else(|| {
+                CliError::Usage("learning propose requires --confidence".to_owned())
+            })?,
+            provenance: provenance.ok_or_else(|| {
+                CliError::Usage("learning propose requires --provenance".to_owned())
+            })?,
+            evidence,
+        },
+    )?;
+    print_learning_mutation(&result, common.json, "Proposed")
+}
+
+fn learning_correct(arguments: &[String]) -> Result<(), CliError> {
+    let mut common = LearningArguments::default();
+    let mut learning_id = None;
+    let mut request_id = None;
+    let mut actor = None;
+    let mut title = None;
+    let mut guidance = None;
+    let mut confidence = None;
+    let mut evidence = Vec::new();
+    let mut note = String::new();
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--request-id" => {
+                index += 1;
+                request_id = Some(required_value(arguments, index, "--request-id")?.to_owned());
+            }
+            "--actor" => {
+                index += 1;
+                actor = Some(parse_learning_actor(required_value(
+                    arguments, index, "--actor",
+                )?)?);
+            }
+            "--title" => {
+                index += 1;
+                title = Some(required_value(arguments, index, "--title")?.to_owned());
+            }
+            "--guidance" => {
+                index += 1;
+                guidance = Some(required_value(arguments, index, "--guidance")?.to_owned());
+            }
+            "--confidence" => {
+                index += 1;
+                confidence = Some(parse_confidence(required_value(
+                    arguments,
+                    index,
+                    "--confidence",
+                )?)?);
+            }
+            "--evidence" => {
+                index += 1;
+                evidence.push(parse_learning_evidence(required_value(
+                    arguments,
+                    index,
+                    "--evidence",
+                )?)?);
+            }
+            "--note" => {
+                index += 1;
+                note = required_value(arguments, index, "--note")?.to_owned();
+            }
+            value if learning_id.is_none() && value.starts_with("lrn_") => {
+                learning_id = Some(value.to_owned());
+            }
+            value => parse_learning_common(arguments, &mut index, value, &mut common)?,
+        }
+        index += 1;
+    }
+    let learning_id = learning_id
+        .ok_or_else(|| CliError::Usage("learning correct requires LEARNING".to_owned()))?;
+    let binding = resolve_learning_binding(&common)?;
+    let result = correct_learning(
+        common.project_path()?,
+        &binding.vault_path,
+        &learning_id,
+        CorrectLearningInput {
+            request_id: request_id.unwrap_or_else(generate_learning_request_id),
+            actor: actor
+                .ok_or_else(|| CliError::Usage("learning correct requires --actor".to_owned()))?,
+            title: title
+                .ok_or_else(|| CliError::Usage("learning correct requires --title".to_owned()))?,
+            guidance: guidance.ok_or_else(|| {
+                CliError::Usage("learning correct requires --guidance".to_owned())
+            })?,
+            confidence_percent: confidence.ok_or_else(|| {
+                CliError::Usage("learning correct requires --confidence".to_owned())
+            })?,
+            evidence,
+            note,
+        },
+    )?;
+    print_learning_mutation(&result, common.json, "Corrected")
+}
+
+fn learning_review(arguments: &[String]) -> Result<(), CliError> {
+    let mut common = LearningArguments::default();
+    let mut learning_id = None;
+    let mut request_id = None;
+    let mut actor = None;
+    let mut action = None;
+    let mut note = String::new();
+    let mut replacement_learning_id = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--request-id" => {
+                index += 1;
+                request_id = Some(required_value(arguments, index, "--request-id")?.to_owned());
+            }
+            "--actor" => {
+                index += 1;
+                actor = Some(parse_learning_actor(required_value(
+                    arguments, index, "--actor",
+                )?)?);
+            }
+            "--action" => {
+                index += 1;
+                action = Some(parse_feedback_action(required_value(
+                    arguments, index, "--action",
+                )?)?);
+            }
+            "--note" => {
+                index += 1;
+                note = required_value(arguments, index, "--note")?.to_owned();
+            }
+            "--replacement" => {
+                index += 1;
+                replacement_learning_id =
+                    Some(required_value(arguments, index, "--replacement")?.to_owned());
+            }
+            value if learning_id.is_none() && value.starts_with("lrn_") => {
+                learning_id = Some(value.to_owned());
+            }
+            value => parse_learning_common(arguments, &mut index, value, &mut common)?,
+        }
+        index += 1;
+    }
+    let learning_id = learning_id
+        .ok_or_else(|| CliError::Usage("learning review requires LEARNING".to_owned()))?;
+    let binding = resolve_learning_binding(&common)?;
+    let result = review_learning(
+        common.project_path()?,
+        &binding.vault_path,
+        &learning_id,
+        ReviewLearningInput {
+            request_id: request_id.unwrap_or_else(generate_learning_request_id),
+            actor: actor
+                .ok_or_else(|| CliError::Usage("learning review requires --actor".to_owned()))?,
+            action: action
+                .ok_or_else(|| CliError::Usage("learning review requires --action".to_owned()))?,
+            note,
+            replacement_learning_id,
+        },
+    )?;
+    print_learning_mutation(&result, common.json, "Reviewed")
+}
+
+fn learning_list(arguments: &[String]) -> Result<(), CliError> {
+    let mut common = LearningArguments::default();
+    let mut review_only = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        let value = arguments[index].as_str();
+        if value == "--review" {
+            review_only = true;
+        } else {
+            parse_learning_common(arguments, &mut index, value, &mut common)?;
+        }
+        index += 1;
+    }
+    let binding = resolve_learning_binding(&common)?;
+    let project = common.project_path()?;
+    let learnings = if review_only {
+        learning_review_inbox(&project, &binding.vault_path)?
+    } else {
+        list_learnings(&project, &binding.vault_path)?
+    };
+    if common.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&learnings).expect("learnings are serializable")
+        );
+    } else if learnings.is_empty() {
+        println!(
+            "{}",
+            if review_only {
+                "No learnings need review"
+            } else {
+                "No agent learnings"
+            }
+        );
+    } else {
+        for learning in learnings {
+            println!(
+                "{}  {:<11} {:<15} {:<14} {}",
+                learning.learning_id,
+                learning_state_label(learning.state),
+                learning_trust_label(learning.trust_state),
+                learning_freshness_label(learning.freshness),
+                learning.title
+            );
+        }
+    }
+    Ok(())
+}
+
+fn learning_show(arguments: &[String]) -> Result<(), CliError> {
+    let mut common = LearningArguments::default();
+    let mut learning_id = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        let value = arguments[index].as_str();
+        if learning_id.is_none() && value.starts_with("lrn_") {
+            learning_id = Some(value.to_owned());
+        } else {
+            parse_learning_common(arguments, &mut index, value, &mut common)?;
+        }
+        index += 1;
+    }
+    let learning_id =
+        learning_id.ok_or_else(|| CliError::Usage("learning show requires LEARNING".to_owned()))?;
+    let binding = resolve_learning_binding(&common)?;
+    let learning = read_learning(common.project_path()?, &binding.vault_path, &learning_id)?;
+    if common.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&learning).expect("learning is serializable")
+        );
+    } else {
+        println!("Learning: {} ({})", learning.title, learning.learning_id);
+        println!("Kind: {}", learning_kind_label(learning.kind));
+        println!("State: {}", learning_state_label(learning.state));
+        println!("Trust: {}", learning_trust_label(learning.trust_state));
+        println!(
+            "Freshness: {}",
+            learning_freshness_label(learning.freshness)
+        );
+        println!("Confidence: {}%", learning.confidence_percent);
+        println!("Guidance: {}", learning.guidance);
+        println!(
+            "Evidence: {} records across {} sessions",
+            learning.evidence.len(),
+            learning.corroborating_sessions
+        );
+        println!("Events: {}", learning.event_count);
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct LearningArguments {
+    project: Option<PathBuf>,
+    vault: Option<PathBuf>,
+    json: bool,
+}
+
+impl LearningArguments {
+    fn project_path(&self) -> Result<PathBuf, CliError> {
+        self.project
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| env::current_dir().map_err(CliError::CurrentDirectory))
+    }
+}
+
+fn parse_learning_common(
+    arguments: &[String],
+    index: &mut usize,
+    value: &str,
+    common: &mut LearningArguments,
+) -> Result<(), CliError> {
+    match value {
+        "--vault" => {
+            *index += 1;
+            common.vault = Some(PathBuf::from(required_value(arguments, *index, "--vault")?));
+        }
+        "--json" => common.json = true,
+        value if value.starts_with('-') => {
+            return Err(CliError::Usage(format!("unknown option '{value}'")))
+        }
+        value if common.project.is_none() => common.project = Some(PathBuf::from(value)),
+        value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+    }
+    Ok(())
+}
+
+fn resolve_learning_binding(
+    common: &LearningArguments,
+) -> Result<ley_core::ProjectVaultBinding, CliError> {
+    let registry = BindingRegistry::system_default()?;
+    Ok(registry.resolve(common.project_path()?, common.vault.as_deref())?)
+}
+
+fn parse_learning_actor(value: &str) -> Result<LearningActor, CliError> {
+    match value {
+        "user" => Ok(LearningActor::User),
+        "agent" => Ok(LearningActor::Agent),
+        other => Err(CliError::Usage(format!(
+            "invalid learning actor '{other}'; use user or agent"
+        ))),
+    }
+}
+
+fn parse_learning_provenance(value: &str) -> Result<LearningProvenance, CliError> {
+    match value {
+        "user-authored" => Ok(LearningProvenance::UserAuthored),
+        "agent-authored" => Ok(LearningProvenance::AgentAuthored),
+        "inferred" => Ok(LearningProvenance::Inferred),
+        other => Err(CliError::Usage(format!(
+            "invalid provenance '{other}'; use user-authored, agent-authored, or inferred"
+        ))),
+    }
+}
+
+fn parse_learning_kind(value: &str) -> Result<LearningKind, CliError> {
+    match value {
+        "procedure" => Ok(LearningKind::Procedure),
+        "constraint" => Ok(LearningKind::Constraint),
+        "pitfall" => Ok(LearningKind::Pitfall),
+        "convention" => Ok(LearningKind::Convention),
+        "fact" => Ok(LearningKind::Fact),
+        other => Err(CliError::Usage(format!(
+            "invalid learning kind '{other}'; use procedure, constraint, pitfall, convention, or fact"
+        ))),
+    }
+}
+
+fn parse_feedback_action(value: &str) -> Result<LearningFeedbackAction, CliError> {
+    match value {
+        "confirm" => Ok(LearningFeedbackAction::Confirm),
+        "contest" => Ok(LearningFeedbackAction::Contest),
+        "reject" => Ok(LearningFeedbackAction::Reject),
+        "mark-stale" => Ok(LearningFeedbackAction::MarkStale),
+        "supersede" => Ok(LearningFeedbackAction::Supersede),
+        other => Err(CliError::Usage(format!(
+            "invalid review action '{other}'; use confirm, contest, reject, mark-stale, or supersede"
+        ))),
+    }
+}
+
+fn parse_confidence(value: &str) -> Result<u8, CliError> {
+    value
+        .parse::<u8>()
+        .map_err(|_| CliError::Usage("confidence must be an integer between 0 and 100".to_owned()))
+}
+
+fn parse_learning_evidence(value: &str) -> Result<LearningEvidenceInput, CliError> {
+    let Some((session_id, record_id)) = value.split_once(':') else {
+        return Err(CliError::Usage(
+            "evidence must use SESSION:RECORD".to_owned(),
+        ));
+    };
+    if session_id.is_empty() || record_id.is_empty() || record_id.contains(':') {
+        return Err(CliError::Usage(
+            "evidence must use exactly one SESSION:RECORD pair".to_owned(),
+        ));
+    }
+    Ok(LearningEvidenceInput {
+        session_id: session_id.to_owned(),
+        record_id: record_id.to_owned(),
+        note: String::new(),
+    })
+}
+
+fn print_learning_mutation(
+    result: &ley_core::LearningMutation,
+    json: bool,
+    verb: &str,
+) -> Result<(), CliError> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(result).expect("learning mutation is serializable")
+        );
+    } else {
+        println!("{verb} learning: {}", result.learning.learning_id);
+        println!("Title: {}", result.learning.title);
+        println!(
+            "State: {} / {}",
+            learning_state_label(result.learning.state),
+            learning_trust_label(result.learning.trust_state)
+        );
+        println!(
+            "Freshness: {}",
+            learning_freshness_label(result.learning.freshness)
+        );
+        println!("Events: {}", result.learning.event_count);
+        println!(
+            "Write: {}",
+            if result.replayed {
+                "idempotent replay"
+            } else {
+                "recorded"
+            }
+        );
+        println!("Index: {}", result.index_path);
+        println!("Review: {}", result.review_path);
+    }
+    Ok(())
+}
+
+fn learning_kind_label(kind: LearningKind) -> &'static str {
+    match kind {
+        LearningKind::Procedure => "procedure",
+        LearningKind::Constraint => "constraint",
+        LearningKind::Pitfall => "pitfall",
+        LearningKind::Convention => "convention",
+        LearningKind::Fact => "fact",
+    }
+}
+
+fn learning_state_label(state: LearningState) -> &'static str {
+    match state {
+        LearningState::Tentative => "tentative",
+        LearningState::Verified => "verified",
+        LearningState::Contested => "contested",
+        LearningState::Superseded => "superseded",
+        LearningState::Rejected => "rejected",
+        LearningState::Stale => "stale",
+    }
+}
+
+fn learning_trust_label(state: LearningTrustState) -> &'static str {
+    match state {
+        LearningTrustState::ReviewRequired => "review-required",
+        LearningTrustState::Trusted => "trusted",
+        LearningTrustState::Contested => "contested",
+        LearningTrustState::Superseded => "superseded",
+        LearningTrustState::Rejected => "rejected",
+        LearningTrustState::Stale => "stale",
+    }
+}
+
+fn learning_freshness_label(freshness: ley_core::LearningFreshness) -> &'static str {
+    match freshness {
+        ley_core::LearningFreshness::Current => "current",
+        ley_core::LearningFreshness::SourceChanged => "source-changed",
+        ley_core::LearningFreshness::Uncited => "uncited",
     }
 }
 
@@ -885,6 +1431,15 @@ fn print_help() {
     println!("  ley session finish SESSION [path] --summary TEXT [--status STATUS]");
     println!("  ley session list [path] [--json]");
     println!("  ley session show SESSION [path] [--json]");
+    println!(
+        "  ley learning propose [path] --actor ACTOR --provenance SOURCE --kind KIND --title TITLE"
+    );
+    println!("      --guidance TEXT --confidence 0..100 --evidence SESSION:RECORD...");
+    println!("  ley learning correct LEARNING [path] --actor ACTOR --title TITLE --guidance TEXT");
+    println!("      --confidence 0..100 --evidence SESSION:RECORD... [--note TEXT]");
+    println!("  ley learning review LEARNING [path] --actor ACTOR --action ACTION [--note TEXT]");
+    println!("  ley learning list [path] [--review] [--json]");
+    println!("  ley learning show LEARNING [path] [--json]");
     println!("  ley doctor [path] [--json]");
     println!("  ley preview [path] [--json]");
     println!();
