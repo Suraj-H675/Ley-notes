@@ -22,10 +22,18 @@ All surfaces follow the [local storage and data boundaries](privacy-and-storage.
 | `src/shared`         | Product-agnostic components, hooks, state, and utilities               | third-party primitives only                 |
 | `src/website`        | Public site                                                            | shared presentation primitives where useful |
 | `src-tauri`          | Confined native filesystem operations and desktop packaging            | Rust/Tauri only                             |
+| `crates/ley-core`    | Shared project identity, binding, ingestion, and graph engine           | capability I/O and deterministic parsers    |
+| `crates/ley-cli`     | Human/agent command surface over the shared local engine                | `ley-core` only                             |
 
 Feature-specific hooks are colocated with their feature. Only genuinely reusable hooks belong in `shared/hooks`. Tests for pure domain behavior remain beside the module they verify.
 
 Linux development builds emit the native executable plus `.deb` and `.rpm` packages. AppImage packaging is reserved for an Ubuntu-based release runner because the upstream linuxdeploy GTK plugin assumes a legacy gdk-pixbuf module layout that current Arch Linux no longer ships.
+
+## Agent-memory projection
+
+An initialized repository keeps only portable identity, capture consent, and ignore rules in `.ley/`. A private OS-local registry binds that stable project ID to a filesystem vault. Approved repository evidence is stored as redacted content-addressed artifacts and immutable manifests beneath `<vault>/.ley/agent-memory/projects/<project-id>/`; no repository path is written into the vault.
+
+Ingestion derives a separate immutable project graph from the same post-redaction source boundary. Files, language symbols, calls, imports, inheritance, implementations, manifest dependencies, and bounded local Git state carry artifact snapshot citations. Direct syntax stays deterministic; v1 deliberately leaves names unresolved across files instead of promoting heuristic matches into facts. Each graph and artifact current pointer is atomically replaced under one shared cross-process lock, and both are verified against immutable snapshots before use.
 
 ## Persistence contract
 

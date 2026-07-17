@@ -1,4 +1,7 @@
-use ley_core::{ingest_project, BindingRegistry, IngestionResult, ProjectVaultBinding};
+use ley_core::{
+    ingest_project, read_project_graph, BindingRegistry, IngestionResult, ProjectGraph,
+    ProjectVaultBinding,
+};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::{
@@ -83,6 +86,18 @@ fn ingest_agent_project(
         .and_then(|registry| registry.resolve(&project_path, override_path))
         .map_err(|error| error.to_string())?;
     ingest_project(project_path, binding.vault_path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn read_agent_project_graph(
+    project_path: String,
+    vault_override: Option<String>,
+) -> Result<ProjectGraph, String> {
+    let override_path = vault_override.as_deref().map(Path::new);
+    let binding = BindingRegistry::system_default()
+        .and_then(|registry| registry.resolve(&project_path, override_path))
+        .map_err(|error| error.to_string())?;
+    read_project_graph(project_path, binding.vault_path).map_err(|error| error.to_string())
 }
 
 fn suppress_change(path: &Path) {
@@ -529,6 +544,7 @@ pub fn run() {
             resolve_agent_project_vault,
             unbind_agent_project,
             ingest_agent_project,
+            read_agent_project_graph,
             scan_vault,
             scan_canvases,
             write_canvas_file,

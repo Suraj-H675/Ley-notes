@@ -1,3 +1,7 @@
+use crate::graph::{
+    build_project_graph, graph_body, validate_project_graph, GraphSource, ProjectGraph,
+    PROJECT_GRAPH_LIMIT_BYTES,
+};
 use crate::{diagnose_project, preview_capture, validate_project_id, CaptureMode, LeyCoreError};
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
@@ -22,6 +26,8 @@ const CONTENT_DIRECTORY: &str = "content";
 const SNAPSHOTS_DIRECTORY: &str = "snapshots";
 const MANIFEST_FILE: &str = "manifest-v1.json";
 const INGEST_LOCK_FILE: &str = "ingest-v1.lock";
+const GRAPH_DIRECTORY: &str = "graph";
+const GRAPH_MANIFEST_FILE: &str = "graph-v1.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -88,6 +94,10 @@ pub struct IngestionResult {
     pub project_id: String,
     pub snapshot_id: String,
     pub changed: bool,
+    pub graph_snapshot_id: String,
+    pub graph_changed: bool,
+    pub graph_nodes: usize,
+    pub graph_edges: usize,
     pub files: usize,
     pub stored_files: usize,
     pub redacted_files: usize,
@@ -97,6 +107,7 @@ pub struct IngestionResult {
     pub renamed: Vec<RenamedArtifact>,
     pub deleted: Vec<String>,
     pub manifest_path: String,
+    pub graph_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,9 +138,11 @@ struct SnapshotIdentity<'a> {
 }
 
 struct ArtifactStore {
-    project_dir: Dir,
+    artifacts_dir: Dir,
     content_dir: Dir,
     snapshots_dir: Dir,
+    graph_dir: Dir,
+    graph_snapshots_dir: Dir,
 }
 
 struct IngestionLock {
@@ -169,6 +182,11 @@ pub fn ingest_project(
         store.verify_snapshot(manifest)?;
         store.verify_content_blobs(manifest)?;
     }
+    let previous_graph = store.read_graph()?;
+    if let Some(graph) = &previous_graph {
+        validate_project_graph(graph, &diagnostic.identity.project_id)?;
+        store.verify_graph_snapshot(graph)?;
+    }
 
     let preview = preview_capture(&diagnostic.root)?;
     let root_dir =
@@ -179,6 +197,7 @@ pub fn ingest_project(
             }
         })?;
     let mut files = Vec::new();
+    let mut graph_sources = Vec::new();
     let mut skipped = preview
         .skipped_oversized
         .iter()
@@ -241,7 +260,7 @@ pub fn ingest_project(
             Some(format!("{CONTENT_DIRECTORY}/{name}"))
         };
         let (kind, language) = classify_artifact(&candidate.path);
-        files.push(ArtifactRecord {
+        let artifact = ArtifactRecord {
             path: candidate.path.clone(),
             kind,
             language: language.map(str::to_owned),
@@ -251,7 +270,12 @@ pub fn ingest_project(
             content_hash,
             content_blob,
             redactions,
+        };
+        graph_sources.push(GraphSource {
+            artifact: artifact.clone(),
+            text: redacted,
         });
+        files.push(artifact);
     }
     skipped.sort_by(|left, right| left.path.cmp(&right.path));
 
@@ -268,15 +292,28 @@ pub fn ingest_project(
         &serde_json::to_vec(&identity).expect("artifact snapshot identity is serializable"),
     );
     let snapshot_id = format!("snp_{snapshot_hash}");
+    let graph = build_project_graph(
+        &diagnostic.root,
+        &diagnostic.identity.project_id,
+        &diagnostic.identity.name,
+        &snapshot_id,
+        &graph_sources,
+        unix_time_ms(),
+    )?;
     if previous
         .as_ref()
         .is_some_and(|manifest| manifest.snapshot_id == snapshot_id)
     {
+        let graph_changed = store.persist_graph(previous_graph.as_ref(), &graph)?;
         let old = previous.expect("checked as present");
         return Ok(IngestionResult {
             project_id: old.project_id,
             snapshot_id: old.snapshot_id,
             changed: false,
+            graph_snapshot_id: graph.graph_snapshot_id,
+            graph_changed,
+            graph_nodes: graph.nodes.len(),
+            graph_edges: graph.edges.len(),
             files: old.files.len(),
             stored_files: old
                 .files
@@ -294,6 +331,7 @@ pub fn ingest_project(
             renamed: Vec::new(),
             deleted: Vec::new(),
             manifest_path: manifest_relative_path(&diagnostic.identity.project_id),
+            graph_path: graph_relative_path(&diagnostic.identity.project_id),
         });
     }
 
@@ -313,12 +351,17 @@ pub fn ingest_project(
     let body = manifest_body(&manifest)?;
     let changes = calculate_changes(previous.as_ref(), &manifest);
     store.write_snapshot_if_absent(&snapshot_id, &body)?;
+    let graph_changed = store.persist_graph(previous_graph.as_ref(), &graph)?;
     store.write_manifest(&body)?;
 
     Ok(IngestionResult {
         project_id: manifest.project_id,
         snapshot_id,
         changed: true,
+        graph_snapshot_id: graph.graph_snapshot_id,
+        graph_changed,
+        graph_nodes: graph.nodes.len(),
+        graph_edges: graph.edges.len(),
         files: manifest.files.len(),
         stored_files: manifest
             .files
@@ -336,7 +379,34 @@ pub fn ingest_project(
         renamed: changes.renamed,
         deleted: changes.deleted,
         manifest_path: manifest_relative_path(&diagnostic.identity.project_id),
+        graph_path: graph_relative_path(&diagnostic.identity.project_id),
     })
+}
+
+pub fn read_project_graph(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<ProjectGraph, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let vault_path = vault
+        .as_ref()
+        .canonicalize()
+        .map_err(|source| LeyCoreError::Io {
+            path: vault.as_ref().to_path_buf(),
+            source,
+        })?;
+    if !vault_path.is_dir() {
+        return Err(LeyCoreError::NotDirectory(vault.as_ref().to_path_buf()));
+    }
+    let store = ArtifactStore::open(&vault_path, &diagnostic.identity.project_id)?;
+    let graph = store.read_graph()?.ok_or_else(|| {
+        LeyCoreError::InvalidProjectGraph(
+            "no project graph exists; run 'ley ingest' first".to_owned(),
+        )
+    })?;
+    validate_project_graph(&graph, &diagnostic.identity.project_id)?;
+    store.verify_graph_snapshot(&graph)?;
+    Ok(graph)
 }
 
 impl ArtifactStore {
@@ -355,10 +425,15 @@ impl ArtifactStore {
         let artifacts_dir = open_or_create_private_dir(&project_dir, ARTIFACTS_DIRECTORY, vault)?;
         let content_dir = open_or_create_private_dir(&artifacts_dir, CONTENT_DIRECTORY, vault)?;
         let snapshots_dir = open_or_create_private_dir(&artifacts_dir, SNAPSHOTS_DIRECTORY, vault)?;
+        let graph_dir = open_or_create_private_dir(&project_dir, GRAPH_DIRECTORY, vault)?;
+        let graph_snapshots_dir =
+            open_or_create_private_dir(&graph_dir, SNAPSHOTS_DIRECTORY, vault)?;
         Ok(Self {
-            project_dir: artifacts_dir,
+            artifacts_dir,
             content_dir,
             snapshots_dir,
+            graph_dir,
+            graph_snapshots_dir,
         })
     }
 
@@ -375,7 +450,7 @@ impl ArtifactStore {
             options.mode(0o600);
         }
         let lock = self
-            .project_dir
+            .artifacts_dir
             .open_with(INGEST_LOCK_FILE, &options)
             .map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
         ensure_private_file_permissions(&lock, INGEST_LOCK_FILE)?;
@@ -387,7 +462,7 @@ impl ArtifactStore {
 
     fn read_manifest(&self) -> Result<Option<ArtifactManifest>, LeyCoreError> {
         let Some(bytes) = read_optional_store_file(
-            &self.project_dir,
+            &self.artifacts_dir,
             MANIFEST_FILE,
             ARTIFACT_MANIFEST_LIMIT_BYTES,
         )?
@@ -408,7 +483,7 @@ impl ArtifactStore {
     }
 
     fn write_manifest(&self, body: &[u8]) -> Result<(), LeyCoreError> {
-        write_atomic_private(&self.project_dir, MANIFEST_FILE, body)
+        write_atomic_private(&self.artifacts_dir, MANIFEST_FILE, body)
     }
 
     fn verify_snapshot(&self, manifest: &ArtifactManifest) -> Result<(), LeyCoreError> {
@@ -454,6 +529,56 @@ impl ArtifactStore {
             }
         }
         Ok(())
+    }
+
+    fn read_graph(&self) -> Result<Option<ProjectGraph>, LeyCoreError> {
+        let Some(bytes) = read_optional_store_file(
+            &self.graph_dir,
+            GRAPH_MANIFEST_FILE,
+            PROJECT_GRAPH_LIMIT_BYTES,
+        )?
+        else {
+            return Ok(None);
+        };
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|source| LeyCoreError::InvalidProjectGraph(source.to_string()))
+    }
+
+    fn verify_graph_snapshot(&self, graph: &ProjectGraph) -> Result<(), LeyCoreError> {
+        let name = format!("{}.json", graph.graph_snapshot_id);
+        let body = graph_body(graph)?;
+        let stored =
+            read_optional_store_file(&self.graph_snapshots_dir, &name, PROJECT_GRAPH_LIMIT_BYTES)?
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidProjectGraph(format!(
+                        "current graph snapshot is missing: {name}"
+                    ))
+                })?;
+        if stored != body {
+            return Err(LeyCoreError::InvalidProjectGraph(format!(
+                "current graph does not match immutable snapshot {name}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn persist_graph(
+        &self,
+        previous: Option<&ProjectGraph>,
+        graph: &ProjectGraph,
+    ) -> Result<bool, LeyCoreError> {
+        if previous.is_some_and(|old| old.graph_snapshot_id == graph.graph_snapshot_id) {
+            return Ok(false);
+        }
+        let body = graph_body(graph)?;
+        write_immutable_private(
+            &self.graph_snapshots_dir,
+            &format!("{}.json", graph.graph_snapshot_id),
+            &body,
+        )?;
+        write_atomic_private(&self.graph_dir, GRAPH_MANIFEST_FILE, &body)?;
+        Ok(true)
     }
 }
 
@@ -1129,6 +1254,12 @@ fn manifest_relative_path(project_id: &str) -> String {
     )
 }
 
+fn graph_relative_path(project_id: &str) -> String {
+    format!(
+        "{STORE_ROOT}/{AGENT_MEMORY_DIRECTORY}/{PROJECTS_DIRECTORY}/{project_id}/{GRAPH_DIRECTORY}/{GRAPH_MANIFEST_FILE}"
+    )
+}
+
 fn store_io(name: &str, source: std::io::Error) -> LeyCoreError {
     LeyCoreError::Io {
         path: PathBuf::from(name),
@@ -1171,6 +1302,17 @@ mod tests {
             .join(MANIFEST_FILE)
     }
 
+    fn graph_path(project: &Path, vault: &Path) -> PathBuf {
+        let project_id = diagnose_project(project).unwrap().identity.project_id;
+        vault
+            .join(STORE_ROOT)
+            .join(AGENT_MEMORY_DIRECTORY)
+            .join(PROJECTS_DIRECTORY)
+            .join(project_id)
+            .join(GRAPH_DIRECTORY)
+            .join(GRAPH_MANIFEST_FILE)
+    }
+
     #[test]
     fn ingestion_persists_redacted_text_and_reports_unsupported_files() {
         let (_base, project, vault) = setup_project(CaptureMode::Structured);
@@ -1205,6 +1347,10 @@ mod tests {
         assert!(!manifest_body.contains("abcdefghijklmnopqrstuvwxyz123456"));
         assert!(!manifest_body.contains("hunter2"));
         assert!(!manifest_body.contains("must-never-appear"));
+        let graph_body = std::fs::read_to_string(graph_path(&project, &vault)).unwrap();
+        assert!(!graph_body.contains("abcdefghijklmnopqrstuvwxyz123456"));
+        assert!(!graph_body.contains("hunter2"));
+        assert!(!graph_body.contains("must-never-appear"));
         let manifest: ArtifactManifest = serde_json::from_str(&manifest_body).unwrap();
         let config = manifest
             .files
@@ -1233,12 +1379,24 @@ mod tests {
         assert!(first.changed);
         let unchanged = ingest_project(&project, &vault).unwrap();
         assert!(!unchanged.changed);
+        assert!(!unchanged.graph_changed);
         assert_eq!(unchanged.snapshot_id, first.snapshot_id);
         let snapshots = manifest_path(&project, &vault)
             .parent()
             .unwrap()
             .join(SNAPSHOTS_DIRECTORY);
         assert_eq!(std::fs::read_dir(&snapshots).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(
+                graph_path(&project, &vault)
+                    .parent()
+                    .unwrap()
+                    .join(SNAPSHOTS_DIRECTORY)
+            )
+            .unwrap()
+            .count(),
+            1
+        );
 
         std::fs::write(project.join("modify.md"), "after\n").unwrap();
         std::fs::rename(project.join("rename.md"), project.join("renamed.md")).unwrap();
@@ -1291,6 +1449,7 @@ mod tests {
         let result = ingest_project(&project, &vault).unwrap();
         assert_eq!(result.files, 1);
         assert_eq!(result.stored_files, 0);
+        assert!(result.graph_nodes >= 3);
         let manifest: ArtifactManifest = serde_json::from_str(
             &std::fs::read_to_string(manifest_path(&project, &vault)).unwrap(),
         )
@@ -1301,6 +1460,11 @@ mod tests {
             .unwrap()
             .join(CONTENT_DIRECTORY);
         assert_eq!(std::fs::read_dir(content).unwrap().count(), 0);
+        let graph = read_project_graph(&project, &vault).unwrap();
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.kind == crate::GraphNodeKind::Symbol && node.name == "main"));
     }
 
     #[cfg(unix)]
@@ -1452,6 +1616,9 @@ mod tests {
         let manifest: ArtifactManifest =
             serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
         let blob = manifest.files[0].content_blob.as_ref().unwrap();
+        let graph_path = graph_path(&project, &vault);
+        let graph: ProjectGraph =
+            serde_json::from_str(&std::fs::read_to_string(&graph_path).unwrap()).unwrap();
 
         for path in [
             manifest_path.clone(),
@@ -1462,6 +1629,12 @@ mod tests {
                 .unwrap()
                 .join(SNAPSHOTS_DIRECTORY)
                 .join(format!("{}.json", manifest.snapshot_id)),
+            graph_path.clone(),
+            graph_path
+                .parent()
+                .unwrap()
+                .join(SNAPSHOTS_DIRECTORY)
+                .join(format!("{}.json", graph.graph_snapshot_id)),
         ] {
             assert_eq!(
                 std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
@@ -1488,6 +1661,27 @@ mod tests {
         assert!(matches!(
             ingest_project(&project, &vault),
             Err(LeyCoreError::InvalidArtifactStore(_))
+        ));
+    }
+
+    #[test]
+    fn graph_reads_detect_current_and_immutable_snapshot_corruption() {
+        let (_base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(project.join("main.py"), "def recall():\n    return True\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let graph_path = graph_path(&project, &vault);
+        let graph: ProjectGraph =
+            serde_json::from_str(&std::fs::read_to_string(&graph_path).unwrap()).unwrap();
+        let snapshot_path = graph_path
+            .parent()
+            .unwrap()
+            .join(SNAPSHOTS_DIRECTORY)
+            .join(format!("{}.json", graph.graph_snapshot_id));
+        std::fs::write(&snapshot_path, "{}\n").unwrap();
+
+        assert!(matches!(
+            read_project_graph(&project, &vault),
+            Err(LeyCoreError::InvalidProjectGraph(_))
         ));
     }
 }

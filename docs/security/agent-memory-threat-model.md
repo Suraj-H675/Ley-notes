@@ -1,6 +1,6 @@
 # Agent memory threat model
 
-Status: project initialization, capture preview, private vault binding, and deterministic artifact-ingestion boundary; expand before AST projections and MCP writes.
+Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, and cited project-graph projection; expand before MCP reads or session writes.
 
 ## Assets
 
@@ -41,11 +41,16 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Recursive self-ingestion | Refuse a vault equal to or nested below the project | Overlap fixtures on case-insensitive filesystems |
 | Artifact-store path replacement | Capability-scoped no-follow directories, private permissions, immutable collision checks, atomic manifest replacement | Cross-platform concurrent attacker and removable-volume tests |
 | Partial or duplicate ingestion | Per-project cross-process lock; content-addressed blobs; deterministic snapshot IDs; identical ingestion is a no-op | Process-kill fault injection at every durable write |
+| Parser/model executes repository content | Local Tree-sitter parsing only; no compiler, package manager, build script, language server, or model is invoked during graph projection | Malicious grammar-input corpus, parser dependency review, and resource benchmarks |
+| Syntactic name promoted into a false fact | Calls and references target unresolved name nodes; no heuristic cross-file resolution is emitted as deterministic | Resolution evaluation corpus before adding inferred edges |
+| Git command expands capture scope | Porcelain-v2 tracked status only; untracked files, optional locks, fsmonitor, and untracked cache disabled; retain changes only for already-approved artifact paths; 8 MiB output cap | Adversarial Git config/worktree/submodule fixtures on every supported OS |
+| Graph corruption or dangling citations | Strict schema/size/identity/endpoint/citation checks; artifact snapshot written before graph; immutable graph snapshot verified before reads | Process-kill matrix across artifact/graph current-pointer updates |
+| Graph leaks source or machine paths | Project-relative citations only; external name nodes contain syntax-level names; no project/vault path persisted | Schema inspection and sensitive-path fixtures |
 | Deleted evidence becomes unverifiable | Immutable snapshot manifests and content blobs remain after current-source deletion | Reviewed retention/deletion policy and storage-budget UI |
 | Cross-project memory access | Project ID required at every future storage/query boundary | Multi-project adversarial tests |
 | Prompt injection in stored material | Stored text remains untrusted evidence | Typed context envelope and agent-facing injection warnings |
 | Memory poisoning | No inference becomes trusted automatically | Provenance, review, correction, corroboration, supersession |
-| Local MCP compromise | No MCP server in this phase | Exact-command consent, stdio default, scoped tools, no ambient home access |
+| Local MCP compromise | No MCP server in this phase; the future server must read only verified bindings/artifacts/graphs | Exact-command consent, stdio default, scoped tools, no ambient home access |
 
 ## Explicit non-claims
 

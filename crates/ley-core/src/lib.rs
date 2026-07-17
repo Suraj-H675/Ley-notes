@@ -9,15 +9,21 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod binding;
+mod graph;
 mod ingestion;
 
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
 };
+pub use graph::{
+    FactProvenance, GitChange, GitState, GraphCitation, GraphDiagnostic, GraphEdge, GraphEdgeKind,
+    GraphNode, GraphNodeKind, ProjectGraph, PROJECT_GRAPH_LIMIT_BYTES,
+    PROJECT_GRAPH_SCHEMA_VERSION,
+};
 pub use ingestion::{
-    ingest_project, ArtifactKind, ArtifactRecord, ArtifactSkipReason, IngestionResult,
-    RedactionFinding, RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY,
+    ingest_project, read_project_graph, ArtifactKind, ArtifactRecord, ArtifactSkipReason,
+    IngestionResult, RedactionFinding, RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY,
     ARTIFACT_MANIFEST_LIMIT_BYTES, ARTIFACT_MANIFEST_SCHEMA_VERSION,
 };
 
@@ -180,6 +186,8 @@ pub enum LeyCoreError {
     ProjectChangedDuringIngestion(String),
     #[error("invalid Ley artifact store: {0}")]
     InvalidArtifactStore(String),
+    #[error("invalid Ley project graph: {0}")]
+    InvalidProjectGraph(String),
     #[error("unsafe Ley project layout at {0}")]
     UnsafeProjectLayout(PathBuf),
     #[error("Ley metadata exceeds the {limit_bytes}-byte limit: {path}")]

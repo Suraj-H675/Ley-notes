@@ -1,6 +1,6 @@
 use ley_core::{
-    diagnose_project, ingest_project, initialize_project, preview_capture, BindingRegistry,
-    CaptureMode, LeyCoreError,
+    diagnose_project, ingest_project, initialize_project, preview_capture, read_project_graph,
+    BindingRegistry, CaptureMode, GraphNodeKind, LeyCoreError,
 };
 use std::env;
 use std::path::PathBuf;
@@ -23,6 +23,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "binding" => binding(&arguments[1..]),
         "unbind" => unbind(&arguments[1..]),
         "ingest" => ingest(&arguments[1..]),
+        "graph" => graph(&arguments[1..]),
         "doctor" => doctor(&arguments[1..]),
         "preview" => preview(&arguments[1..]),
         "help" | "--help" | "-h" => {
@@ -66,6 +67,17 @@ fn ingest(arguments: &[String]) -> Result<(), CliError> {
             result.redacted_files,
             result.skipped.len()
         );
+        println!(
+            "Graph: {} nodes / {} edges / {}",
+            result.graph_nodes,
+            result.graph_edges,
+            if result.graph_changed {
+                "updated"
+            } else {
+                "unchanged"
+            }
+        );
+        println!("Graph snapshot: {}", result.graph_snapshot_id);
         if result.changed {
             println!(
                 "Changes: {} added / {} modified / {} renamed / {} deleted",
@@ -79,6 +91,57 @@ fn ingest(arguments: &[String]) -> Result<(), CliError> {
             println!("No source changes; the durable snapshot was left untouched");
         }
     }
+    Ok(())
+}
+
+fn graph(arguments: &[String]) -> Result<(), CliError> {
+    let parsed = binding_arguments(arguments, false)?;
+    let registry = BindingRegistry::system_default()?;
+    let binding = registry.resolve(&parsed.project, parsed.vault.as_deref())?;
+    let graph = read_project_graph(&parsed.project, &binding.vault_path)?;
+    if parsed.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&graph).expect("project graph is serializable")
+        );
+        return Ok(());
+    }
+
+    let symbols = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == GraphNodeKind::Symbol)
+        .count();
+    let dependencies = graph
+        .nodes
+        .iter()
+        .filter(|node| node.kind == GraphNodeKind::Dependency)
+        .count();
+    println!("Project graph: {}", graph.project_name);
+    println!("Snapshot: {}", graph.graph_snapshot_id);
+    println!("Source snapshot: {}", graph.artifact_snapshot_id);
+    println!(
+        "Nodes: {} total / {} symbols / {} dependencies",
+        graph.nodes.len(),
+        symbols,
+        dependencies
+    );
+    println!("Edges: {}", graph.edges.len());
+    println!("Diagnostics: {}", graph.diagnostics.len());
+    if let Some(git) = &graph.git {
+        println!(
+            "Git: {} @ {} / {} tracked changes",
+            git.branch.as_deref().unwrap_or("detached"),
+            git.head
+                .as_deref()
+                .map(|head| &head[..head.len().min(12)])
+                .unwrap_or("unborn"),
+            git.changes.len()
+        );
+    } else {
+        println!("Git: not a repository or Git is unavailable");
+    }
+    println!("Vault: {}", binding.vault_path.display());
     Ok(())
 }
 
@@ -344,6 +407,7 @@ fn print_help() {
     println!("  ley binding [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley unbind [path] [--json]");
     println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
+    println!("  ley graph [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley doctor [path] [--json]");
     println!("  ley preview [path] [--json]");
     println!();

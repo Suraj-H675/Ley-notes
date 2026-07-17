@@ -25,7 +25,9 @@ The project-to-vault association lives outside both locations in Ley's private o
 
 After an explicit ingestion command, deterministic project evidence lives under `<vault>/.ley/agent-memory/projects/<project-id>/`. Structured and Full Evidence modes retain allowed UTF-8 source text only after local credential redaction; Minimal mode retains artifact metadata and post-redaction hashes without source blobs. Binary/non-UTF-8 files, ignored paths, and detected raw values are not copied. Redaction is a safety layer, not a guarantee that every possible secret is recognizable, so preview and project-specific ignore rules remain important.
 
-Derived search and graph indexes remain disposable local database state. Deleting an index must never destroy an authoritative filesystem vault.
+The durable agent project graph is derived locally from that same post-redaction boundary. It stores project-relative file/symbol citations, syntax-level imports/calls/inheritance, declared dependencies, and bounded tracked Git state. Git cannot introduce untracked or excluded paths. It stores no project root or vault path and does not run compilers, build scripts, package managers, language servers, or models.
+
+Ordinary note search and visualization indexes remain disposable local database state. The versioned agent graph is a rebuildable but intentionally durable cited projection so agents can inspect immutable historical snapshots; deleting it must never delete source artifacts or the authoritative filesystem vault.
 
 ## Required safeguards
 
