@@ -12,6 +12,7 @@ mod binding;
 mod graph;
 mod ingestion;
 mod learning;
+mod learning_context;
 mod retrieval;
 mod session;
 mod session_context;
@@ -38,6 +39,14 @@ pub use learning::{
     LearningRedaction, LearningReviewEntry, LearningState, LearningSummary, LearningTrustState,
     ProposeLearningInput, ReviewLearningInput, LEARNING_EVENT_LIMIT, LEARNING_EVENT_LIMIT_BYTES,
     LEARNING_INDEX_LIMIT_BYTES, LEARNING_SCHEMA_VERSION,
+};
+pub use learning_context::{
+    list_learning_contexts, read_learning_context, LearningContextPack, LearningList,
+    LearningListScope, DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
+    DEFAULT_LEARNING_LIST_RESULTS, MAX_LEARNING_CONTEXT_ARTIFACTS, MAX_LEARNING_CONTEXT_CHARACTERS,
+    MAX_LEARNING_CONTEXT_EVIDENCE, MAX_LEARNING_CONTEXT_HISTORY, MAX_LEARNING_LIST_RESULTS,
+    MIN_LEARNING_CONTEXT_CHARACTERS,
 };
 pub use retrieval::{
     find_project_context, find_project_graph_path, project_memory_overview, read_project_evidence,

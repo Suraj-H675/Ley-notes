@@ -24,8 +24,10 @@ The server exposes seven tools:
 | `ley_graph_path` | Bounded shortest path, depth 1–8 and at most 500 inspected nodes, with optional edge filters |
 | `ley_sessions_list` | At most 50 recent session summaries with bounded goal excerpts |
 | `ley_session_get` | One untrusted resume pack, at most 20 recent checkpoints and 32,000 text characters |
+| `ley_learnings_list` | Trusted-first bounded learning summaries with explicit review/all scopes |
+| `ley_learning_get` | One bounded learning pack with trust, freshness, provenance, citations, and history |
 
-All seven default tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. The only resource is `ley://project/<project-id>/overview`; unknown resources fail instead of mapping arbitrary URIs to files. The default process has no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout. ADR 0008 defines the explicit startup flag that adds append-only session writes.
+All nine default tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. The only resource is `ley://project/<project-id>/overview`; unknown resources fail instead of mapping arbitrary URIs to files. The default process has no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout. ADR 0008 defines the explicit startup flag that adds append-only session writes; ADR 0010 separately governs review-required learning proposals.
 
 Every successful result is structured JSON and repeats stable project or session identity. Project evidence carries a project-relative range, post-redaction content hash, provenance, confidence, trust state, and `untrusted-project-evidence` boundary. Session packs carry an `untrusted-agent-memory` boundary, an instruction warning, omission counts, and truncation state. Project results say `freshness: captured-snapshot` and `liveSourceChecked: false`; Ley does not imply that an old ingestion reflects the current working tree. Tool failures use MCP tool errors with sanitized messages rather than exposing absolute scope paths.
 

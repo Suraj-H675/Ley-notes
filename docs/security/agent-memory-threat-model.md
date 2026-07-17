@@ -65,6 +65,7 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Stale trusted lessons | Artifact citations pin post-redaction hashes; changed/deleted sources return trusted lessons to the review inbox | Modify, rename, and delete cited artifacts across ingestion |
 | Learning history loss or forgery | Immutable deterministic events, request fingerprints, contiguous replay, atomic projections, private file modes, symlink rejection, and a cross-process writer lock | Retry conflicts, corruption, interrupted projection, and concurrent-proposal tests |
 | Ambient MCP write authority | Session write routes are absent by default and require `--allow-session-writes` at process startup; stored content cannot enable them; writes are append-only and idempotent | Actual-host permission UX and adversarial injection tests |
+| Agent self-approval | `--allow-learning-proposals` adds only one agent-authored, review-required route; MCP has no confirm, correct, reject, supersede, delete, or promote route; default retrieval requires trusted, artifact-current memory | Inspector tool-surface diff and proposal/retrieval lifecycle |
 | Local MCP compromise | Local stdio only; exact host launch command; fixed project scope; no Roots, sampling, network listener, deletion tools, subscriptions, or ambient project discovery | Host-adapter sandbox profiles |
 
 ## Explicit non-claims

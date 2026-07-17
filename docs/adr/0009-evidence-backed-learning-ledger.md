@@ -40,7 +40,7 @@ Every mutation requires a stable `req_` request ID. Event and learning IDs are d
 
 Recognized credential patterns are redacted before event creation, including titles, guidance, evidence notes, correction notes, and review notes. The ledger stores redaction metadata. Redaction remains a safety layer rather than a guarantee.
 
-The CLI requires actor and provenance to be explicit rather than inferring who invoked it. Its review inbox excludes terminally rejected or superseded records. Agent protocol exposure is a separate consent decision; this ADR does not add ambient MCP writes.
+The CLI requires actor and provenance to be explicit rather than inferring who invoked it. Its review inbox excludes terminally rejected or superseded records. [ADR 0010](0010-explicit-mcp-learning-proposal-consent.md) separately exposes trusted-first reads and an opt-in agent-only proposal capability without adding ambient review authority.
 
 ## Consequences
 

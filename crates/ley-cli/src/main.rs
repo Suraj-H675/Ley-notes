@@ -592,6 +592,7 @@ fn learning_freshness_label(freshness: ley_core::LearningFreshness) -> &'static 
 
 fn mcp(arguments: &[String]) -> Result<(), CliError> {
     let mut allow_session_writes = false;
+    let mut allow_learning_proposals = false;
     let mut binding_arguments_only = Vec::new();
     for argument in arguments {
         if argument == "--allow-session-writes" {
@@ -601,6 +602,13 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
                 ));
             }
             allow_session_writes = true;
+        } else if argument == "--allow-learning-proposals" {
+            if allow_learning_proposals {
+                return Err(CliError::Usage(
+                    "--allow-learning-proposals may be specified only once".to_owned(),
+                ));
+            }
+            allow_learning_proposals = true;
         } else {
             binding_arguments_only.push(argument.clone());
         }
@@ -613,7 +621,13 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
     }
     let registry = BindingRegistry::system_default()?;
     let binding = registry.resolve(&parsed.project, parsed.vault.as_deref())?;
-    run_stdio(parsed.project, binding.vault_path, allow_session_writes).map_err(CliError::Mcp)
+    run_stdio(
+        parsed.project,
+        binding.vault_path,
+        allow_session_writes,
+        allow_learning_proposals,
+    )
+    .map_err(CliError::Mcp)
 }
 
 fn session(arguments: &[String]) -> Result<(), CliError> {
@@ -1425,6 +1439,7 @@ fn print_help() {
     println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley graph [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley mcp [path] [--vault TEMPORARY_VAULT] [--allow-session-writes]");
+    println!("      [--allow-learning-proposals]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
     println!("  ley session checkpoint SESSION [path] --summary TEXT [--touched PATH]...");
     println!("  ley session checkpoint SESSION [path] --data CHECKPOINT.json");

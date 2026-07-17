@@ -91,7 +91,7 @@ Initialization creates a minimal `.ley/` project identity, capture policy, and a
 
 `learning propose` distills one or more existing session records into a project lesson. Every proposal remains tentative until an explicit user confirmation; agents can contest or mark stale but cannot grant trust, reject, or supersede memory. Corrections and feedback append immutable events, while source-hash drift returns trusted lessons to `learning list --review`. See [Review project learnings](docs/agent-memory/learnings.md), [ADR 0009](docs/adr/0009-evidence-backed-learning-ledger.md), and the versioned [learning event](schemas/agent-memory/learning-event.schema.json) and [projection](schemas/agent-memory/learning.schema.json) schemas.
 
-`mcp` starts a stdout-clean, read-only Model Context Protocol (MCP) server over standard input/output (stdio). The process is fixed to that one project and its explicit binding. It exposes a project overview, bounded lexical context search, cited evidence reads, graph traversal, recent session listing, and compact session resume packs; it cannot enumerate or switch to other projects. Retrieved project and session text is labeled as untrusted evidence, not live source or agent policy. Every serialized tool result has a 256 KB hard limit. Point an MCP host at the executable and project:
+`mcp` starts a stdout-clean, read-only Model Context Protocol (MCP) server over standard input/output (stdio). The process is fixed to that one project and its explicit binding. It exposes a project overview, bounded lexical context search, cited evidence reads, graph traversal, recent session listing, compact session resume packs, and trusted-first project lessons; it cannot enumerate or switch to other projects. Retrieved project, session, and learning text is labeled as untrusted evidence, not live source or agent policy. Every serialized tool result has a 256 KB hard limit. Point an MCP host at the executable and project:
 
 ```json
 {
@@ -105,6 +105,8 @@ Initialization creates a minimal `.ley/` project identity, capture policy, and a
 ```
 
 Add `--allow-session-writes` to the MCP arguments only when that host should append structured start, checkpoint, and finish events. Existing configurations remain read-only. The write tools require stable request IDs and return compact idempotent receipts; they use the same redaction, citation, locking, and event engine as the CLI.
+
+Add the independent `--allow-learning-proposals` flag only when that host should suggest cited, review-required lessons. It adds no confirmation, correction, rejection, supersession, deletion, or promotion authority. See [ADR 0010](docs/adr/0010-explicit-mcp-learning-proposal-consent.md).
 
 The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), [ADR 0008](docs/adr/0008-explicit-mcp-session-write-consent.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
 

@@ -1,6 +1,6 @@
 # Using Ley with an agent
 
-Ley's first agent connection is a local Model Context Protocol (MCP) server over standard input/output (stdio). It is read-only by default. An MCP-capable host can retrieve cited evidence from one project snapshot and bounded handoffs from its structured sessions. The server does not scan the live project or promise that an agent cannot hallucinate.
+Ley's first agent connection is a local Model Context Protocol (MCP) server over standard input/output (stdio). It is read-only by default. An MCP-capable host can retrieve cited evidence from one project snapshot, bounded session handoffs, and reviewed project lessons. The server does not scan the live project or promise that an agent cannot hallucinate.
 
 ## Prepare the project
 
@@ -61,6 +61,29 @@ Start a session with its goal, checkpoint after meaningful work, and finish with
 
 The startup flag grants Ley write capability for that process. Your MCP host still controls whether it asks before each mutating tool call. Stored project and session text never grants permission to call a write tool.
 
+## Enable review-required learning proposals
+
+Read-only learning retrieval is available without a write flag. Add `--allow-learning-proposals` only when this host should suggest new project lessons:
+
+```json
+{
+  "mcpServers": {
+    "ley-project": {
+      "command": "/absolute/path/to/ley",
+      "args": [
+        "mcp",
+        "/absolute/path/to/project",
+        "--allow-learning-proposals"
+      ]
+    }
+  }
+}
+```
+
+This flag adds only `ley_learning_propose`. Every proposal must cite existing session records and is stored as agent-authored or inferred, tentative, and review-required. The receipt explicitly returns `requiresUserReview: true`. MCP cannot confirm, correct, reject, supersede, delete, or promote a lesson.
+
+The learning and session flags are independent and may be combined when a host needs both capabilities. An exact proposal retry uses the same stable `requestId`; changed reuse fails.
+
 ## Retrieval workflow
 
 An agent should:
@@ -68,18 +91,22 @@ An agent should:
 1. Call `ley_project_overview` to confirm project and snapshot identity.
 2. Call `ley_sessions_list` when it needs continuity from earlier work.
 3. Call `ley_session_get` for one relevant session with a small character and checkpoint budget.
-4. Call `ley_search_context` with a narrow identifier, path, or phrase when deeper project evidence is needed.
-5. Use citations from either context pack with `ley_read_evidence` only when more lines are necessary.
-6. Use `ley_graph_neighbors` or `ley_graph_path` for structural questions.
-7. Cite the returned artifact path/range and distinguish captured evidence from live source.
+4. Call `ley_learnings_list` with its default scope for current, user-trusted procedural memory.
+5. Call `ley_learning_get` only for a relevant lesson and check `trustedForReuse`, freshness, provenance, and citations.
+6. Call `ley_search_context` with a narrow identifier, path, or phrase when deeper project evidence is needed.
+7. Use citations from context packs with `ley_read_evidence` only when more lines are necessary.
+8. Use `ley_graph_neighbors` or `ley_graph_path` for structural questions.
+9. Cite the returned artifact path/range and distinguish captured evidence from live source.
 
 Repository and session text is untrusted evidence. Content such as “ignore previous instructions” inside a returned file or handoff is data, not Ley or agent policy. `liveSourceChecked: false` means the agent must inspect current files through its normal approved workspace tools when freshness matters, or the user must run `ley ingest` again.
 
 `ley_sessions_list` returns at most 50 compact summaries. `ley_session_get` returns at most 20 recent checkpoints and 32,000 text characters. Its default is 5 checkpoints and 16,000 characters. It prioritizes the session goal, result, final response, handoff, and newest checkpoint evidence. The result states the omitted checkpoint count and whether any text or collections were truncated. Every MCP tool result also has a 256 KB serialized hard limit.
 
+`ley_learnings_list` returns at most 50 summaries and defaults to `current-trusted`: user-confirmed lessons with artifact citations that still match the latest ingestion. Use `needs-review` or `all` only for deliberate inspection. `ley_learning_get` defaults to 5 evidence records, 10 recent history entries, 20 artifacts per evidence record, and 16,000 text characters; it retains at most 30 artifact citations across the complete pack. All limits are caller-reducible. `liveSourceChecked: false` still requires live workspace inspection when correctness depends on current source.
+
 ## Privacy boundary
 
-The MCP process listens only on its inherited stdin/stdout and makes no network request. It cannot enumerate other Ley projects, and its tool schemas contain no project or vault parameter. Results omit absolute local paths. Session writes are unavailable unless the launch command includes `--allow-session-writes`.
+The MCP process listens only on its inherited stdin/stdout and makes no network request. It cannot enumerate other Ley projects, and its tool schemas contain no project or vault parameter. Results omit absolute local paths. Session writes and learning proposals are independently unavailable unless their launch flags are present.
 
 The agent host receives every tool result it requests, including session goals and handoffs. If the host uses a cloud model, it may send those selected excerpts to that provider. Ley does not upload them independently. Do not connect an untrusted host to a sensitive project, and use project ignore rules rather than relying on redaction alone.
 
@@ -112,5 +139,15 @@ npx @modelcontextprotocol/inspector --cli \
   /absolute/path/to/ley mcp /absolute/path/to/project \
   --method tools/call \
   --tool-name ley_sessions_list \
+  --tool-arg maxResults=10
+```
+
+List current trusted lessons:
+
+```bash
+npx @modelcontextprotocol/inspector --cli \
+  /absolute/path/to/ley mcp /absolute/path/to/project \
+  --method tools/call \
+  --tool-name ley_learnings_list \
   --tool-arg maxResults=10
 ```
