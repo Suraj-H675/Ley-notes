@@ -9,7 +9,7 @@ Agent memory must not begin by silently reading a project. A user or agent needs
 
 ## Decision
 
-Add `ley preview [path] [--json]`. It reads the initialized project policy and returns lexically sorted, project-relative paths and byte sizes. Preview reads filesystem metadata, not file contents.
+Add `ley preview [path] [--json]`. It reads the initialized project policy and returns lexically sorted, project-relative paths and byte sizes. It also returns a SHA-256 capture fingerprint over the validated policy plus `.leyignore`, allowing later ingestion to prove which consent/exclusion configuration produced a snapshot. Preview reads project filesystem metadata, not candidate file contents.
 
 The traversal:
 

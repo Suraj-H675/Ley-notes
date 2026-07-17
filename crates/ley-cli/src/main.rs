@@ -1,6 +1,6 @@
 use ley_core::{
-    diagnose_project, initialize_project, preview_capture, BindingRegistry, CaptureMode,
-    LeyCoreError,
+    diagnose_project, ingest_project, initialize_project, preview_capture, BindingRegistry,
+    CaptureMode, LeyCoreError,
 };
 use std::env;
 use std::path::PathBuf;
@@ -22,6 +22,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "bind" => bind(&arguments[1..]),
         "binding" => binding(&arguments[1..]),
         "unbind" => unbind(&arguments[1..]),
+        "ingest" => ingest(&arguments[1..]),
         "doctor" => doctor(&arguments[1..]),
         "preview" => preview(&arguments[1..]),
         "help" | "--help" | "-h" => {
@@ -34,6 +35,51 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         }
         other => Err(CliError::Usage(format!("unknown command '{other}'"))),
     }
+}
+
+fn ingest(arguments: &[String]) -> Result<(), CliError> {
+    let parsed = binding_arguments(arguments, false)?;
+    let registry = BindingRegistry::system_default()?;
+    let binding = registry.resolve(&parsed.project, parsed.vault.as_deref())?;
+    let result = ingest_project(&parsed.project, &binding.vault_path)?;
+    if parsed.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "binding": binding,
+                "ingestion": result,
+            }))
+            .expect("CLI result is serializable")
+        );
+    } else {
+        println!("Ingested project: {}", result.project_id);
+        println!("Snapshot: {}", result.snapshot_id);
+        println!(
+            "Vault: {} ({})",
+            binding.vault_path.display(),
+            binding.source
+        );
+        println!(
+            "Artifacts: {} files / {} stored / {} redacted / {} skipped",
+            result.files,
+            result.stored_files,
+            result.redacted_files,
+            result.skipped.len()
+        );
+        if result.changed {
+            println!(
+                "Changes: {} added / {} modified / {} renamed / {} deleted",
+                result.added.len(),
+                result.modified.len(),
+                result.renamed.len(),
+                result.deleted.len()
+            );
+            println!("Manifest: {}", result.manifest_path);
+        } else {
+            println!("No source changes; the durable snapshot was left untouched");
+        }
+    }
+    Ok(())
 }
 
 fn bind(arguments: &[String]) -> Result<(), CliError> {
@@ -297,6 +343,7 @@ fn print_help() {
     println!("  ley bind [path] --vault VAULT [--json]");
     println!("  ley binding [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley unbind [path] [--json]");
+    println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley doctor [path] [--json]");
     println!("  ley preview [path] [--json]");
     println!();

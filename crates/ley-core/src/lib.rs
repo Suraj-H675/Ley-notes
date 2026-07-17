@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Component;
@@ -8,10 +9,16 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod binding;
+mod ingestion;
 
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
+};
+pub use ingestion::{
+    ingest_project, ArtifactKind, ArtifactRecord, ArtifactSkipReason, IngestionResult,
+    RedactionFinding, RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY,
+    ARTIFACT_MANIFEST_LIMIT_BYTES, ARTIFACT_MANIFEST_SCHEMA_VERSION,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";
@@ -137,6 +144,7 @@ pub struct CapturePreview {
     pub root: PathBuf,
     pub project_id: String,
     pub mode: CaptureMode,
+    pub capture_fingerprint: String,
     pub files: Vec<CaptureFile>,
     pub included_bytes: u64,
     pub skipped_oversized: Vec<CaptureFile>,
@@ -166,6 +174,12 @@ pub enum LeyCoreError {
     VaultNotBound(String),
     #[error("the bound Ley vault is unavailable; rebind project {project_id}: {path}")]
     BoundVaultUnavailable { project_id: String, path: PathBuf },
+    #[error("a Ley vault cannot be the project directory or live inside it: {0}")]
+    OverlappingProjectVault(PathBuf),
+    #[error("project file changed after capture preview; rerun ingestion: {0}")]
+    ProjectChangedDuringIngestion(String),
+    #[error("invalid Ley artifact store: {0}")]
+    InvalidArtifactStore(String),
     #[error("unsafe Ley project layout at {0}")]
     UnsafeProjectLayout(PathBuf),
     #[error("Ley metadata exceeds the {limit_bytes}-byte limit: {path}")]
@@ -287,6 +301,13 @@ pub fn preview_capture(start: impl AsRef<Path>) -> Result<CapturePreview, LeyCor
         path: ignore_path.clone(),
         source,
     })?;
+    let mut fingerprint = Sha256::new();
+    fingerprint.update(
+        serde_json::to_vec(&diagnostic.capture).expect("validated capture policy is serializable"),
+    );
+    fingerprint.update([0]);
+    fingerprint.update(ignore_body.as_bytes());
+    let capture_fingerprint = format!("sha256:{:x}", fingerprint.finalize());
     let mut ignore_builder = GitignoreBuilder::new(root);
     for line in ignore_body.lines() {
         ignore_builder
@@ -381,6 +402,7 @@ pub fn preview_capture(start: impl AsRef<Path>) -> Result<CapturePreview, LeyCor
         root: diagnostic.root,
         project_id: diagnostic.identity.project_id,
         mode: diagnostic.capture.mode,
+        capture_fingerprint,
         files,
         included_bytes,
         skipped_oversized,

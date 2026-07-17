@@ -23,6 +23,8 @@ A vault-level `.ley/` directory is reserved for local Ley workspace and agent-me
 
 The project-to-vault association lives outside both locations in Ley's private operating-system application configuration directory. Its versioned registry stores only stable project IDs and canonical vault paths. It contains no project path/name or knowledge content, is updated under a cross-process lock with atomic replacement, and can be deleted without deleting either project or vault data. A moved vault must be rebound explicitly; Ley does not guess another folder.
 
+After an explicit ingestion command, deterministic project evidence lives under `<vault>/.ley/agent-memory/projects/<project-id>/`. Structured and Full Evidence modes retain allowed UTF-8 source text only after local credential redaction; Minimal mode retains artifact metadata and post-redaction hashes without source blobs. Binary/non-UTF-8 files, ignored paths, and detected raw values are not copied. Redaction is a safety layer, not a guarantee that every possible secret is recognizable, so preview and project-specific ignore rules remain important.
+
 Derived search and graph indexes remain disposable local database state. Deleting an index must never destroy an authoritative filesystem vault.
 
 ## Required safeguards
