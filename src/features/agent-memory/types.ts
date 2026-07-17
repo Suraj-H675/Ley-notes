@@ -76,6 +76,83 @@ export interface SessionSummary {
   checkpoints: number;
 }
 
+export interface SessionContext {
+  projectId: string;
+  sessionId: string;
+  name: string;
+  goal: string;
+  status: "active" | "completed" | "paused" | "abandoned";
+  source: {
+    kind: string;
+    host?: string;
+    agent?: string;
+  };
+  artifactSnapshotIdAtStart: string;
+  startedAtUnixMs: number;
+  updatedAtUnixMs: number;
+  eventCount: number;
+  checkpointCount: number;
+  checkpoints: Array<{
+    checkpointId: string;
+    recordedAtUnixMs: number;
+    summary: string;
+    decisions: Array<{ id: string; title: string; decision: string }>;
+    tasks: Array<{ id: string; title: string; status: string }>;
+    problems: Array<{
+      id: string;
+      title: string;
+      symptom: string;
+      attempts: Array<{
+        id: string;
+        action: string;
+        outcome: string;
+        evidence: string;
+      }>;
+      latestAttemptOutcome?: string;
+      resolution?: string;
+      resolutionDetail?: {
+        id: string;
+        rootCause: string;
+        change: string;
+        verification: string;
+      };
+    }>;
+    touchedArtifacts: Array<{
+      artifactPath: string;
+      artifactSnapshotId: string;
+      contentHash: string;
+      startLine: number;
+      endLine: number;
+    }>;
+    commands: Array<{
+      id: string;
+      command: string;
+      exitCode?: number;
+      summary: string;
+    }>;
+    verification: Array<{
+      id: string;
+      kind: string;
+      status: string;
+      summary: string;
+    }>;
+    unresolved: string[];
+  }>;
+  finish?: {
+    recordedAtUnixMs: number;
+    status: string;
+    summary: string;
+    finalResponse: string;
+    handoff: string;
+    unresolved: string[];
+  };
+  omittedCheckpoints: number;
+  textCharacters: number;
+  estimatedTextTokens: number;
+  truncated: boolean;
+  instructionWarning: string;
+}
+
 export interface ResumeLearning {
   learningId: string;
   kind: string;

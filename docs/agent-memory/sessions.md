@@ -115,6 +115,8 @@ ley session show ses_01234567890123456789012345678901 \
 
 The vault also contains `session.md` for review and `session-v1.json` for local tools. Both files are derived. Preserve the immutable event files when repairing or migrating memory.
 
+Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, and snapshot-pinned artifact citations. Older checkpoints and truncated text are disclosed instead of being presented as complete history.
+
 ## Retry a write safely
 
 Supply `--request-id req_01234567890123456789012345678901` when another process may repeat a start, compact checkpoint, or finish call. The same ID and content replay the original event. The same ID with different content fails instead of creating ambiguous history.

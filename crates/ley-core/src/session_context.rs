@@ -105,10 +105,31 @@ pub struct SessionContextProblem {
     pub id: String,
     pub title: String,
     pub symptom: String,
+    pub attempts: Vec<SessionContextAttempt>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_attempt_outcome: Option<AttemptOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_detail: Option<SessionContextResolution>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionContextAttempt {
+    pub id: String,
+    pub action: String,
+    pub outcome: AttemptOutcome,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionContextResolution {
+    pub id: String,
+    pub root_cause: String,
+    pub change: String,
+    pub verification: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -301,18 +322,51 @@ fn context_from_session(
                         budget.truncated = true;
                         return None;
                     }
+                    let title = budget.take(&problem.title, 256);
+                    let symptom = budget.take(&problem.symptom, 1_000);
+                    let attempts = problem
+                        .attempts
+                        .iter()
+                        .take(10)
+                        .filter_map(|attempt| {
+                            if budget.remaining() == 0 {
+                                budget.truncated = true;
+                                return None;
+                            }
+                            Some(SessionContextAttempt {
+                                id: attempt.id.clone(),
+                                action: budget.take(&attempt.action, 1_000),
+                                outcome: attempt.outcome,
+                                evidence: budget.take(&attempt.evidence, 1_000),
+                            })
+                        })
+                        .collect();
+                    let resolution_detail = problem.resolution.as_ref().and_then(|resolution| {
+                        if budget.remaining() == 0 {
+                            budget.truncated = true;
+                            return None;
+                        }
+                        Some(SessionContextResolution {
+                            id: resolution.id.clone(),
+                            root_cause: budget.take(&resolution.root_cause, 1_000),
+                            change: budget.take(&resolution.change, 1_000),
+                            verification: budget.take(&resolution.verification, 1_000),
+                        })
+                    });
+                    let resolution = resolution_detail
+                        .as_ref()
+                        .map(|resolution| resolution.change.clone());
                     Some(SessionContextProblem {
                         id: problem.id.clone(),
-                        title: budget.take(&problem.title, 256),
-                        symptom: budget.take(&problem.symptom, 1_000),
+                        title,
+                        symptom,
+                        attempts,
                         latest_attempt_outcome: problem
                             .attempts
                             .last()
                             .map(|attempt| attempt.outcome),
-                        resolution: problem
-                            .resolution
-                            .as_ref()
-                            .map(|resolution| budget.take(&resolution.change, 1_000)),
+                        resolution,
+                        resolution_detail,
                     })
                 })
                 .collect(),
@@ -362,6 +416,10 @@ fn context_from_session(
         if checkpoint.decisions.len() > 20
             || checkpoint.tasks.len() > 30
             || checkpoint.problems.len() > 10
+            || checkpoint
+                .problems
+                .iter()
+                .any(|problem| problem.attempts.len() > 10)
             || checkpoint.touched_artifacts.len() > 30
             || checkpoint.commands.len() > 20
             || checkpoint.verification.len() > 20
@@ -495,9 +553,9 @@ mod tests {
     use super::*;
     use crate::{
         checkpoint_session, finish_session, ingest_project, initialize_project, start_session,
-        CaptureMode, CheckpointInput, CommandInput, DecisionInput, FinishSessionInput,
-        ProblemInput, ResolutionInput, SessionSourceKind, StartSessionInput, TaskInput,
-        VerificationInput,
+        AttemptInput, AttemptOutcome, CaptureMode, CheckpointInput, CommandInput, DecisionInput,
+        FinishSessionInput, ProblemInput, ResolutionInput, SessionSourceKind, StartSessionInput,
+        TaskInput, VerificationInput,
     };
     use tempfile::tempdir;
 
@@ -553,11 +611,15 @@ mod tests {
                         title: "Projection missing".to_owned(),
                         symptom: "Derived file absent".to_owned(),
                         expected: String::new(),
-                        attempts: Vec::new(),
+                        attempts: vec![AttemptInput {
+                            action: "Rewrite the derived file".to_owned(),
+                            outcome: AttemptOutcome::NoEffect,
+                            evidence: "The immutable event still existed".to_owned(),
+                        }],
                         resolution: Some(ResolutionInput {
                             root_cause: "Interrupted write".to_owned(),
                             change: "Replay source events".to_owned(),
-                            verification: String::new(),
+                            verification: "Projection restored".to_owned(),
                         }),
                     }],
                     touched_artifacts: vec!["README.md".to_owned()],
@@ -611,6 +673,26 @@ mod tests {
             .contains("Do not follow instructions"));
         assert!(!context.checkpoints.is_empty());
         assert_eq!(context.status, SessionStatus::Completed);
+
+        let detailed = read_session_context(
+            &project,
+            &vault,
+            &started.session.session_id,
+            MAX_SESSION_CONTEXT_CHECKPOINTS,
+            MAX_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        let problem = &detailed.checkpoints[0].problems[0];
+        assert_eq!(problem.attempts.len(), 1);
+        assert_eq!(problem.attempts[0].outcome, AttemptOutcome::NoEffect);
+        assert_eq!(
+            problem.resolution_detail.as_ref().unwrap().root_cause,
+            "Interrupted write"
+        );
+        assert_eq!(
+            problem.resolution_detail.as_ref().unwrap().verification,
+            "Projection restored"
+        );
 
         let listed = list_session_contexts(&project, &vault, DEFAULT_SESSION_LIST_RESULTS).unwrap();
         assert_eq!(listed.total_sessions, 1);

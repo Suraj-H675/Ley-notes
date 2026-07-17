@@ -73,12 +73,13 @@ pub use session::{
     SESSION_PROJECTION_LIMIT_BYTES, SESSION_SCHEMA_VERSION,
 };
 pub use session_context::{
-    list_session_contexts, read_session_context, SessionContextCheckpoint, SessionContextCitation,
-    SessionContextCommand, SessionContextDecision, SessionContextFinish, SessionContextPack,
-    SessionContextProblem, SessionContextTask, SessionContextVerification, SessionList,
-    SessionListItem, DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
-    DEFAULT_SESSION_LIST_RESULTS, MAX_SESSION_CONTEXT_CHARACTERS, MAX_SESSION_CONTEXT_CHECKPOINTS,
-    MAX_SESSION_LIST_RESULTS, MIN_SESSION_CONTEXT_CHARACTERS,
+    list_session_contexts, read_session_context, SessionContextAttempt, SessionContextCheckpoint,
+    SessionContextCitation, SessionContextCommand, SessionContextDecision, SessionContextFinish,
+    SessionContextPack, SessionContextProblem, SessionContextResolution, SessionContextTask,
+    SessionContextVerification, SessionList, SessionListItem, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_LIST_RESULTS,
+    MAX_SESSION_CONTEXT_CHARACTERS, MAX_SESSION_CONTEXT_CHECKPOINTS, MAX_SESSION_LIST_RESULTS,
+    MIN_SESSION_CONTEXT_CHARACTERS,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";

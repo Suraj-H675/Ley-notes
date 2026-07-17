@@ -1,13 +1,15 @@
 use ley_core::{
     diagnose_project, generate_learning_request_id, ingest_project, initialize_project,
     list_learning_contexts, list_sessions, project_memory_overview, project_resume_context,
-    read_learning_context, read_project_graph, review_learning, BindingRegistry, BindingSource,
-    CaptureMode, IngestionResult, LearningActor, LearningContextPack, LearningFeedbackAction,
-    LearningList, LearningListScope, LeyCoreError, MemoryOverview, ProjectGraph, ProjectResumePack,
-    ProjectVaultBinding, ReviewLearningInput, SessionSummary, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    read_learning_context, read_project_graph, read_session_context, review_learning,
+    BindingRegistry, BindingSource, CaptureMode, IngestionResult, LearningActor,
+    LearningContextPack, LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError,
+    MemoryOverview, ProjectGraph, ProjectResumePack, ProjectVaultBinding, ReviewLearningInput,
+    SessionContextPack, SessionSummary, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, MAX_LEARNING_LIST_RESULTS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, MAX_LEARNING_LIST_RESULTS,
 };
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -247,6 +249,24 @@ fn read_agent_learning(
                 DEFAULT_LEARNING_CONTEXT_HISTORY,
                 DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
                 DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+            )
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn read_agent_session(
+    project_path: String,
+    session_id: String,
+) -> Result<SessionContextPack, String> {
+    resolved_agent_binding(Path::new(&project_path))
+        .and_then(|binding| {
+            read_session_context(
+                &project_path,
+                &binding.vault_path,
+                &session_id,
+                DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+                DEFAULT_SESSION_CONTEXT_CHARACTERS,
             )
         })
         .map_err(|error| error.to_string())
@@ -775,6 +795,7 @@ pub fn run() {
             connect_agent_project,
             refresh_agent_project,
             read_agent_learning,
+            read_agent_session,
             review_agent_learning,
             bind_agent_project,
             resolve_agent_project_vault,

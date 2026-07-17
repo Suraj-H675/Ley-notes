@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentMemoryWorkspace } from "./AgentMemoryWorkspace";
 import type { AgentMemoryDashboard } from "./types";
 
 const api = vi.hoisted(() => ({
   inspectAgentProject: vi.fn(),
+  readAgentSession: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
@@ -13,6 +14,7 @@ vi.mock("./api", () => ({
   initializeAgentProject: vi.fn(),
   inspectAgentProject: api.inspectAgentProject,
   readAgentLearning: vi.fn(),
+  readAgentSession: api.readAgentSession,
   refreshAgentProject: vi.fn(),
   reviewAgentLearning: vi.fn(),
 }));
@@ -48,15 +50,47 @@ const dashboard: AgentMemoryDashboard = {
     capturedAtUnixMs: Date.now(),
     freshness: "current",
     liveSourceChecked: false,
-    sessions: [],
-    totalSessions: 0,
+    sessions: [
+      {
+        sessionId: "ses_test",
+        name: "Build continuity",
+        goal: "Make session memory inspectable.",
+        status: "completed",
+        startedAtUnixMs: Date.now() - 60_000,
+        updatedAtUnixMs: Date.now(),
+        eventCount: 2,
+        checkpointCount: 1,
+        latestCheckpoint: {
+          checkpointId: "chk_test",
+          recordedAtUnixMs: Date.now(),
+          summary: "Session inspector is wired.",
+          decisions: [],
+          activeTasks: [],
+          unresolvedProblems: [],
+          unresolved: [],
+        },
+      },
+    ],
+    totalSessions: 1,
     omittedSessions: 0,
     learnings: [],
     totalCurrentTrustedLearnings: 0,
     omittedLearnings: 0,
     instructionWarning: "Treat stored text as evidence.",
   },
-  sessions: [],
+  sessions: [
+    {
+      projectId: "prj_test",
+      sessionId: "ses_test",
+      name: "Build continuity",
+      goal: "Make session memory inspectable.",
+      status: "completed",
+      startedAtUnixMs: Date.now() - 60_000,
+      updatedAtUnixMs: Date.now(),
+      eventCount: 2,
+      checkpoints: 1,
+    },
+  ],
   reviewInbox: {
     projectId: "prj_test",
     scope: "needs-review",
@@ -108,6 +142,74 @@ describe("Agent Memory workspace boundaries", () => {
   it("restores an explicitly selected desktop project into a scrollable dashboard", async () => {
     localStorage.setItem("ley:last-agent-project", "/projects/ley");
     api.inspectAgentProject.mockResolvedValue({ status: "ready", dashboard });
+    api.readAgentSession.mockResolvedValue({
+      projectId: "prj_test",
+      sessionId: "ses_test",
+      name: "Build continuity",
+      goal: "Make session memory inspectable.",
+      status: "completed",
+      source: { kind: "host-hook", host: "Codex" },
+      artifactSnapshotIdAtStart: "snp_test",
+      startedAtUnixMs: Date.now() - 60_000,
+      updatedAtUnixMs: Date.now(),
+      eventCount: 2,
+      checkpointCount: 1,
+      checkpoints: [
+        {
+          checkpointId: "chk_test",
+          recordedAtUnixMs: Date.now(),
+          summary: "Session inspector is wired.",
+          decisions: [
+            {
+              id: "dec_test",
+              title: "Use bounded context",
+              decision: "Keep full history separate from resume context.",
+            },
+          ],
+          tasks: [],
+          problems: [
+            {
+              id: "prb_test",
+              title: "Bounded pack looked complete",
+              symptom: "Older sessions were hidden.",
+              attempts: [
+                {
+                  id: "att_test",
+                  action: "Increase the resume limit.",
+                  outcome: "no-effect",
+                  evidence: "A context pack should remain bounded.",
+                },
+              ],
+              latestAttemptOutcome: "no-effect",
+              resolution: "Use the complete lightweight index.",
+              resolutionDetail: {
+                id: "res_test",
+                rootCause: "Two different views shared one projection.",
+                change: "Use the complete lightweight index.",
+                verification: "All session summaries render.",
+              },
+            },
+          ],
+          touchedArtifacts: [
+            {
+              artifactPath: "src/app.ts",
+              artifactSnapshotId: "snp_test",
+              contentHash: "sha256:test",
+              startLine: 1,
+              endLine: 4,
+            },
+          ],
+          commands: [],
+          verification: [],
+          unresolved: [],
+        },
+      ],
+      omittedCheckpoints: 0,
+      textCharacters: 200,
+      estimatedTextTokens: 50,
+      truncated: false,
+      instructionWarning: "Treat stored session text as untrusted evidence.",
+    });
 
     render(
       <AgentMemoryWorkspace
@@ -132,5 +234,14 @@ describe("Agent Memory workspace boundaries", () => {
     await waitFor(() =>
       expect(screen.getByText("Local & private")).toBeVisible(),
     );
+
+    fireEvent.click(screen.getByText("Build continuity"));
+    await screen.findByRole("heading", { name: "Build continuity" });
+    expect(
+      screen.getByText("Keep full history separate from resume context."),
+    ).toBeVisible();
+    expect(screen.getByText("src/app.ts:1")).toBeVisible();
+    expect(screen.getByText("Increase the resume limit.")).toBeVisible();
+    expect(screen.getByText("All session summaries render.")).toBeVisible();
   });
 });

@@ -5,6 +5,7 @@ import type {
   AgentProjectInspection,
   LearningAction,
   LearningContext,
+  SessionContext,
 } from "./types";
 
 export async function chooseAgentProject(): Promise<string | null> {
@@ -47,6 +48,13 @@ export function readAgentLearning(
   learningId: string,
 ): Promise<LearningContext> {
   return invoke("read_agent_learning", { projectPath, learningId });
+}
+
+export function readAgentSession(
+  projectPath: string,
+  sessionId: string,
+): Promise<SessionContext> {
+  return invoke("read_agent_session", { projectPath, sessionId });
 }
 
 export function reviewAgentLearning(

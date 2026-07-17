@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   AlertTriangle,
@@ -32,6 +32,7 @@ import {
   initializeAgentProject,
   inspectAgentProject,
   readAgentLearning,
+  readAgentSession,
   refreshAgentProject,
   reviewAgentLearning,
 } from "./api";
@@ -42,6 +43,7 @@ import type {
   LearningContext,
   LearningSummary,
   ResumeSession,
+  SessionContext,
   SessionSummary,
 } from "./types";
 
@@ -78,6 +80,7 @@ export function AgentMemoryWorkspace({
   );
   const [error, setError] = useState<string | null>(null);
   const [learningId, setLearningId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (
@@ -259,10 +262,14 @@ export function AgentMemoryWorkspace({
                       onOpenSession={() => setSection("sessions")}
                       onOpenReview={() => setSection("review")}
                       onLearning={setLearningId}
+                      onSession={setSessionId}
                     />
                   )}
                   {section === "sessions" && (
-                    <Sessions sessions={inspection.dashboard.sessions} />
+                    <Sessions
+                      sessions={inspection.dashboard.sessions}
+                      onSession={setSessionId}
+                    />
                   )}
                   {section === "lessons" && (
                     <Lessons
@@ -279,6 +286,15 @@ export function AgentMemoryWorkspace({
                 </div>
               </main>
             </div>
+          )}
+
+          {dashboard && projectPath && (
+            <SessionInspector
+              key={sessionId ?? "closed"}
+              sessionId={sessionId}
+              projectPath={projectPath}
+              onClose={() => setSessionId(null)}
+            />
           )}
 
           {dashboard && projectPath && (
@@ -405,11 +421,13 @@ function Overview({
   onOpenSession,
   onOpenReview,
   onLearning,
+  onSession,
 }: {
   dashboard: AgentMemoryDashboard;
   onOpenSession: () => void;
   onOpenReview: () => void;
   onLearning: (id: string) => void;
+  onSession: (id: string) => void;
 }) {
   const { overview, resume, reviewInbox } = dashboard;
   const active = resume.sessions.filter(
@@ -528,6 +546,7 @@ function Overview({
                     key={session.sessionId}
                     session={session}
                     divided={index > 0}
+                    onClick={() => onSession(session.sessionId)}
                   />
                 ))
             )}
@@ -600,7 +619,13 @@ function Overview({
   );
 }
 
-function Sessions({ sessions }: { sessions: SessionSummary[] }) {
+function Sessions({
+  sessions,
+  onSession,
+}: {
+  sessions: SessionSummary[];
+  onSession: (id: string) => void;
+}) {
   return (
     <section aria-labelledby="sessions-title">
       <PageHeading
@@ -617,7 +642,11 @@ function Sessions({ sessions }: { sessions: SessionSummary[] }) {
           />
         ) : (
           sessions.map((session) => (
-            <SessionSummaryCard key={session.sessionId} session={session} />
+            <SessionSummaryCard
+              key={session.sessionId}
+              session={session}
+              onClick={() => onSession(session.sessionId)}
+            />
           ))
         )}
       </div>
@@ -697,6 +726,328 @@ function ReviewInbox({
         )}
       </div>
     </section>
+  );
+}
+
+function SessionInspector({
+  sessionId,
+  projectPath,
+  onClose,
+}: {
+  sessionId: string | null;
+  projectPath: string;
+  onClose: () => void;
+}) {
+  const [session, setSession] = useState<SessionContext | null>(null);
+  const [busy, setBusy] = useState(Boolean(sessionId));
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!sessionId) return;
+    let current = true;
+    void readAgentSession(projectPath, sessionId)
+      .then((next) => {
+        if (current) setSession(next);
+      })
+      .catch((cause) => {
+        if (current) setError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (current) setBusy(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [projectPath, sessionId]);
+
+  return (
+    <Dialog.Root
+      open={Boolean(sessionId)}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/70 backdrop-blur-sm" />
+        <Dialog.Content
+          className="fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-menu outline-none sm:inset-x-6 sm:bottom-6 sm:top-6"
+          aria-describedby={undefined}
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3 sm:px-5">
+            <div className="min-w-0">
+              <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Session provenance
+              </p>
+              <Dialog.Title className="mt-0.5 truncate text-body font-semibold">
+                {session?.name ?? "Loading session…"}
+              </Dialog.Title>
+            </div>
+            <Dialog.Close
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              aria-label="Close session inspector"
+            >
+              <X size={15} />
+            </Dialog.Close>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+            {busy && !session ? (
+              <div className="py-20 text-center text-meta text-muted-foreground">
+                Replaying structured session events…
+              </div>
+            ) : error && !session ? (
+              <ErrorNotice message={error} />
+            ) : (
+              session && (
+                <div className="space-y-7">
+                  <section className="rounded-xl border border-border bg-background/35 p-4 sm:p-5">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <SessionStatus status={session.status} />
+                      <span className="text-micro text-muted-foreground">
+                        {sourceLabel(session)}
+                      </span>
+                      <span className="text-micro text-muted-foreground">
+                        {new Intl.DateTimeFormat(undefined, {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        }).format(session.startedAtUnixMs)}
+                      </span>
+                    </div>
+                    <h3 className="mt-4 text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Goal
+                    </h3>
+                    <p className="mt-1 whitespace-pre-wrap text-body leading-6">
+                      {session.goal}
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-micro text-muted-foreground">
+                      <span>{session.checkpointCount} checkpoints</span>
+                      <span>{session.eventCount} immutable events</span>
+                      <span>~{session.estimatedTextTokens} context tokens</span>
+                    </div>
+                  </section>
+
+                  {session.finish && (
+                    <section aria-labelledby="session-outcome-title">
+                      <SectionLabel
+                        id="session-outcome-title"
+                        icon={CheckCircle2}
+                        label="Outcome & handoff"
+                      />
+                      <div className="mt-2 rounded-xl border border-border bg-surface-1 p-4 shadow-panel">
+                        <p className="text-meta leading-5 text-muted-foreground-strong">
+                          {session.finish.summary}
+                        </p>
+                        {session.finish.handoff && (
+                          <p className="mt-3 rounded-lg bg-primary/7 px-3 py-2 text-meta leading-5">
+                            <span className="font-medium text-primary">
+                              Handoff:
+                            </span>{" "}
+                            {session.finish.handoff}
+                          </p>
+                        )}
+                        {session.finish.finalResponse && (
+                          <details className="mt-3 border-t border-border pt-3">
+                            <summary className="cursor-pointer rounded text-micro font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                              Final response
+                            </summary>
+                            <p className="mt-2 whitespace-pre-wrap text-micro leading-5 text-muted-foreground-strong">
+                              {session.finish.finalResponse}
+                            </p>
+                          </details>
+                        )}
+                        {session.finish.unresolved.length > 0 && (
+                          <MemoryList
+                            title="Still unresolved"
+                            items={session.finish.unresolved}
+                            tone="warning"
+                          />
+                        )}
+                      </div>
+                    </section>
+                  )}
+
+                  <section aria-labelledby="checkpoint-timeline-title">
+                    <SectionLabel
+                      id="checkpoint-timeline-title"
+                      icon={History}
+                      label="Checkpoint timeline"
+                    />
+                    <div className="mt-3 space-y-4">
+                      {session.checkpoints.length === 0 ? (
+                        <CompactEmpty
+                          icon={History}
+                          title="No checkpoints yet"
+                          body="This session has started but has not recorded structured progress."
+                        />
+                      ) : (
+                        session.checkpoints.map((checkpoint, index) => (
+                          <article
+                            key={checkpoint.checkpointId}
+                            className="relative rounded-xl border border-border bg-surface-1 p-4 shadow-panel sm:p-5"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-micro font-semibold uppercase tracking-[0.12em] text-primary">
+                                Checkpoint {index + 1}
+                              </span>
+                              <time className="text-micro text-muted-foreground">
+                                {relativeTime(checkpoint.recordedAtUnixMs)}
+                              </time>
+                            </div>
+                            <p className="mt-2 whitespace-pre-wrap text-body leading-6">
+                              {checkpoint.summary}
+                            </p>
+
+                            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                              {checkpoint.decisions.length > 0 && (
+                                <RecordGroup
+                                  icon={GitBranch}
+                                  title="Decisions"
+                                  count={checkpoint.decisions.length}
+                                >
+                                  {checkpoint.decisions.map((decision) => (
+                                    <RecordItem
+                                      key={decision.id}
+                                      title={decision.title}
+                                      body={decision.decision}
+                                    />
+                                  ))}
+                                </RecordGroup>
+                              )}
+                              {checkpoint.tasks.length > 0 && (
+                                <RecordGroup
+                                  icon={BookCheck}
+                                  title="Tasks"
+                                  count={checkpoint.tasks.length}
+                                >
+                                  {checkpoint.tasks.map((task) => (
+                                    <RecordItem
+                                      key={task.id}
+                                      title={task.title}
+                                      meta={humanize(task.status)}
+                                    />
+                                  ))}
+                                </RecordGroup>
+                              )}
+                              {checkpoint.problems.length > 0 && (
+                                <RecordGroup
+                                  icon={AlertTriangle}
+                                  title="Problems & outcomes"
+                                  count={checkpoint.problems.length}
+                                >
+                                  {checkpoint.problems.map((problem) => (
+                                    <ProblemItem
+                                      key={problem.id}
+                                      problem={problem}
+                                    />
+                                  ))}
+                                </RecordGroup>
+                              )}
+                              {checkpoint.verification.length > 0 && (
+                                <RecordGroup
+                                  icon={ShieldCheck}
+                                  title="Verification"
+                                  count={checkpoint.verification.length}
+                                >
+                                  {checkpoint.verification.map(
+                                    (verification) => (
+                                      <RecordItem
+                                        key={verification.id}
+                                        title={humanize(verification.kind)}
+                                        body={verification.summary}
+                                        meta={humanize(verification.status)}
+                                      />
+                                    ),
+                                  )}
+                                </RecordGroup>
+                              )}
+                            </div>
+
+                            {checkpoint.touchedArtifacts.length > 0 && (
+                              <div className="mt-4 border-t border-border pt-4">
+                                <p className="text-micro font-medium text-muted-foreground">
+                                  Cited artifacts
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {checkpoint.touchedArtifacts.map(
+                                    (artifact) => (
+                                      <span
+                                        key={`${artifact.artifactPath}:${artifact.startLine}`}
+                                        title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
+                                        className="max-w-full truncate rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-micro text-muted-foreground"
+                                      >
+                                        {artifact.artifactPath}:
+                                        {artifact.startLine}
+                                      </span>
+                                    ),
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            {checkpoint.commands.length > 0 && (
+                              <details className="mt-4 border-t border-border pt-4">
+                                <summary className="cursor-pointer rounded text-micro font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                                  Commands · {checkpoint.commands.length}
+                                </summary>
+                                <div className="mt-2 space-y-2">
+                                  {checkpoint.commands.map((command) => (
+                                    <div
+                                      key={command.id}
+                                      className="overflow-hidden rounded-lg border border-border bg-background/45"
+                                    >
+                                      <code className="block overflow-x-auto px-3 py-2 font-mono text-micro text-foreground">
+                                        {command.command}
+                                      </code>
+                                      {(command.summary ||
+                                        command.exitCode !== undefined) && (
+                                        <p className="border-t border-border px-3 py-2 text-micro text-muted-foreground">
+                                          {command.exitCode !== undefined
+                                            ? `Exit ${command.exitCode}`
+                                            : "Exit not recorded"}
+                                          {command.summary
+                                            ? ` · ${command.summary}`
+                                            : ""}
+                                        </p>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </details>
+                            )}
+
+                            {checkpoint.unresolved.length > 0 && (
+                              <MemoryList
+                                title="Unresolved at this checkpoint"
+                                items={checkpoint.unresolved}
+                                tone="warning"
+                              />
+                            )}
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </section>
+
+                  {session.omittedCheckpoints > 0 && (
+                    <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-micro text-amber-500">
+                      {session.omittedCheckpoints} older checkpoints were
+                      omitted from this bounded view.
+                    </p>
+                  )}
+                  <p className="rounded-lg border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
+                    <MessageSquareWarning
+                      size={13}
+                      className="mr-2 inline text-secondary"
+                    />
+                    {session.instructionWarning}
+                  </p>
+                </div>
+              )
+            )}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -1180,9 +1531,19 @@ function BrowserBoundary({
   );
 }
 
-function SessionSummaryCard({ session }: { session: SessionSummary }) {
+function SessionSummaryCard({
+  session,
+  onClick,
+}: {
+  session: SessionSummary;
+  onClick: () => void;
+}) {
   return (
-    <article className="rounded-xl border border-border bg-surface-1 p-4 shadow-panel sm:p-5">
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full cursor-pointer rounded-xl border border-border bg-surface-1 p-4 text-left shadow-panel hover:border-border-strong hover:bg-surface-2/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5"
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -1200,21 +1561,25 @@ function SessionSummaryCard({ session }: { session: SessionSummary }) {
           {session.checkpoints} checkpoints · {session.eventCount} events
         </span>
       </div>
-    </article>
+    </button>
   );
 }
 
 function SessionRow({
   session,
   divided,
+  onClick,
 }: {
   session: ResumeSession;
   divided: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div
+    <button
+      type="button"
+      onClick={onClick}
       className={cn(
-        "flex gap-3 px-4 py-3",
+        "flex w-full gap-3 px-4 py-3 text-left hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
         divided && "border-t border-border",
       )}
     >
@@ -1234,7 +1599,7 @@ function SessionRow({
             session.goal}
         </p>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -1318,6 +1683,168 @@ function MetricCard({
         {new Intl.NumberFormat().format(value)}
       </p>
       <p className="mt-1 text-micro text-muted-foreground">{detail}</p>
+    </div>
+  );
+}
+
+function SectionLabel({
+  id,
+  icon: Icon,
+  label,
+}: {
+  id: string;
+  icon: typeof History;
+  label: string;
+}) {
+  return (
+    <h3
+      id={id}
+      className="flex items-center gap-2 text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+    >
+      <Icon size={14} className="text-primary" />
+      {label}
+    </h3>
+  );
+}
+
+function RecordGroup({
+  icon: Icon,
+  title,
+  count,
+  children,
+}: {
+  icon: typeof History;
+  title: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-border bg-background/30 p-3">
+      <h4 className="flex items-center gap-2 text-micro font-medium text-muted-foreground">
+        <Icon size={13} />
+        {title}
+        <span className="ml-auto tabular-nums">{count}</span>
+      </h4>
+      <div className="mt-2 space-y-2">{children}</div>
+    </section>
+  );
+}
+
+function RecordItem({
+  title,
+  body,
+  meta,
+}: {
+  title: string;
+  body?: string;
+  meta?: string;
+}) {
+  return (
+    <div className="rounded-md bg-surface-2/70 px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="text-meta font-medium">{title}</p>
+        {meta && (
+          <span className="text-micro text-muted-foreground">{meta}</span>
+        )}
+      </div>
+      {body && (
+        <p className="mt-1 whitespace-pre-wrap text-micro leading-5 text-muted-foreground-strong">
+          {body}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ProblemItem({
+  problem,
+}: {
+  problem: SessionContext["checkpoints"][number]["problems"][number];
+}) {
+  return (
+    <div className="rounded-md bg-surface-2/70 px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="text-meta font-medium">{problem.title}</p>
+        <span className="text-micro text-muted-foreground">
+          {problem.resolutionDetail
+            ? "Resolved"
+            : problem.latestAttemptOutcome
+              ? `Latest · ${humanize(problem.latestAttemptOutcome)}`
+              : "Unresolved"}
+        </span>
+      </div>
+      <p className="mt-1 whitespace-pre-wrap text-micro leading-5 text-muted-foreground-strong">
+        {problem.symptom}
+      </p>
+      {problem.attempts.length > 0 && (
+        <ol className="mt-3 space-y-2 border-l border-border pl-3">
+          {problem.attempts.map((attempt, index) => (
+            <li key={attempt.id}>
+              <p className="text-micro font-medium">
+                Attempt {index + 1} · {humanize(attempt.outcome)}
+              </p>
+              <p className="mt-0.5 text-micro leading-5 text-muted-foreground-strong">
+                {attempt.action}
+              </p>
+              {attempt.evidence && (
+                <p className="mt-0.5 text-micro italic leading-5 text-muted-foreground">
+                  Evidence: {attempt.evidence}
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+      {problem.resolutionDetail && (
+        <div className="mt-3 rounded-md border border-emerald-500/15 bg-emerald-500/7 px-3 py-2">
+          <p className="text-micro font-medium text-emerald-500">Resolution</p>
+          <p className="mt-1 text-micro leading-5 text-muted-foreground-strong">
+            <span className="font-medium text-foreground">Root cause:</span>{" "}
+            {problem.resolutionDetail.rootCause}
+          </p>
+          <p className="mt-1 text-micro leading-5 text-muted-foreground-strong">
+            <span className="font-medium text-foreground">Changed:</span>{" "}
+            {problem.resolutionDetail.change}
+          </p>
+          {problem.resolutionDetail.verification && (
+            <p className="mt-1 text-micro leading-5 text-muted-foreground-strong">
+              <span className="font-medium text-foreground">Verified:</span>{" "}
+              {problem.resolutionDetail.verification}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MemoryList({
+  title,
+  items,
+  tone,
+}: {
+  title: string;
+  items: string[];
+  tone: "warning" | "neutral";
+}) {
+  return (
+    <div className="mt-3">
+      <p
+        className={cn(
+          "text-micro font-medium",
+          tone === "warning" ? "text-amber-500" : "text-muted-foreground",
+        )}
+      >
+        {title}
+      </p>
+      <ul className="mt-1 space-y-1 text-micro leading-5 text-muted-foreground-strong">
+        {items.map((item, index) => (
+          <li key={`${index}:${item}`} className="flex gap-2">
+            <span className="mt-2 size-1 shrink-0 rounded-full bg-border-strong" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -1527,6 +2054,15 @@ function reviewPlaceholder(action: LearningAction): string {
   if (action === "contest") return "What is uncertain or conflicting?";
   if (action === "reject") return "Why should agents not reuse this?";
   return "What changed or became outdated?";
+}
+
+function sourceLabel(session: SessionContext): string {
+  const parts = [
+    humanize(session.source.kind),
+    session.source.host,
+    session.source.agent,
+  ].filter((part): part is string => Boolean(part));
+  return parts.join(" · ");
 }
 
 function errorMessage(cause: unknown): string {
