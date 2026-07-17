@@ -12,6 +12,7 @@ mod binding;
 mod graph;
 mod ingestion;
 mod retrieval;
+mod session;
 
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
@@ -32,6 +33,17 @@ pub use retrieval::{
     traverse_project_graph, ContextItem, ContextItemKind, ContextPack, EvidenceExcerpt,
     GraphDirection, GraphPath, GraphTraversal, MemoryOverview, RetrievalLimits,
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
+};
+pub use session::{
+    checkpoint_session, finish_session, generate_request_id, list_sessions, read_session,
+    start_session, AgentSession, AttemptInput, AttemptOutcome, AttemptRecord, CheckpointInput,
+    CommandInput, CommandRecord, DecisionInput, DecisionRecord, FinishSessionInput,
+    MemoryRedaction, PlanItem, PlanItemInput, PlanStatus, ProblemInput, ProblemRecord,
+    ResolutionInput, ResolutionRecord, SessionArtifactCitation, SessionCheckpoint, SessionFinish,
+    SessionMutation, SessionSource, SessionSourceKind, SessionStatus, SessionSummary,
+    StartSessionInput, TaskInput, TaskRecord, TaskStatus, VerificationInput, VerificationRecord,
+    VerificationStatus, SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES,
+    SESSION_PROJECTION_LIMIT_BYTES, SESSION_SCHEMA_VERSION,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";
@@ -199,6 +211,14 @@ pub enum LeyCoreError {
     ProjectMemoryUnavailable(String),
     #[error("invalid Ley retrieval request: {0}")]
     InvalidRetrievalRequest(String),
+    #[error("invalid Ley session store: {0}")]
+    InvalidSessionStore(String),
+    #[error("invalid Ley session request: {0}")]
+    InvalidSessionRequest(String),
+    #[error("Ley session not found: {0}")]
+    SessionNotFound(String),
+    #[error("session request ID was reused with different content: {0}")]
+    SessionIdempotencyConflict(String),
     #[error("unsafe Ley project layout at {0}")]
     UnsafeProjectLayout(PathBuf),
     #[error("Ley metadata exceeds the {limit_bytes}-byte limit: {path}")]

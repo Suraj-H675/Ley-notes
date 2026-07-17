@@ -1,6 +1,6 @@
 # Agent memory threat model
 
-Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, and fixed-project read-only MCP retrieval; expand before session writes.
+Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project read-only MCP retrieval, and structured session lifecycle.
 
 ## Assets
 
@@ -53,6 +53,13 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Oversized MCP context | Queries, result counts, token estimates, snippets, evidence ranges, characters, graph depth, and visited nodes are capped | Serialized-byte limits and large-graph latency corpus |
 | MCP argument path traversal | Evidence reads accept only an exact current-manifest artifact path and use no-follow capability reads | Encoded/platform-specific traversal corpus |
 | MCP output leaks machine paths | Results contain project-relative citations and stable IDs; tool errors are sanitized; project/vault paths never enter schemas | Cross-platform output snapshot scanning |
+| Duplicate or reordered session writes | Deterministic event IDs and request fingerprints; exact retries replay; changed reuse fails; project lock; contiguous sequence validation | Multi-process hook retry and process-kill matrix |
+| Partial session projection | Immutable event-per-file source; atomic JSON and Markdown projections; reads verify and replay events | Fault injection before and during every durable write |
+| Concurrent session data loss | Exclusive advisory lock covers validation, append, replay, and projection replacement | Cross-process stress tests on supported filesystems |
+| Session secret capture | Bounded fields and collections; local credential redaction before persistence; per-event redaction metadata; no automatic raw transcript | Host-specific secret corpus and false-negative measurement |
+| Session path or symlink escape | Stable ID-only store paths; no-follow capability directories and files; touched paths must exactly match the current artifact manifest | Encoded path and concurrent replacement corpus |
+| Uncited session artifact claims | Touched paths become current-snapshot citations with post-redaction content hash and line range | Source-change and deleted-artifact scenarios |
+| Session history corruption | Strict schemas, IDs, request fingerprints, timestamps, record IDs, limits, and event ordering are verified on every read | Property tests and malformed-event fuzzing |
 | Memory poisoning | No inference becomes trusted automatically | Provenance, review, correction, corroboration, supersession |
 | Local MCP compromise | Local stdio only; exact host launch command; fixed project scope; read-only tools/resources; no Roots, sampling, network listener, write tools, subscriptions, or ambient project discovery | Host-adapter permission UX and sandbox profiles |
 

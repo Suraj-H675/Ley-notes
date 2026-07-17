@@ -1240,7 +1240,7 @@ fn redaction_rules() -> &'static Vec<RedactionRule> {
     })
 }
 
-fn redact_secrets(text: &str) -> (String, Vec<RedactionFinding>) {
+pub(crate) fn redact_secrets(text: &str) -> (String, Vec<RedactionFinding>) {
     let mut redacted = text.to_owned();
     let mut findings = Vec::new();
     for rule in redaction_rules() {

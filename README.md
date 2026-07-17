@@ -77,12 +77,16 @@ cargo run -p ley-cli -- bind /path/to/project --vault /path/to/ley-vault
 cargo run -p ley-cli -- binding /path/to/project
 cargo run -p ley-cli -- ingest /path/to/project
 cargo run -p ley-cli -- graph /path/to/project
+cargo run -p ley-cli -- session start /path/to/project \
+  --name "First session" --goal "Ship cited memory"
 cargo run -p ley-cli -- mcp /path/to/project
 cargo run -p ley-cli -- doctor /path/to/project
 cargo run -p ley-cli -- preview /path/to/project
 ```
 
 Initialization creates a minimal `.ley/` project identity, capture policy, and additional ignore rules. Structured capture is the default and does not enable raw transcripts. Repeating `init` reads the existing identity without changing its name or capture consent. `bind` stores only the stable project-ID-to-canonical-vault-path association in Ley's private OS application configuration; no machine path is written into the repository. A temporary `binding --vault /other/vault` override is validated but not persisted, and `unbind` removes the private association without touching project or vault data. `preview` deterministically lists the regular files that fit the approved roots and byte limits without reading their contents; ignored files and symlink targets are not captured. `ingest` performs a real incremental capture into the bound vault: Structured/Full Evidence modes retain redacted UTF-8 evidence, Minimal retains metadata only, identical runs are no-ops, and additions/changes/renames/deletions create immutable cited snapshots. It also projects cited repository structure, Tree-sitter symbols/calls/imports/inheritance, declared dependencies, and bounded local Git state. `graph` integrity-checks and reads that durable projection without rescanning source.
+
+`session start`, `session checkpoint`, and `session finish` append structured, credential-redacted events to the bound vault. Checkpoints can retain plans, decisions, tasks, problems, attempts, outcomes, resolutions, cited touched artifacts, commands, verification, and unresolved work. Repeated request IDs are idempotent, concurrent writers are serialized, and session reads replay immutable events instead of trusting a mutable summary. Use `session list` and `session show` to inspect the result. See [Capture structured agent sessions](docs/agent-memory/sessions.md), [ADR 0007](docs/adr/0007-append-only-structured-sessions.md), and the versioned [checkpoint input schema](schemas/agent-memory/checkpoint-input.schema.json).
 
 `mcp` starts a stdout-clean, read-only Model Context Protocol (MCP) server over standard input/output (stdio). The process is fixed to that one project and its explicit binding. It exposes a project overview, bounded lexical context search, cited evidence reads, graph neighbors, and graph paths; it cannot enumerate or switch to other projects. Retrieved text is labeled as untrusted captured-snapshot evidence, not live source or agent policy. Point an MCP host at the executable and project:
 
@@ -97,7 +101,7 @@ Initialization creates a minimal `.ley/` project identity, capture policy, and a
 }
 ```
 
-The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md). Structured session capture is the next agent-memory slice and is not claimed yet.
+The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md). The current MCP surface remains read-only; session capture uses the shared CLI until reviewed write tools and host adapters ship.
 
 ## Data model
 

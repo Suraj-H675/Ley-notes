@@ -160,13 +160,16 @@ The selected filesystem vault remains the source of truth:
 ```text
 .ley/
 └── agent-memory/
-    ├── projects/<project-id>/project.md
-    ├── projects/<project-id>/sessions/<session-id>.md
-    ├── projects/<project-id>/events/<session-id>.jsonl   # optional raw evidence
-    └── projects/<project-id>/artifacts/...               # compact structured sidecars
+    └── projects/<project-id>/
+        ├── artifacts/...
+        ├── graph/...
+        └── sessions/<session-id>/
+            ├── events/<event-id>.json
+            ├── session-v1.json
+            └── session.md
 ```
 
-Markdown summaries stay inspectable and linkable from normal notes. Append-only JSONL is appropriate for machine event evidence when enabled. A local SQLite/IndexedDB projection can accelerate graph, lexical, temporal, and optional embedding retrieval, but deleting it must not destroy durable memory.
+Markdown summaries stay inspectable and linkable from normal notes. One immutable JSON file per event permits atomic creation, strict replay, and concurrent writers without relying on partial-line recovery. A local SQLite/IndexedDB projection can accelerate graph, lexical, temporal, and optional embedding retrieval, but deleting it must not destroy durable memory.
 
 Browser-local compatibility vaults cannot be directly opened by an external local MCP process. Agent integration therefore requires a filesystem vault or a running desktop companion that owns a filesystem-backed vault. The PWA can still display updates by refreshing the same granted folder.
 
@@ -198,7 +201,7 @@ Every initialization must preview included/excluded categories and offer a dry r
 
 ### MCP server
 
-Default transport: local stdio. It has no listening port, account, OAuth flow, or remote endpoint. The server receives an approved project ID or path on each call; it must not depend on MCP Roots, which are informational and deprecated in the 2026 MCP evolution.
+Default transport: local stdio. It has no listening port, account, OAuth flow, or remote endpoint. Each process resolves one approved project and binding at startup; tool calls cannot select another project or vault. It must not depend on MCP Roots, which are informational and deprecated in the 2026 MCP evolution.
 
 Initial read tools:
 
