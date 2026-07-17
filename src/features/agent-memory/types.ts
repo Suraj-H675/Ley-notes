@@ -217,6 +217,117 @@ export interface AgentMemoryDashboard {
   allLearnings: LearningList;
 }
 
+export type ArtifactKind =
+  "source" | "documentation" | "manifest" | "configuration" | "text";
+
+export interface ProjectArtifactInventory {
+  projectId: string;
+  projectName: string;
+  artifactSnapshotId: string;
+  generatedAtUnixMs: number;
+  captureMode: CaptureMode;
+  query: string;
+  artifacts: Array<{
+    path: string;
+    kind: ArtifactKind;
+    language?: string;
+    sourceBytes: number;
+    storedBytes: number;
+    lineCount: number;
+    retainedSource: boolean;
+    redactions: Array<{ kind: string; lines: number[] }>;
+  }>;
+  totalMatchingArtifacts: number;
+  omittedArtifacts: number;
+  skipped: Array<{
+    path: string;
+    reason: "binary" | "non-utf8" | "oversized" | "total-limit" | "symlink";
+    bytes: number;
+  }>;
+  totalMatchingSkipped: number;
+  omittedSkipped: number;
+  liveSourceChecked: boolean;
+  instructionWarning: string;
+}
+
+export type ProjectGraphNodeKind =
+  | "project"
+  | "file"
+  | "symbol"
+  | "dependency"
+  | "external-symbol"
+  | "external-module";
+
+export interface GraphCitation {
+  artifactPath: string;
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+  contentHash: string;
+  artifactSnapshotId: string;
+}
+
+export interface ProjectGraphViewNode {
+  id: string;
+  kind: ProjectGraphNodeKind;
+  name: string;
+  path?: string;
+  language?: string;
+  symbolKind?: string;
+  packageManager?: string;
+  citation?: GraphCitation;
+  provenance: "deterministic" | "user-authored" | "agent-authored" | "inferred";
+  confidence: number;
+  degree: number;
+}
+
+export interface ProjectGraphView {
+  projectId: string;
+  projectName: string;
+  artifactSnapshotId: string;
+  graphSnapshotId: string;
+  generatedAtUnixMs: number;
+  query: string;
+  selection: string;
+  nodes: ProjectGraphViewNode[];
+  edges: Array<{
+    id: string;
+    kind: string;
+    source: string;
+    target: string;
+    label?: string;
+    citation?: GraphCitation;
+    provenance: string;
+    confidence: number;
+  }>;
+  totalNodes: number;
+  totalEdges: number;
+  matchingNodes: number;
+  omittedNodes: number;
+  omittedEdges: number;
+  diagnostics: Array<{
+    artifactPath: string;
+    kind: string;
+    message: string;
+  }>;
+  omittedDiagnostics: number;
+  git?: {
+    head?: string;
+    branch?: string;
+    upstream?: string;
+    ahead: number;
+    behind: number;
+    changes: Array<{
+      status: string;
+      path: string;
+      originalPath?: string;
+    }>;
+  };
+  liveSourceChecked: boolean;
+  instructionWarning: string;
+}
+
 export type AgentProjectInspection =
   | { status: "uninitialized"; suggestedName: string }
   | {

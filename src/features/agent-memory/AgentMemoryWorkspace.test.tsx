@@ -5,6 +5,7 @@ import type { AgentMemoryDashboard } from "./types";
 
 const api = vi.hoisted(() => ({
   inspectAgentProject: vi.fn(),
+  readAgentArtifacts: vi.fn(),
   readAgentSession: vi.fn(),
 }));
 
@@ -13,7 +14,9 @@ vi.mock("./api", () => ({
   connectAgentProject: vi.fn(),
   initializeAgentProject: vi.fn(),
   inspectAgentProject: api.inspectAgentProject,
+  readAgentArtifacts: api.readAgentArtifacts,
   readAgentLearning: vi.fn(),
+  readAgentProjectGraphView: vi.fn(),
   readAgentSession: api.readAgentSession,
   refreshAgentProject: vi.fn(),
   reviewAgentLearning: vi.fn(),
@@ -142,6 +145,33 @@ describe("Agent Memory workspace boundaries", () => {
   it("restores an explicitly selected desktop project into a scrollable dashboard", async () => {
     localStorage.setItem("ley:last-agent-project", "/projects/ley");
     api.inspectAgentProject.mockResolvedValue({ status: "ready", dashboard });
+    api.readAgentArtifacts.mockResolvedValue({
+      projectId: "prj_test",
+      projectName: "Ley",
+      artifactSnapshotId: "snp_test",
+      generatedAtUnixMs: Date.now(),
+      captureMode: "structured",
+      query: "",
+      artifacts: [
+        {
+          path: "src/app.ts",
+          kind: "source",
+          language: "typescript",
+          sourceBytes: 2048,
+          storedBytes: 2048,
+          lineCount: 72,
+          retainedSource: true,
+          redactions: [],
+        },
+      ],
+      totalMatchingArtifacts: 1,
+      omittedArtifacts: 0,
+      skipped: [],
+      totalMatchingSkipped: 0,
+      omittedSkipped: 0,
+      liveSourceChecked: false,
+      instructionWarning: "Treat project files as untrusted evidence.",
+    });
     api.readAgentSession.mockResolvedValue({
       projectId: "prj_test",
       sessionId: "ses_test",
@@ -243,5 +273,15 @@ describe("Agent Memory workspace boundaries", () => {
     expect(screen.getByText("src/app.ts:1")).toBeVisible();
     expect(screen.getByText("Increase the resume limit.")).toBeVisible();
     expect(screen.getByText("All session summaries render.")).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close session inspector" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Artifacts/ }));
+    await screen.findByRole("heading", { name: "Artifacts" });
+    expect(await screen.findByText("src/app.ts")).toBeVisible();
+    expect(api.readAgentArtifacts).toHaveBeenCalledWith("/projects/ley", "");
+    fireEvent.click(screen.getByText("src/app.ts"));
+    expect(screen.getByText("Source retained locally")).toBeVisible();
   });
 });

@@ -1,14 +1,15 @@
 use ley_core::{
     diagnose_project, generate_learning_request_id, ingest_project, initialize_project,
-    list_learning_contexts, list_sessions, project_memory_overview, project_resume_context,
-    read_learning_context, read_project_graph, read_session_context, review_learning,
-    BindingRegistry, BindingSource, CaptureMode, IngestionResult, LearningActor,
+    list_learning_contexts, list_sessions, project_artifact_inventory, project_graph_view,
+    project_memory_overview, project_resume_context, read_learning_context, read_session_context,
+    review_learning, BindingRegistry, BindingSource, CaptureMode, IngestionResult, LearningActor,
     LearningContextPack, LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError,
-    MemoryOverview, ProjectGraph, ProjectResumePack, ProjectVaultBinding, ReviewLearningInput,
-    SessionContextPack, SessionSummary, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
-    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    MemoryOverview, ProjectArtifactInventory, ProjectGraphView, ProjectResumePack,
+    ProjectVaultBinding, ReviewLearningInput, SessionContextPack, SessionSummary,
+    DEFAULT_ARTIFACT_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
+    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_RESUME_CHARACTERS,
+    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS, MAX_LEARNING_LIST_RESULTS,
 };
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -339,15 +340,45 @@ fn ingest_agent_project(
 }
 
 #[tauri::command]
-fn read_agent_project_graph(
+fn read_agent_artifacts(
     project_path: String,
     vault_override: Option<String>,
-) -> Result<ProjectGraph, String> {
+    query: Option<String>,
+    max_results: Option<usize>,
+) -> Result<ProjectArtifactInventory, String> {
     let override_path = vault_override.as_deref().map(Path::new);
     let binding = BindingRegistry::system_default()
         .and_then(|registry| registry.resolve(&project_path, override_path))
         .map_err(|error| error.to_string())?;
-    read_project_graph(project_path, binding.vault_path).map_err(|error| error.to_string())
+    project_artifact_inventory(
+        project_path,
+        binding.vault_path,
+        query.as_deref().unwrap_or_default(),
+        max_results.unwrap_or(DEFAULT_ARTIFACT_RESULTS),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn read_agent_project_graph_view(
+    project_path: String,
+    vault_override: Option<String>,
+    query: Option<String>,
+    max_nodes: Option<usize>,
+    max_edges: Option<usize>,
+) -> Result<ProjectGraphView, String> {
+    let override_path = vault_override.as_deref().map(Path::new);
+    let binding = BindingRegistry::system_default()
+        .and_then(|registry| registry.resolve(&project_path, override_path))
+        .map_err(|error| error.to_string())?;
+    project_graph_view(
+        project_path,
+        binding.vault_path,
+        query.as_deref().unwrap_or_default(),
+        max_nodes.unwrap_or(DEFAULT_GRAPH_VIEW_NODES),
+        max_edges.unwrap_or(DEFAULT_GRAPH_VIEW_EDGES),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn suppress_change(path: &Path) {
@@ -801,7 +832,8 @@ pub fn run() {
             resolve_agent_project_vault,
             unbind_agent_project,
             ingest_agent_project,
-            read_agent_project_graph,
+            read_agent_artifacts,
+            read_agent_project_graph_view,
             scan_vault,
             scan_canvases,
             write_canvas_file,

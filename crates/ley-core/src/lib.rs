@@ -11,6 +11,7 @@ use uuid::Uuid;
 mod binding;
 mod graph;
 mod ingestion;
+mod knowledge_view;
 mod learning;
 mod learning_context;
 mod resume_context;
@@ -31,6 +32,13 @@ pub use ingestion::{
     ingest_project, read_project_graph, ArtifactKind, ArtifactRecord, ArtifactSkipReason,
     IngestionResult, RedactionFinding, RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY,
     ARTIFACT_MANIFEST_LIMIT_BYTES, ARTIFACT_MANIFEST_SCHEMA_VERSION,
+};
+pub use knowledge_view::{
+    project_artifact_inventory, project_graph_view, ArtifactInventoryItem,
+    ProjectArtifactInventory, ProjectGraphView, ProjectGraphViewNode, SkippedArtifactInventoryItem,
+    DEFAULT_ARTIFACT_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
+    MAX_ARTIFACT_RESULTS, MAX_GRAPH_VIEW_EDGES, MAX_GRAPH_VIEW_NODES,
+    MAX_KNOWLEDGE_QUERY_CHARACTERS,
 };
 pub use learning::{
     correct_learning, generate_learning_request_id, learning_review_inbox, list_learnings,

@@ -5,6 +5,8 @@ import type {
   AgentProjectInspection,
   LearningAction,
   LearningContext,
+  ProjectArtifactInventory,
+  ProjectGraphView,
   SessionContext,
 } from "./types";
 
@@ -55,6 +57,29 @@ export function readAgentSession(
   sessionId: string,
 ): Promise<SessionContext> {
   return invoke("read_agent_session", { projectPath, sessionId });
+}
+
+export function readAgentArtifacts(
+  projectPath: string,
+  query = "",
+): Promise<ProjectArtifactInventory> {
+  return invoke("read_agent_artifacts", {
+    projectPath,
+    query,
+    maxResults: 300,
+  });
+}
+
+export function readAgentProjectGraphView(
+  projectPath: string,
+  query = "",
+): Promise<ProjectGraphView> {
+  return invoke("read_agent_project_graph_view", {
+    projectPath,
+    query,
+    maxNodes: 180,
+    maxEdges: 600,
+  });
 }
 
 export function reviewAgentLearning(

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   AlertTriangle,
@@ -11,12 +11,14 @@ import {
   CircleDot,
   Clock3,
   FileCode2,
+  Files,
   FolderOpen,
   GitBranch,
   History,
   Inbox,
   LockKeyhole,
   MessageSquareWarning,
+  Network,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -48,7 +50,19 @@ import type {
 } from "./types";
 
 const LAST_AGENT_PROJECT_KEY = "ley:last-agent-project";
-type Section = "overview" | "sessions" | "lessons" | "review";
+type Section =
+  "overview" | "sessions" | "lessons" | "artifacts" | "graph" | "review";
+
+const ArtifactExplorer = lazy(() =>
+  import("./ArtifactExplorer").then((module) => ({
+    default: module.ArtifactExplorer,
+  })),
+);
+const ProjectKnowledgeGraph = lazy(() =>
+  import("./ProjectKnowledgeGraph").then((module) => ({
+    default: module.ProjectKnowledgeGraph,
+  })),
+);
 
 export function AgentMemoryWorkspace({
   open,
@@ -277,6 +291,16 @@ export function AgentMemoryWorkspace({
                       onLearning={setLearningId}
                     />
                   )}
+                  {section === "artifacts" && projectPath && (
+                    <Suspense fallback={<KnowledgeSurfaceFallback />}>
+                      <ArtifactExplorer projectPath={projectPath} />
+                    </Suspense>
+                  )}
+                  {section === "graph" && projectPath && (
+                    <Suspense fallback={<KnowledgeSurfaceFallback />}>
+                      <ProjectKnowledgeGraph projectPath={projectPath} />
+                    </Suspense>
+                  )}
                   {section === "review" && (
                     <ReviewInbox
                       dashboard={inspection.dashboard}
@@ -290,7 +314,7 @@ export function AgentMemoryWorkspace({
 
           {dashboard && projectPath && (
             <SessionInspector
-              key={sessionId ?? "closed"}
+              key={`session-${sessionId ?? "closed"}`}
               sessionId={sessionId}
               projectPath={projectPath}
               onClose={() => setSessionId(null)}
@@ -299,7 +323,7 @@ export function AgentMemoryWorkspace({
 
           {dashboard && projectPath && (
             <LearningInspector
-              key={learningId ?? "closed"}
+              key={`learning-${learningId ?? "closed"}`}
               learningId={learningId}
               projectPath={projectPath}
               onClose={() => setLearningId(null)}
@@ -346,6 +370,18 @@ function AgentMemoryNav({
       label: "Lessons",
       icon: BookCheck,
       count: dashboard.allLearnings.totalMatching,
+    },
+    {
+      id: "artifacts",
+      label: "Artifacts",
+      icon: Files,
+      count: dashboard.overview.files,
+    },
+    {
+      id: "graph",
+      label: "Project graph",
+      icon: Network,
+      count: dashboard.overview.graphNodes,
     },
     {
       id: "review",
@@ -413,6 +449,17 @@ function AgentMemoryNav({
         </button>
       </div>
     </aside>
+  );
+}
+
+function KnowledgeSurfaceFallback() {
+  return (
+    <div
+      className="flex min-h-80 items-center justify-center rounded-xl border border-border bg-surface-1 text-meta text-muted-foreground"
+      aria-label="Loading project knowledge"
+    >
+      Loading local project knowledge…
+    </div>
   );
 }
 
