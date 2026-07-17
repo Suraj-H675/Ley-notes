@@ -21,6 +21,7 @@ import {
   Network,
   RefreshCw,
   RotateCcw,
+  Scale,
   ShieldCheck,
   Sparkles,
   X,
@@ -51,7 +52,14 @@ import type {
 
 const LAST_AGENT_PROJECT_KEY = "ley:last-agent-project";
 type Section =
-  "overview" | "sessions" | "lessons" | "artifacts" | "graph" | "review";
+  | "overview"
+  | "sessions"
+  | "decisions"
+  | "problems"
+  | "lessons"
+  | "artifacts"
+  | "graph"
+  | "review";
 
 const ArtifactExplorer = lazy(() =>
   import("./ArtifactExplorer").then((module) => ({
@@ -61,6 +69,11 @@ const ArtifactExplorer = lazy(() =>
 const ProjectKnowledgeGraph = lazy(() =>
   import("./ProjectKnowledgeGraph").then((module) => ({
     default: module.ProjectKnowledgeGraph,
+  })),
+);
+const ProjectActivityExplorer = lazy(() =>
+  import("./ProjectActivityExplorer").then((module) => ({
+    default: module.ProjectActivityExplorer,
   })),
 );
 
@@ -285,6 +298,16 @@ export function AgentMemoryWorkspace({
                       onSession={setSessionId}
                     />
                   )}
+                  {(section === "decisions" || section === "problems") &&
+                    projectPath && (
+                      <Suspense fallback={<KnowledgeSurfaceFallback />}>
+                        <ProjectActivityExplorer
+                          mode={section}
+                          projectPath={projectPath}
+                          onSession={setSessionId}
+                        />
+                      </Suspense>
+                    )}
                   {section === "lessons" && (
                     <Lessons
                       dashboard={inspection.dashboard}
@@ -364,6 +387,16 @@ function AgentMemoryNav({
       label: "Sessions",
       icon: History,
       count: dashboard.sessions.length,
+    },
+    {
+      id: "decisions",
+      label: "Decisions",
+      icon: Scale,
+    },
+    {
+      id: "problems",
+      label: "Problems & outcomes",
+      icon: MessageSquareWarning,
     },
     {
       id: "lessons",

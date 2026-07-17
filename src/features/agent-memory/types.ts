@@ -328,6 +328,81 @@ export interface ProjectGraphView {
   instructionWarning: string;
 }
 
+export type ProjectProblemScope = "all" | "open" | "resolved";
+
+export interface ProjectActivityCitation {
+  artifactPath: string;
+  artifactSnapshotId: string;
+  contentHash: string;
+  startLine: number;
+  endLine: number;
+}
+
+export interface ProjectDecision {
+  recordId: string;
+  checkpointId: string;
+  sessionId: string;
+  sessionName: string;
+  sessionStatus: SessionSummary["status"];
+  recordedAtUnixMs: number;
+  title: string;
+  decision: string;
+  rationale: string;
+  alternatives: string[];
+  omittedAlternatives: number;
+  artifactCitations: ProjectActivityCitation[];
+  omittedArtifactCitations: number;
+  detailTruncated: boolean;
+}
+
+export interface ProjectProblemAttempt {
+  id: string;
+  action: string;
+  outcome: "worked" | "failed" | "partial" | "no-effect" | "not-verified";
+  evidence: string;
+}
+
+export interface ProjectProblem {
+  recordId: string;
+  checkpointId: string;
+  sessionId: string;
+  sessionName: string;
+  sessionStatus: SessionSummary["status"];
+  recordedAtUnixMs: number;
+  title: string;
+  symptom: string;
+  expected: string;
+  attempts: ProjectProblemAttempt[];
+  totalAttempts: number;
+  omittedAttempts: number;
+  latestAttemptOutcome?: ProjectProblemAttempt["outcome"];
+  resolution?: {
+    id: string;
+    rootCause: string;
+    change: string;
+    verification: string;
+  };
+  artifactCitations: ProjectActivityCitation[];
+  omittedArtifactCitations: number;
+  detailTruncated: boolean;
+}
+
+export interface ProjectActivityView {
+  projectId: string;
+  query: string;
+  problemScope: ProjectProblemScope;
+  decisions: ProjectDecision[];
+  totalMatchingDecisions: number;
+  omittedDecisions: number;
+  problems: ProjectProblem[];
+  totalMatchingProblems: number;
+  omittedProblems: number;
+  totalSessions: number;
+  liveSourceChecked: boolean;
+  sourceBoundary: string;
+  instructionWarning: string;
+}
+
 export type AgentProjectInspection =
   | { status: "uninitialized"; suggestedName: string }
   | {

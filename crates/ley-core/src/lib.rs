@@ -14,6 +14,7 @@ mod ingestion;
 mod knowledge_view;
 mod learning;
 mod learning_context;
+mod project_activity;
 mod resume_context;
 mod retrieval;
 mod session;
@@ -56,6 +57,12 @@ pub use learning_context::{
     DEFAULT_LEARNING_LIST_RESULTS, MAX_LEARNING_CONTEXT_ARTIFACTS, MAX_LEARNING_CONTEXT_CHARACTERS,
     MAX_LEARNING_CONTEXT_EVIDENCE, MAX_LEARNING_CONTEXT_HISTORY, MAX_LEARNING_LIST_RESULTS,
     MIN_LEARNING_CONTEXT_CHARACTERS,
+};
+pub use project_activity::{
+    project_activity_view, ProjectActivityCitation, ProjectActivityView, ProjectDecision,
+    ProjectProblem, ProjectProblemAttempt, ProjectProblemResolution, ProjectProblemScope,
+    DEFAULT_PROJECT_ACTIVITY_RESULTS, MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS,
+    MAX_PROJECT_ACTIVITY_RESULTS,
 };
 pub use resume_context::{
     project_resume_context, ProjectResumePack, ResumeCheckpoint, ResumeDecision, ResumeLearning,

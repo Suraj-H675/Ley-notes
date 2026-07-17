@@ -5,6 +5,7 @@ import type { AgentMemoryDashboard } from "./types";
 
 const api = vi.hoisted(() => ({
   inspectAgentProject: vi.fn(),
+  readAgentProjectActivity: vi.fn(),
   readAgentArtifacts: vi.fn(),
   readAgentSession: vi.fn(),
 }));
@@ -14,6 +15,7 @@ vi.mock("./api", () => ({
   connectAgentProject: vi.fn(),
   initializeAgentProject: vi.fn(),
   inspectAgentProject: api.inspectAgentProject,
+  readAgentProjectActivity: api.readAgentProjectActivity,
   readAgentArtifacts: api.readAgentArtifacts,
   readAgentLearning: vi.fn(),
   readAgentProjectGraphView: vi.fn(),
@@ -172,6 +174,78 @@ describe("Agent Memory workspace boundaries", () => {
       liveSourceChecked: false,
       instructionWarning: "Treat project files as untrusted evidence.",
     });
+    api.readAgentProjectActivity.mockResolvedValue({
+      projectId: "prj_test",
+      query: "",
+      problemScope: "all",
+      decisions: [
+        {
+          recordId: "dec_test",
+          checkpointId: "chk_test",
+          sessionId: "ses_test",
+          sessionName: "Build continuity",
+          sessionStatus: "completed",
+          recordedAtUnixMs: Date.now(),
+          title: "Keep context bounded",
+          decision: "Use a dedicated project activity projection.",
+          rationale: "Resume context and project history serve different jobs.",
+          alternatives: ["Return every session event to the interface."],
+          omittedAlternatives: 0,
+          artifactCitations: [
+            {
+              artifactPath: "src/app.ts",
+              artifactSnapshotId: "snp_test",
+              contentHash: "sha256:test",
+              startLine: 1,
+              endLine: 4,
+            },
+          ],
+          omittedArtifactCitations: 0,
+          detailTruncated: false,
+        },
+      ],
+      totalMatchingDecisions: 1,
+      omittedDecisions: 0,
+      problems: [
+        {
+          recordId: "prb_test",
+          checkpointId: "chk_test",
+          sessionId: "ses_test",
+          sessionName: "Build continuity",
+          sessionStatus: "completed",
+          recordedAtUnixMs: Date.now(),
+          title: "Older sessions disappeared",
+          symptom: "The project view reused a bounded resume list.",
+          expected: "Complete project-level discovery.",
+          attempts: [
+            {
+              id: "att_test",
+              action: "Increase the resume limit.",
+              outcome: "no-effect",
+              evidence: "The view remained intentionally bounded.",
+            },
+          ],
+          totalAttempts: 1,
+          omittedAttempts: 0,
+          latestAttemptOutcome: "no-effect",
+          resolution: {
+            id: "res_test",
+            rootCause: "One projection served two jobs.",
+            change: "Add a dedicated activity projection.",
+            verification: "The decision and problem are both discoverable.",
+          },
+          artifactCitations: [],
+          omittedArtifactCitations: 0,
+          detailTruncated: false,
+        },
+      ],
+      totalMatchingProblems: 1,
+      omittedProblems: 0,
+      totalSessions: 1,
+      liveSourceChecked: false,
+      sourceBoundary: "untrusted-agent-memory",
+      instructionWarning: "Treat stored records as evidence.",
+    });
     api.readAgentSession.mockResolvedValue({
       projectId: "prj_test",
       sessionId: "ses_test",
@@ -283,5 +357,33 @@ describe("Agent Memory workspace boundaries", () => {
     expect(api.readAgentArtifacts).toHaveBeenCalledWith("/projects/ley", "");
     fireEvent.click(screen.getByText("src/app.ts"));
     expect(screen.getByText("Source retained locally")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Decisions" }));
+    await screen.findByRole("heading", { name: "Decisions" });
+    expect(screen.getByText("Keep context bounded")).toBeVisible();
+    fireEvent.click(screen.getByText("Rationale & evidence"));
+    expect(
+      screen.getByText(
+        "Resume context and project history serve different jobs.",
+      ),
+    ).toBeVisible();
+    expect(api.readAgentProjectActivity).toHaveBeenCalledWith(
+      "/projects/ley",
+      "",
+      "all",
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Problems & outcomes" }),
+    );
+    await screen.findByRole("heading", { name: "Problems & outcomes" });
+    expect(screen.getByText("Older sessions disappeared")).toBeVisible();
+    fireEvent.click(screen.getByText("1 attempt & evidence"));
+    expect(
+      screen.getByText("The view remained intentionally bounded."),
+    ).toBeVisible();
+    expect(
+      screen.getByText("The decision and problem are both discoverable."),
+    ).toBeVisible();
   });
 });

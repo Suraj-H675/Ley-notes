@@ -577,17 +577,10 @@ pub fn list_sessions(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<Vec<SessionSummary>, LeyCoreError> {
-    let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
-    let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
-        return Ok(Vec::new());
-    };
-    let _lock = store.lock(true)?;
     let mut sessions = Vec::new();
-    for session_id in store.session_ids()? {
-        let session = store.rebuild_session(&session_id)?;
+    visit_session_records(project_start, vault, |session| {
         sessions.push(SessionSummary::from(&session));
-    }
+    })?;
     sessions.sort_by(|left, right| {
         right
             .updated_at_unix_ms
@@ -595,6 +588,25 @@ pub fn list_sessions(
             .then_with(|| left.session_id.cmp(&right.session_id))
     });
     Ok(sessions)
+}
+
+pub(crate) fn visit_session_records(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    mut visitor: impl FnMut(AgentSession),
+) -> Result<usize, LeyCoreError> {
+    let diagnostic = diagnose_project(&project_start)?;
+    project_memory_overview(&diagnostic.root, &vault)?;
+    let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
+        return Ok(0);
+    };
+    let _lock = store.lock(true)?;
+    let session_ids = store.session_ids()?;
+    let total_sessions = session_ids.len();
+    for session_id in session_ids {
+        visitor(store.rebuild_session(&session_id)?);
+    }
+    Ok(total_sessions)
 }
 
 impl From<&AgentSession> for SessionSummary {

@@ -5,8 +5,10 @@ import type {
   AgentProjectInspection,
   LearningAction,
   LearningContext,
+  ProjectActivityView,
   ProjectArtifactInventory,
   ProjectGraphView,
+  ProjectProblemScope,
   SessionContext,
 } from "./types";
 
@@ -79,6 +81,19 @@ export function readAgentProjectGraphView(
     query,
     maxNodes: 180,
     maxEdges: 600,
+  });
+}
+
+export function readAgentProjectActivity(
+  projectPath: string,
+  query = "",
+  problemScope: ProjectProblemScope = "all",
+): Promise<ProjectActivityView> {
+  return invoke("read_agent_project_activity", {
+    projectPath,
+    query,
+    problemScope,
+    maxResults: 120,
   });
 }
 
