@@ -1,6 +1,13 @@
 use ley_core::{
-    ingest_project, read_project_graph, BindingRegistry, IngestionResult, ProjectGraph,
-    ProjectVaultBinding,
+    diagnose_project, generate_learning_request_id, ingest_project, initialize_project,
+    list_learning_contexts, list_sessions, project_memory_overview, project_resume_context,
+    read_learning_context, read_project_graph, review_learning, BindingRegistry, BindingSource,
+    CaptureMode, IngestionResult, LearningActor, LearningContextPack, LearningFeedbackAction,
+    LearningList, LearningListScope, LeyCoreError, MemoryOverview, ProjectGraph, ProjectResumePack,
+    ProjectVaultBinding, ReviewLearningInput, SessionSummary, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
+    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, MAX_LEARNING_LIST_RESULTS,
 };
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -47,6 +54,229 @@ struct ActiveVaultWatcher {
 struct VaultWatcherState(Mutex<Option<ActiveVaultWatcher>>);
 
 static SUPPRESSED_CHANGES: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentMemoryBinding {
+    project_id: String,
+    vault_name: String,
+    source: BindingSource,
+}
+
+impl From<ProjectVaultBinding> for AgentMemoryBinding {
+    fn from(binding: ProjectVaultBinding) -> Self {
+        let vault_name = binding
+            .vault_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Ley vault")
+            .to_owned();
+        Self {
+            project_id: binding.project_id,
+            vault_name,
+            source: binding.source,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentMemoryDashboard {
+    binding: AgentMemoryBinding,
+    overview: MemoryOverview,
+    resume: ProjectResumePack,
+    sessions: Vec<SessionSummary>,
+    review_inbox: LearningList,
+    all_learnings: LearningList,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "kebab-case")]
+enum AgentProjectInspection {
+    Uninitialized {
+        suggested_name: String,
+    },
+    Unbound {
+        project_id: String,
+        project_name: String,
+        capture_mode: CaptureMode,
+    },
+    NeedsCapture {
+        project_id: String,
+        project_name: String,
+        capture_mode: CaptureMode,
+        binding: AgentMemoryBinding,
+    },
+    Ready {
+        dashboard: Box<AgentMemoryDashboard>,
+    },
+}
+
+fn load_agent_memory_dashboard(
+    project_path: &Path,
+    binding: ProjectVaultBinding,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let overview = project_memory_overview(project_path, &binding.vault_path)?;
+    let resume = project_resume_context(
+        project_path,
+        &binding.vault_path,
+        DEFAULT_RESUME_SESSIONS,
+        DEFAULT_RESUME_LEARNINGS,
+        DEFAULT_RESUME_CHARACTERS,
+    )?;
+    let sessions = list_sessions(project_path, &binding.vault_path)?;
+    let review_inbox = list_learning_contexts(
+        project_path,
+        &binding.vault_path,
+        LearningListScope::NeedsReview,
+        MAX_LEARNING_LIST_RESULTS,
+    )?;
+    let all_learnings = list_learning_contexts(
+        project_path,
+        &binding.vault_path,
+        LearningListScope::All,
+        MAX_LEARNING_LIST_RESULTS,
+    )?;
+    Ok(AgentMemoryDashboard {
+        binding: binding.into(),
+        overview,
+        resume,
+        sessions,
+        review_inbox,
+        all_learnings,
+    })
+}
+
+fn resolved_agent_binding(project_path: &Path) -> Result<ProjectVaultBinding, LeyCoreError> {
+    BindingRegistry::system_default()?.resolve(project_path, None)
+}
+
+#[tauri::command]
+fn inspect_agent_project(project_path: String) -> Result<AgentProjectInspection, String> {
+    let path = Path::new(&project_path);
+    let diagnostic = match diagnose_project(path) {
+        Ok(diagnostic) => diagnostic,
+        Err(LeyCoreError::ProjectNotFound(_)) => {
+            let suggested_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("New project")
+                .to_owned();
+            return Ok(AgentProjectInspection::Uninitialized { suggested_name });
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let binding = match resolved_agent_binding(&diagnostic.root) {
+        Ok(binding) => binding,
+        Err(LeyCoreError::VaultNotBound(_)) => {
+            return Ok(AgentProjectInspection::Unbound {
+                project_id: diagnostic.identity.project_id,
+                project_name: diagnostic.identity.name,
+                capture_mode: diagnostic.capture.mode,
+            });
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    match load_agent_memory_dashboard(&diagnostic.root, binding.clone()) {
+        Ok(dashboard) => Ok(AgentProjectInspection::Ready {
+            dashboard: Box::new(dashboard),
+        }),
+        Err(LeyCoreError::ProjectMemoryUnavailable(_)) => {
+            Ok(AgentProjectInspection::NeedsCapture {
+                project_id: diagnostic.identity.project_id,
+                project_name: diagnostic.identity.name,
+                capture_mode: diagnostic.capture.mode,
+                binding: binding.into(),
+            })
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[tauri::command]
+fn initialize_agent_project(
+    project_path: String,
+    vault_path: String,
+) -> Result<AgentMemoryDashboard, String> {
+    initialize_project(&project_path, None, CaptureMode::Structured)
+        .and_then(|initialization| {
+            let binding =
+                BindingRegistry::system_default()?.bind(&initialization.root, &vault_path)?;
+            ingest_project(&initialization.root, &binding.vault_path)?;
+            load_agent_memory_dashboard(&initialization.root, binding)
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn connect_agent_project(
+    project_path: String,
+    vault_path: String,
+) -> Result<AgentMemoryDashboard, String> {
+    BindingRegistry::system_default()
+        .and_then(|registry| registry.bind(&project_path, &vault_path))
+        .and_then(|binding| {
+            ingest_project(&project_path, &binding.vault_path)?;
+            load_agent_memory_dashboard(Path::new(&project_path), binding)
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn refresh_agent_project(project_path: String) -> Result<AgentMemoryDashboard, String> {
+    resolved_agent_binding(Path::new(&project_path))
+        .and_then(|binding| {
+            ingest_project(&project_path, &binding.vault_path)?;
+            load_agent_memory_dashboard(Path::new(&project_path), binding)
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn read_agent_learning(
+    project_path: String,
+    learning_id: String,
+) -> Result<LearningContextPack, String> {
+    resolved_agent_binding(Path::new(&project_path))
+        .and_then(|binding| {
+            read_learning_context(
+                &project_path,
+                &binding.vault_path,
+                &learning_id,
+                DEFAULT_LEARNING_CONTEXT_EVIDENCE,
+                DEFAULT_LEARNING_CONTEXT_HISTORY,
+                DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+                DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+            )
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn review_agent_learning(
+    project_path: String,
+    learning_id: String,
+    action: LearningFeedbackAction,
+    note: String,
+) -> Result<AgentMemoryDashboard, String> {
+    resolved_agent_binding(Path::new(&project_path))
+        .and_then(|binding| {
+            review_learning(
+                &project_path,
+                &binding.vault_path,
+                &learning_id,
+                ReviewLearningInput {
+                    request_id: generate_learning_request_id(),
+                    actor: LearningActor::User,
+                    action,
+                    note,
+                    replacement_learning_id: None,
+                },
+            )?;
+            load_agent_memory_dashboard(Path::new(&project_path), binding)
+        })
+        .map_err(|error| error.to_string())
+}
 
 #[tauri::command]
 fn bind_agent_project(
@@ -540,6 +770,12 @@ pub fn run() {
         .manage(VaultWatcherState::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            inspect_agent_project,
+            initialize_agent_project,
+            connect_agent_project,
+            refresh_agent_project,
+            read_agent_learning,
+            review_agent_learning,
             bind_agent_project,
             resolve_agent_project_vault,
             unbind_agent_project,
@@ -669,6 +905,111 @@ mod tests {
         assert!(relevant_change_path(&root, &root.join("image.png")).is_none());
 
         drop(watcher);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn agent_memory_dashboard_reads_sessions_and_reviewable_lessons() {
+        use ley_core::{
+            checkpoint_session, propose_learning, review_learning, start_session, CheckpointInput,
+            LearningActor, LearningEvidenceInput, LearningFeedbackAction, LearningKind,
+            LearningProvenance, ProposeLearningInput, ReviewLearningInput, SessionSource,
+            StartSessionInput,
+        };
+
+        let root =
+            std::env::temp_dir().join(format!("ley-agent-dashboard-test-{}", std::process::id()));
+        let project = root.join("project");
+        let vault = root.join("vault");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(
+            project.join("README.md"),
+            "# Dashboard\n\nUse cited memory.",
+        )
+        .unwrap();
+        let initialized =
+            initialize_project(&project, Some("Dashboard project"), CaptureMode::Structured)
+                .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let session = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "Build memory dashboard".into(),
+                goal: "Expose real continuity data in the desktop app.".into(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &session.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "The desktop bridge reads the shared engine.".into(),
+                plan: vec![],
+                decisions: vec![],
+                tasks: vec![],
+                problems: vec![],
+                touched_artifacts: vec!["README.md".into()],
+                commands: vec![],
+                verification: vec![],
+                unresolved: vec![],
+            },
+        )
+        .unwrap();
+        let learning = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Use the shared local engine".into(),
+                guidance: "Read sessions and lessons through ley-core.".into(),
+                confidence_percent: 90,
+                provenance: LearningProvenance::AgentAuthored,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: session.session.session_id.clone(),
+                    record_id: checkpoint.session.checkpoints.last().unwrap().id.clone(),
+                    note: "Captured in the dashboard implementation session.".into(),
+                }],
+            },
+        )
+        .unwrap();
+        let binding = ProjectVaultBinding {
+            project_id: initialized.identity.project_id,
+            vault_path: vault.clone(),
+            source: BindingSource::Override,
+        };
+
+        let pending = load_agent_memory_dashboard(&project, binding.clone()).unwrap();
+        assert_eq!(pending.resume.total_sessions, 1);
+        assert_eq!(pending.sessions.len(), 1);
+        assert_eq!(pending.review_inbox.total_matching, 1);
+        assert_eq!(pending.overview.files, 1);
+
+        review_learning(
+            &project,
+            &vault,
+            &learning.learning.learning_id,
+            ReviewLearningInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Verified in the native dashboard.".into(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        let reviewed = load_agent_memory_dashboard(&project, binding).unwrap();
+        assert_eq!(reviewed.review_inbox.total_matching, 0);
+        assert_eq!(reviewed.resume.total_current_trusted_learnings, 1);
+
         fs::remove_dir_all(root).unwrap();
     }
 }

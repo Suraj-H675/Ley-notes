@@ -1,0 +1,1534 @@
+import { useEffect, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import {
+  AlertTriangle,
+  ArrowRight,
+  BookCheck,
+  BrainCircuit,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  CircleDot,
+  Clock3,
+  FileCode2,
+  FolderOpen,
+  GitBranch,
+  History,
+  Inbox,
+  LockKeyhole,
+  MessageSquareWarning,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  Sparkles,
+  X,
+  XCircle,
+} from "lucide-react";
+import { Button } from "@/shared/components/Button";
+import { cn } from "@/shared/lib/classnames";
+import {
+  chooseAgentProject,
+  connectAgentProject,
+  initializeAgentProject,
+  inspectAgentProject,
+  readAgentLearning,
+  refreshAgentProject,
+  reviewAgentLearning,
+} from "./api";
+import type {
+  AgentMemoryDashboard,
+  AgentProjectInspection,
+  LearningAction,
+  LearningContext,
+  LearningSummary,
+  ResumeSession,
+  SessionSummary,
+} from "./types";
+
+const LAST_AGENT_PROJECT_KEY = "ley:last-agent-project";
+type Section = "overview" | "sessions" | "lessons" | "review";
+
+export function AgentMemoryWorkspace({
+  open,
+  vaultMode,
+  vaultPath,
+  vaultName,
+  onClose,
+}: {
+  open: boolean;
+  vaultMode: "desktop" | "browser-folder" | "browser-local";
+  vaultPath: string;
+  vaultName: string;
+  onClose: () => void;
+}) {
+  const [section, setSection] = useState<Section>("overview");
+  const [projectPath, setProjectPath] = useState<string | null>(() =>
+    vaultMode === "desktop"
+      ? localStorage.getItem(LAST_AGENT_PROJECT_KEY)
+      : null,
+  );
+  const [inspection, setInspection] = useState<AgentProjectInspection | null>(
+    null,
+  );
+  const [inspectedPath, setInspectedPath] = useState<string | null>(null);
+  const [busy, setBusy] = useState(
+    () =>
+      vaultMode === "desktop" &&
+      Boolean(localStorage.getItem(LAST_AGENT_PROJECT_KEY)),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [learningId, setLearningId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (
+      !open ||
+      vaultMode !== "desktop" ||
+      !projectPath ||
+      inspectedPath === projectPath
+    )
+      return;
+    let current = true;
+    void inspectAgentProject(projectPath)
+      .then((next) => {
+        if (!current) return;
+        setInspection(next);
+        setInspectedPath(projectPath);
+        localStorage.setItem(LAST_AGENT_PROJECT_KEY, projectPath);
+      })
+      .catch((cause) => {
+        if (!current) return;
+        setInspectedPath(projectPath);
+        setError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (current) setBusy(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [inspectedPath, open, projectPath, vaultMode]);
+
+  async function chooseProject() {
+    setError(null);
+    try {
+      const selected = await chooseAgentProject();
+      if (selected) {
+        setBusy(true);
+        setInspection(null);
+        setInspectedPath(null);
+        setProjectPath(selected);
+      }
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }
+
+  async function makeReady(kind: "initialize" | "connect" | "capture") {
+    if (!projectPath) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const dashboard =
+        kind === "initialize"
+          ? await initializeAgentProject(projectPath, vaultPath)
+          : kind === "connect"
+            ? await connectAgentProject(projectPath, vaultPath)
+            : await refreshAgentProject(projectPath);
+      setInspection({ status: "ready", dashboard });
+      setSection("overview");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refresh() {
+    await makeReady("capture");
+  }
+
+  function forgetProject() {
+    localStorage.removeItem(LAST_AGENT_PROJECT_KEY);
+    setProjectPath(null);
+    setInspection(null);
+    setInspectedPath(null);
+    setError(null);
+    setSection("overview");
+  }
+
+  const dashboard =
+    inspection?.status === "ready" ? inspection.dashboard : null;
+  const projectLabel =
+    dashboard?.overview.projectName ??
+    (inspection && "projectName" in inspection ? inspection.projectName : null);
+
+  if (!open) return null;
+
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[59] bg-background" />
+        <Dialog.Content
+          data-page="agent-memory-workspace"
+          className="fixed inset-0 z-[60] flex min-h-0 flex-col overflow-hidden bg-background text-foreground outline-none"
+          aria-describedby={undefined}
+        >
+          <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface-1/95 px-3 sm:px-5">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
+                <BrainCircuit size={17} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <Dialog.Title className="truncate text-body font-semibold tracking-tight">
+                  Agent Memory
+                </Dialog.Title>
+                <p className="truncate text-micro text-muted-foreground">
+                  {projectLabel
+                    ? `${projectLabel} · local project memory`
+                    : "Continuity for your coding agents"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {dashboard && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void refresh()}
+                  title="Capture changed project files and rebuild memory"
+                >
+                  <RefreshCw
+                    size={13}
+                    className={
+                      busy
+                        ? "animate-spin motion-reduce:animate-none"
+                        : undefined
+                    }
+                  />
+                  <span className="hidden sm:inline">Refresh snapshot</span>
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onClose}
+                aria-label="Close Agent Memory"
+                title="Close Agent Memory"
+              >
+                <X size={16} />
+              </Button>
+            </div>
+          </header>
+
+          {vaultMode !== "desktop" ? (
+            <BrowserBoundary vaultMode={vaultMode} vaultName={vaultName} />
+          ) : !inspection || inspection.status !== "ready" ? (
+            <ProjectOnboarding
+              inspection={inspection}
+              projectPath={projectPath}
+              vaultName={vaultName}
+              busy={busy}
+              error={error}
+              onChoose={() => void chooseProject()}
+              onForget={forgetProject}
+              onInitialize={() => void makeReady("initialize")}
+              onConnect={() => void makeReady("connect")}
+              onCapture={() => void makeReady("capture")}
+            />
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+              <AgentMemoryNav
+                section={section}
+                dashboard={inspection.dashboard}
+                busy={busy}
+                onSection={setSection}
+                onChangeProject={forgetProject}
+              />
+              <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
+                <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
+                  {error && <ErrorNotice message={error} />}
+                  {section === "overview" && (
+                    <Overview
+                      dashboard={inspection.dashboard}
+                      onOpenSession={() => setSection("sessions")}
+                      onOpenReview={() => setSection("review")}
+                      onLearning={setLearningId}
+                    />
+                  )}
+                  {section === "sessions" && (
+                    <Sessions sessions={inspection.dashboard.sessions} />
+                  )}
+                  {section === "lessons" && (
+                    <Lessons
+                      dashboard={inspection.dashboard}
+                      onLearning={setLearningId}
+                    />
+                  )}
+                  {section === "review" && (
+                    <ReviewInbox
+                      dashboard={inspection.dashboard}
+                      onLearning={setLearningId}
+                    />
+                  )}
+                </div>
+              </main>
+            </div>
+          )}
+
+          {dashboard && projectPath && (
+            <LearningInspector
+              key={learningId ?? "closed"}
+              learningId={learningId}
+              projectPath={projectPath}
+              onClose={() => setLearningId(null)}
+              onReviewed={(next) => {
+                setInspection({ status: "ready", dashboard: next });
+                setLearningId(null);
+              }}
+            />
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function AgentMemoryNav({
+  section,
+  dashboard,
+  busy,
+  onSection,
+  onChangeProject,
+}: {
+  section: Section;
+  dashboard: AgentMemoryDashboard;
+  busy: boolean;
+  onSection: (section: Section) => void;
+  onChangeProject: () => void;
+}) {
+  const items: Array<{
+    id: Section;
+    label: string;
+    icon: typeof Sparkles;
+    count?: number;
+  }> = [
+    { id: "overview", label: "Overview", icon: Sparkles },
+    {
+      id: "sessions",
+      label: "Sessions",
+      icon: History,
+      count: dashboard.sessions.length,
+    },
+    {
+      id: "lessons",
+      label: "Lessons",
+      icon: BookCheck,
+      count: dashboard.allLearnings.totalMatching,
+    },
+    {
+      id: "review",
+      label: "Review",
+      icon: Inbox,
+      count: dashboard.reviewInbox.totalMatching,
+    },
+  ];
+  return (
+    <aside className="shrink-0 border-b border-border bg-surface-1 md:flex md:w-56 md:flex-col md:border-b-0 md:border-r">
+      <nav
+        className="flex gap-1 overflow-x-auto p-2 md:flex-col md:overflow-visible md:p-3"
+        aria-label="Agent Memory sections"
+      >
+        {items.map((item) => {
+          const Icon = item.icon;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onSection(item.id)}
+              aria-current={section === item.id ? "page" : undefined}
+              className={cn(
+                "flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-meta font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                section === item.id
+                  ? "bg-primary/12 text-foreground"
+                  : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+              )}
+            >
+              <Icon
+                size={14}
+                className={section === item.id ? "text-primary" : undefined}
+              />
+              {item.label}
+              {item.count !== undefined && (
+                <span
+                  className={cn(
+                    "ml-auto rounded-full px-1.5 text-micro tabular-nums",
+                    section === item.id
+                      ? "bg-primary/15 text-primary"
+                      : "bg-surface-3 text-muted-foreground",
+                  )}
+                >
+                  {item.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+      <div className="mt-auto hidden border-t border-border p-3 md:block">
+        <p className="truncate text-meta font-medium">
+          {dashboard.overview.projectName}
+        </p>
+        <p className="mt-0.5 truncate text-micro text-muted-foreground">
+          {dashboard.binding.vaultName}
+        </p>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onChangeProject}
+          className="mt-2 text-micro font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          Change project
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function Overview({
+  dashboard,
+  onOpenSession,
+  onOpenReview,
+  onLearning,
+}: {
+  dashboard: AgentMemoryDashboard;
+  onOpenSession: () => void;
+  onOpenReview: () => void;
+  onLearning: (id: string) => void;
+}) {
+  const { overview, resume, reviewInbox } = dashboard;
+  const active = resume.sessions.filter(
+    (session) => session.status === "active" || session.status === "paused",
+  );
+  return (
+    <div className="space-y-8">
+      <section className="relative overflow-hidden rounded-2xl border border-border bg-surface-1 p-5 shadow-panel sm:p-7">
+        <div className="pointer-events-none absolute -right-20 -top-24 size-64 rounded-full bg-primary/10 blur-3xl" />
+        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <StatusPill
+                tone="success"
+                label="Local & private"
+                icon={LockKeyhole}
+              />
+              <StatusPill
+                tone={overview.freshness === "current" ? "success" : "warning"}
+                label={humanize(overview.freshness)}
+                icon={CircleDot}
+              />
+              <StatusPill
+                tone="neutral"
+                label={`${humanize(overview.captureMode)} capture`}
+                icon={ShieldCheck}
+              />
+            </div>
+            <h2 className="text-2xl font-semibold tracking-[-0.035em] sm:text-3xl">
+              {overview.projectName}
+            </h2>
+            <p className="mt-2 max-w-xl text-body leading-6 text-muted-foreground-strong">
+              A bounded continuity brief assembled from structured sessions,
+              verified lessons, and a deterministic snapshot of the project.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-meta text-muted-foreground">
+            <Clock3 size={14} />
+            Captured {relativeTime(overview.artifactGeneratedAtUnixMs)}
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="memory-health-title">
+        <div className="mb-3 flex items-end justify-between">
+          <div>
+            <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Memory health
+            </p>
+            <h3
+              id="memory-health-title"
+              className="mt-1 text-lg font-semibold tracking-tight"
+            >
+              What Ley can ground right now
+            </h3>
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            icon={History}
+            label="Sessions"
+            value={resume.totalSessions}
+            detail={`${active.length} active or paused`}
+          />
+          <MetricCard
+            icon={BookCheck}
+            label="Trusted lessons"
+            value={resume.totalCurrentTrustedLearnings}
+            detail="Current and reusable"
+          />
+          <MetricCard
+            icon={FileCode2}
+            label="Captured files"
+            value={overview.files}
+            detail={`${overview.retainedSourceFiles} with retained text`}
+          />
+          <MetricCard
+            icon={GitBranch}
+            label="Project graph"
+            value={overview.graphNodes}
+            detail={`${overview.graphEdges} deterministic links`}
+          />
+        </div>
+      </section>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]">
+        <section aria-labelledby="continuity-title">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Continuity
+              </p>
+              <h3
+                id="continuity-title"
+                className="mt-1 text-lg font-semibold tracking-tight"
+              >
+                Recent agent sessions
+              </h3>
+            </div>
+            {resume.totalSessions > 0 && (
+              <TextAction onClick={onOpenSession}>View all</TextAction>
+            )}
+          </div>
+          <div className="overflow-hidden rounded-xl border border-border bg-surface-1 shadow-panel">
+            {resume.sessions.length === 0 ? (
+              <CompactEmpty
+                icon={History}
+                title="No sessions captured yet"
+                body="Start a Ley session from an agent or the CLI. Its checkpoints and handoff will appear here."
+              />
+            ) : (
+              resume.sessions
+                .slice(0, 3)
+                .map((session, index) => (
+                  <SessionRow
+                    key={session.sessionId}
+                    session={session}
+                    divided={index > 0}
+                  />
+                ))
+            )}
+          </div>
+        </section>
+
+        <section aria-labelledby="review-title">
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Human control
+              </p>
+              <h3
+                id="review-title"
+                className="mt-1 text-lg font-semibold tracking-tight"
+              >
+                Review inbox
+              </h3>
+            </div>
+            {reviewInbox.totalMatching > 0 && (
+              <TextAction onClick={onOpenReview}>Open inbox</TextAction>
+            )}
+          </div>
+          <div className="overflow-hidden rounded-xl border border-border bg-surface-1 shadow-panel">
+            {reviewInbox.learnings.length === 0 ? (
+              <CompactEmpty
+                icon={CheckCircle2}
+                title="Inbox clear"
+                body="No agent-proposed, contested, or stale lessons need your decision."
+              />
+            ) : (
+              reviewInbox.learnings.slice(0, 3).map((learning, index) => (
+                <button
+                  key={learning.learningId}
+                  type="button"
+                  onClick={() => onLearning(learning.learningId)}
+                  className={cn(
+                    "flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+                    index > 0 && "border-t border-border",
+                  )}
+                >
+                  <TrustDot learning={learning} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-meta font-medium">
+                      {learning.title}
+                    </span>
+                    <span className="mt-0.5 block truncate text-micro text-muted-foreground">
+                      {humanize(learning.trustState)} ·{" "}
+                      {learning.confidencePercent}% confidence
+                    </span>
+                  </span>
+                  <ChevronRight
+                    size={14}
+                    className="shrink-0 text-subtle-foreground"
+                  />
+                </button>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      <p className="rounded-lg border border-border bg-surface-1 px-4 py-3 text-micro leading-5 text-muted-foreground">
+        <ShieldCheck size={13} className="mr-2 inline text-primary" />
+        Stored text is evidence, never executable policy. Ley excludes known
+        secret files, keeps projects isolated, and only marks explicitly
+        reviewed current lessons as reusable.
+      </p>
+    </div>
+  );
+}
+
+function Sessions({ sessions }: { sessions: SessionSummary[] }) {
+  return (
+    <section aria-labelledby="sessions-title">
+      <PageHeading
+        eyebrow="Continuity timeline"
+        title="Sessions"
+        description={`${sessions.length} structured agent ${sessions.length === 1 ? "session" : "sessions"} captured for this project.`}
+      />
+      <div className="mt-6 space-y-3">
+        {sessions.length === 0 ? (
+          <LargeEmpty
+            icon={History}
+            title="No sessions yet"
+            body="When an agent starts a Ley session, its goal, checkpoints, decisions, verification, and handoff will appear here."
+          />
+        ) : (
+          sessions.map((session) => (
+            <SessionSummaryCard key={session.sessionId} session={session} />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Lessons({
+  dashboard,
+  onLearning,
+}: {
+  dashboard: AgentMemoryDashboard;
+  onLearning: (id: string) => void;
+}) {
+  const learnings = dashboard.allLearnings.learnings;
+  return (
+    <section aria-labelledby="lessons-title">
+      <PageHeading
+        eyebrow="Procedural memory"
+        title="Lessons"
+        description={`Evidence-backed guidance remains reviewable, temporal, and separate from ordinary notes. Showing ${learnings.length} of ${dashboard.allLearnings.totalMatching}.`}
+      />
+      <div className="mt-6 grid gap-3 lg:grid-cols-2">
+        {learnings.length === 0 ? (
+          <div className="lg:col-span-2">
+            <LargeEmpty
+              icon={BookCheck}
+              title="No lessons proposed"
+              body="Agents can propose learnings from cited session records. Nothing becomes trusted until evidence or your explicit confirmation supports it."
+            />
+          </div>
+        ) : (
+          learnings.map((learning) => (
+            <LearningCard
+              key={learning.learningId}
+              learning={learning}
+              onClick={() => onLearning(learning.learningId)}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReviewInbox({
+  dashboard,
+  onLearning,
+}: {
+  dashboard: AgentMemoryDashboard;
+  onLearning: (id: string) => void;
+}) {
+  const inbox = dashboard.reviewInbox;
+  return (
+    <section aria-labelledby="review-inbox-title">
+      <PageHeading
+        eyebrow="Human authority"
+        title="Review inbox"
+        description={`Confirm useful guidance, contest uncertain claims, reject false memory, or mark guidance stale. Showing ${inbox.learnings.length} of ${inbox.totalMatching}.`}
+      />
+      <div className="mt-6 space-y-3">
+        {inbox.learnings.length === 0 ? (
+          <LargeEmpty
+            icon={CheckCircle2}
+            title="You’re all caught up"
+            body="No proposed, contested, source-changed, or stale lessons need review."
+          />
+        ) : (
+          inbox.learnings.map((learning) => (
+            <LearningCard
+              key={learning.learningId}
+              learning={learning}
+              onClick={() => onLearning(learning.learningId)}
+              wide
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function LearningInspector({
+  learningId,
+  projectPath,
+  onClose,
+  onReviewed,
+}: {
+  learningId: string | null;
+  projectPath: string;
+  onClose: () => void;
+  onReviewed: (dashboard: AgentMemoryDashboard) => void;
+}) {
+  const [learning, setLearning] = useState<LearningContext | null>(null);
+  const [action, setAction] = useState<LearningAction | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(Boolean(learningId));
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!learningId) return;
+    let current = true;
+    void readAgentLearning(projectPath, learningId)
+      .then((next) => {
+        if (current) setLearning(next);
+      })
+      .catch((cause) => {
+        if (current) setError(errorMessage(cause));
+      })
+      .finally(() => {
+        if (current) setBusy(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [learningId, projectPath]);
+
+  const noteRequired =
+    action === "contest" || action === "reject" || action === "mark-stale";
+  const canSubmit = action && (!noteRequired || note.trim().length > 0);
+
+  async function submitReview() {
+    if (!learningId || !action || !canSubmit) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const dashboard = await reviewAgentLearning(
+        projectPath,
+        learningId,
+        action,
+        note.trim(),
+      );
+      onReviewed(dashboard);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog.Root
+      open={Boolean(learningId)}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/70 backdrop-blur-sm" />
+        <Dialog.Content
+          className="fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-menu outline-none sm:inset-x-6 sm:bottom-6 sm:top-6"
+          aria-describedby={undefined}
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3 sm:px-5">
+            <div>
+              <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Provenance inspector
+              </p>
+              <Dialog.Title className="mt-0.5 text-body font-semibold">
+                {learning?.title ?? "Loading learning…"}
+              </Dialog.Title>
+            </div>
+            <Dialog.Close
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              aria-label="Close learning inspector"
+            >
+              <X size={15} />
+            </Dialog.Close>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+            {busy && !learning ? (
+              <div className="py-20 text-center text-meta text-muted-foreground">
+                Reading cited memory…
+              </div>
+            ) : error && !learning ? (
+              <ErrorNotice message={error} />
+            ) : (
+              learning && (
+                <div className="space-y-6">
+                  <div className="flex flex-wrap gap-2">
+                    <StatusPill
+                      tone={learning.trustedForReuse ? "success" : "warning"}
+                      label={humanize(learning.trustState)}
+                      icon={
+                        learning.trustedForReuse ? CheckCircle2 : AlertTriangle
+                      }
+                    />
+                    <StatusPill
+                      tone="neutral"
+                      label={humanize(learning.provenance)}
+                      icon={BrainCircuit}
+                    />
+                    <StatusPill
+                      tone="neutral"
+                      label={`${learning.confidencePercent}% confidence`}
+                      icon={CircleDot}
+                    />
+                    <StatusPill
+                      tone={
+                        learning.freshness === "current" ? "success" : "warning"
+                      }
+                      label={humanize(learning.freshness)}
+                      icon={RefreshCw}
+                    />
+                  </div>
+                  <section>
+                    <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Guidance
+                    </h3>
+                    <p className="mt-2 whitespace-pre-wrap text-body leading-6 text-foreground">
+                      {learning.guidance}
+                    </p>
+                  </section>
+                  <section>
+                    <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Evidence · {learning.evidenceCount}
+                    </h3>
+                    <div className="mt-2 space-y-2">
+                      {learning.evidence.length === 0 ? (
+                        <p className="text-meta text-muted-foreground">
+                          No evidence is available.
+                        </p>
+                      ) : (
+                        learning.evidence.map((evidence) => (
+                          <div
+                            key={`${evidence.sessionId}:${evidence.recordId}`}
+                            className="rounded-lg border border-border bg-background/35 p-3"
+                          >
+                            <div className="flex flex-wrap items-center gap-2 text-micro text-muted-foreground">
+                              <span className="rounded bg-surface-3 px-1.5 py-0.5 font-medium text-muted-foreground-strong">
+                                {humanize(evidence.recordType)}
+                              </span>
+                              <span>
+                                {relativeTime(evidence.sessionUpdatedAtUnixMs)}
+                              </span>
+                            </div>
+                            {evidence.note && (
+                              <p className="mt-2 text-meta leading-5 text-muted-foreground-strong">
+                                {evidence.note}
+                              </p>
+                            )}
+                            {evidence.artifacts.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {evidence.artifacts.map((artifact) => (
+                                  <span
+                                    key={`${artifact.artifactPath}:${artifact.startLine}`}
+                                    title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
+                                    className="max-w-full truncate rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-micro text-muted-foreground"
+                                  >
+                                    {artifact.artifactPath}:{artifact.startLine}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </section>
+                  {learning.history.length > 0 && (
+                    <section>
+                      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Review history
+                      </h3>
+                      <ol className="mt-2 space-y-2">
+                        {learning.history.map((entry) => (
+                          <li
+                            key={entry.eventId}
+                            className="flex gap-3 text-meta"
+                          >
+                            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-border-strong" />
+                            <span>
+                              <span className="font-medium">
+                                {humanize(entry.action)}
+                              </span>{" "}
+                              by {humanize(entry.actor)} ·{" "}
+                              {relativeTime(entry.recordedAtUnixMs)}
+                              {entry.note ? ` — ${entry.note}` : ""}
+                            </span>
+                          </li>
+                        ))}
+                      </ol>
+                    </section>
+                  )}
+                  <p className="rounded-lg border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
+                    <MessageSquareWarning
+                      size={13}
+                      className="mr-2 inline text-secondary"
+                    />
+                    {learning.instructionWarning}
+                  </p>
+                </div>
+              )
+            )}
+          </div>
+          {learning && (
+            <div className="shrink-0 border-t border-border bg-surface-1 p-4 sm:p-5">
+              {!action ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="mr-auto text-meta font-medium">
+                    Your decision
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAction("mark-stale")}
+                  >
+                    <RotateCcw size={13} />
+                    Mark stale
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setAction("contest")}
+                  >
+                    <AlertTriangle size={13} />
+                    Contest
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => setAction("reject")}
+                  >
+                    <XCircle size={13} />
+                    Reject
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => setAction("confirm")}
+                  >
+                    <Check size={13} />
+                    Confirm
+                  </Button>
+                </div>
+              ) : (
+                <div>
+                  <label
+                    htmlFor="learning-review-note"
+                    className="block text-meta font-medium"
+                  >
+                    {actionLabel(action)}
+                    <span className="ml-1 font-normal text-muted-foreground">
+                      {noteRequired ? "· note required" : "· note optional"}
+                    </span>
+                  </label>
+                  <textarea
+                    id="learning-review-note"
+                    name="learning-review-note"
+                    value={note}
+                    onChange={(event) => setNote(event.target.value)}
+                    placeholder={reviewPlaceholder(action)}
+                    rows={2}
+                    autoFocus
+                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+                  />
+                  {error && (
+                    <p
+                      className="mt-2 text-micro text-destructive"
+                      role="alert"
+                    >
+                      {error}
+                    </p>
+                  )}
+                  <div className="mt-3 flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        setAction(null);
+                        setNote("");
+                        setError(null);
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={action === "reject" ? "destructive" : "primary"}
+                      disabled={busy || !canSubmit}
+                      onClick={() => void submitReview()}
+                    >
+                      {busy ? "Saving…" : actionLabel(action)}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function ProjectOnboarding({
+  inspection,
+  projectPath,
+  vaultName,
+  busy,
+  error,
+  onChoose,
+  onForget,
+  onInitialize,
+  onConnect,
+  onCapture,
+}: {
+  inspection: AgentProjectInspection | null;
+  projectPath: string | null;
+  vaultName: string;
+  busy: boolean;
+  error: string | null;
+  onChoose: () => void;
+  onForget: () => void;
+  onInitialize: () => void;
+  onConnect: () => void;
+  onCapture: () => void;
+}) {
+  const title = !inspection
+    ? "Choose a project"
+    : inspection.status === "uninitialized"
+      ? "Initialize Agent Memory"
+      : inspection.status === "unbound"
+        ? "Connect this project"
+        : "Create the first snapshot";
+  const body = !inspection
+    ? "Ley only reads a project after you choose its folder. It never scans neighboring folders or discovers projects silently."
+    : inspection.status === "uninitialized"
+      ? `Ley will add a small .ley folder to “${inspection.suggestedName}”, use Structured capture, bind durable memory to “${vaultName}”, and create the first redacted snapshot.`
+      : inspection.status === "unbound"
+        ? `“${inspection.projectName}” is initialized but has no private vault binding. Connect it to “${vaultName}” and capture its approved files.`
+        : inspection.status === "needs-capture"
+          ? `“${inspection.projectName}” is connected to “${inspection.binding.vaultName}” but has not been captured yet.`
+          : "This project is ready.";
+  return (
+    <main className="min-h-0 flex-1 overflow-y-auto px-4 py-10 sm:px-6">
+      <div className="mx-auto flex min-h-full max-w-xl items-center justify-center">
+        <div className="w-full rounded-2xl border border-border bg-surface-1 p-6 shadow-panel sm:p-8">
+          <div className="flex size-11 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary">
+            {inspection ? <BrainCircuit size={21} /> : <FolderOpen size={21} />}
+          </div>
+          <h2 className="mt-5 text-2xl font-semibold tracking-[-0.035em]">
+            {title}
+          </h2>
+          <p className="mt-2 text-body leading-6 text-muted-foreground-strong">
+            {body}
+          </p>
+          {projectPath && (
+            <p
+              className="mt-4 truncate rounded-md bg-background/40 px-3 py-2 font-mono text-micro text-muted-foreground"
+              title={projectPath}
+            >
+              {projectPath}
+            </p>
+          )}
+          {error && (
+            <div className="mt-4">
+              <ErrorNotice message={error} />
+            </div>
+          )}
+          <div className="mt-6 flex flex-wrap gap-2">
+            {!inspection ? (
+              <Button variant="primary" disabled={busy} onClick={onChoose}>
+                <FolderOpen size={14} />
+                {busy ? "Opening…" : "Choose project folder"}
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="primary"
+                  disabled={busy}
+                  onClick={
+                    inspection.status === "uninitialized"
+                      ? onInitialize
+                      : inspection.status === "unbound"
+                        ? onConnect
+                        : onCapture
+                  }
+                >
+                  {busy ? (
+                    <RefreshCw
+                      size={14}
+                      className="animate-spin motion-reduce:animate-none"
+                    />
+                  ) : (
+                    <ArrowRight size={14} />
+                  )}
+                  {busy
+                    ? "Preparing memory…"
+                    : inspection.status === "uninitialized"
+                      ? "Initialize & capture"
+                      : inspection.status === "unbound"
+                        ? "Connect & capture"
+                        : "Capture project"}
+                </Button>
+                <Button variant="outline" disabled={busy} onClick={onChoose}>
+                  Choose another
+                </Button>
+                <Button variant="ghost" disabled={busy} onClick={onForget}>
+                  Forget selection
+                </Button>
+              </>
+            )}
+          </div>
+          <div className="mt-6 border-t border-border pt-4">
+            <p className="flex gap-2 text-micro leading-5 text-muted-foreground">
+              <ShieldCheck size={14} className="mt-0.5 shrink-0 text-primary" />
+              Known credentials, private keys, environment files, build output,
+              and ignored paths are excluded before durable memory is written.
+            </p>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function BrowserBoundary({
+  vaultMode,
+  vaultName,
+}: {
+  vaultMode: "browser-folder" | "browser-local";
+  vaultName: string;
+}) {
+  return (
+    <main className="min-h-0 flex-1 overflow-y-auto px-4 py-10 sm:px-6">
+      <div className="mx-auto flex min-h-full max-w-xl items-center justify-center">
+        <div className="w-full rounded-2xl border border-border bg-surface-1 p-6 shadow-panel sm:p-8">
+          <div className="flex size-11 items-center justify-center rounded-xl border border-secondary/20 bg-secondary/10 text-secondary">
+            <LockKeyhole size={21} />
+          </div>
+          <p className="mt-5 text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Honest local boundary
+          </p>
+          <h2 className="mt-1 text-2xl font-semibold tracking-[-0.035em]">
+            Agent Memory needs the desktop app
+          </h2>
+          <p className="mt-3 text-body leading-6 text-muted-foreground-strong">
+            This{" "}
+            {vaultMode === "browser-folder"
+              ? `browser folder vault, “${vaultName},”`
+              : "browser-local vault"}{" "}
+            can edit notes, but a web page cannot safely read coding projects or
+            serve local agents through stdio MCP.
+          </p>
+          <div className="mt-5 rounded-lg border border-border bg-background/35 p-4">
+            <p className="text-meta font-medium">
+              Your browser notes still remain fully usable.
+            </p>
+            <p className="mt-1 text-micro leading-5 text-muted-foreground">
+              Open the same filesystem vault in Ley Desktop to initialize
+              projects, capture structured sessions, review lessons, and connect
+              Claude, Codex, Gemini, or another MCP client.
+            </p>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+function SessionSummaryCard({ session }: { session: SessionSummary }) {
+  return (
+    <article className="rounded-xl border border-border bg-surface-1 p-4 shadow-panel sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <SessionStatus status={session.status} />
+            <span className="text-micro text-muted-foreground">
+              {relativeTime(session.updatedAtUnixMs)}
+            </span>
+          </div>
+          <h3 className="mt-2 text-body font-semibold">{session.name}</h3>
+          <p className="mt-1 text-meta leading-5 text-muted-foreground-strong">
+            {session.goal}
+          </p>
+        </div>
+        <span className="shrink-0 text-micro tabular-nums text-muted-foreground">
+          {session.checkpoints} checkpoints · {session.eventCount} events
+        </span>
+      </div>
+    </article>
+  );
+}
+
+function SessionRow({
+  session,
+  divided,
+}: {
+  session: ResumeSession;
+  divided: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex gap-3 px-4 py-3",
+        divided && "border-t border-border",
+      )}
+    >
+      <div className="pt-0.5">
+        <SessionStatus status={session.status} compact />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="truncate text-meta font-medium">{session.name}</p>
+          <span className="shrink-0 text-micro text-muted-foreground">
+            {relativeTime(session.updatedAtUnixMs)}
+          </span>
+        </div>
+        <p className="mt-0.5 line-clamp-2 text-micro leading-5 text-muted-foreground">
+          {session.latestCheckpoint?.summary ??
+            session.result?.summary ??
+            session.goal}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function LearningCard({
+  learning,
+  onClick,
+  wide = false,
+}: {
+  learning: LearningSummary;
+  onClick: () => void;
+  wide?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "group w-full rounded-xl border border-border bg-surface-1 p-4 text-left shadow-panel hover:border-border-strong hover:bg-surface-2/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+        wide && "sm:p-5",
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <TrustDot learning={learning} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded bg-surface-3 px-1.5 py-0.5 text-micro font-medium text-muted-foreground-strong">
+              {humanize(learning.kind)}
+            </span>
+            <span className="text-micro text-muted-foreground">
+              {humanize(learning.trustState)}
+            </span>
+            <span className="text-micro text-muted-foreground">
+              · {learning.confidencePercent}%
+            </span>
+          </div>
+          <h3 className="mt-2 text-body font-semibold">{learning.title}</h3>
+          <p
+            className={cn(
+              "mt-1 text-meta leading-5 text-muted-foreground-strong",
+              wide ? "line-clamp-3" : "line-clamp-2",
+            )}
+          >
+            {learning.guidanceExcerpt}
+          </p>
+          <p className="mt-3 text-micro text-muted-foreground">
+            {humanize(learning.provenance)} · {learning.corroboratingSessions}{" "}
+            corroborating{" "}
+            {learning.corroboratingSessions === 1 ? "session" : "sessions"} ·{" "}
+            {relativeTime(learning.updatedAtUnixMs)}
+          </p>
+        </div>
+        <ChevronRight
+          size={15}
+          className="mt-1 shrink-0 text-subtle-foreground group-hover:text-foreground"
+        />
+      </div>
+    </button>
+  );
+}
+
+function MetricCard({
+  icon: Icon,
+  label,
+  value,
+  detail,
+}: {
+  icon: typeof History;
+  label: string;
+  value: number;
+  detail: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-panel">
+      <div className="flex items-center justify-between">
+        <span className="text-meta font-medium text-muted-foreground">
+          {label}
+        </span>
+        <Icon size={15} className="text-primary" />
+      </div>
+      <p className="mt-3 text-2xl font-semibold tracking-tight tabular-nums">
+        {new Intl.NumberFormat().format(value)}
+      </p>
+      <p className="mt-1 text-micro text-muted-foreground">{detail}</p>
+    </div>
+  );
+}
+
+function PageHeading({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div>
+      <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {eyebrow}
+      </p>
+      <h2 className="mt-1 text-2xl font-semibold tracking-[-0.035em]">
+        {title}
+      </h2>
+      <p className="mt-2 max-w-2xl text-body leading-6 text-muted-foreground-strong">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+function StatusPill({
+  tone,
+  label,
+  icon: Icon,
+}: {
+  tone: "success" | "warning" | "neutral";
+  label: string;
+  icon: typeof ShieldCheck;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-micro font-medium",
+        tone === "success" &&
+          "border-emerald-500/20 bg-emerald-500/10 text-emerald-500",
+        tone === "warning" &&
+          "border-amber-500/20 bg-amber-500/10 text-amber-500",
+        tone === "neutral" &&
+          "border-border bg-surface-2 text-muted-foreground-strong",
+      )}
+    >
+      <Icon size={11} />
+      {label}
+    </span>
+  );
+}
+
+function SessionStatus({
+  status,
+  compact = false,
+}: {
+  status: ResumeSession["status"];
+  compact?: boolean;
+}) {
+  const color =
+    status === "active"
+      ? "bg-emerald-500"
+      : status === "paused"
+        ? "bg-amber-500"
+        : status === "completed"
+          ? "bg-primary"
+          : "bg-subtle-foreground";
+  if (compact)
+    return (
+      <span
+        className={cn("block size-2 rounded-full", color)}
+        title={humanize(status)}
+      />
+    );
+  return (
+    <span className="inline-flex items-center gap-1.5 text-micro font-medium text-muted-foreground-strong">
+      <span className={cn("size-2 rounded-full", color)} />
+      {humanize(status)}
+    </span>
+  );
+}
+
+function TrustDot({
+  learning,
+}: {
+  learning: Pick<LearningSummary, "trustState" | "freshness">;
+}) {
+  const trusted =
+    learning.trustState === "trusted" && learning.freshness === "current";
+  const rejected = learning.trustState === "rejected";
+  return (
+    <span
+      className={cn(
+        "mt-1.5 size-2.5 shrink-0 rounded-full ring-4",
+        trusted
+          ? "bg-emerald-500 ring-emerald-500/10"
+          : rejected
+            ? "bg-destructive ring-destructive/10"
+            : "bg-amber-500 ring-amber-500/10",
+      )}
+    />
+  );
+}
+
+function CompactEmpty({
+  icon: Icon,
+  title,
+  body,
+}: {
+  icon: typeof History;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="px-5 py-6 text-center">
+      <Icon size={18} className="mx-auto text-subtle-foreground" />
+      <p className="mt-2 text-meta font-medium">{title}</p>
+      <p className="mx-auto mt-1 max-w-sm text-micro leading-5 text-muted-foreground">
+        {body}
+      </p>
+    </div>
+  );
+}
+
+function LargeEmpty({
+  icon: Icon,
+  title,
+  body,
+}: {
+  icon: typeof History;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="rounded-xl border border-dashed border-border bg-surface-1/50 px-6 py-14 text-center">
+      <Icon size={22} className="mx-auto text-subtle-foreground" />
+      <h3 className="mt-3 text-body font-semibold">{title}</h3>
+      <p className="mx-auto mt-1 max-w-md text-meta leading-5 text-muted-foreground">
+        {body}
+      </p>
+    </div>
+  );
+}
+
+function TextAction({
+  children,
+  onClick,
+}: {
+  children: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded text-micro font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      {children}
+    </button>
+  );
+}
+
+function ErrorNotice({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="flex gap-2 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-meta text-destructive"
+    >
+      <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+      <span>{message}</span>
+    </div>
+  );
+}
+
+function relativeTime(unixMs: number): string {
+  const deltaSeconds = Math.round((unixMs - Date.now()) / 1000);
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (Math.abs(deltaSeconds) < 60)
+    return formatter.format(deltaSeconds, "second");
+  const deltaMinutes = Math.round(deltaSeconds / 60);
+  if (Math.abs(deltaMinutes) < 60)
+    return formatter.format(deltaMinutes, "minute");
+  const deltaHours = Math.round(deltaMinutes / 60);
+  if (Math.abs(deltaHours) < 24) return formatter.format(deltaHours, "hour");
+  const deltaDays = Math.round(deltaHours / 24);
+  if (Math.abs(deltaDays) < 30) return formatter.format(deltaDays, "day");
+  const deltaMonths = Math.round(deltaDays / 30);
+  if (Math.abs(deltaMonths) < 12) return formatter.format(deltaMonths, "month");
+  return formatter.format(Math.round(deltaMonths / 12), "year");
+}
+
+function humanize(value: string): string {
+  return value
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function actionLabel(action: LearningAction): string {
+  return action === "mark-stale" ? "Mark stale" : humanize(action);
+}
+
+function reviewPlaceholder(action: LearningAction): string {
+  if (action === "confirm") return "Why is this useful or reliable?";
+  if (action === "contest") return "What is uncertain or conflicting?";
+  if (action === "reject") return "Why should agents not reuse this?";
+  return "What changed or became outdated?";
+}
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}

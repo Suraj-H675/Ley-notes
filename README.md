@@ -27,6 +27,8 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Interoperable JSON Canvas files with text, note, link, and group cards; resizing, colors, labeled directional connections, and trash recovery
 - Vault-native templates for new notes and daily notes
 - Sparse local revision snapshots with a user-facing recovery panel
+- Desktop Agent Memory workspace with explicit project initialization/binding, deterministic refresh, complete session history, bounded continuity briefs, trusted lessons, provenance inspection, and append-only human review
+- An honest browser Agent Memory boundary: the PWA keeps notes usable but does not pretend a web page can serve external local agents or read arbitrary coding projects
 - Offline-capable PWA and a separate public website
 
 ## Repository map
@@ -67,9 +69,11 @@ cargo test --workspace   # local core, CLI, and desktop Rust tests
 
 No account, backend, or environment file is required.
 
-### Initialize a project for agent memory
+### Use Agent Memory
 
-The first agent-memory foundation is available through the local CLI:
+In Ley Desktop, open **Agent Memory** from the title bar or command palette, choose a project folder, then explicitly initialize or connect it to the active filesystem vault. Ley uses Structured capture by default, shows only engine-backed sessions and lessons, and keeps review actions under user authority. The browser app explains why this local-agent integration requires desktop instead of displaying fabricated or incomplete memory.
+
+The same foundation is available without the GUI through the local CLI:
 
 ```bash
 cargo run -p ley-cli -- init /path/to/project --capture structured
