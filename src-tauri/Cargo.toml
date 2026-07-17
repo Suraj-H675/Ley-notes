@@ -13,6 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+ley-core = { path = "../crates/ley-core" }
 notify = "8.2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

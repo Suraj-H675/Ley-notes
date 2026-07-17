@@ -1,3 +1,4 @@
+use ley_core::{BindingRegistry, ProjectVaultBinding};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::{
@@ -43,6 +44,34 @@ struct ActiveVaultWatcher {
 struct VaultWatcherState(Mutex<Option<ActiveVaultWatcher>>);
 
 static SUPPRESSED_CHANGES: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
+
+#[tauri::command]
+fn bind_agent_project(
+    project_path: String,
+    vault_path: String,
+) -> Result<ProjectVaultBinding, String> {
+    BindingRegistry::system_default()
+        .and_then(|registry| registry.bind(project_path, vault_path))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn resolve_agent_project_vault(
+    project_path: String,
+    vault_override: Option<String>,
+) -> Result<ProjectVaultBinding, String> {
+    let override_path = vault_override.as_deref().map(Path::new);
+    BindingRegistry::system_default()
+        .and_then(|registry| registry.resolve(project_path, override_path))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn unbind_agent_project(project_path: String) -> Result<Option<ProjectVaultBinding>, String> {
+    BindingRegistry::system_default()
+        .and_then(|registry| registry.unbind(project_path))
+        .map_err(|error| error.to_string())
+}
 
 fn suppress_change(path: &Path) {
     let changes = SUPPRESSED_CHANGES.get_or_init(|| Mutex::new(HashMap::new()));
@@ -484,6 +513,9 @@ pub fn run() {
         .manage(VaultWatcherState::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            bind_agent_project,
+            resolve_agent_project_vault,
+            unbind_agent_project,
             scan_vault,
             scan_canvases,
             write_canvas_file,

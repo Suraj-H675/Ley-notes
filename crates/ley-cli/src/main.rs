@@ -1,4 +1,7 @@
-use ley_core::{diagnose_project, initialize_project, preview_capture, CaptureMode, LeyCoreError};
+use ley_core::{
+    diagnose_project, initialize_project, preview_capture, BindingRegistry, CaptureMode,
+    LeyCoreError,
+};
 use std::env;
 use std::path::PathBuf;
 
@@ -16,6 +19,9 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
     };
     match command {
         "init" => initialize(&arguments[1..]),
+        "bind" => bind(&arguments[1..]),
+        "binding" => binding(&arguments[1..]),
+        "unbind" => unbind(&arguments[1..]),
         "doctor" => doctor(&arguments[1..]),
         "preview" => preview(&arguments[1..]),
         "help" | "--help" | "-h" => {
@@ -28,6 +34,116 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         }
         other => Err(CliError::Usage(format!("unknown command '{other}'"))),
     }
+}
+
+fn bind(arguments: &[String]) -> Result<(), CliError> {
+    let parsed = binding_arguments(arguments, true)?;
+    let registry = BindingRegistry::system_default()?;
+    let vault = parsed
+        .vault
+        .expect("binding argument validation requires a vault");
+    let result = registry.bind(parsed.project, vault)?;
+    if parsed.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).expect("CLI result is serializable")
+        );
+    } else {
+        println!("Bound project: {}", result.project_id);
+        println!("Vault: {}", result.vault_path.display());
+        println!("Private registry: {}", registry.path().display());
+    }
+    Ok(())
+}
+
+fn binding(arguments: &[String]) -> Result<(), CliError> {
+    let parsed = binding_arguments(arguments, false)?;
+    let registry = BindingRegistry::system_default()?;
+    let result = registry.resolve(parsed.project, parsed.vault.as_deref())?;
+    if parsed.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).expect("CLI result is serializable")
+        );
+    } else {
+        println!("Project: {}", result.project_id);
+        println!("Vault: {}", result.vault_path.display());
+        println!("Source: {}", result.source);
+    }
+    Ok(())
+}
+
+fn unbind(arguments: &[String]) -> Result<(), CliError> {
+    let mut project = None;
+    let mut json = false;
+    for argument in arguments {
+        match argument.as_str() {
+            "--json" => json = true,
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown option '{value}'")))
+            }
+            value if project.is_none() => project = Some(PathBuf::from(value)),
+            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+        }
+    }
+    let project = project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+    let registry = BindingRegistry::system_default()?;
+    let removed = registry.unbind(project)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "removed": removed.is_some(),
+                "binding": removed,
+            }))
+            .expect("CLI result is serializable")
+        );
+    } else if let Some(binding) = removed {
+        println!("Unbound project: {}", binding.project_id);
+        println!("Former vault: {}", binding.vault_path.display());
+    } else {
+        println!("Project was not bound");
+    }
+    Ok(())
+}
+
+struct BindingArguments {
+    project: PathBuf,
+    vault: Option<PathBuf>,
+    json: bool,
+}
+
+fn binding_arguments(
+    arguments: &[String],
+    vault_required: bool,
+) -> Result<BindingArguments, CliError> {
+    let mut project = None;
+    let mut vault = None;
+    let mut json = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--vault" => {
+                index += 1;
+                vault = Some(PathBuf::from(required_value(arguments, index, "--vault")?));
+            }
+            "--json" => json = true,
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown option '{value}'")))
+            }
+            value if project.is_none() => project = Some(PathBuf::from(value)),
+            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+        }
+        index += 1;
+    }
+    if vault_required && vault.is_none() {
+        return Err(CliError::Usage("bind requires --vault <path>".to_owned()));
+    }
+    Ok(BindingArguments {
+        project: project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?),
+        vault,
+        json,
+    })
 }
 
 fn preview(arguments: &[String]) -> Result<(), CliError> {
@@ -178,6 +294,9 @@ fn print_help() {
     println!();
     println!("Usage:");
     println!("  ley init [path] [--name NAME] [--capture minimal|structured|full] [--json]");
+    println!("  ley bind [path] --vault VAULT [--json]");
+    println!("  ley binding [path] [--vault TEMPORARY_VAULT] [--json]");
+    println!("  ley unbind [path] [--json]");
     println!("  ley doctor [path] [--json]");
     println!("  ley preview [path] [--json]");
     println!();

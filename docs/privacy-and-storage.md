@@ -21,6 +21,8 @@ Ley does not independently upload notes, project scans, sessions, or indexes. Wh
 
 A vault-level `.ley/` directory is reserved for local Ley workspace and agent-memory files. An initialized code repository may also contain a minimal `.ley/` folder holding only its stable project identity, capture policy, and ignore rules. Repository-local metadata must not contain conversations, generated memories, credentials, embeddings, machine-specific vault paths, or raw transcripts.
 
+The project-to-vault association lives outside both locations in Ley's private operating-system application configuration directory. Its versioned registry stores only stable project IDs and canonical vault paths. It contains no project path/name or knowledge content, is updated under a cross-process lock with atomic replacement, and can be deleted without deleting either project or vault data. A moved vault must be rebound explicitly; Ley does not guess another folder.
+
 Derived search and graph indexes remain disposable local database state. Deleting an index must never destroy an authoritative filesystem vault.
 
 ## Required safeguards

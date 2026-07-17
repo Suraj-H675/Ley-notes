@@ -6,6 +6,8 @@ authors.workspace = true
 description = "Local project identity and agent-memory primitives for Ley"
 
 [dependencies]
+atomic-write-file.workspace = true
+directories.workspace = true
 ignore.workspace = true
 serde.workspace = true
 serde_json.workspace = true

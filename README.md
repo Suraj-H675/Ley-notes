@@ -73,11 +73,13 @@ The first agent-memory foundation is available through the local CLI:
 
 ```bash
 cargo run -p ley-cli -- init /path/to/project --capture structured
+cargo run -p ley-cli -- bind /path/to/project --vault /path/to/ley-vault
+cargo run -p ley-cli -- binding /path/to/project
 cargo run -p ley-cli -- doctor /path/to/project
 cargo run -p ley-cli -- preview /path/to/project
 ```
 
-Initialization creates a minimal `.ley/` project identity, capture policy, and additional ignore rules. Structured capture is the default and does not enable raw transcripts. Repeating `init` reads the existing identity without changing its name or capture consent. `preview` deterministically lists the regular files that fit the approved roots and byte limits without reading their contents; ignored files and symlink targets are not captured. Session ingestion and retrieval are deliberately not claimed yet; they build on this reviewed boundary in subsequent slices. See [ADR 0001](docs/adr/0001-local-agent-project-boundary.md), [ADR 0002](docs/adr/0002-deterministic-capture-preview.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
+Initialization creates a minimal `.ley/` project identity, capture policy, and additional ignore rules. Structured capture is the default and does not enable raw transcripts. Repeating `init` reads the existing identity without changing its name or capture consent. `bind` stores only the stable project-ID-to-canonical-vault-path association in Ley's private OS application configuration; no machine path is written into the repository. A temporary `binding --vault /other/vault` override is validated but not persisted, and `unbind` removes the private association without touching project or vault data. `preview` deterministically lists the regular files that fit the approved roots and byte limits without reading their contents; ignored files and symlink targets are not captured. Session ingestion and retrieval are deliberately not claimed yet; they build on this reviewed boundary in subsequent slices. See [ADR 0001](docs/adr/0001-local-agent-project-boundary.md), [ADR 0002](docs/adr/0002-deterministic-capture-preview.md), [ADR 0003](docs/adr/0003-private-vault-binding-registry.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
 
 ## Data model
 

@@ -7,6 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod binding;
+
+pub use binding::{
+    default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
+    APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
+};
+
 pub const LEY_DIRECTORY: &str = ".ley";
 pub const PROJECT_FILE: &str = "project.json";
 pub const CAPTURE_FILE: &str = "capture.json";
@@ -151,6 +158,14 @@ pub enum LeyCoreError {
     InvalidProjectIdentity(String),
     #[error("invalid Ley capture policy: {0}")]
     InvalidCapturePolicy(String),
+    #[error("invalid Ley vault binding registry: {0}")]
+    InvalidBindingRegistry(String),
+    #[error("no private configuration directory is available on this operating system")]
+    ConfigDirectoryUnavailable,
+    #[error("project {0} is not bound to a Ley vault; run 'ley bind --vault <path>'")]
+    VaultNotBound(String),
+    #[error("the bound Ley vault is unavailable; rebind project {project_id}: {path}")]
+    BoundVaultUnavailable { project_id: String, path: PathBuf },
     #[error("unsafe Ley project layout at {0}")]
     UnsafeProjectLayout(PathBuf),
     #[error("Ley metadata exceeds the {limit_bytes}-byte limit: {path}")]
@@ -476,17 +491,27 @@ fn validate_identity(identity: &ProjectIdentity) -> Result<(), LeyCoreError> {
             identity.schema_version
         )));
     }
-    let Some(uuid) = identity.project_id.strip_prefix("prj_") else {
+    validate_project_id(&identity.project_id)?;
+    validated_project_name(Some(&identity.name), Path::new("."))?;
+    Ok(())
+}
+
+pub(crate) fn validate_project_id(project_id: &str) -> Result<(), LeyCoreError> {
+    let Some(uuid) = project_id.strip_prefix("prj_") else {
         return Err(LeyCoreError::InvalidProjectIdentity(
             "projectId must start with prj_".to_owned(),
         ));
     };
-    if Uuid::parse_str(uuid).is_err() {
+    if uuid.len() != 32
+        || !uuid
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || Uuid::parse_str(uuid).is_err()
+    {
         return Err(LeyCoreError::InvalidProjectIdentity(
-            "projectId is not a UUID".to_owned(),
+            "projectId must contain a 32-character lowercase hexadecimal UUID".to_owned(),
         ));
     }
-    validated_project_name(Some(&identity.name), Path::new("."))?;
     Ok(())
 }
 
