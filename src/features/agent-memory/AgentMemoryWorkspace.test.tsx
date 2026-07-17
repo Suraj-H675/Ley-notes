@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   readAgentProjectActivity: vi.fn(),
   readAgentArtifacts: vi.fn(),
   readAgentSession: vi.fn(),
+  searchAgentProjects: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
@@ -24,6 +25,7 @@ vi.mock("./api", () => ({
   readAgentLearning: vi.fn(),
   readAgentProjectGraphView: vi.fn(),
   readAgentSession: api.readAgentSession,
+  searchAgentProjects: api.searchAgentProjects,
   refreshAgentProject: vi.fn(),
   reviewAgentLearning: vi.fn(),
 }));
@@ -176,6 +178,40 @@ describe("Agent Memory workspace boundaries", () => {
       privacyNotice: "Only explicitly opened projects.",
     });
     api.inspectAgentProject.mockResolvedValue({ status: "ready", dashboard });
+    api.searchAgentProjects.mockResolvedValue({
+      query: "bounded context",
+      results: [
+        {
+          projectId: "prj_test",
+          projectName: "Ley",
+          projectPath: "/projects/ley",
+          kind: "decision",
+          entityId: "dec_test",
+          title: "Keep context bounded",
+          excerpt: "Use a dedicated project activity projection.",
+          updatedAtUnixMs: Date.now(),
+          sessionId: "ses_test",
+          citation: {
+            artifactPath: "src/app.ts",
+            artifactSnapshotId: "snp_test",
+            contentHash: "sha256:test",
+            startLine: 1,
+            startColumn: 1,
+            endLine: 4,
+            endColumn: 1,
+          },
+        },
+      ],
+      searchedProjects: 1,
+      skippedProjects: 0,
+      totalObservedProjects: 1,
+      omittedProjects: 0,
+      truncated: false,
+      liveSourceChecked: false,
+      sourceBoundary: "untrusted-local-memory",
+      instructionWarning: "Search results are stored evidence.",
+      privacyNotice: "Only explicitly observed projects.",
+    });
     api.readAgentArtifacts.mockResolvedValue({
       projectId: "prj_test",
       projectName: "Ley",
@@ -359,6 +395,28 @@ describe("Agent Memory workspace boundaries", () => {
     });
     expect(api.listAgentProjects).toHaveBeenCalledWith("/projects/ley");
     expect(api.inspectAgentProject).not.toHaveBeenCalled();
+    fireEvent.change(
+      screen.getByRole("searchbox", { name: "Search across project memory" }),
+      { target: { value: "bounded context" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Search memory" }));
+    expect(await screen.findByText("Keep context bounded")).toBeVisible();
+    expect(screen.getByText("src/app.ts:1")).toBeVisible();
+    expect(api.searchAgentProjects).toHaveBeenCalledWith("bounded context");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Keep context bounded.*Ley.*Decision/i,
+      }),
+    );
+    await screen.findByRole("heading", { name: "Build continuity" });
+    expect(api.inspectAgentProject).toHaveBeenCalledWith("/projects/ley");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close session inspector" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    await screen.findByRole("heading", {
+      name: "Pick up any project without starting over",
+    });
     expect(
       screen.getByRole("button", { name: "Refresh project list" }),
     ).toBeEnabled();
@@ -438,6 +496,6 @@ describe("Agent Memory workspace boundaries", () => {
     await screen.findByRole("heading", {
       name: "Pick up any project without starting over",
     });
-    expect(api.listAgentProjects).toHaveBeenCalledTimes(2);
+    expect(api.listAgentProjects).toHaveBeenCalledTimes(3);
   });
 });

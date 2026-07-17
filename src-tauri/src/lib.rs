@@ -2,12 +2,13 @@ use ley_core::{
     diagnose_project, generate_learning_request_id, ingest_project, initialize_project,
     list_learning_contexts, list_sessions, project_activity_view, project_artifact_inventory,
     project_graph_view, project_memory_overview, project_resume_context, project_session_stats,
-    read_learning_context, read_session_context, review_learning, BindingRegistry, BindingSource,
-    CaptureMode, IngestionResult, LearningActor, LearningContextPack, LearningFeedbackAction,
-    LearningList, LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView,
-    ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic, ProjectGraphView,
-    ProjectProblemScope, ProjectResumePack, ProjectVaultBinding, ReviewLearningInput,
-    SessionContextPack, SessionSummary, DEFAULT_ARTIFACT_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
+    read_learning_context, read_session_context, review_learning, search_observed_projects,
+    BindingRegistry, BindingSource, CaptureMode, CrossProjectSearch, IngestionResult,
+    LearningActor, LearningContextPack, LearningFeedbackAction, LearningList, LearningListScope,
+    LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory, ProjectCatalog,
+    ProjectDiagnostic, ProjectGraphView, ProjectProblemScope, ProjectResumePack,
+    ProjectVaultBinding, ReviewLearningInput, SessionContextPack, SessionSummary,
+    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
     DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
@@ -396,6 +397,23 @@ fn forget_agent_project(project_id: String) -> Result<AgentProjectCatalogView, S
         .and_then(|catalog| catalog.forget(&project_id))
         .and_then(|_| load_agent_project_catalog())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn search_agent_projects(query: String) -> Result<CrossProjectSearch, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let catalog = ProjectCatalog::system_default()?;
+        let registry = BindingRegistry::system_default()?;
+        search_observed_projects(
+            &catalog,
+            &registry,
+            &query,
+            DEFAULT_CROSS_PROJECT_SEARCH_RESULTS,
+        )
+    })
+    .await
+    .map_err(|_| "Cross-project search was interrupted.".to_owned())?
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1101,6 +1119,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_agent_projects,
             forget_agent_project,
+            search_agent_projects,
             inspect_agent_project,
             initialize_agent_project,
             connect_agent_project,

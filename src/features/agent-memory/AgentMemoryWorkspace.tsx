@@ -47,6 +47,7 @@ import type {
   AgentMemoryDashboard,
   AgentProjectCatalog,
   AgentProjectInspection,
+  AgentProjectSearchResult,
   LearningAction,
   LearningContext,
   LearningSummary,
@@ -185,13 +186,38 @@ export function AgentMemoryWorkspace({
     }
   }
 
-  function openProject(nextProjectPath: string) {
+  function openProject(
+    nextProjectPath: string,
+    destination?: AgentProjectSearchResult,
+  ) {
     setBusy(true);
     setError(null);
     setInspection(null);
     setInspectedPath(null);
     setProjectPath(nextProjectPath);
-    setSection("overview");
+    if (!destination) {
+      setSection("overview");
+      return;
+    }
+    if (
+      destination.kind === "session" ||
+      destination.kind === "decision" ||
+      destination.kind === "problem"
+    ) {
+      setSection(
+        destination.kind === "session"
+          ? "sessions"
+          : destination.kind === "decision"
+            ? "decisions"
+            : "problems",
+      );
+      setSessionId(destination.sessionId ?? null);
+    } else if (destination.kind === "learning") {
+      setSection("lessons");
+      setLearningId(destination.learningId ?? null);
+    } else {
+      setSection(destination.kind === "artifact" ? "artifacts" : "graph");
+    }
   }
 
   async function makeReady(kind: "initialize" | "connect" | "capture") {

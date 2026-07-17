@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AgentMemoryDashboard,
+  AgentProjectSearch,
   AgentProjectCatalog,
   AgentProjectInspection,
   LearningAction,
@@ -32,6 +33,12 @@ export function forgetAgentProject(
   projectId: string,
 ): Promise<AgentProjectCatalog> {
   return invoke("forget_agent_project", { projectId });
+}
+
+export function searchAgentProjects(
+  query: string,
+): Promise<AgentProjectSearch> {
+  return invoke("search_agent_projects", { query });
 }
 
 export function inspectAgentProject(

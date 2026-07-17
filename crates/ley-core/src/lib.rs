@@ -9,6 +9,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod binding;
+mod cross_project_search;
 mod graph;
 mod ingestion;
 mod knowledge_view;
@@ -24,6 +25,11 @@ mod session_context;
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
+};
+pub use cross_project_search::{
+    search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,
+    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, MAX_CROSS_PROJECT_SEARCH_QUERY_CHARACTERS,
+    MAX_CROSS_PROJECT_SEARCH_RESULTS,
 };
 pub use graph::{
     FactProvenance, GitChange, GitState, GraphCitation, GraphDiagnostic, GraphEdge, GraphEdgeKind,

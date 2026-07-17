@@ -120,6 +120,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | --- | --- | --- |
 | Projects hub | Add | Desktop Agent Memory opens on an explicit, recent-first project catalog instead of silently restoring one webview path. It never scans the device, distinguishes ready and repair states, and shows bounded local counts before opening a project. |
 | Project search | Add | Filters only the owner-private known-project list by name, folder, vault, or state; it is not mislabeled as cross-project knowledge search. |
+| Cross-project memory search | Add | A distinct submit-driven desktop search covers structured sessions, decisions, problems/outcomes, lessons, captured files, symbols, and dependencies across independently revalidated observed projects. Results are bounded, cited where possible, visibly stored rather than live, and navigate into the relevant project surface. |
 | Add project | Keep primary | Opens the operating-system folder chooser and preserves uninitialized, unbound, uncaptured, moved-vault, and ready onboarding states. |
 | Remove from Projects | Add | Removes only the device observation and clearly states that repository metadata, binding, and vault memory are not deleted. |
 | Last-project restoration | Replace | A one-time migration observes the previous explicit path, then removes the `localStorage` key. Multi-project recency now belongs to the shared private local engine. |

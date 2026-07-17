@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   BrainCircuit,
+  BookCheck,
   CheckCircle2,
   CircleDot,
   Files,
@@ -19,10 +20,14 @@ import {
 } from "lucide-react";
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/lib/classnames";
+import { searchAgentProjects } from "./api";
 import type {
   AgentProjectCatalog,
   AgentProjectCatalogItem,
   AgentProjectCatalogState,
+  AgentProjectSearch,
+  AgentProjectSearchResult,
+  AgentProjectSearchResultKind,
 } from "./types";
 
 export function ProjectsHub({
@@ -38,12 +43,16 @@ export function ProjectsHub({
   loading: boolean;
   error: string | null;
   onAdd: () => void;
-  onOpen: (projectPath: string) => void;
+  onOpen: (projectPath: string, destination?: AgentProjectSearchResult) => void;
   onForget: (projectId: string) => void;
   onReload: () => void;
 }) {
-  const [query, setQuery] = useState("");
-  const normalized = query.trim().toLocaleLowerCase();
+  const [filterQuery, setFilterQuery] = useState("");
+  const [memoryQuery, setMemoryQuery] = useState("");
+  const [search, setSearch] = useState<AgentProjectSearch | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const normalized = filterQuery.trim().toLocaleLowerCase();
   const projects =
     catalog?.projects.filter((project) => {
       if (!normalized) return true;
@@ -54,6 +63,26 @@ export function ProjectsHub({
         project.state,
       ].some((value) => value.toLocaleLowerCase().includes(normalized));
     }) ?? [];
+
+  async function searchMemory() {
+    const query = memoryQuery.trim();
+    if (!query || searching) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      setSearch(await searchAgentProjects(query));
+    } catch (cause) {
+      setSearchError(
+        cause instanceof Error
+          ? cause.message
+          : typeof cause === "string"
+            ? cause
+            : "Cross-project search failed.",
+      );
+    } finally {
+      setSearching(false);
+    }
+  }
 
   return (
     <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -79,6 +108,81 @@ export function ProjectsHub({
               Add project
             </Button>
           </div>
+        </section>
+
+        <section
+          className="mt-5 overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/8 via-surface-1 to-surface-1 shadow-panel"
+          aria-labelledby="memory-search-title"
+        >
+          <div className="border-b border-border/70 p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
+                <Search size={16} aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <h2
+                  id="memory-search-title"
+                  className="text-body font-semibold tracking-tight"
+                >
+                  Search every project memory
+                </h2>
+                <p className="mt-0.5 text-meta text-muted-foreground">
+                  Sessions, decisions, problems, lessons, files, and symbols ·
+                  local captured snapshots only
+                </p>
+              </div>
+            </div>
+            <form
+              className="mt-4 flex flex-col gap-2 sm:flex-row"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void searchMemory();
+              }}
+            >
+              <label className="relative min-w-0 flex-1">
+                <span className="sr-only">Search across project memory</span>
+                <Search
+                  size={15}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+                <input
+                  type="search"
+                  value={memoryQuery}
+                  maxLength={256}
+                  onChange={(event) => setMemoryQuery(event.target.value)}
+                  placeholder="What did we decide about offline sync?"
+                  className="h-11 w-full rounded-lg border border-border bg-background/55 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+                />
+              </label>
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={!memoryQuery.trim() || searching}
+              >
+                {searching ? (
+                  <RefreshCw
+                    size={14}
+                    className="animate-spin motion-reduce:animate-none"
+                  />
+                ) : (
+                  <Search size={14} />
+                )}
+                {searching ? "Searching locally" : "Search memory"}
+              </Button>
+            </form>
+            {searchError && (
+              <p className="mt-2 text-meta text-destructive" role="alert">
+                {searchError}
+              </p>
+            )}
+          </div>
+          {search && (
+            <SearchResults
+              search={search}
+              onOpen={(result) => onOpen(result.projectPath, result)}
+            />
+          )}
         </section>
 
         <section
@@ -130,8 +234,8 @@ export function ProjectsHub({
                 />
                 <input
                   type="search"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  value={filterQuery}
+                  onChange={(event) => setFilterQuery(event.target.value)}
                   placeholder="Name, folder, vault, or status"
                   className="h-10 w-full rounded-lg border border-border bg-surface-1 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
                 />
@@ -198,7 +302,7 @@ export function ProjectsHub({
               ))}
             </div>
           ) : (
-            <EmptyProjects query={query} onAdd={onAdd} />
+            <EmptyProjects query={filterQuery} onAdd={onAdd} />
           )}
 
           {catalog && catalog.omittedProjects > 0 && (
@@ -229,6 +333,152 @@ export function ProjectsHub({
   );
 }
 
+function SearchResults({
+  search,
+  onOpen,
+}: {
+  search: AgentProjectSearch;
+  onOpen: (result: AgentProjectSearchResult) => void;
+}) {
+  return (
+    <div className="p-4 sm:p-5" aria-live="polite">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-meta font-semibold">
+          {search.results.length === 0
+            ? `No captured memory matched “${search.query}”`
+            : `${search.results.length} top ${search.results.length === 1 ? "result" : "results"} for “${search.query}”`}
+        </p>
+        <p className="text-micro text-muted-foreground">
+          {search.searchedProjects} searched
+          {search.skippedProjects > 0
+            ? ` · ${search.skippedProjects} unavailable`
+            : ""}
+        </p>
+      </div>
+      {search.results.length > 0 && (
+        <div className="mt-3 grid gap-2 lg:grid-cols-2">
+          {search.results.map((result) => (
+            <SearchResultCard
+              key={`${result.projectId}:${result.kind}:${result.entityId}`}
+              result={result}
+              onOpen={() => onOpen(result)}
+            />
+          ))}
+        </div>
+      )}
+      <div className="mt-3 flex flex-col gap-1 text-micro text-muted-foreground sm:flex-row sm:justify-between">
+        <span>{search.instructionWarning}</span>
+        <span className="shrink-0">
+          {search.truncated
+            ? "Top bounded matches shown"
+            : "All matches in bound shown"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function SearchResultCard({
+  result,
+  onOpen,
+}: {
+  result: AgentProjectSearchResult;
+  onOpen: () => void;
+}) {
+  const meta = resultKindMeta(result.kind);
+  const Icon = meta.icon;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group min-w-0 overflow-hidden rounded-xl border border-border bg-background/45 p-3.5 text-left outline-none transition hover:border-primary/35 hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={cn(
+              "flex size-7 shrink-0 items-center justify-center rounded-md",
+              meta.className,
+            )}
+          >
+            <Icon size={13} aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-meta font-semibold">{result.title}</p>
+            <p className="mt-0.5 truncate text-micro text-muted-foreground">
+              {result.projectName} · {meta.label}
+            </p>
+          </div>
+        </div>
+        <ArrowUpRight
+          size={13}
+          className="shrink-0 text-muted-foreground transition group-hover:text-primary"
+          aria-hidden="true"
+        />
+      </div>
+      <p className="mt-2 line-clamp-2 text-meta leading-5 text-muted-foreground-strong">
+        {result.excerpt}
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-micro text-muted-foreground">
+        {result.citation && (
+          <span className="truncate font-mono">
+            {result.citation.artifactPath}:{result.citation.startLine}
+          </span>
+        )}
+        {result.trustState && <span>{humanize(result.trustState)}</span>}
+        {result.freshness && <span>{humanize(result.freshness)}</span>}
+      </div>
+    </button>
+  );
+}
+
+function resultKindMeta(kind: AgentProjectSearchResultKind) {
+  switch (kind) {
+    case "session":
+      return {
+        label: "Session",
+        icon: History,
+        className: "bg-sky-500/10 text-sky-500",
+      };
+    case "decision":
+      return {
+        label: "Decision",
+        icon: CheckCircle2,
+        className: "bg-violet-500/10 text-violet-500",
+      };
+    case "problem":
+      return {
+        label: "Problem & outcome",
+        icon: AlertTriangle,
+        className: "bg-amber-500/10 text-amber-500",
+      };
+    case "learning":
+      return {
+        label: "Lesson",
+        icon: BookCheck,
+        className: "bg-emerald-500/10 text-emerald-500",
+      };
+    case "artifact":
+      return {
+        label: "Artifact",
+        icon: Files,
+        className: "bg-primary/10 text-primary",
+      };
+    case "symbol":
+      return {
+        label: "Symbol",
+        icon: CircleDot,
+        className: "bg-fuchsia-500/10 text-fuchsia-500",
+      };
+    case "dependency":
+      return {
+        label: "Dependency",
+        icon: Network,
+        className: "bg-cyan-500/10 text-cyan-500",
+      };
+  }
+}
+
 function SummaryTile({
   icon: Icon,
   label,
@@ -248,7 +498,9 @@ function SummaryTile({
     <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-panel">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-micro font-medium text-muted-foreground">{label}</p>
+          <p className="text-micro font-medium text-muted-foreground">
+            {label}
+          </p>
           <p className="mt-1 text-2xl font-semibold tabular-nums">{value}</p>
         </div>
         <span
@@ -344,11 +596,7 @@ function ProjectCard({
               value={project.sessions ?? 0}
               label="sessions"
             />
-            <Metric
-              icon={Files}
-              value={project.files ?? 0}
-              label="files"
-            />
+            <Metric icon={Files} value={project.files ?? 0} label="files" />
             <Metric
               icon={Inbox}
               value={project.reviewItems ?? 0}

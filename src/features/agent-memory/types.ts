@@ -252,6 +252,45 @@ export interface AgentProjectCatalog {
   privacyNotice: string;
 }
 
+export type AgentProjectSearchResultKind =
+  | "session"
+  | "decision"
+  | "problem"
+  | "learning"
+  | "artifact"
+  | "symbol"
+  | "dependency";
+
+export interface AgentProjectSearchResult {
+  projectId: string;
+  projectName: string;
+  projectPath: string;
+  kind: AgentProjectSearchResultKind;
+  entityId: string;
+  title: string;
+  excerpt: string;
+  updatedAtUnixMs: number;
+  sessionId?: string;
+  learningId?: string;
+  citation?: GraphCitation;
+  trustState?: string;
+  freshness?: string;
+}
+
+export interface AgentProjectSearch {
+  query: string;
+  results: AgentProjectSearchResult[];
+  searchedProjects: number;
+  skippedProjects: number;
+  totalObservedProjects: number;
+  omittedProjects: number;
+  truncated: boolean;
+  liveSourceChecked: boolean;
+  sourceBoundary: string;
+  instructionWarning: string;
+  privacyNotice: string;
+}
+
 export type ArtifactKind =
   "source" | "documentation" | "manifest" | "configuration" | "text";
 
