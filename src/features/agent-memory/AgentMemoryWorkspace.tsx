@@ -65,7 +65,8 @@ type Section =
   | "lessons"
   | "artifacts"
   | "graph"
-  | "review";
+  | "review"
+  | "privacy";
 
 const ArtifactExplorer = lazy(() =>
   import("./ArtifactExplorer").then((module) => ({
@@ -80,6 +81,11 @@ const ProjectKnowledgeGraph = lazy(() =>
 const ProjectActivityExplorer = lazy(() =>
   import("./ProjectActivityExplorer").then((module) => ({
     default: module.ProjectActivityExplorer,
+  })),
+);
+const CapturePrivacyPanel = lazy(() =>
+  import("./CapturePrivacyPanel").then((module) => ({
+    default: module.CapturePrivacyPanel,
   })),
 );
 
@@ -441,6 +447,18 @@ export function AgentMemoryWorkspace({
                       onLearning={setLearningId}
                     />
                   )}
+                  {section === "privacy" && projectPath && (
+                    <Suspense fallback={<KnowledgeSurfaceFallback />}>
+                      <CapturePrivacyPanel
+                        key={projectPath}
+                        projectPath={projectPath}
+                        dashboard={inspection.dashboard}
+                        onUpdated={(next) =>
+                          setInspection({ status: "ready", dashboard: next })
+                        }
+                      />
+                    </Suspense>
+                  )}
                 </div>
               </main>
             </div>
@@ -532,6 +550,11 @@ function AgentMemoryNav({
       label: "Review",
       icon: Inbox,
       count: dashboard.reviewInbox.totalMatching,
+    },
+    {
+      id: "privacy",
+      label: "Capture & privacy",
+      icon: ShieldCheck,
     },
   ];
   return (

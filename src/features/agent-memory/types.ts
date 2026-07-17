@@ -252,6 +252,25 @@ export interface AgentProjectCatalog {
   privacyNotice: string;
 }
 
+export interface AgentCaptureSettings {
+  projectId: string;
+  projectName: string;
+  mode: CaptureMode;
+  approvedRoots: string[];
+  respectGitignore: boolean;
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  storeRawTranscripts: boolean;
+  ignoreFilePresent: boolean;
+  captureFingerprint: string;
+  eligibleFiles: number;
+  eligibleBytes: number;
+  skippedOversized: number;
+  skippedTotalLimit: number;
+  skippedSymlinks: number;
+  privacyNotice: string;
+}
+
 export type AgentProjectSearchResultKind =
   | "session"
   | "decision"

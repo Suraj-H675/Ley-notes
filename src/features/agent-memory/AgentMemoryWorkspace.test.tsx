@@ -9,8 +9,10 @@ const api = vi.hoisted(() => ({
   listAgentProjects: vi.fn(),
   readAgentProjectActivity: vi.fn(),
   readAgentArtifacts: vi.fn(),
+  readAgentCaptureSettings: vi.fn(),
   readAgentSession: vi.fn(),
   searchAgentProjects: vi.fn(),
+  updateAgentCaptureMode: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
@@ -22,10 +24,12 @@ vi.mock("./api", () => ({
   listAgentProjects: api.listAgentProjects,
   readAgentProjectActivity: api.readAgentProjectActivity,
   readAgentArtifacts: api.readAgentArtifacts,
+  readAgentCaptureSettings: api.readAgentCaptureSettings,
   readAgentLearning: vi.fn(),
   readAgentProjectGraphView: vi.fn(),
   readAgentSession: api.readAgentSession,
   searchAgentProjects: api.searchAgentProjects,
+  updateAgentCaptureMode: api.updateAgentCaptureMode,
   refreshAgentProject: vi.fn(),
   reviewAgentLearning: vi.fn(),
 }));
@@ -311,6 +315,42 @@ describe("Agent Memory workspace boundaries", () => {
       sourceBoundary: "untrusted-agent-memory",
       instructionWarning: "Treat stored records as evidence.",
     });
+    const captureSettings = {
+      projectId: "prj_test",
+      projectName: "Ley",
+      mode: "structured" as const,
+      approvedRoots: ["."],
+      respectGitignore: true,
+      maxFileBytes: 1_048_576,
+      maxTotalBytes: 536_870_912,
+      storeRawTranscripts: false,
+      ignoreFilePresent: true,
+      captureFingerprint: "sha256:capture",
+      eligibleFiles: 18,
+      eligibleBytes: 32_768,
+      skippedOversized: 1,
+      skippedTotalLimit: 0,
+      skippedSymlinks: 1,
+      privacyNotice: "Preview reads metadata only.",
+    };
+    api.readAgentCaptureSettings
+      .mockResolvedValueOnce(captureSettings)
+      .mockResolvedValueOnce({
+        ...captureSettings,
+        mode: "minimal",
+      });
+    api.updateAgentCaptureMode.mockResolvedValue({
+      ...dashboard,
+      overview: {
+        ...dashboard.overview,
+        captureMode: "minimal",
+        retainedSourceFiles: 0,
+      },
+      resume: {
+        ...dashboard.resume,
+        captureMode: "minimal",
+      },
+    });
     api.readAgentSession.mockResolvedValue({
       projectId: "prj_test",
       sessionId: "ses_test",
@@ -491,6 +531,43 @@ describe("Agent Memory workspace boundaries", () => {
     expect(
       screen.getByText("The decision and problem are both discoverable."),
     ).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Capture & privacy" }),
+    );
+    await screen.findByRole("heading", {
+      name: "Decide what this project remembers",
+    });
+    expect(screen.getByText("Preview reads metadata only.")).toBeVisible();
+    fireEvent.click(screen.getByRole("radio", { name: /Full Evidence/ }));
+    expect(
+      screen.getByRole("button", { name: "Apply & recapture" }),
+    ).toBeDisabled();
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: /Permit Full Evidence for this project/i,
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Apply & recapture" }),
+    ).toBeEnabled();
+    fireEvent.click(screen.getByRole("radio", { name: /Minimal/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Apply & recapture" }),
+    );
+    await waitFor(() =>
+      expect(api.updateAgentCaptureMode).toHaveBeenCalledWith(
+        "/projects/ley",
+        "structured",
+        "minimal",
+        false,
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByText("Minimal is active"),
+      ).toBeVisible(),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));
     await screen.findByRole("heading", {

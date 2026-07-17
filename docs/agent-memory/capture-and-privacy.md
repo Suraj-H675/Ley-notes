@@ -1,0 +1,25 @@
+# Capture and privacy
+
+Every initialized project owns a small, portable `.ley/capture.json` policy. Durable evidence still lives in the bound filesystem vault. In the desktop app, open **Agent Memory → Capture & privacy** to inspect the policy, preview its current filesystem boundary, and change evidence retention.
+
+## Choose a mode
+
+| Mode | Project evidence retained in the vault | Structured sessions | Raw host transcript permission |
+| --- | --- | --- | --- |
+| Minimal | Paths, classifications, post-redaction hashes, deterministic graph; no source blobs | Yes | No |
+| Structured | Minimal plus post-redaction UTF-8 source evidence and citations | Yes | No |
+| Full Evidence | Structured evidence | Yes | Explicitly permitted for a compatible adapter |
+
+Structured is the recommended default. Full Evidence does not make Ley scrape chats. It allows a future or compatible transcript-capable adapter to submit raw evidence, so the desktop app requires a separate acknowledgement before enabling it.
+
+## Inspect the boundary
+
+The panel runs the same deterministic preview as `ley preview`. Preview reads candidate file metadata, not contents. It shows approved project-relative roots, eligible file and byte totals, configured limits, skipped symlinks, and whether Git and `.leyignore` rules apply.
+
+Applying a mode serializes local writers with a private project-specific OS lock, rechecks the project identity and visible mode, writes the repository-local policy atomically, and immediately runs the same redacted ingestion used by the CLI. The durable artifact manifest records the complete policy and fingerprint. A stale interface cannot overwrite a mode changed by another local client; reload the panel and decide again.
+
+Mode changes preserve custom roots, ignore behavior, and byte limits. Minimal re-capture stops source blobs from appearing in the current snapshot, but immutable historical evidence is not garbage-collected automatically. Ley must add a separate reviewed retention/deletion workflow before claiming old immutable evidence has been erased.
+
+## Cloud-agent boundary
+
+Ley never uploads captured data independently. A cloud agent such as Claude, Codex, or Gemini may receive bounded context only when the user or host asks that agent to retrieve it. Capture mode controls local retention; it does not override the connected provider's handling of deliberately retrieved context.

@@ -239,6 +239,15 @@ pub struct CapturePreview {
     pub skipped_symlinks: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapturePolicyUpdate {
+    pub project_id: String,
+    pub previous_mode: CaptureMode,
+    pub capture: CapturePolicy,
+    pub changed: bool,
+}
+
 #[derive(Debug, Error)]
 pub enum LeyCoreError {
     #[error("project path is not a directory: {0}")]
@@ -399,6 +408,181 @@ pub fn diagnose_project(start: impl AsRef<Path>) -> Result<ProjectDiagnostic, Le
         identity,
         capture,
         ignore_file_present,
+    })
+}
+
+pub fn update_capture_mode(
+    start: impl AsRef<Path>,
+    expected_project_id: &str,
+    expected_mode: CaptureMode,
+    next_mode: CaptureMode,
+    full_evidence_consent: bool,
+) -> Result<CapturePolicyUpdate, LeyCoreError> {
+    let initial = diagnose_project(&start)?;
+    if initial.identity.project_id != expected_project_id {
+        return Err(LeyCoreError::InvalidCapturePolicy(
+            "project identity changed before the capture policy could be saved".to_owned(),
+        ));
+    }
+    let config_path = default_binding_registry_path()?;
+    let lock_path =
+        config_path.with_file_name(format!("capture-policy-{}.lock", expected_project_id));
+    update_capture_mode_with_lock(
+        start,
+        expected_project_id,
+        expected_mode,
+        next_mode,
+        full_evidence_consent,
+        &lock_path,
+    )
+}
+
+fn update_capture_mode_with_lock(
+    start: impl AsRef<Path>,
+    expected_project_id: &str,
+    expected_mode: CaptureMode,
+    next_mode: CaptureMode,
+    full_evidence_consent: bool,
+    lock_path: &Path,
+) -> Result<CapturePolicyUpdate, LeyCoreError> {
+    use std::fs::{File, OpenOptions};
+
+    let parent = lock_path.parent().ok_or_else(|| {
+        LeyCoreError::InvalidCapturePolicy("capture policy lock path must have a parent".to_owned())
+    })?;
+    let mut directory = fs::DirBuilder::new();
+    directory.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        directory.mode(0o700);
+    }
+    directory
+        .create(parent)
+        .map_err(|source| LeyCoreError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    let parent_metadata = fs::symlink_metadata(parent).map_err(|source| LeyCoreError::Io {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
+        return Err(LeyCoreError::UnsafeProjectLayout(parent.to_path_buf()));
+    }
+    match fs::symlink_metadata(lock_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(LeyCoreError::Io {
+                path: lock_path.to_path_buf(),
+                source,
+            })
+        }
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err(LeyCoreError::UnsafeProjectLayout(lock_path.to_path_buf()))
+        }
+        #[cfg(unix)]
+        Ok(metadata) => {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(LeyCoreError::InvalidCapturePolicy(
+                    "capture policy lock must use owner-only permissions".to_owned(),
+                ));
+            }
+        }
+        #[cfg(not(unix))]
+        Ok(_) => {}
+    }
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = options.open(lock_path).map_err(|source| LeyCoreError::Io {
+        path: lock_path.to_path_buf(),
+        source,
+    })?;
+    lock.lock().map_err(|source| LeyCoreError::Io {
+        path: lock_path.to_path_buf(),
+        source,
+    })?;
+
+    let result = update_capture_mode_under_lock(
+        start,
+        expected_project_id,
+        expected_mode,
+        next_mode,
+        full_evidence_consent,
+    );
+    let unlock = File::unlock(&lock).map_err(|source| LeyCoreError::Io {
+        path: lock_path.to_path_buf(),
+        source,
+    });
+    match (result, unlock) {
+        (Ok(update), Ok(())) => Ok(update),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+fn update_capture_mode_under_lock(
+    start: impl AsRef<Path>,
+    expected_project_id: &str,
+    expected_mode: CaptureMode,
+    next_mode: CaptureMode,
+    full_evidence_consent: bool,
+) -> Result<CapturePolicyUpdate, LeyCoreError> {
+    let diagnostic = diagnose_project(start)?;
+    if diagnostic.identity.project_id != expected_project_id {
+        return Err(LeyCoreError::InvalidCapturePolicy(
+            "project identity changed before the capture policy could be saved".to_owned(),
+        ));
+    }
+    if diagnostic.capture.mode != expected_mode {
+        return Err(LeyCoreError::InvalidCapturePolicy(format!(
+            "capture mode changed from {expected_mode} to {}; reload before saving",
+            diagnostic.capture.mode
+        )));
+    }
+    if next_mode == CaptureMode::FullEvidence
+        && !diagnostic.capture.store_raw_transcripts
+        && !full_evidence_consent
+    {
+        return Err(LeyCoreError::InvalidCapturePolicy(
+            "enabling full-evidence mode requires explicit consent".to_owned(),
+        ));
+    }
+
+    let previous_mode = diagnostic.capture.mode;
+    let previous_raw_transcripts = diagnostic.capture.store_raw_transcripts;
+    let mut capture = diagnostic.capture;
+    capture.mode = next_mode;
+    capture.store_raw_transcripts = next_mode == CaptureMode::FullEvidence;
+    validate_capture(&capture)?;
+    let changed =
+        capture.mode != previous_mode || capture.store_raw_transcripts != previous_raw_transcripts;
+    if changed {
+        let ley_directory = diagnostic.root.join(LEY_DIRECTORY);
+        let metadata = fs::symlink_metadata(&ley_directory).map_err(|source| LeyCoreError::Io {
+            path: ley_directory.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(LeyCoreError::UnsafeProjectLayout(ley_directory));
+        }
+        write_json_atomic(
+            &diagnostic.root.join(LEY_DIRECTORY).join(CAPTURE_FILE),
+            &capture,
+        )?;
+    }
+
+    Ok(CapturePolicyUpdate {
+        project_id: diagnostic.identity.project_id,
+        previous_mode,
+        capture,
+        changed,
     })
 }
 
@@ -734,12 +918,21 @@ fn optional_regular_metadata_file(path: &Path) -> Result<bool, LeyCoreError> {
 }
 
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), LeyCoreError> {
+    use std::io::Write;
     let mut body =
         serde_json::to_vec_pretty(value).expect("serializing project metadata cannot fail");
     body.push(b'\n');
-    let temporary = path.with_extension(format!("tmp-{}", Uuid::new_v4().simple()));
-    write_new_file(&temporary, &body)?;
-    fs::rename(&temporary, path).map_err(|source| LeyCoreError::Io {
+    let mut file = atomic_write_file::OpenOptions::new()
+        .open(path)
+        .map_err(|source| LeyCoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    file.write_all(&body).map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    file.commit().map_err(|source| LeyCoreError::Io {
         path: path.to_path_buf(),
         source,
     })
@@ -814,6 +1007,166 @@ mod tests {
         assert_eq!(second.identity, first.identity);
         assert_eq!(second.capture.mode, CaptureMode::Minimal);
         assert!(!second.capture.store_raw_transcripts);
+    }
+
+    #[test]
+    fn capture_mode_updates_preserve_scope_require_consent_and_change_retention() {
+        let directory = tempdir().unwrap();
+        let project = directory.path().join("project");
+        let vault = directory.path().join("vault");
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(project.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let initialized =
+            initialize_project(&project, Some("Privacy"), CaptureMode::Structured).unwrap();
+        let lock_path = directory.path().join("config/capture-policy.lock");
+
+        let capture_path = project.join(LEY_DIRECTORY).join(CAPTURE_FILE);
+        let mut customized: CapturePolicy = read_json(&capture_path).unwrap();
+        customized.approved_roots = vec!["src".to_owned()];
+        customized.max_file_bytes = 2_048;
+        customized.max_total_bytes = 8_192;
+        write_json_atomic(&capture_path, &customized).unwrap();
+
+        assert!(matches!(
+            update_capture_mode(
+                &project,
+                "prj_wrong",
+                CaptureMode::Structured,
+                CaptureMode::Minimal,
+                false,
+            ),
+            Err(LeyCoreError::InvalidCapturePolicy(message))
+                if message.contains("project identity changed")
+        ));
+
+        crate::ingest_project(&project, &vault).unwrap();
+        assert_eq!(
+            crate::project_memory_overview(&project, &vault)
+                .unwrap()
+                .retained_source_files,
+            1
+        );
+        let minimal = update_capture_mode_with_lock(
+            &project,
+            &initialized.identity.project_id,
+            CaptureMode::Structured,
+            CaptureMode::Minimal,
+            false,
+            &lock_path,
+        )
+        .unwrap();
+        assert!(minimal.changed);
+        assert_eq!(minimal.capture.approved_roots, ["src"]);
+        assert_eq!(minimal.capture.max_file_bytes, 2_048);
+        assert_eq!(minimal.capture.max_total_bytes, 8_192);
+        assert!(!minimal.capture.store_raw_transcripts);
+        crate::ingest_project(&project, &vault).unwrap();
+        assert_eq!(
+            crate::project_memory_overview(&project, &vault)
+                .unwrap()
+                .retained_source_files,
+            0
+        );
+
+        assert!(matches!(
+            update_capture_mode_with_lock(
+                &project,
+                &initialized.identity.project_id,
+                CaptureMode::Structured,
+                CaptureMode::FullEvidence,
+                true,
+                &lock_path,
+            ),
+            Err(LeyCoreError::InvalidCapturePolicy(message))
+                if message.contains("reload before saving")
+        ));
+        assert!(matches!(
+            update_capture_mode_with_lock(
+                &project,
+                &initialized.identity.project_id,
+                CaptureMode::Minimal,
+                CaptureMode::FullEvidence,
+                false,
+                &lock_path,
+            ),
+            Err(LeyCoreError::InvalidCapturePolicy(message))
+                if message.contains("explicit consent")
+        ));
+        let full = update_capture_mode_with_lock(
+            &project,
+            &initialized.identity.project_id,
+            CaptureMode::Minimal,
+            CaptureMode::FullEvidence,
+            true,
+            &lock_path,
+        )
+        .unwrap();
+        assert!(full.capture.store_raw_transcripts);
+        assert_eq!(
+            diagnose_project(&project).unwrap().capture.mode,
+            CaptureMode::FullEvidence
+        );
+    }
+
+    #[test]
+    fn capture_mode_updates_serialize_concurrent_writers() {
+        use std::sync::{Arc, Barrier};
+
+        let directory = tempdir().unwrap();
+        let project = directory.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let initialized =
+            initialize_project(&project, Some("Concurrent"), CaptureMode::Structured).unwrap();
+        let lock_path = directory.path().join("config/capture-policy.lock");
+        let barrier = Arc::new(Barrier::new(2));
+
+        let results = std::thread::scope(|scope| {
+            let updates = [
+                (CaptureMode::Minimal, false),
+                (CaptureMode::FullEvidence, true),
+            ];
+            let handles = updates.map(|(next_mode, consent)| {
+                let barrier = Arc::clone(&barrier);
+                let project = &project;
+                let project_id = &initialized.identity.project_id;
+                let lock_path = &lock_path;
+                scope.spawn(move || {
+                    barrier.wait();
+                    update_capture_mode_with_lock(
+                        project,
+                        project_id,
+                        CaptureMode::Structured,
+                        next_mode,
+                        consent,
+                        lock_path,
+                    )
+                })
+            });
+            handles.map(|handle| handle.join().unwrap())
+        });
+
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(
+                    result,
+                    Err(LeyCoreError::InvalidCapturePolicy(message))
+                        if message.contains("reload before saving")
+                ))
+                .count(),
+            1
+        );
+        let saved = diagnose_project(&project).unwrap().capture;
+        assert!(matches!(
+            saved.mode,
+            CaptureMode::Minimal | CaptureMode::FullEvidence
+        ));
+        assert_eq!(
+            saved.store_raw_transcripts,
+            saved.mode == CaptureMode::FullEvidence
+        );
     }
 
     #[test]

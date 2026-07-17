@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  AgentCaptureSettings,
   AgentMemoryDashboard,
   AgentProjectSearch,
   AgentProjectCatalog,
@@ -39,6 +40,26 @@ export function searchAgentProjects(
   query: string,
 ): Promise<AgentProjectSearch> {
   return invoke("search_agent_projects", { query });
+}
+
+export function readAgentCaptureSettings(
+  projectPath: string,
+): Promise<AgentCaptureSettings> {
+  return invoke("read_agent_capture_settings", { projectPath });
+}
+
+export function updateAgentCaptureMode(
+  projectPath: string,
+  expectedMode: AgentCaptureSettings["mode"],
+  mode: AgentCaptureSettings["mode"],
+  fullEvidenceConsent: boolean,
+): Promise<AgentMemoryDashboard> {
+  return invoke("update_agent_capture_mode", {
+    projectPath,
+    expectedMode,
+    mode,
+    fullEvidenceConsent,
+  });
 }
 
 export function inspectAgentProject(

@@ -3,10 +3,10 @@ use ley_core::{
     list_learning_contexts, list_sessions, project_activity_view, project_artifact_inventory,
     project_graph_view, project_memory_overview, project_resume_context, project_session_stats,
     read_learning_context, read_session_context, review_learning, search_observed_projects,
-    BindingRegistry, BindingSource, CaptureMode, CrossProjectSearch, IngestionResult,
-    LearningActor, LearningContextPack, LearningFeedbackAction, LearningList, LearningListScope,
-    LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory, ProjectCatalog,
-    ProjectDiagnostic, ProjectGraphView, ProjectProblemScope, ProjectResumePack,
+    update_capture_mode, BindingRegistry, BindingSource, CaptureMode, CrossProjectSearch,
+    IngestionResult, LearningActor, LearningContextPack, LearningFeedbackAction, LearningList,
+    LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory,
+    ProjectCatalog, ProjectDiagnostic, ProjectGraphView, ProjectProblemScope, ProjectResumePack,
     ProjectVaultBinding, ReviewLearningInput, SessionContextPack, SessionSummary,
     DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
     DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
@@ -164,6 +164,27 @@ struct AgentProjectCatalogView {
     omitted_projects: usize,
     ready_projects: usize,
     attention_projects: usize,
+    privacy_notice: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentCaptureSettings {
+    project_id: String,
+    project_name: String,
+    mode: CaptureMode,
+    approved_roots: Vec<String>,
+    respect_gitignore: bool,
+    max_file_bytes: u64,
+    max_total_bytes: u64,
+    store_raw_transcripts: bool,
+    ignore_file_present: bool,
+    capture_fingerprint: String,
+    eligible_files: usize,
+    eligible_bytes: u64,
+    skipped_oversized: usize,
+    skipped_total_limit: usize,
+    skipped_symlinks: usize,
     privacy_notice: &'static str,
 }
 
@@ -396,6 +417,60 @@ fn forget_agent_project(project_id: String) -> Result<AgentProjectCatalogView, S
     ProjectCatalog::system_default()
         .and_then(|catalog| catalog.forget(&project_id))
         .and_then(|_| load_agent_project_catalog())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn read_agent_capture_settings(project_path: String) -> Result<AgentCaptureSettings, String> {
+    resolved_agent_binding(Path::new(&project_path))
+        .and_then(|_| {
+            let diagnostic = diagnose_project(&project_path)?;
+            let preview = ley_core::preview_capture(&project_path)?;
+            Ok(AgentCaptureSettings {
+                project_id: diagnostic.identity.project_id,
+                project_name: diagnostic.identity.name,
+                mode: diagnostic.capture.mode,
+                approved_roots: diagnostic.capture.approved_roots,
+                respect_gitignore: diagnostic.capture.respect_gitignore,
+                max_file_bytes: diagnostic.capture.max_file_bytes,
+                max_total_bytes: diagnostic.capture.max_total_bytes,
+                store_raw_transcripts: diagnostic.capture.store_raw_transcripts,
+                ignore_file_present: diagnostic.ignore_file_present,
+                capture_fingerprint: preview.capture_fingerprint,
+                eligible_files: preview.files.len(),
+                eligible_bytes: preview.included_bytes,
+                skipped_oversized: preview.skipped_oversized.len(),
+                skipped_total_limit: preview.skipped_total_limit.len(),
+                skipped_symlinks: preview.skipped_symlinks.len(),
+                privacy_notice: "Preview reads file metadata only. Applying a mode refreshes the redacted local snapshot; Ley never uploads it.",
+            })
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn update_agent_capture_mode(
+    project_path: String,
+    expected_mode: CaptureMode,
+    mode: CaptureMode,
+    full_evidence_consent: bool,
+) -> Result<AgentMemoryDashboard, String> {
+    let binding =
+        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
+    update_capture_mode(
+        &project_path,
+        &binding.project_id,
+        expected_mode,
+        mode,
+        full_evidence_consent,
+    )
+    .map_err(|error| error.to_string())?;
+    ingest_project(&project_path, &binding.vault_path).map_err(|error| {
+        format!(
+            "The capture mode was saved, but the local snapshot refresh failed: {error}. Retry Refresh snapshot."
+        )
+    })?;
+    load_agent_memory_dashboard(Path::new(&project_path), binding)
         .map_err(|error| error.to_string())
 }
 
@@ -1119,6 +1194,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_agent_projects,
             forget_agent_project,
+            read_agent_capture_settings,
+            update_agent_capture_mode,
             search_agent_projects,
             inspect_agent_project,
             initialize_agent_project,

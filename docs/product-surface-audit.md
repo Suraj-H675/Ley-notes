@@ -125,6 +125,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Remove from Projects | Add | Removes only the device observation and clearly states that repository metadata, binding, and vault memory are not deleted. |
 | Last-project restoration | Replace | A one-time migration observes the previous explicit path, then removes the `localStorage` key. Multi-project recency now belongs to the shared private local engine. |
 | Project detail navigation | Improve | A persistent Projects back action and the existing sidebar establish Projects → overview → evidence surfaces without losing responsive horizontal navigation. |
+| Capture & privacy | Add | A real project-level surface previews eligible local scope, retained evidence, exclusions, and limits; switches Minimal/Structured/Full Evidence modes through atomic policy persistence and immediate re-capture; and requires a separate warning acknowledgement before Full Evidence permission. |
 
 ## Deferred surfaces
 
