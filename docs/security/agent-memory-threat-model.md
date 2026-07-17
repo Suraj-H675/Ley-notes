@@ -62,7 +62,8 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Session history corruption | Strict schemas, IDs, request fingerprints, timestamps, record IDs, limits, and event ordering are verified on every read | Property tests and malformed-event fuzzing |
 | Stored session prompt injection | Session packs use an `untrusted-agent-memory` boundary and repeat a non-instruction warning; MCP never promotes memory into server instructions | Injection corpus across goals, decisions, problems, final responses, and handoffs |
 | Memory poisoning | No inference becomes trusted automatically | Provenance, review, correction, corroboration, supersession |
-| Local MCP compromise | Local stdio only; exact host launch command; fixed project scope; read-only tools/resources; no Roots, sampling, network listener, write tools, subscriptions, or ambient project discovery | Host-adapter permission UX and sandbox profiles |
+| Ambient MCP write authority | Session write routes are absent by default and require `--allow-session-writes` at process startup; stored content cannot enable them; writes are append-only and idempotent | Actual-host permission UX and adversarial injection tests |
+| Local MCP compromise | Local stdio only; exact host launch command; fixed project scope; no Roots, sampling, network listener, deletion tools, subscriptions, or ambient project discovery | Host-adapter sandbox profiles |
 
 ## Explicit non-claims
 

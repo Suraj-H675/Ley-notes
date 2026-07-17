@@ -101,7 +101,9 @@ Initialization creates a minimal `.ley/` project identity, capture policy, and a
 }
 ```
 
-The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md). The current MCP surface remains read-only; session capture uses the shared CLI until reviewed write tools and host adapters ship.
+Add `--allow-session-writes` to the MCP arguments only when that host should append structured start, checkpoint, and finish events. Existing configurations remain read-only. The write tools require stable request IDs and return compact idempotent receipts; they use the same redaction, citation, locking, and event engine as the CLI.
+
+The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), [ADR 0008](docs/adr/0008-explicit-mcp-session-write-consent.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
 
 ## Data model
 

@@ -228,6 +228,8 @@ Initial write tools:
 - `ley_learning_record`
 - `ley_memory_feedback` (`confirm`, `correct`, `reject`, `supersede`, `stale`)
 
+Write tools must be absent from the default read-only process and require an explicit per-project host configuration opt-in. Stored content cannot expand the process tool set.
+
 Resources such as `ley://projects`, `ley://project/<id>/brief`, `ley://session/<id>`, and `ley://project/<id>/lessons` are useful for clients that expose resources well. Tools remain primary because client support and invocation policy are more consistent.
 
 Every context response includes stable IDs, project/session scope, citations, timestamps, extraction method, confidence, trust state, freshness, conflicts, and an enforced token/character budget.

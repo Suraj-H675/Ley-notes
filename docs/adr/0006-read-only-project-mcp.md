@@ -1,6 +1,6 @@
 # ADR 0006: Fixed-project read-only Model Context Protocol retrieval
 
-- Status: Accepted
+- Status: Accepted; write surface extended by [ADR 0008](0008-explicit-mcp-session-write-consent.md)
 - Date: 2026-07-18
 
 ## Context
@@ -25,7 +25,7 @@ The server exposes seven tools:
 | `ley_sessions_list` | At most 50 recent session summaries with bounded goal excerpts |
 | `ley_session_get` | One untrusted resume pack, at most 20 recent checkpoints and 32,000 text characters |
 
-All tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. The only resource is `ley://project/<project-id>/overview`; unknown resources fail instead of mapping arbitrary URIs to files. There are no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout.
+All seven default tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. The only resource is `ley://project/<project-id>/overview`; unknown resources fail instead of mapping arbitrary URIs to files. The default process has no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout. ADR 0008 defines the explicit startup flag that adds append-only session writes.
 
 Every successful result is structured JSON and repeats stable project or session identity. Project evidence carries a project-relative range, post-redaction content hash, provenance, confidence, trust state, and `untrusted-project-evidence` boundary. Session packs carry an `untrusted-agent-memory` boundary, an instruction warning, omission counts, and truncation state. Project results say `freshness: captured-snapshot` and `liveSourceChecked: false`; Ley does not imply that an old ingestion reflects the current working tree. Tool failures use MCP tool errors with sanitized messages rather than exposing absolute scope paths.
 
@@ -42,6 +42,6 @@ Read operations open existing capability-scoped store directories without creati
 
 - A host configuration is the user-visible authorization boundary: one command starts one project-scoped process.
 - The model never needs a vault path and cannot switch projects through prompt-controlled tool arguments.
-- Context is useful but deliberately incomplete. Session writes remain in the CLI; learnings, corrections, temporal reranking, and local embeddings remain later slices.
+- Context is useful but deliberately incomplete. Session writes require the ADR 0008 startup opt-in; learnings, corrections, temporal reranking, and local embeddings remain later slices.
 - Lexical token counts are conservative estimates, not tokenizer-specific guarantees; retrieval evaluation remains follow-up hardening.
 - A cloud agent may send intentionally retrieved context to its provider even though Ley's own storage and server remain local.

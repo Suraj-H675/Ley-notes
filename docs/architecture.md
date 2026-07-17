@@ -23,7 +23,7 @@ All surfaces follow the [local storage and data boundaries](privacy-and-storage.
 | `src/website`        | Public site                                                            | shared presentation primitives where useful |
 | `src-tauri`          | Confined native filesystem operations and desktop packaging            | Rust/Tauri only                             |
 | `crates/ley-core`    | Identity, binding, ingestion, graph, retrieval, and session engine      | capability I/O and deterministic parsers    |
-| `crates/ley-mcp`     | Fixed-project read-only stdio MCP tools and resources                   | `ley-core`, official Rust MCP SDK            |
+| `crates/ley-mcp`     | Fixed-project stdio retrieval and opt-in session capture                | `ley-core`, official Rust MCP SDK            |
 | `crates/ley-cli`     | Human/agent command surface and MCP process entry point                 | `ley-core`, `ley-mcp`                        |
 
 Feature-specific hooks are colocated with their feature. Only genuinely reusable hooks belong in `shared/hooks`. Tests for pure domain behavior remain beside the module they verify.
@@ -39,6 +39,8 @@ Ingestion derives a separate immutable project graph from the same post-redactio
 Read-only retrieval opens that store without creating or changing it, holds a shared project lock while verifying the current artifact and graph against their immutable snapshots, and refuses inconsistent pointers. The MCP server is scoped at process startup to one initialized project and one resolved binding. Tool arguments contain no project or vault selector, so an agent cannot use a running server to enumerate or cross into another project. Search, evidence, graph, and session results are bounded; every serialized result also has a 256 KB hard limit. Project evidence carries relative citations and snapshot times, while session resume packs report omitted checkpoints and truncation. Both boundaries label stored text as untrusted and distinguish it from current agent policy.
 
 Structured session capture appends one immutable JSON event per start, checkpoint, or finish request beneath the same project namespace. A separate project lock serializes session writers. Stable request IDs make retries idempotent, while reused IDs with changed content fail. Checkpoints replace touched project paths with citations to the current approved artifact snapshot. Ley derives `session-v1.json` and reviewable `session.md` projections by replaying the event sequence, so a missing or interrupted projection does not erase history. Text is bounded and credential-redacted before persistence; raw transcripts are not captured.
+
+MCP session writes are absent by default. `--allow-session-writes` enables only start, checkpoint, and finish routes at process construction, so an existing read-only configuration cannot gain authority from a tool argument or stored instruction. Write tools return compact receipts and delegate to the same session engine as the CLI.
 
 ## Persistence contract
 

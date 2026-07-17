@@ -511,8 +511,7 @@ mod tests {
         initialize_project(&project, Some("Context fixture"), CaptureMode::Structured).unwrap();
         std::fs::write(project.join("README.md"), "# Context\n").unwrap();
         ingest_project(&project, &vault).unwrap();
-        let empty =
-            list_session_contexts(&project, &vault, DEFAULT_SESSION_LIST_RESULTS).unwrap();
+        let empty = list_session_contexts(&project, &vault, DEFAULT_SESSION_LIST_RESULTS).unwrap();
         assert_eq!(empty.total_sessions, 0);
         assert!(empty.project_id.starts_with("prj_"));
         let started = start_session(

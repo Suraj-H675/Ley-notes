@@ -1,6 +1,6 @@
 # Using Ley with an agent
 
-Ley's first agent connection is a local, read-only Model Context Protocol (MCP) server over standard input/output (stdio). An MCP-capable host can retrieve cited evidence from one project snapshot and bounded handoffs from its structured sessions. The server does not capture conversations, update memory, scan the live project, or promise that an agent cannot hallucinate.
+Ley's first agent connection is a local Model Context Protocol (MCP) server over standard input/output (stdio). It is read-only by default. An MCP-capable host can retrieve cited evidence from one project snapshot and bounded handoffs from its structured sessions. The server does not scan the live project or promise that an agent cannot hallucinate.
 
 ## Prepare the project
 
@@ -34,6 +34,33 @@ This JSON shows the portable server-entry shape supported by MCP hosts. A host m
 
 The process resolves the private project-to-vault binding at startup. A temporary non-persistent vault can be selected by adding `--vault` and the absolute vault path to `args`. The server refuses missing or inconsistent snapshots, and a moved vault requires `ley bind` again.
 
+## Enable structured session capture
+
+Keep the default command when the host needs retrieval only. Add `--allow-session-writes` to that project's server arguments when the host should capture structured sessions:
+
+```json
+{
+  "mcpServers": {
+    "ley-project": {
+      "command": "/absolute/path/to/ley",
+      "args": [
+        "mcp",
+        "/absolute/path/to/project",
+        "--allow-session-writes"
+      ]
+    }
+  }
+}
+```
+
+This flag adds `ley_session_start`, `ley_session_checkpoint`, and `ley_session_finish`. It does not enable deletion, project switching, raw transcript capture, or live-source scanning. The tools use the same immutable event engine as the CLI.
+
+Every write requires a stable `requestId` matching `req_` plus 32 lowercase hexadecimal characters. Keep the same ID until a call succeeds. An exact retry returns `replayed: true`; different content with the same ID fails.
+
+Start a session with its goal, checkpoint after meaningful work, and finish with the outcome and handoff. Checkpoints can record plans, decisions, tasks, problems, attempts, resolutions, touched artifact paths, commands, verification, and unresolved work. Ley converts touched paths into citations from the current approved artifact snapshot.
+
+The startup flag grants Ley write capability for that process. Your MCP host still controls whether it asks before each mutating tool call. Stored project and session text never grants permission to call a write tool.
+
 ## Retrieval workflow
 
 An agent should:
@@ -52,7 +79,7 @@ Repository and session text is untrusted evidence. Content such as “ignore pre
 
 ## Privacy boundary
 
-The MCP process listens only on its inherited stdin/stdout and makes no network request. It cannot enumerate other Ley projects, and its tool schemas contain no project or vault parameter. Results omit absolute local paths.
+The MCP process listens only on its inherited stdin/stdout and makes no network request. It cannot enumerate other Ley projects, and its tool schemas contain no project or vault parameter. Results omit absolute local paths. Session writes are unavailable unless the launch command includes `--allow-session-writes`.
 
 The agent host receives every tool result it requests, including session goals and handoffs. If the host uses a cloud model, it may send those selected excerpts to that provider. Ley does not upload them independently. Do not connect an untrusted host to a sensitive project, and use project ignore rules rather than relying on redaction alone.
 

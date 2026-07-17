@@ -3,7 +3,7 @@ name = "ley-mcp"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-description = "Read-only local stdio MCP server for Ley project memory"
+description = "Fixed-project local stdio MCP server for Ley project memory"
 
 [dependencies]
 ley-core = { path = "../ley-core" }

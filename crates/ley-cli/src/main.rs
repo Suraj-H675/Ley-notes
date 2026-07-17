@@ -45,7 +45,21 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
 }
 
 fn mcp(arguments: &[String]) -> Result<(), CliError> {
-    let parsed = binding_arguments(arguments, false)?;
+    let mut allow_session_writes = false;
+    let mut binding_arguments_only = Vec::new();
+    for argument in arguments {
+        if argument == "--allow-session-writes" {
+            if allow_session_writes {
+                return Err(CliError::Usage(
+                    "--allow-session-writes may be specified only once".to_owned(),
+                ));
+            }
+            allow_session_writes = true;
+        } else {
+            binding_arguments_only.push(argument.clone());
+        }
+    }
+    let parsed = binding_arguments(&binding_arguments_only, false)?;
     if parsed.json {
         return Err(CliError::Usage(
             "mcp uses stdout for the protocol and does not support --json".to_owned(),
@@ -53,7 +67,7 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
     }
     let registry = BindingRegistry::system_default()?;
     let binding = registry.resolve(&parsed.project, parsed.vault.as_deref())?;
-    run_stdio(parsed.project, binding.vault_path).map_err(CliError::Mcp)
+    run_stdio(parsed.project, binding.vault_path, allow_session_writes).map_err(CliError::Mcp)
 }
 
 fn session(arguments: &[String]) -> Result<(), CliError> {
@@ -864,7 +878,7 @@ fn print_help() {
     println!("  ley unbind [path] [--json]");
     println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley graph [path] [--vault TEMPORARY_VAULT] [--json]");
-    println!("  ley mcp [path] [--vault TEMPORARY_VAULT]");
+    println!("  ley mcp [path] [--vault TEMPORARY_VAULT] [--allow-session-writes]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
     println!("  ley session checkpoint SESSION [path] --summary TEXT [--touched PATH]...");
     println!("  ley session checkpoint SESSION [path] --data CHECKPOINT.json");
