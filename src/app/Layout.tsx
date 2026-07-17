@@ -54,6 +54,8 @@ import { useIsPageBookmarked } from "@/features/bookmarks/useNoteBookmarks";
 import { togglePageBookmark } from "@/core/vault/note-bookmarks";
 import { startNavigationSession } from "@/core/vault/navigation-session";
 import type { CollectionRequest } from "@/features/collections/CollectionModal";
+import type { PromotedLearningNoteDraft } from "@/features/agent-memory/types";
+import { promoteLearningNote } from "@/features/agent-memory/promote-learning-note";
 
 const GraphView = lazy(() =>
   import("@/features/graph/GraphView").then((module) => ({
@@ -203,6 +205,14 @@ export function Layout({
     const nav = useNavStore.getState();
     nav.openPage(note.pageId);
     nav.pushRecent(note.pageId);
+  }
+
+  async function promoteLearningToNote(draft: PromotedLearningNoteDraft) {
+    const { page: note } = await promoteLearningNote(draft);
+    const nav = useNavStore.getState();
+    nav.openPage(note.id);
+    nav.pushRecent(note.id);
+    setAgentMemoryOpen(false);
   }
 
   function openSearch(query = "") {
@@ -598,6 +608,7 @@ export function Layout({
               vaultPath={vaultKey}
               vaultName={vaultName}
               onClose={() => setAgentMemoryOpen(false)}
+              onPromoteLearning={promoteLearningToNote}
             />
           </Suspense>
         </FeatureErrorBoundary>

@@ -127,6 +127,7 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Project detail navigation | Improve | A persistent Projects back action and the existing sidebar establish Projects → overview → evidence surfaces without losing responsive horizontal navigation. |
 | Capture & privacy | Add | A real project-level surface previews eligible local scope, retained evidence, exclusions, and limits; switches Minimal/Structured/Full Evidence modes through atomic policy persistence and immediate re-capture; and requires a separate warning acknowledgement before Full Evidence permission. |
 | Learning correction | Add | The provenance inspector can append a corrected title, guidance, confidence, and required reason while preserving complete cited evidence and old history. It displays temporal validity and refuses stale corrections or review decisions by matching the inspected ledger event count under the writer lock. Terminal records expose no controls the engine would reject. |
+| Promote trusted lesson | Add | A fully visible current trusted lesson can become an ordinary Markdown note with an editable title, portable provenance, bounded source trail, and immediate editor navigation. Promotion is duplicate-safe by learning ID, refuses unrelated title collisions, and never silently synchronizes or rewrites either namespace. |
 
 ## Deferred surfaces
 

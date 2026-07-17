@@ -27,7 +27,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Interoperable JSON Canvas files with text, note, link, and group cards; resizing, colors, labeled directional connections, and trash recovery
 - Vault-native templates for new notes and daily notes
 - Sparse local revision snapshots with a user-facing recovery panel
-- Desktop Agent Memory workspace with an explicit multi-project catalog, local cross-project search, capture/privacy controls, deterministic refresh, complete session history, bounded continuity briefs, checkpoint/decision/problem/attempt/outcome inspection, cited artifacts, trusted lessons, temporal provenance inspection, version-guarded corrections, and append-only human review
+- Desktop Agent Memory workspace with an explicit multi-project catalog, local cross-project search, capture/privacy controls, deterministic refresh, complete session history, bounded continuity briefs, checkpoint/decision/problem/attempt/outcome inspection, cited artifacts, trusted lessons, temporal provenance inspection, version-guarded corrections, promotion into ordinary Markdown, and append-only human review
 - An honest browser Agent Memory boundary: the PWA keeps notes usable but does not pretend a web page can serve external local agents or read arbitrary coding projects
 - Offline-capable PWA and a separate public website
 

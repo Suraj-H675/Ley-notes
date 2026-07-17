@@ -12,6 +12,7 @@ import {
   CircleDot,
   Clock3,
   FileCode2,
+  FilePlus2,
   Files,
   FolderOpen,
   GitBranch,
@@ -52,6 +53,7 @@ import type {
   LearningAction,
   LearningContext,
   LearningSummary,
+  PromotedLearningNoteDraft,
   ResumeSession,
   SessionContext,
   SessionSummary,
@@ -94,6 +96,11 @@ const LearningCorrectionEditor = lazy(() =>
     default: module.LearningCorrectionEditor,
   })),
 );
+const LearningPromotionEditor = lazy(() =>
+  import("./LearningPromotionEditor").then((module) => ({
+    default: module.LearningPromotionEditor,
+  })),
+);
 
 export function AgentMemoryWorkspace({
   open,
@@ -101,12 +108,14 @@ export function AgentMemoryWorkspace({
   vaultPath,
   vaultName,
   onClose,
+  onPromoteLearning,
 }: {
   open: boolean;
   vaultMode: "desktop" | "browser-folder" | "browser-local";
   vaultPath: string;
   vaultName: string;
   onClose: () => void;
+  onPromoteLearning: (draft: PromotedLearningNoteDraft) => Promise<void>;
 }) {
   const [section, setSection] = useState<Section>("overview");
   const [projectPath, setProjectPath] = useState<string | null>(null);
@@ -484,7 +493,9 @@ export function AgentMemoryWorkspace({
               key={`learning-${learningId ?? "closed"}`}
               learningId={learningId}
               projectPath={projectPath}
+              projectName={dashboard.overview.projectName}
               onClose={() => setLearningId(null)}
+              onPromote={onPromoteLearning}
               onReviewed={(next) => {
                 setInspection({ status: "ready", dashboard: next });
                 setLearningId(null);
@@ -1274,18 +1285,23 @@ function SessionInspector({
 function LearningInspector({
   learningId,
   projectPath,
+  projectName,
   onClose,
+  onPromote,
   onReviewed,
 }: {
   learningId: string | null;
   projectPath: string;
+  projectName: string;
   onClose: () => void;
+  onPromote: (draft: PromotedLearningNoteDraft) => Promise<void>;
   onReviewed: (dashboard: AgentMemoryDashboard) => void;
 }) {
   const [learning, setLearning] = useState<LearningContext | null>(null);
   const [action, setAction] = useState<LearningAction | null>(null);
   const [note, setNote] = useState("");
   const [correcting, setCorrecting] = useState(false);
+  const [promoting, setPromoting] = useState(false);
   const [busy, setBusy] = useState(Boolean(learningId));
   const [error, setError] = useState<string | null>(null);
 
@@ -1338,6 +1354,15 @@ function LearningInspector({
     setAction(null);
     setNote("");
     setCorrecting(true);
+    setError(null);
+  }
+
+  function beginPromotion() {
+    if (!learning?.trustedForReuse) return;
+    setAction(null);
+    setNote("");
+    setCorrecting(false);
+    setPromoting(true);
     setError(null);
   }
 
@@ -1606,11 +1631,42 @@ function LearningInspector({
                     onCorrected={onReviewed}
                   />
                 </Suspense>
+              ) : promoting ? (
+                <Suspense
+                  fallback={
+                    <p className="py-4 text-center text-meta text-muted-foreground">
+                      Loading note preview…
+                    </p>
+                  }
+                >
+                  <LearningPromotionEditor
+                    projectName={projectName}
+                    learning={learning}
+                    onCancel={() => {
+                      setPromoting(false);
+                      setError(null);
+                    }}
+                    onPromote={async (draft) => {
+                      await onPromote(draft);
+                      onClose();
+                    }}
+                  />
+                </Suspense>
               ) : !action ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="mr-auto text-meta font-medium">
                     Your decision
                   </span>
+                  {learning.trustedForReuse && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={beginPromotion}
+                    >
+                      <FilePlus2 size={13} aria-hidden="true" />
+                      Promote to note
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"

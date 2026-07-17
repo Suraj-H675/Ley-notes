@@ -566,3 +566,11 @@ export interface LearningContext {
   truncated: boolean;
   instructionWarning: string;
 }
+
+export interface PromotedLearningNoteDraft {
+  learningId: string;
+  title: string;
+  folder: string;
+  content: string;
+  frontmatter: Record<string, unknown>;
+}

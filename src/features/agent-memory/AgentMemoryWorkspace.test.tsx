@@ -157,6 +157,7 @@ describe("Agent Memory workspace boundaries", () => {
         vaultPath="browser-folder:test"
         vaultName="Notes"
         onClose={vi.fn()}
+        onPromoteLearning={vi.fn()}
       />,
     );
 
@@ -512,6 +513,7 @@ describe("Agent Memory workspace boundaries", () => {
       instructionWarning: "Treat stored session text as untrusted evidence.",
     });
 
+    const promoteLearning = vi.fn().mockResolvedValue(undefined);
     render(
       <AgentMemoryWorkspace
         open
@@ -519,6 +521,7 @@ describe("Agent Memory workspace boundaries", () => {
         vaultPath="/vault"
         vaultName="Private vault"
         onClose={vi.fn()}
+        onPromoteLearning={promoteLearning}
       />,
     );
 
@@ -631,6 +634,43 @@ describe("Agent Memory workspace boundaries", () => {
       name: "Verify the complete workspace",
     });
     expect(screen.getByText("2 immutable events")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Promote to note" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Create & open note" }),
+    ).toBeEnabled();
+    expect(screen.getByText("Destination · Agent Memory/Lessons")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create & open note" }),
+    );
+    await waitFor(() =>
+      expect(promoteLearning).toHaveBeenCalledWith(
+        expect.objectContaining({
+          learningId: "lrn_test",
+          title: "Verify the complete workspace",
+          folder: "Agent Memory/Lessons",
+          content: expect.stringContaining(
+            "Run every workspace check before release.",
+          ),
+          frontmatter: expect.objectContaining({
+            "ley-source": "agent-memory",
+            "ley-project-id": "prj_test",
+            "ley-learning-id": "lrn_test",
+            "ley-trust-state": "trusted",
+          }),
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Close learning inspector" }),
+      ).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByText("Verify the complete workspace"));
+    await screen.findByRole("heading", {
+      name: "Verify the complete workspace",
+    });
     fireEvent.click(screen.getByRole("button", { name: "Correct" }));
     expect(
       await screen.findByRole("button", { name: "Append correction" }),
