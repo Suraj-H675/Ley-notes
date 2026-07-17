@@ -213,8 +213,10 @@ pub struct LearningSummary {
     pub learning_id: String,
     pub kind: LearningKind,
     pub title: String,
+    pub guidance_excerpt: String,
     pub state: LearningState,
     pub trust_state: LearningTrustState,
+    pub provenance: LearningProvenance,
     pub confidence_percent: u8,
     pub freshness: LearningFreshness,
     pub corroborating_sessions: usize,
@@ -523,14 +525,26 @@ impl From<&LearningRecord> for LearningSummary {
             learning_id: learning.learning_id.clone(),
             kind: learning.kind,
             title: learning.title.clone(),
+            guidance_excerpt: text_excerpt(&learning.guidance, 512),
             state: learning.state,
             trust_state: learning.trust_state,
+            provenance: learning.provenance,
             confidence_percent: learning.confidence_percent,
             freshness: learning.freshness,
             corroborating_sessions: learning.corroborating_sessions,
             updated_at_unix_ms: learning.updated_at_unix_ms,
         }
     }
+}
+
+fn text_excerpt(value: &str, maximum: usize) -> String {
+    let mut characters = value.chars();
+    let mut output = characters.by_ref().take(maximum).collect::<String>();
+    if characters.next().is_some() {
+        output.pop();
+        output.push('…');
+    }
+    output
 }
 
 fn validate_review_authority(

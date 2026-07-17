@@ -1,17 +1,18 @@
 use ley_core::{
     checkpoint_session, find_project_context, find_project_graph_path, finish_session,
-    list_learning_contexts, project_memory_overview, propose_learning, read_learning_context,
-    read_project_evidence, read_session_context, start_session, traverse_project_graph,
-    AttemptInput, AttemptOutcome, CheckpointInput, CommandInput, DecisionInput, FinishSessionInput,
-    GraphDirection, GraphEdgeKind, LearningActor, LearningEvidenceInput, LearningKind,
-    LearningListScope, LearningMutation, LearningProvenance, LeyCoreError, PlanItemInput,
-    PlanStatus, ProblemInput, ProposeLearningInput, ResolutionInput, RetrievalLimits,
-    SessionMutation, SessionSource, SessionSourceKind, SessionStatus, StartSessionInput, TaskInput,
-    TaskStatus, VerificationInput, VerificationStatus, DEFAULT_CONTEXT_RESULTS,
-    DEFAULT_CONTEXT_TOKENS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    list_learning_contexts, project_memory_overview, project_resume_context, propose_learning,
+    read_learning_context, read_project_evidence, read_session_context, start_session,
+    traverse_project_graph, AttemptInput, AttemptOutcome, CheckpointInput, CommandInput,
+    DecisionInput, FinishSessionInput, GraphDirection, GraphEdgeKind, LearningActor,
+    LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
+    LeyCoreError, PlanItemInput, PlanStatus, ProblemInput, ProposeLearningInput, ResolutionInput,
+    RetrievalLimits, SessionMutation, SessionSource, SessionSourceKind, SessionStatus,
+    StartSessionInput, TaskInput, TaskStatus, VerificationInput, VerificationStatus,
+    DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
-    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS, DEFAULT_RESUME_CHARACTERS,
+    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_core::{list_session_contexts, DEFAULT_SESSION_LIST_RESULTS};
 use rmcp::{
@@ -80,6 +81,23 @@ pub struct SearchContextParams {
     /// Approximate result token budget. Defaults to 2000 and cannot exceed 8000.
     #[serde(default)]
     pub max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProjectResumeParams {
+    /// Maximum active, paused, then recent sessions. Defaults to 3 and cannot exceed 10.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 10))]
+    pub max_sessions: Option<usize>,
+    /// Maximum current trusted lessons. Defaults to 10 and cannot exceed 20.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 20))]
+    pub max_learnings: Option<usize>,
+    /// Maximum text characters. Defaults to 16000; range 1000–32000.
+    #[serde(default)]
+    #[schemars(range(min = 1_000, max = 32_000))]
+    pub max_characters: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -721,6 +739,30 @@ impl LeyMcpServer {
         Ok(tool_result(project_memory_overview(
             self.project.as_path(),
             self.vault.as_path(),
+        )))
+    }
+
+    /// Resume a project from bounded recent work and only current trusted learnings.
+    #[tool(
+        name = "ley_project_resume",
+        annotations(
+            title = "Resume Ley project context",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn project_resume(
+        &self,
+        Parameters(params): Parameters<ProjectResumeParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(tool_result(project_resume_context(
+            self.project.as_path(),
+            self.vault.as_path(),
+            params.max_sessions.unwrap_or(DEFAULT_RESUME_SESSIONS),
+            params.max_learnings.unwrap_or(DEFAULT_RESUME_LEARNINGS),
+            params.max_characters.unwrap_or(DEFAULT_RESUME_CHARACTERS),
         )))
     }
 
@@ -1407,6 +1449,7 @@ mod tests {
                 "ley_learning_get",
                 "ley_learnings_list",
                 "ley_project_overview",
+                "ley_project_resume",
                 "ley_read_evidence",
                 "ley_search_context",
                 "ley_session_get",
@@ -1451,6 +1494,7 @@ mod tests {
                 "ley_learning_get",
                 "ley_learnings_list",
                 "ley_project_overview",
+                "ley_project_resume",
                 "ley_read_evidence",
                 "ley_search_context",
                 "ley_session_checkpoint",
@@ -1512,6 +1556,34 @@ mod tests {
         assert_eq!(json["sourceBoundary"], "untrusted-project-evidence");
         assert!(json["items"][0]["citation"]["artifactPath"].is_string());
         let serialized = json.to_string();
+        assert!(!serialized.contains(project.to_str().unwrap()));
+        assert!(!serialized.contains(vault.to_str().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn project_resume_is_bounded_and_marks_history_untrusted() {
+        let (_temporary, project, vault, server) = fixture();
+        let result = server
+            .project_resume(Parameters(ProjectResumeParams {
+                max_sessions: Some(1),
+                max_learnings: Some(1),
+                max_characters: Some(1_000),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false));
+        let context = result.structured_content.unwrap();
+        assert_eq!(context["projectName"], "MCP fixture");
+        assert_eq!(context["sessions"].as_array().unwrap().len(), 1);
+        assert_eq!(context["learnings"].as_array().unwrap().len(), 0);
+        assert_eq!(context["liveSourceChecked"], false);
+        assert_eq!(context["sourceBoundary"], "untrusted-agent-resume-context");
+        assert!(context["instructionWarning"]
+            .as_str()
+            .unwrap()
+            .contains("trustedForReuse"));
+        assert!(context["textCharacters"].as_u64().unwrap() <= 1_000);
+        let serialized = context.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));
     }
@@ -1833,7 +1905,7 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 10);
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await

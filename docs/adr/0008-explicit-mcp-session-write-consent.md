@@ -29,7 +29,7 @@ The flag enables three additional tools:
 
 Each write requires a caller-stable `req_` ID. Exact retries return the original compact receipt. Reusing the ID with different content fails. Receipts contain stable project, session, and event IDs plus status, counts, timestamp, and replay state. They do not return the growing session body or absolute local paths.
 
-Write tools declare `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. They append immutable local history and cannot delete or rewrite prior events. The nine default tools retain read-only annotations; ADR 0010 defines a separate opt-in for agent learning proposals.
+Write tools declare `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. They append immutable local history and cannot delete or rewrite prior events. The ten default tools retain read-only annotations; ADR 0010 defines a separate opt-in for agent learning proposals.
 
 The process remains fixed to the project and private binding resolved at startup. Tool arguments contain no project or vault selector. MCP-created sessions record `source.kind: mcp`; optional host and agent labels remain untrusted metadata.
 

@@ -46,6 +46,8 @@ MCP session writes are absent by default. `--allow-session-writes` enables only 
 
 MCP learning proposals use an independent startup capability. `--allow-learning-proposals` adds one route that hardcodes agent authority and produces only tentative, review-required records. Confirmation, correction, rejection, supersession, deletion, and promotion remain absent. Default lesson listing includes only user-trusted records whose artifact citations still match the latest captured snapshot; explicit review/all scopes remain visibly untrusted.
 
+Project resume context composes these existing stores without creating a new authority layer. It prioritizes active and paused sessions before recent history, projects only the newest checkpoint and handoff details needed to continue, and includes only verified/trusted/current artifact-backed lessons. Stable IDs link every compact item back to the bounded session, learning, graph, or artifact readers. Both CLI and MCP use the same projection and budget rules.
+
 ## Persistence contract
 
 For filesystem vaults, Markdown is authoritative. A vault scan projects files into Dexie, then rebuilds links and tags after every page exists so forward references resolve correctly. First scans derive IDs from vault identity and relative path; subsequent scans preserve the current ID for each matching path so in-session creations, renames, tabs, and revisions remain coherent.

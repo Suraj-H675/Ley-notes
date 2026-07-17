@@ -80,6 +80,7 @@ cargo run -p ley-cli -- graph /path/to/project
 cargo run -p ley-cli -- session start /path/to/project \
   --name "First session" --goal "Ship cited memory"
 cargo run -p ley-cli -- learning list /path/to/project --review
+cargo run -p ley-cli -- resume /path/to/project
 cargo run -p ley-cli -- mcp /path/to/project
 cargo run -p ley-cli -- doctor /path/to/project
 cargo run -p ley-cli -- preview /path/to/project
@@ -90,6 +91,8 @@ Initialization creates a minimal `.ley/` project identity, capture policy, and a
 `session start`, `session checkpoint`, and `session finish` append structured, credential-redacted events to the bound vault. Checkpoints can retain plans, decisions, tasks, problems, attempts, outcomes, resolutions, cited touched artifacts, commands, verification, and unresolved work. Repeated request IDs are idempotent, concurrent writers are serialized, and session reads replay immutable events instead of trusting a mutable summary. Use `session list` and `session show` to inspect the result. See [Capture structured agent sessions](docs/agent-memory/sessions.md), [ADR 0007](docs/adr/0007-append-only-structured-sessions.md), and the versioned [checkpoint input schema](schemas/agent-memory/checkpoint-input.schema.json).
 
 `learning propose` distills one or more existing session records into a project lesson. Every proposal remains tentative until an explicit user confirmation; agents can contest or mark stale but cannot grant trust, reject, or supersede memory. Corrections and feedback append immutable events, while source-hash drift returns trusted lessons to `learning list --review`. See [Review project learnings](docs/agent-memory/learnings.md), [ADR 0009](docs/adr/0009-evidence-backed-learning-ledger.md), and the versioned [learning event](schemas/agent-memory/learning-event.schema.json) and [projection](schemas/agent-memory/learning.schema.json) schemas.
+
+`resume` produces one token-bounded startup pack: active and paused work, recent handoffs and unresolved items, plus only user-trusted lessons whose artifact citations still match the latest ingestion. It never checks live source or includes tentative/uncited advice. See [Resume a project](docs/agent-memory/resume.md) and [ADR 0011](docs/adr/0011-bounded-project-resume-context.md).
 
 `mcp` starts a stdout-clean, read-only Model Context Protocol (MCP) server over standard input/output (stdio). The process is fixed to that one project and its explicit binding. It exposes a project overview, bounded lexical context search, cited evidence reads, graph traversal, recent session listing, compact session resume packs, and trusted-first project lessons; it cannot enumerate or switch to other projects. Retrieved project, session, and learning text is labeled as untrusted evidence, not live source or agent policy. Every serialized tool result has a 256 KB hard limit. Point an MCP host at the executable and project:
 

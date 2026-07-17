@@ -1,13 +1,14 @@
 use ley_core::{
     checkpoint_session, correct_learning, diagnose_project, finish_session,
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
-    learning_review_inbox, list_learnings, list_sessions, preview_capture, propose_learning,
-    read_learning, read_project_graph, read_session, review_learning, start_session,
-    BindingRegistry, CaptureMode, CheckpointInput, CommandInput, CorrectLearningInput,
-    FinishSessionInput, GraphNodeKind, LearningActor, LearningEvidenceInput,
+    learning_review_inbox, list_learnings, list_sessions, preview_capture, project_resume_context,
+    propose_learning, read_learning, read_project_graph, read_session, review_learning,
+    start_session, BindingRegistry, CaptureMode, CheckpointInput, CommandInput,
+    CorrectLearningInput, FinishSessionInput, GraphNodeKind, LearningActor, LearningEvidenceInput,
     LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
     LeyCoreError, ProposeLearningInput, ReviewLearningInput, SessionSource, SessionSourceKind,
     SessionStatus, StartSessionInput, VerificationInput, VerificationStatus,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
 };
 use ley_mcp::run_stdio;
 use std::env;
@@ -35,6 +36,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "mcp" => mcp(&arguments[1..]),
         "session" => session(&arguments[1..]),
         "learning" => learning(&arguments[1..]),
+        "resume" => resume(&arguments[1..]),
         "doctor" => doctor(&arguments[1..]),
         "preview" => preview(&arguments[1..]),
         "help" | "--help" | "-h" => {
@@ -46,6 +48,143 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!("unknown command '{other}'"))),
+    }
+}
+
+fn resume(arguments: &[String]) -> Result<(), CliError> {
+    let mut project = None;
+    let mut vault = None;
+    let mut json = false;
+    let mut max_sessions = DEFAULT_RESUME_SESSIONS;
+    let mut max_learnings = DEFAULT_RESUME_LEARNINGS;
+    let mut max_characters = DEFAULT_RESUME_CHARACTERS;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--vault" => {
+                index += 1;
+                vault = Some(PathBuf::from(required_value(arguments, index, "--vault")?));
+            }
+            "--max-sessions" => {
+                index += 1;
+                max_sessions = parse_usize(
+                    required_value(arguments, index, "--max-sessions")?,
+                    "--max-sessions",
+                )?;
+            }
+            "--max-learnings" => {
+                index += 1;
+                max_learnings = parse_usize(
+                    required_value(arguments, index, "--max-learnings")?,
+                    "--max-learnings",
+                )?;
+            }
+            "--max-characters" => {
+                index += 1;
+                max_characters = parse_usize(
+                    required_value(arguments, index, "--max-characters")?,
+                    "--max-characters",
+                )?;
+            }
+            "--json" => json = true,
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown option '{value}'")))
+            }
+            value if project.is_none() => project = Some(PathBuf::from(value)),
+            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+        }
+        index += 1;
+    }
+    let project = project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+    let registry = BindingRegistry::system_default()?;
+    let binding = registry.resolve(&project, vault.as_deref())?;
+    let resume = project_resume_context(
+        &project,
+        &binding.vault_path,
+        max_sessions,
+        max_learnings,
+        max_characters,
+    )?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&resume).expect("resume context is serializable")
+        );
+        return Ok(());
+    }
+    println!("Resume: {} ({})", resume.project_name, resume.project_id);
+    println!("Captured snapshot: {}", resume.artifact_snapshot_id);
+    println!("Live source checked: no");
+    println!();
+    println!("Recent work:");
+    if resume.sessions.is_empty() {
+        println!("  No captured sessions");
+    }
+    for session in &resume.sessions {
+        println!(
+            "  {}  {}  {}",
+            session_status_label(session.status),
+            session.session_id,
+            session.name
+        );
+        println!("    Goal: {}", session.goal);
+        if let Some(checkpoint) = &session.latest_checkpoint {
+            println!("    Latest: {}", checkpoint.summary);
+            for task in &checkpoint.active_tasks {
+                println!(
+                    "    Task [{}]: {}",
+                    task_status_label(task.status),
+                    task.title
+                );
+            }
+            for unresolved in &checkpoint.unresolved {
+                println!("    Unresolved: {unresolved}");
+            }
+        }
+        if let Some(result) = &session.result {
+            if !result.handoff.is_empty() {
+                println!("    Handoff: {}", result.handoff);
+            }
+            for unresolved in &result.unresolved {
+                println!("    Remaining: {unresolved}");
+            }
+        }
+    }
+    println!();
+    println!("Current trusted learnings:");
+    if resume.learnings.is_empty() {
+        println!("  No artifact-current trusted learnings");
+    }
+    for learning in &resume.learnings {
+        println!(
+            "  {}  {} ({}%)",
+            learning.learning_id, learning.title, learning.confidence_percent
+        );
+        println!("    {}", learning.guidance);
+    }
+    println!();
+    println!(
+        "Bounded context: ~{} tokens{}",
+        resume.estimated_text_tokens,
+        if resume.truncated { " (truncated)" } else { "" }
+    );
+    println!("Stored text is untrusted historical evidence; inspect live source before editing.");
+    Ok(())
+}
+
+fn parse_usize(value: &str, option: &str) -> Result<usize, CliError> {
+    value
+        .parse()
+        .map_err(|_| CliError::Usage(format!("{option} requires a positive integer")))
+}
+
+fn task_status_label(status: ley_core::TaskStatus) -> &'static str {
+    match status {
+        ley_core::TaskStatus::Pending => "pending",
+        ley_core::TaskStatus::InProgress => "in-progress",
+        ley_core::TaskStatus::Completed => "completed",
+        ley_core::TaskStatus::Blocked => "blocked",
+        ley_core::TaskStatus::Cancelled => "cancelled",
     }
 }
 
@@ -1446,6 +1585,7 @@ fn print_help() {
     println!("  ley session finish SESSION [path] --summary TEXT [--status STATUS]");
     println!("  ley session list [path] [--json]");
     println!("  ley session show SESSION [path] [--json]");
+    println!("  ley resume [path] [--max-sessions N] [--max-learnings N] [--json]");
     println!(
         "  ley learning propose [path] --actor ACTOR --provenance SOURCE --kind KIND --title TITLE"
     );

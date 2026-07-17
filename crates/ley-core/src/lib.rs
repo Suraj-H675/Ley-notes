@@ -13,6 +13,7 @@ mod graph;
 mod ingestion;
 mod learning;
 mod learning_context;
+mod resume_context;
 mod retrieval;
 mod session;
 mod session_context;
@@ -47,6 +48,12 @@ pub use learning_context::{
     DEFAULT_LEARNING_LIST_RESULTS, MAX_LEARNING_CONTEXT_ARTIFACTS, MAX_LEARNING_CONTEXT_CHARACTERS,
     MAX_LEARNING_CONTEXT_EVIDENCE, MAX_LEARNING_CONTEXT_HISTORY, MAX_LEARNING_LIST_RESULTS,
     MIN_LEARNING_CONTEXT_CHARACTERS,
+};
+pub use resume_context::{
+    project_resume_context, ProjectResumePack, ResumeCheckpoint, ResumeDecision, ResumeLearning,
+    ResumeProblem, ResumeResult, ResumeSession, ResumeTask, DEFAULT_RESUME_CHARACTERS,
+    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, MAX_RESUME_CHARACTERS, MAX_RESUME_LEARNINGS,
+    MAX_RESUME_SESSIONS, MIN_RESUME_CHARACTERS,
 };
 pub use retrieval::{
     find_project_context, find_project_graph_path, project_memory_overview, read_project_evidence,
