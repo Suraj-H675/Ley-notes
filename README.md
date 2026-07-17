@@ -33,7 +33,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 
 ```text
 .
-├── crates/               # Shared local Rust core and the `ley` CLI
+├── crates/               # Shared Rust core, `ley` CLI, and local stdio MCP server
 ├── docs/                 # Architecture, decisions, security, and product research
 ├── schemas/              # Versioned open agent-memory contracts
 ├── src/
@@ -77,11 +77,27 @@ cargo run -p ley-cli -- bind /path/to/project --vault /path/to/ley-vault
 cargo run -p ley-cli -- binding /path/to/project
 cargo run -p ley-cli -- ingest /path/to/project
 cargo run -p ley-cli -- graph /path/to/project
+cargo run -p ley-cli -- mcp /path/to/project
 cargo run -p ley-cli -- doctor /path/to/project
 cargo run -p ley-cli -- preview /path/to/project
 ```
 
-Initialization creates a minimal `.ley/` project identity, capture policy, and additional ignore rules. Structured capture is the default and does not enable raw transcripts. Repeating `init` reads the existing identity without changing its name or capture consent. `bind` stores only the stable project-ID-to-canonical-vault-path association in Ley's private OS application configuration; no machine path is written into the repository. A temporary `binding --vault /other/vault` override is validated but not persisted, and `unbind` removes the private association without touching project or vault data. `preview` deterministically lists the regular files that fit the approved roots and byte limits without reading their contents; ignored files and symlink targets are not captured. `ingest` performs a real incremental capture into the bound vault: Structured/Full Evidence modes retain redacted UTF-8 evidence, Minimal retains metadata only, identical runs are no-ops, and additions/changes/renames/deletions create immutable cited snapshots. It also projects cited repository structure, Tree-sitter symbols/calls/imports/inheritance, declared dependencies, and bounded local Git state. `graph` integrity-checks and reads that durable projection without rescanning source. Session capture and MCP retrieval are deliberately not claimed yet; they build on this reviewed source layer in subsequent slices. See [ADR 0001](docs/adr/0001-local-agent-project-boundary.md), [ADR 0002](docs/adr/0002-deterministic-capture-preview.md), [ADR 0003](docs/adr/0003-private-vault-binding-registry.md), [ADR 0004](docs/adr/0004-deterministic-artifact-ingestion.md), [ADR 0005](docs/adr/0005-deterministic-project-graph.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
+Initialization creates a minimal `.ley/` project identity, capture policy, and additional ignore rules. Structured capture is the default and does not enable raw transcripts. Repeating `init` reads the existing identity without changing its name or capture consent. `bind` stores only the stable project-ID-to-canonical-vault-path association in Ley's private OS application configuration; no machine path is written into the repository. A temporary `binding --vault /other/vault` override is validated but not persisted, and `unbind` removes the private association without touching project or vault data. `preview` deterministically lists the regular files that fit the approved roots and byte limits without reading their contents; ignored files and symlink targets are not captured. `ingest` performs a real incremental capture into the bound vault: Structured/Full Evidence modes retain redacted UTF-8 evidence, Minimal retains metadata only, identical runs are no-ops, and additions/changes/renames/deletions create immutable cited snapshots. It also projects cited repository structure, Tree-sitter symbols/calls/imports/inheritance, declared dependencies, and bounded local Git state. `graph` integrity-checks and reads that durable projection without rescanning source.
+
+`mcp` starts a stdout-clean, read-only Model Context Protocol (MCP) server over standard input/output (stdio). The process is fixed to that one project and its explicit binding. It exposes a project overview, bounded lexical context search, cited evidence reads, graph neighbors, and graph paths; it cannot enumerate or switch to other projects. Retrieved text is labeled as untrusted captured-snapshot evidence, not live source or agent policy. Point an MCP host at the executable and project:
+
+```json
+{
+  "mcpServers": {
+    "ley": {
+      "command": "/absolute/path/to/ley",
+      "args": ["mcp", "/absolute/path/to/project"]
+    }
+  }
+}
+```
+
+The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md). Structured session capture is the next agent-memory slice and is not claimed yet.
 
 ## Data model
 

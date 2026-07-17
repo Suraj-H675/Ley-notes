@@ -2,6 +2,7 @@ use ley_core::{
     diagnose_project, ingest_project, initialize_project, preview_capture, read_project_graph,
     BindingRegistry, CaptureMode, GraphNodeKind, LeyCoreError,
 };
+use ley_mcp::run_stdio;
 use std::env;
 use std::path::PathBuf;
 
@@ -24,6 +25,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "unbind" => unbind(&arguments[1..]),
         "ingest" => ingest(&arguments[1..]),
         "graph" => graph(&arguments[1..]),
+        "mcp" => mcp(&arguments[1..]),
         "doctor" => doctor(&arguments[1..]),
         "preview" => preview(&arguments[1..]),
         "help" | "--help" | "-h" => {
@@ -36,6 +38,18 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         }
         other => Err(CliError::Usage(format!("unknown command '{other}'"))),
     }
+}
+
+fn mcp(arguments: &[String]) -> Result<(), CliError> {
+    let parsed = binding_arguments(arguments, false)?;
+    if parsed.json {
+        return Err(CliError::Usage(
+            "mcp uses stdout for the protocol and does not support --json".to_owned(),
+        ));
+    }
+    let registry = BindingRegistry::system_default()?;
+    let binding = registry.resolve(&parsed.project, parsed.vault.as_deref())?;
+    run_stdio(parsed.project, binding.vault_path).map_err(CliError::Mcp)
 }
 
 fn ingest(arguments: &[String]) -> Result<(), CliError> {
@@ -408,6 +422,7 @@ fn print_help() {
     println!("  ley unbind [path] [--json]");
     println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley graph [path] [--vault TEMPORARY_VAULT] [--json]");
+    println!("  ley mcp [path] [--vault TEMPORARY_VAULT]");
     println!("  ley doctor [path] [--json]");
     println!("  ley preview [path] [--json]");
     println!();
@@ -420,6 +435,7 @@ fn print_help() {
 enum CliError {
     Usage(String),
     Core(LeyCoreError),
+    Mcp(ley_mcp::McpServerError),
     CurrentDirectory(std::io::Error),
 }
 
@@ -428,6 +444,7 @@ impl std::fmt::Display for CliError {
         match self {
             Self::Usage(message) => write!(formatter, "{message}; run 'ley help'"),
             Self::Core(error) => error.fmt(formatter),
+            Self::Mcp(error) => error.fmt(formatter),
             Self::CurrentDirectory(error) => {
                 write!(formatter, "could not read current directory: {error}")
             }

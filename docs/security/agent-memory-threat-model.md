@@ -1,6 +1,6 @@
 # Agent memory threat model
 
-Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, and cited project-graph projection; expand before MCP reads or session writes.
+Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, and fixed-project read-only MCP retrieval; expand before session writes.
 
 ## Assets
 
@@ -47,10 +47,14 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Graph corruption or dangling citations | Strict schema/size/identity/endpoint/citation checks; artifact snapshot written before graph; immutable graph snapshot verified before reads | Process-kill matrix across artifact/graph current-pointer updates |
 | Graph leaks source or machine paths | Project-relative citations only; external name nodes contain syntax-level names; no project/vault path persisted | Schema inspection and sensitive-path fixtures |
 | Deleted evidence becomes unverifiable | Immutable snapshot manifests and content blobs remain after current-source deletion | Reviewed retention/deletion policy and storage-budget UI |
-| Cross-project memory access | Project ID required at every future storage/query boundary | Multi-project adversarial tests |
-| Prompt injection in stored material | Stored text remains untrusted evidence | Typed context envelope and agent-facing injection warnings |
+| Cross-project memory access | One project/binding is fixed at MCP process start; tools have no project/vault selector; resource URI includes only the stable project ID | Actual-host multi-project adversarial tests |
+| Prompt injection in stored material | Typed results mark content `untrusted-project-evidence`, repeat a non-instruction warning, and never promote retrieved text to server instructions | Injection corpus across every host adapter |
+| Stale source presented as current | Every result identifies immutable artifact/graph snapshots and capture time and says `liveSourceChecked: false` | Source-change UX, re-ingestion hooks, and stale-result evals |
+| Oversized MCP context | Queries, result counts, token estimates, snippets, evidence ranges, characters, graph depth, and visited nodes are capped | Serialized-byte limits and large-graph latency corpus |
+| MCP argument path traversal | Evidence reads accept only an exact current-manifest artifact path and use no-follow capability reads | Encoded/platform-specific traversal corpus |
+| MCP output leaks machine paths | Results contain project-relative citations and stable IDs; tool errors are sanitized; project/vault paths never enter schemas | Cross-platform output snapshot scanning |
 | Memory poisoning | No inference becomes trusted automatically | Provenance, review, correction, corroboration, supersession |
-| Local MCP compromise | No MCP server in this phase; the future server must read only verified bindings/artifacts/graphs | Exact-command consent, stdio default, scoped tools, no ambient home access |
+| Local MCP compromise | Local stdio only; exact host launch command; fixed project scope; read-only tools/resources; no Roots, sampling, network listener, write tools, subscriptions, or ambient project discovery | Host-adapter permission UX and sandbox profiles |
 
 ## Explicit non-claims
 

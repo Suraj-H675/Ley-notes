@@ -11,6 +11,7 @@ use uuid::Uuid;
 mod binding;
 mod graph;
 mod ingestion;
+mod retrieval;
 
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
@@ -25,6 +26,12 @@ pub use ingestion::{
     ingest_project, read_project_graph, ArtifactKind, ArtifactRecord, ArtifactSkipReason,
     IngestionResult, RedactionFinding, RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY,
     ARTIFACT_MANIFEST_LIMIT_BYTES, ARTIFACT_MANIFEST_SCHEMA_VERSION,
+};
+pub use retrieval::{
+    find_project_context, find_project_graph_path, project_memory_overview, read_project_evidence,
+    traverse_project_graph, ContextItem, ContextItemKind, ContextPack, EvidenceExcerpt,
+    GraphDirection, GraphPath, GraphTraversal, MemoryOverview, RetrievalLimits,
+    DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";
@@ -188,6 +195,10 @@ pub enum LeyCoreError {
     InvalidArtifactStore(String),
     #[error("invalid Ley project graph: {0}")]
     InvalidProjectGraph(String),
+    #[error("Ley project memory is unavailable: {0}")]
+    ProjectMemoryUnavailable(String),
+    #[error("invalid Ley retrieval request: {0}")]
+    InvalidRetrievalRequest(String),
     #[error("unsafe Ley project layout at {0}")]
     UnsafeProjectLayout(PathBuf),
     #[error("Ley metadata exceeds the {limit_bytes}-byte limit: {path}")]

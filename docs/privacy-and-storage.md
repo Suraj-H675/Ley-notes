@@ -27,6 +27,8 @@ After an explicit ingestion command, deterministic project evidence lives under 
 
 The durable agent project graph is derived locally from that same post-redaction boundary. It stores project-relative file/symbol citations, syntax-level imports/calls/inheritance, declared dependencies, and bounded tracked Git state. Git cannot introduce untracked or excluded paths. It stores no project root or vault path and does not run compilers, build scripts, package managers, language servers, or models.
 
+`ley mcp` is a local stdio child process, not a network service. Each process is fixed to one explicitly initialized project and its resolved vault binding. Its current tools are read-only: they verify and query an existing captured snapshot, do not rescan live source, do not create a missing memory store, and do not expose project or vault absolute paths in results. A host may receive a bounded cited excerpt only after calling a retrieval tool; that host determines whether the excerpt stays local or is sent to its model provider.
+
 Ordinary note search and visualization indexes remain disposable local database state. The versioned agent graph is a rebuildable but intentionally durable cited projection so agents can inspect immutable historical snapshots; deleting it must never delete source artifacts or the authoritative filesystem vault.
 
 ## Required safeguards

@@ -22,8 +22,9 @@ All surfaces follow the [local storage and data boundaries](privacy-and-storage.
 | `src/shared`         | Product-agnostic components, hooks, state, and utilities               | third-party primitives only                 |
 | `src/website`        | Public site                                                            | shared presentation primitives where useful |
 | `src-tauri`          | Confined native filesystem operations and desktop packaging            | Rust/Tauri only                             |
-| `crates/ley-core`    | Shared project identity, binding, ingestion, and graph engine           | capability I/O and deterministic parsers    |
-| `crates/ley-cli`     | Human/agent command surface over the shared local engine                | `ley-core` only                             |
+| `crates/ley-core`    | Identity, binding, ingestion, graph, and bounded retrieval engine       | capability I/O and deterministic parsers    |
+| `crates/ley-mcp`     | Fixed-project read-only stdio MCP tools and resources                   | `ley-core`, official Rust MCP SDK            |
+| `crates/ley-cli`     | Human/agent command surface and MCP process entry point                 | `ley-core`, `ley-mcp`                        |
 
 Feature-specific hooks are colocated with their feature. Only genuinely reusable hooks belong in `shared/hooks`. Tests for pure domain behavior remain beside the module they verify.
 
@@ -34,6 +35,8 @@ Linux development builds emit the native executable plus `.deb` and `.rpm` packa
 An initialized repository keeps only portable identity, capture consent, and ignore rules in `.ley/`. A private OS-local registry binds that stable project ID to a filesystem vault. Approved repository evidence is stored as redacted content-addressed artifacts and immutable manifests beneath `<vault>/.ley/agent-memory/projects/<project-id>/`; no repository path is written into the vault.
 
 Ingestion derives a separate immutable project graph from the same post-redaction source boundary. Files, language symbols, calls, imports, inheritance, implementations, manifest dependencies, and bounded local Git state carry artifact snapshot citations. Direct syntax stays deterministic; v1 deliberately leaves names unresolved across files instead of promoting heuristic matches into facts. Each graph and artifact current pointer is atomically replaced under one shared cross-process lock, and both are verified against immutable snapshots before use.
+
+Read-only retrieval opens that store without creating or changing it, holds a shared project lock while verifying the current artifact and graph against their immutable snapshots, and refuses inconsistent pointers. The MCP server is scoped at process startup to one initialized project and one resolved binding. Tool arguments contain no project or vault selector, so an agent cannot use a running server to enumerate or cross into another project. Search, evidence, and graph results are bounded, carry project-relative citations and snapshot times, and explicitly distinguish a captured snapshot from the unchecked live working tree.
 
 ## Persistence contract
 

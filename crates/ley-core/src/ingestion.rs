@@ -112,17 +112,17 @@ pub struct IngestionResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ArtifactManifest {
-    schema_version: u32,
-    project_id: String,
-    project_name: String,
-    snapshot_id: String,
-    generated_at_unix_ms: u64,
-    capture_mode: CaptureMode,
-    capture_policy: crate::CapturePolicy,
-    capture_fingerprint: String,
-    files: Vec<ArtifactRecord>,
-    skipped: Vec<SkippedArtifact>,
+pub(crate) struct ArtifactManifest {
+    pub(crate) schema_version: u32,
+    pub(crate) project_id: String,
+    pub(crate) project_name: String,
+    pub(crate) snapshot_id: String,
+    pub(crate) generated_at_unix_ms: u64,
+    pub(crate) capture_mode: CaptureMode,
+    pub(crate) capture_policy: crate::CapturePolicy,
+    pub(crate) capture_fingerprint: String,
+    pub(crate) files: Vec<ArtifactRecord>,
+    pub(crate) skipped: Vec<SkippedArtifact>,
 }
 
 #[derive(Serialize)]
@@ -147,6 +147,12 @@ struct ArtifactStore {
 
 struct IngestionLock {
     file: File,
+}
+
+pub(crate) struct LoadedProjectMemory {
+    pub(crate) manifest: ArtifactManifest,
+    pub(crate) graph: ProjectGraph,
+    content_dir: Dir,
 }
 
 impl Drop for IngestionLock {
@@ -398,7 +404,7 @@ pub fn read_project_graph(
     if !vault_path.is_dir() {
         return Err(LeyCoreError::NotDirectory(vault.as_ref().to_path_buf()));
     }
-    let store = ArtifactStore::open(&vault_path, &diagnostic.identity.project_id)?;
+    let store = ArtifactStore::open_existing(&vault_path, &diagnostic.identity.project_id)?;
     let graph = store.read_graph()?.ok_or_else(|| {
         LeyCoreError::InvalidProjectGraph(
             "no project graph exists; run 'ley ingest' first".to_owned(),
@@ -407,6 +413,89 @@ pub fn read_project_graph(
     validate_project_graph(&graph, &diagnostic.identity.project_id)?;
     store.verify_graph_snapshot(&graph)?;
     Ok(graph)
+}
+
+pub(crate) fn load_project_memory(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<LoadedProjectMemory, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let vault_path = vault
+        .as_ref()
+        .canonicalize()
+        .map_err(|source| LeyCoreError::Io {
+            path: vault.as_ref().to_path_buf(),
+            source,
+        })?;
+    if !vault_path.is_dir() {
+        return Err(LeyCoreError::NotDirectory(vault.as_ref().to_path_buf()));
+    }
+    let store = ArtifactStore::open_existing(&vault_path, &diagnostic.identity.project_id)?;
+    let _lock = store.read_lock()?;
+    let manifest = store.read_manifest()?.ok_or_else(|| {
+        LeyCoreError::ProjectMemoryUnavailable(
+            "no artifact snapshot exists; run 'ley ingest' first".to_owned(),
+        )
+    })?;
+    validate_manifest(&manifest, &diagnostic.identity.project_id)?;
+    store.verify_snapshot(&manifest)?;
+    let graph = store.read_graph()?.ok_or_else(|| {
+        LeyCoreError::ProjectMemoryUnavailable(
+            "no project graph exists; run 'ley ingest' first".to_owned(),
+        )
+    })?;
+    validate_project_graph(&graph, &diagnostic.identity.project_id)?;
+    store.verify_graph_snapshot(&graph)?;
+    if graph.artifact_snapshot_id != manifest.snapshot_id {
+        return Err(LeyCoreError::ProjectMemoryUnavailable(
+            "artifact and graph snapshots are temporarily inconsistent; rerun ingestion".to_owned(),
+        ));
+    }
+    Ok(LoadedProjectMemory {
+        manifest,
+        graph,
+        content_dir: store.content_dir,
+    })
+}
+
+impl LoadedProjectMemory {
+    pub(crate) fn read_artifact_text(
+        &self,
+        artifact: &ArtifactRecord,
+    ) -> Result<Option<String>, LeyCoreError> {
+        let Some(blob) = &artifact.content_blob else {
+            return Ok(None);
+        };
+        let name = blob
+            .strip_prefix(&format!("{CONTENT_DIRECTORY}/"))
+            .ok_or_else(|| {
+                LeyCoreError::InvalidArtifactStore(format!(
+                    "invalid content blob for {}",
+                    artifact.path
+                ))
+            })?;
+        let stored = read_optional_store_file(&self.content_dir, name, artifact.stored_bytes)?
+            .ok_or_else(|| {
+                LeyCoreError::InvalidArtifactStore(format!(
+                    "content blob is missing for {}",
+                    artifact.path
+                ))
+            })?;
+        if stored.len() as u64 != artifact.stored_bytes
+            || format!("sha256:{}", sha256_hex(&stored)) != artifact.content_hash
+        {
+            return Err(LeyCoreError::InvalidArtifactStore(format!(
+                "content blob failed integrity verification for {}",
+                artifact.path
+            )));
+        }
+        String::from_utf8(stored).map(Some).map_err(|_| {
+            LeyCoreError::InvalidArtifactStore(format!(
+                "content blob is not UTF-8 for {}",
+                artifact.path
+            ))
+        })
+    }
 }
 
 impl ArtifactStore {
@@ -437,7 +526,60 @@ impl ArtifactStore {
         })
     }
 
+    fn open_existing(vault: &Path, project_id: &str) -> Result<Self, LeyCoreError> {
+        use cap_fs_ext::DirExt;
+
+        validate_project_id(project_id)?;
+        let vault_dir = Dir::open_ambient_dir(vault, ambient_authority()).map_err(|source| {
+            LeyCoreError::Io {
+                path: vault.to_path_buf(),
+                source,
+            }
+        })?;
+        let open = |parent: &Dir, name: &str| {
+            parent
+                .open_dir_nofollow(name)
+                .map_err(|source| LeyCoreError::Io {
+                    path: PathBuf::from(name),
+                    source,
+                })
+        };
+        let ley_dir = open(&vault_dir, STORE_ROOT)?;
+        let memory_dir = open(&ley_dir, AGENT_MEMORY_DIRECTORY)?;
+        let projects_dir = open(&memory_dir, PROJECTS_DIRECTORY)?;
+        let project_dir = open(&projects_dir, project_id)?;
+        let artifacts_dir = open(&project_dir, ARTIFACTS_DIRECTORY)?;
+        let content_dir = open(&artifacts_dir, CONTENT_DIRECTORY)?;
+        let snapshots_dir = open(&artifacts_dir, SNAPSHOTS_DIRECTORY)?;
+        let graph_dir = open(&project_dir, GRAPH_DIRECTORY)?;
+        let graph_snapshots_dir = open(&graph_dir, SNAPSHOTS_DIRECTORY)?;
+        Ok(Self {
+            artifacts_dir,
+            content_dir,
+            snapshots_dir,
+            graph_dir,
+            graph_snapshots_dir,
+        })
+    }
+
     fn lock(&self) -> Result<IngestionLock, LeyCoreError> {
+        self.open_lock()
+    }
+
+    fn read_lock(&self) -> Result<IngestionLock, LeyCoreError> {
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        let lock = self
+            .artifacts_dir
+            .open_with(INGEST_LOCK_FILE, &options)
+            .map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
+        ensure_private_file_permissions(&lock, INGEST_LOCK_FILE)?;
+        let file = lock.into_std();
+        File::lock_shared(&file).map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
+        Ok(IngestionLock { file })
+    }
+
+    fn open_lock(&self) -> Result<IngestionLock, LeyCoreError> {
         let mut options = OpenOptions::new();
         options
             .read(true)

@@ -11,4 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 ley-core = { path = "../ley-core" }
+ley-mcp = { path = "../ley-mcp" }
 serde_json.workspace = true
