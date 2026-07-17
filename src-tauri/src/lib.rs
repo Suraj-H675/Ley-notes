@@ -1,16 +1,18 @@
 use ley_core::{
     diagnose_project, generate_learning_request_id, ingest_project, initialize_project,
     list_learning_contexts, list_sessions, project_activity_view, project_artifact_inventory,
-    project_graph_view, project_memory_overview, project_resume_context, read_learning_context,
-    read_session_context, review_learning, BindingRegistry, BindingSource, CaptureMode,
-    IngestionResult, LearningActor, LearningContextPack, LearningFeedbackAction, LearningList,
-    LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory,
-    ProjectGraphView, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
-    ReviewLearningInput, SessionContextPack, SessionSummary, DEFAULT_ARTIFACT_RESULTS,
-    DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    project_graph_view, project_memory_overview, project_resume_context, project_session_stats,
+    read_learning_context, read_session_context, review_learning, BindingRegistry, BindingSource,
+    CaptureMode, IngestionResult, LearningActor, LearningContextPack, LearningFeedbackAction,
+    LearningList, LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView,
+    ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic, ProjectGraphView,
+    ProjectProblemScope, ProjectResumePack, ProjectVaultBinding, ReviewLearningInput,
+    SessionContextPack, SessionSummary, DEFAULT_ARTIFACT_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
+    DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_RESUME_CHARACTERS,
-    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
+    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS, MAX_LEARNING_LIST_RESULTS,
 };
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -105,6 +107,12 @@ enum AgentProjectInspection {
         project_name: String,
         capture_mode: CaptureMode,
     },
+    VaultUnavailable {
+        project_id: String,
+        project_name: String,
+        capture_mode: CaptureMode,
+        previous_vault_name: String,
+    },
     NeedsCapture {
         project_id: String,
         project_name: String,
@@ -114,6 +122,48 @@ enum AgentProjectInspection {
     Ready {
         dashboard: Box<AgentMemoryDashboard>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum AgentProjectCatalogState {
+    Ready,
+    Unbound,
+    NeedsCapture,
+    ProjectUnavailable,
+    VaultUnavailable,
+    IdentityChanged,
+    MemoryError,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentProjectCatalogItem {
+    project_id: String,
+    project_path: PathBuf,
+    project_name: String,
+    capture_mode: Option<CaptureMode>,
+    state: AgentProjectCatalogState,
+    last_opened_at_unix_ms: u64,
+    vault_name: Option<String>,
+    files: Option<usize>,
+    graph_nodes: Option<usize>,
+    sessions: Option<usize>,
+    active_sessions: Option<usize>,
+    review_items: Option<usize>,
+    freshness: Option<String>,
+    status_detail: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentProjectCatalogView {
+    projects: Vec<AgentProjectCatalogItem>,
+    total_projects: usize,
+    omitted_projects: usize,
+    ready_projects: usize,
+    attention_projects: usize,
+    privacy_notice: &'static str,
 }
 
 fn load_agent_memory_dashboard(
@@ -155,6 +205,199 @@ fn resolved_agent_binding(project_path: &Path) -> Result<ProjectVaultBinding, Le
     BindingRegistry::system_default()?.resolve(project_path, None)
 }
 
+fn agent_project_catalog_item(
+    observed: ley_core::ObservedProject,
+    registry: &BindingRegistry,
+) -> AgentProjectCatalogItem {
+    let fallback_name = observed
+        .root_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("Unavailable project")
+        .to_owned();
+    let base = |state, status_detail| AgentProjectCatalogItem {
+        project_id: observed.project_id.clone(),
+        project_path: observed.root_path.clone(),
+        project_name: fallback_name.clone(),
+        capture_mode: None,
+        state,
+        last_opened_at_unix_ms: observed.last_opened_at_unix_ms,
+        vault_name: None,
+        files: None,
+        graph_nodes: None,
+        sessions: None,
+        active_sessions: None,
+        review_items: None,
+        freshness: None,
+        status_detail,
+    };
+
+    let diagnostic = match diagnose_project(&observed.root_path) {
+        Ok(diagnostic) => diagnostic,
+        Err(error) => {
+            return base(
+                AgentProjectCatalogState::ProjectUnavailable,
+                error.to_string(),
+            )
+        }
+    };
+    if diagnostic.identity.project_id != observed.project_id {
+        return base(
+            AgentProjectCatalogState::IdentityChanged,
+            "This folder now contains a different Ley project identity.".to_owned(),
+        );
+    }
+    agent_project_catalog_item_for_diagnostic(observed, diagnostic, registry)
+}
+
+fn agent_project_catalog_item_for_diagnostic(
+    observed: ley_core::ObservedProject,
+    diagnostic: ProjectDiagnostic,
+    registry: &BindingRegistry,
+) -> AgentProjectCatalogItem {
+    let mut item = AgentProjectCatalogItem {
+        project_id: observed.project_id,
+        project_path: observed.root_path,
+        project_name: diagnostic.identity.name.clone(),
+        capture_mode: Some(diagnostic.capture.mode),
+        state: AgentProjectCatalogState::Ready,
+        last_opened_at_unix_ms: observed.last_opened_at_unix_ms,
+        vault_name: None,
+        files: None,
+        graph_nodes: None,
+        sessions: None,
+        active_sessions: None,
+        review_items: None,
+        freshness: None,
+        status_detail: "Ready to resume locally.".to_owned(),
+    };
+    let binding = match registry.resolve_observed(&diagnostic) {
+        Ok(binding) => binding,
+        Err(LeyCoreError::VaultNotBound(_)) => {
+            item.state = AgentProjectCatalogState::Unbound;
+            item.status_detail = "Choose a filesystem vault before capturing memory.".to_owned();
+            return item;
+        }
+        Err(LeyCoreError::BoundVaultUnavailable { path, .. }) => {
+            item.state = AgentProjectCatalogState::VaultUnavailable;
+            item.vault_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned);
+            item.status_detail =
+                "The bound vault moved or is currently unavailable. Reconnect it explicitly."
+                    .to_owned();
+            return item;
+        }
+        Err(error) => {
+            item.state = AgentProjectCatalogState::MemoryError;
+            item.status_detail = error.to_string();
+            return item;
+        }
+    };
+    item.vault_name = Some(
+        binding
+            .vault_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Ley vault")
+            .to_owned(),
+    );
+    let overview = match project_memory_overview(&diagnostic.root, &binding.vault_path) {
+        Ok(overview) => overview,
+        Err(LeyCoreError::ProjectMemoryUnavailable(_)) => {
+            item.state = AgentProjectCatalogState::NeedsCapture;
+            item.status_detail = "Connected locally; create the first project snapshot.".to_owned();
+            return item;
+        }
+        Err(error) => {
+            item.state = AgentProjectCatalogState::MemoryError;
+            item.status_detail = error.to_string();
+            return item;
+        }
+    };
+    let sessions = match project_session_stats(&diagnostic.root, &binding.vault_path) {
+        Ok(sessions) => sessions,
+        Err(error) => {
+            item.state = AgentProjectCatalogState::MemoryError;
+            item.status_detail = error.to_string();
+            return item;
+        }
+    };
+    let review = match list_learning_contexts(
+        &diagnostic.root,
+        &binding.vault_path,
+        LearningListScope::NeedsReview,
+        MAX_LEARNING_LIST_RESULTS,
+    ) {
+        Ok(review) => review,
+        Err(error) => {
+            item.state = AgentProjectCatalogState::MemoryError;
+            item.status_detail = error.to_string();
+            return item;
+        }
+    };
+    item.files = Some(overview.files);
+    item.graph_nodes = Some(overview.graph_nodes);
+    item.sessions = Some(sessions.total_sessions);
+    item.active_sessions = Some(sessions.active_sessions + sessions.paused_sessions);
+    item.review_items = Some(review.total_matching);
+    item.freshness = Some(overview.freshness.to_owned());
+    item
+}
+
+fn load_agent_project_catalog_from(
+    catalog: &ProjectCatalog,
+    registry: &BindingRegistry,
+) -> Result<AgentProjectCatalogView, LeyCoreError> {
+    let observed = catalog.list(DEFAULT_PROJECT_CATALOG_RESULTS)?;
+    let projects = observed
+        .projects
+        .into_iter()
+        .map(|project| agent_project_catalog_item(project, registry))
+        .collect::<Vec<_>>();
+    let ready_projects = projects
+        .iter()
+        .filter(|project| matches!(project.state, AgentProjectCatalogState::Ready))
+        .count();
+    Ok(AgentProjectCatalogView {
+        attention_projects: projects.len().saturating_sub(ready_projects),
+        projects,
+        total_projects: observed.total_projects,
+        omitted_projects: observed.omitted_projects,
+        ready_projects,
+        privacy_notice: "Ley lists only initialized projects you explicitly opened on this device. It never scans neighboring folders.",
+    })
+}
+
+fn load_agent_project_catalog() -> Result<AgentProjectCatalogView, LeyCoreError> {
+    load_agent_project_catalog_from(
+        &ProjectCatalog::system_default()?,
+        &BindingRegistry::system_default()?,
+    )
+}
+
+#[tauri::command]
+fn list_agent_projects(
+    legacy_project_path: Option<String>,
+) -> Result<AgentProjectCatalogView, String> {
+    if let Some(path) = legacy_project_path {
+        match ProjectCatalog::system_default().and_then(|catalog| catalog.observe(path)) {
+            Ok(_) | Err(LeyCoreError::ProjectNotFound(_) | LeyCoreError::NotDirectory(_)) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    load_agent_project_catalog().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn forget_agent_project(project_id: String) -> Result<AgentProjectCatalogView, String> {
+    ProjectCatalog::system_default()
+        .and_then(|catalog| catalog.forget(&project_id))
+        .and_then(|_| load_agent_project_catalog())
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn inspect_agent_project(project_path: String) -> Result<AgentProjectInspection, String> {
     let path = Path::new(&project_path);
@@ -177,6 +420,18 @@ fn inspect_agent_project(project_path: String) -> Result<AgentProjectInspection,
                 project_id: diagnostic.identity.project_id,
                 project_name: diagnostic.identity.name,
                 capture_mode: diagnostic.capture.mode,
+            });
+        }
+        Err(LeyCoreError::BoundVaultUnavailable { path, .. }) => {
+            return Ok(AgentProjectInspection::VaultUnavailable {
+                project_id: diagnostic.identity.project_id,
+                project_name: diagnostic.identity.name,
+                capture_mode: diagnostic.capture.mode,
+                previous_vault_name: path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("previous vault")
+                    .to_owned(),
             });
         }
         Err(error) => return Err(error.to_string()),
@@ -844,6 +1099,8 @@ pub fn run() {
         .manage(VaultWatcherState::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            list_agent_projects,
+            forget_agent_project,
             inspect_agent_project,
             initialize_agent_project,
             connect_agent_project,
@@ -982,6 +1239,84 @@ mod tests {
         assert!(relevant_change_path(&root, &root.join("image.png")).is_none());
 
         drop(watcher);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_catalog_summarizes_ready_unbound_and_unavailable_projects() {
+        let root =
+            std::env::temp_dir().join(format!("ley-project-catalog-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let config = root.join("config");
+        let vault = root.join("vault");
+        let moved_vault = root.join("moved-vault");
+        let ready = root.join("ready");
+        let unbound = root.join("unbound");
+        let unavailable = root.join("unavailable");
+        let disconnected = root.join("disconnected");
+        for directory in [
+            &vault,
+            &moved_vault,
+            &ready,
+            &unbound,
+            &unavailable,
+            &disconnected,
+        ] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        fs::write(ready.join("main.rs"), "fn ready_marker() {}\n").unwrap();
+        initialize_project(&ready, Some("Ready project"), CaptureMode::Structured).unwrap();
+        initialize_project(&unbound, Some("Unbound project"), CaptureMode::Minimal).unwrap();
+        initialize_project(
+            &unavailable,
+            Some("Unavailable project"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        initialize_project(
+            &disconnected,
+            Some("Disconnected project"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+
+        let catalog = ProjectCatalog::at(config.join(ley_core::PROJECT_CATALOG_FILE));
+        let registry = BindingRegistry::at(config.join(ley_core::BINDING_REGISTRY_FILE));
+        registry.bind(&ready, &vault).unwrap();
+        ingest_project(&ready, &vault).unwrap();
+        registry.bind(&disconnected, &moved_vault).unwrap();
+        catalog.observe(&unbound).unwrap();
+        catalog.observe(&unavailable).unwrap();
+        fs::remove_dir_all(&unavailable).unwrap();
+        fs::rename(&moved_vault, root.join("vault-after-move")).unwrap();
+
+        let view = load_agent_project_catalog_from(&catalog, &registry).unwrap();
+        assert_eq!(view.total_projects, 4);
+        assert_eq!(view.ready_projects, 1);
+        assert_eq!(view.attention_projects, 3);
+        let ready_item = view
+            .projects
+            .iter()
+            .find(|project| project.project_name == "Ready project")
+            .unwrap();
+        assert_eq!(ready_item.state, AgentProjectCatalogState::Ready);
+        assert_eq!(ready_item.files, Some(1));
+        assert_eq!(ready_item.sessions, Some(0));
+        let unbound_item = view
+            .projects
+            .iter()
+            .find(|project| project.project_name == "Unbound project")
+            .unwrap();
+        assert_eq!(unbound_item.state, AgentProjectCatalogState::Unbound);
+        assert!(view.projects.iter().any(|project| {
+            project.project_name == "Disconnected project"
+                && project.state == AgentProjectCatalogState::VaultUnavailable
+        }));
+        assert!(view.projects.iter().any(|project| {
+            project.state == AgentProjectCatalogState::ProjectUnavailable
+                && project.project_path == unavailable.canonicalize().unwrap_or(unavailable.clone())
+        }));
+
         fs::remove_dir_all(root).unwrap();
     }
 

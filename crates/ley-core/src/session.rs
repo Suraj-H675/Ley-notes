@@ -590,6 +590,33 @@ pub fn list_sessions(
     Ok(sessions)
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSessionStats {
+    pub total_sessions: usize,
+    pub active_sessions: usize,
+    pub paused_sessions: usize,
+    pub completed_sessions: usize,
+    pub abandoned_sessions: usize,
+}
+
+pub fn project_session_stats(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<ProjectSessionStats, LeyCoreError> {
+    let mut stats = ProjectSessionStats::default();
+    visit_session_records(project_start, vault, |session| {
+        stats.total_sessions += 1;
+        match session.status {
+            SessionStatus::Active => stats.active_sessions += 1,
+            SessionStatus::Paused => stats.paused_sessions += 1,
+            SessionStatus::Completed => stats.completed_sessions += 1,
+            SessionStatus::Abandoned => stats.abandoned_sessions += 1,
+        }
+    })?;
+    Ok(stats)
+}
+
 pub(crate) fn visit_session_records(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -2418,6 +2445,14 @@ mod tests {
         let listed = list_sessions(&project, &vault).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].status, SessionStatus::Completed);
+        assert_eq!(
+            project_session_stats(&project, &vault).unwrap(),
+            ProjectSessionStats {
+                total_sessions: 1,
+                completed_sessions: 1,
+                ..ProjectSessionStats::default()
+            }
+        );
     }
 
     #[test]

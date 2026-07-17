@@ -4,7 +4,9 @@ import { AgentMemoryWorkspace } from "./AgentMemoryWorkspace";
 import type { AgentMemoryDashboard } from "./types";
 
 const api = vi.hoisted(() => ({
+  forgetAgentProject: vi.fn(),
   inspectAgentProject: vi.fn(),
+  listAgentProjects: vi.fn(),
   readAgentProjectActivity: vi.fn(),
   readAgentArtifacts: vi.fn(),
   readAgentSession: vi.fn(),
@@ -13,8 +15,10 @@ const api = vi.hoisted(() => ({
 vi.mock("./api", () => ({
   chooseAgentProject: vi.fn(),
   connectAgentProject: vi.fn(),
+  forgetAgentProject: api.forgetAgentProject,
   initializeAgentProject: vi.fn(),
   inspectAgentProject: api.inspectAgentProject,
+  listAgentProjects: api.listAgentProjects,
   readAgentProjectActivity: api.readAgentProjectActivity,
   readAgentArtifacts: api.readAgentArtifacts,
   readAgentLearning: vi.fn(),
@@ -144,8 +148,33 @@ describe("Agent Memory workspace boundaries", () => {
     expect(api.inspectAgentProject).not.toHaveBeenCalled();
   });
 
-  it("restores an explicitly selected desktop project into a scrollable dashboard", async () => {
+  it("migrates the last selection into Projects and opens a scrollable dashboard", async () => {
     localStorage.setItem("ley:last-agent-project", "/projects/ley");
+    api.listAgentProjects.mockResolvedValue({
+      projects: [
+        {
+          projectId: "prj_test",
+          projectPath: "/projects/ley",
+          projectName: "Ley",
+          captureMode: "structured",
+          state: "ready",
+          lastOpenedAtUnixMs: Date.now(),
+          vaultName: "Private vault",
+          files: 18,
+          graphNodes: 42,
+          sessions: 1,
+          activeSessions: 0,
+          reviewItems: 0,
+          freshness: "current",
+          statusDetail: "Ready to resume locally.",
+        },
+      ],
+      totalProjects: 1,
+      omittedProjects: 0,
+      readyProjects: 1,
+      attentionProjects: 0,
+      privacyNotice: "Only explicitly opened projects.",
+    });
     api.inspectAgentProject.mockResolvedValue({ status: "ready", dashboard });
     api.readAgentArtifacts.mockResolvedValue({
       projectId: "prj_test",
@@ -326,9 +355,28 @@ describe("Agent Memory workspace boundaries", () => {
     );
 
     await screen.findByRole("heading", {
+      name: "Pick up any project without starting over",
+    });
+    expect(api.listAgentProjects).toHaveBeenCalledWith("/projects/ley");
+    expect(api.inspectAgentProject).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Refresh project list" }),
+    ).toBeEnabled();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Ley.*Ready.*sessions.*1.*files.*18/i,
+      }),
+    );
+    await screen.findByRole("heading", {
       name: "What Ley can ground right now",
     });
     expect(api.inspectAgentProject).toHaveBeenCalledWith("/projects/ley");
+    expect(
+      screen.getByRole("button", { name: "Refresh snapshot" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Change project" }),
+    ).toBeEnabled();
     const scrollRoot = screen.getByRole("main");
     expect(scrollRoot).toHaveClass(
       "min-h-0",
@@ -360,7 +408,7 @@ describe("Agent Memory workspace boundaries", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Decisions" }));
     await screen.findByRole("heading", { name: "Decisions" });
-    expect(screen.getByText("Keep context bounded")).toBeVisible();
+    expect(await screen.findByText("Keep context bounded")).toBeVisible();
     fireEvent.click(screen.getByText("Rationale & evidence"));
     expect(
       screen.getByText(
@@ -385,5 +433,11 @@ describe("Agent Memory workspace boundaries", () => {
     expect(
       screen.getByText("The decision and problem are both discoverable."),
     ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Projects" }));
+    await screen.findByRole("heading", {
+      name: "Pick up any project without starting over",
+    });
+    expect(api.listAgentProjects).toHaveBeenCalledTimes(2);
   });
 });

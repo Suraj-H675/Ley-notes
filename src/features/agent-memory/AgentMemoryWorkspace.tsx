@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   BookCheck,
   BrainCircuit,
@@ -32,15 +33,19 @@ import { cn } from "@/shared/lib/classnames";
 import {
   chooseAgentProject,
   connectAgentProject,
+  forgetAgentProject,
   initializeAgentProject,
   inspectAgentProject,
+  listAgentProjects,
   readAgentLearning,
   readAgentSession,
   refreshAgentProject,
   reviewAgentLearning,
 } from "./api";
+import { ProjectsHub } from "./ProjectsHub";
 import type {
   AgentMemoryDashboard,
+  AgentProjectCatalog,
   AgentProjectInspection,
   LearningAction,
   LearningContext,
@@ -91,23 +96,52 @@ export function AgentMemoryWorkspace({
   onClose: () => void;
 }) {
   const [section, setSection] = useState<Section>("overview");
-  const [projectPath, setProjectPath] = useState<string | null>(() =>
-    vaultMode === "desktop"
-      ? localStorage.getItem(LAST_AGENT_PROJECT_KEY)
-      : null,
-  );
+  const [projectPath, setProjectPath] = useState<string | null>(null);
+  const [catalog, setCatalog] = useState<AgentProjectCatalog | null>(null);
+  const [catalogBusy, setCatalogBusy] = useState(vaultMode === "desktop");
+  const [catalogRevision, setCatalogRevision] = useState(0);
   const [inspection, setInspection] = useState<AgentProjectInspection | null>(
     null,
   );
   const [inspectedPath, setInspectedPath] = useState<string | null>(null);
-  const [busy, setBusy] = useState(
-    () =>
-      vaultMode === "desktop" &&
-      Boolean(localStorage.getItem(LAST_AGENT_PROJECT_KEY)),
-  );
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [learningId, setLearningId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (
+      !open ||
+      vaultMode !== "desktop" ||
+      projectPath ||
+      catalog
+    )
+      return;
+    let current = true;
+    const legacyProjectPath =
+      localStorage.getItem(LAST_AGENT_PROJECT_KEY) ?? undefined;
+    void listAgentProjects(legacyProjectPath)
+      .then((next) => {
+        if (!current) return;
+        setCatalog(next);
+        localStorage.removeItem(LAST_AGENT_PROJECT_KEY);
+        setCatalogBusy(false);
+      })
+      .catch((cause) => {
+        if (!current) return;
+        setError(errorMessage(cause));
+        setCatalogBusy(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [
+    catalog,
+    catalogRevision,
+    open,
+    projectPath,
+    vaultMode,
+  ]);
 
   useEffect(() => {
     if (
@@ -123,15 +157,13 @@ export function AgentMemoryWorkspace({
         if (!current) return;
         setInspection(next);
         setInspectedPath(projectPath);
-        localStorage.setItem(LAST_AGENT_PROJECT_KEY, projectPath);
+        setBusy(false);
       })
       .catch((cause) => {
         if (!current) return;
         setInspectedPath(projectPath);
         setError(errorMessage(cause));
-      })
-      .finally(() => {
-        if (current) setBusy(false);
+        setBusy(false);
       });
     return () => {
       current = false;
@@ -151,6 +183,15 @@ export function AgentMemoryWorkspace({
     } catch (cause) {
       setError(errorMessage(cause));
     }
+  }
+
+  function openProject(nextProjectPath: string) {
+    setBusy(true);
+    setError(null);
+    setInspection(null);
+    setInspectedPath(null);
+    setProjectPath(nextProjectPath);
+    setSection("overview");
   }
 
   async function makeReady(kind: "initialize" | "connect" | "capture") {
@@ -177,13 +218,29 @@ export function AgentMemoryWorkspace({
     await makeReady("capture");
   }
 
-  function forgetProject() {
-    localStorage.removeItem(LAST_AGENT_PROJECT_KEY);
+  function returnToProjects() {
     setProjectPath(null);
     setInspection(null);
     setInspectedPath(null);
     setError(null);
+    setLearningId(null);
+    setSessionId(null);
     setSection("overview");
+    setCatalog(null);
+    setCatalogBusy(true);
+    setCatalogRevision((value) => value + 1);
+  }
+
+  async function removeProject(projectId: string) {
+    setCatalogBusy(true);
+    setError(null);
+    try {
+      setCatalog(await forgetAgentProject(projectId));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setCatalogBusy(false);
+    }
   }
 
   const dashboard =
@@ -215,16 +272,29 @@ export function AgentMemoryWorkspace({
               </div>
               <div className="min-w-0">
                 <Dialog.Title className="truncate text-body font-semibold tracking-tight">
-                  Agent Memory
+                  {projectPath ? "Agent Memory" : "Projects"}
                 </Dialog.Title>
                 <p className="truncate text-micro text-muted-foreground">
                   {projectLabel
                     ? `${projectLabel} · local project memory`
-                    : "Continuity for your coding agents"}
+                    : catalog
+                      ? `${catalog.totalProjects.toLocaleString()} local project ${catalog.totalProjects === 1 ? "memory" : "memories"}`
+                      : "Continuity for your coding agents"}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-1.5">
+              {projectPath && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={returnToProjects}
+                  title="Back to Projects"
+                >
+                  <ArrowLeft size={13} />
+                  <span className="hidden sm:inline">Projects</span>
+                </Button>
+              )}
               {dashboard && (
                 <Button
                   size="sm"
@@ -258,6 +328,21 @@ export function AgentMemoryWorkspace({
 
           {vaultMode !== "desktop" ? (
             <BrowserBoundary vaultMode={vaultMode} vaultName={vaultName} />
+          ) : !projectPath ? (
+            <ProjectsHub
+              catalog={catalog}
+              loading={catalogBusy}
+              error={error}
+              onAdd={() => void chooseProject()}
+              onOpen={openProject}
+              onForget={(projectId) => void removeProject(projectId)}
+              onReload={() => {
+                setCatalog(null);
+                setCatalogBusy(true);
+                setError(null);
+                setCatalogRevision((value) => value + 1);
+              }}
+            />
           ) : !inspection || inspection.status !== "ready" ? (
             <ProjectOnboarding
               inspection={inspection}
@@ -266,7 +351,7 @@ export function AgentMemoryWorkspace({
               busy={busy}
               error={error}
               onChoose={() => void chooseProject()}
-              onForget={forgetProject}
+              onForget={returnToProjects}
               onInitialize={() => void makeReady("initialize")}
               onConnect={() => void makeReady("connect")}
               onCapture={() => void makeReady("capture")}
@@ -278,7 +363,7 @@ export function AgentMemoryWorkspace({
                 dashboard={inspection.dashboard}
                 busy={busy}
                 onSection={setSection}
-                onChangeProject={forgetProject}
+                onChangeProject={returnToProjects}
               />
               <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
                 <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
@@ -1469,18 +1554,26 @@ function ProjectOnboarding({
   onCapture: () => void;
 }) {
   const title = !inspection
-    ? "Choose a project"
+    ? projectPath
+      ? "Opening local project"
+      : "Choose a project"
     : inspection.status === "uninitialized"
       ? "Initialize Agent Memory"
       : inspection.status === "unbound"
         ? "Connect this project"
+        : inspection.status === "vault-unavailable"
+          ? "Reconnect this project"
         : "Create the first snapshot";
   const body = !inspection
-    ? "Ley only reads a project after you choose its folder. It never scans neighboring folders or discovers projects silently."
+    ? projectPath
+      ? "Ley is validating this project’s local identity, private vault binding, and captured memory."
+      : "Ley only reads a project after you choose its folder. It never scans neighboring folders or discovers projects silently."
     : inspection.status === "uninitialized"
       ? `Ley will add a small .ley folder to “${inspection.suggestedName}”, use Structured capture, bind durable memory to “${vaultName}”, and create the first redacted snapshot.`
       : inspection.status === "unbound"
         ? `“${inspection.projectName}” is initialized but has no private vault binding. Connect it to “${vaultName}” and capture its approved files.`
+        : inspection.status === "vault-unavailable"
+          ? `“${inspection.projectName}” was connected to “${inspection.previousVaultName}”, which moved or is unavailable. Reconnect it to the open vault, “${vaultName}”, and rebuild its local snapshot.`
         : inspection.status === "needs-capture"
           ? `“${inspection.projectName}” is connected to “${inspection.binding.vaultName}” but has not been captured yet.`
           : "This project is ready.";
@@ -1512,10 +1605,28 @@ function ProjectOnboarding({
           )}
           <div className="mt-6 flex flex-wrap gap-2">
             {!inspection ? (
-              <Button variant="primary" disabled={busy} onClick={onChoose}>
-                <FolderOpen size={14} />
-                {busy ? "Opening…" : "Choose project folder"}
-              </Button>
+              <>
+                <Button
+                  variant="primary"
+                  disabled={busy}
+                  onClick={onChoose}
+                >
+                  {busy ? (
+                    <RefreshCw
+                      size={14}
+                      className="animate-spin motion-reduce:animate-none"
+                    />
+                  ) : (
+                    <FolderOpen size={14} />
+                  )}
+                  {busy ? "Opening…" : "Choose project folder"}
+                </Button>
+                {projectPath && (
+                  <Button variant="outline" onClick={onForget}>
+                    Back to projects
+                  </Button>
+                )}
+              </>
             ) : (
               <>
                 <Button
@@ -1524,7 +1635,8 @@ function ProjectOnboarding({
                   onClick={
                     inspection.status === "uninitialized"
                       ? onInitialize
-                      : inspection.status === "unbound"
+                      : inspection.status === "unbound" ||
+                          inspection.status === "vault-unavailable"
                         ? onConnect
                         : onCapture
                   }
@@ -1543,13 +1655,15 @@ function ProjectOnboarding({
                       ? "Initialize & capture"
                       : inspection.status === "unbound"
                         ? "Connect & capture"
+                        : inspection.status === "vault-unavailable"
+                          ? "Reconnect & capture"
                         : "Capture project"}
                 </Button>
                 <Button variant="outline" disabled={busy} onClick={onChoose}>
                   Choose another
                 </Button>
                 <Button variant="ghost" disabled={busy} onClick={onForget}>
-                  Forget selection
+                  Back to projects
                 </Button>
               </>
             )}

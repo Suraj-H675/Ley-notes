@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AgentMemoryDashboard,
+  AgentProjectCatalog,
   AgentProjectInspection,
   LearningAction,
   LearningContext,
@@ -19,6 +20,18 @@ export async function chooseAgentProject(): Promise<string | null> {
     title: "Choose a project for Agent Memory",
   });
   return selected ?? null;
+}
+
+export function listAgentProjects(
+  legacyProjectPath?: string,
+): Promise<AgentProjectCatalog> {
+  return invoke("list_agent_projects", { legacyProjectPath });
+}
+
+export function forgetAgentProject(
+  projectId: string,
+): Promise<AgentProjectCatalog> {
+  return invoke("forget_agent_project", { projectId });
 }
 
 export function inspectAgentProject(

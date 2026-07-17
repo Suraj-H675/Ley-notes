@@ -1,5 +1,5 @@
 use crate::{
-    canonical_directory, diagnose_project, validate_project_id, LeyCoreError,
+    canonical_directory, diagnose_project, validate_project_id, LeyCoreError, ProjectCatalog,
     METADATA_FILE_LIMIT_BYTES,
 };
 use directories::BaseDirs;
@@ -79,6 +79,7 @@ impl RegistryDocument {
 #[derive(Debug, Clone)]
 pub struct BindingRegistry {
     path: PathBuf,
+    project_catalog: ProjectCatalog,
 }
 
 impl BindingRegistry {
@@ -87,7 +88,12 @@ impl BindingRegistry {
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        let path = path.into();
+        let project_catalog = ProjectCatalog::at(path.with_file_name(crate::PROJECT_CATALOG_FILE));
+        Self {
+            path,
+            project_catalog,
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -100,12 +106,13 @@ impl BindingRegistry {
         vault: impl AsRef<Path>,
     ) -> Result<ProjectVaultBinding, LeyCoreError> {
         let diagnostic = diagnose_project(project_start)?;
+        self.project_catalog.observe_diagnostic(&diagnostic)?;
         let vault_path = canonical_directory(vault.as_ref())?;
         let vault_string = vault_path
             .to_str()
             .ok_or_else(|| LeyCoreError::NonUtf8Path(vault_path.clone()))?
             .to_owned();
-        let project_id = diagnostic.identity.project_id;
+        let project_id = diagnostic.identity.project_id.clone();
 
         self.mutate(|document| {
             document.bindings.insert(project_id.clone(), vault_string);
@@ -125,11 +132,27 @@ impl BindingRegistry {
         vault_override: Option<&Path>,
     ) -> Result<ProjectVaultBinding, LeyCoreError> {
         let diagnostic = diagnose_project(project_start)?;
-        let project_id = diagnostic.identity.project_id;
+        self.project_catalog.observe_diagnostic(&diagnostic)?;
+        self.resolve_diagnostic(&diagnostic, vault_override)
+    }
+
+    pub fn resolve_observed(
+        &self,
+        diagnostic: &crate::ProjectDiagnostic,
+    ) -> Result<ProjectVaultBinding, LeyCoreError> {
+        self.resolve_diagnostic(diagnostic, None)
+    }
+
+    fn resolve_diagnostic(
+        &self,
+        diagnostic: &crate::ProjectDiagnostic,
+        vault_override: Option<&Path>,
+    ) -> Result<ProjectVaultBinding, LeyCoreError> {
+        let project_id = diagnostic.identity.project_id.clone();
 
         if let Some(override_path) = vault_override {
             return Ok(ProjectVaultBinding {
-                project_id,
+                project_id: project_id.clone(),
                 vault_path: canonical_directory(override_path)?,
                 source: BindingSource::Override,
             });
@@ -158,6 +181,7 @@ impl BindingRegistry {
         project_start: impl AsRef<Path>,
     ) -> Result<Option<ProjectVaultBinding>, LeyCoreError> {
         let diagnostic = diagnose_project(project_start)?;
+        self.project_catalog.observe_diagnostic(&diagnostic)?;
         let project_id = diagnostic.identity.project_id;
         let removed = self.mutate(|document| Ok(document.bindings.remove(&project_id)))?;
         Ok(removed.map(|vault_path| ProjectVaultBinding {

@@ -114,6 +114,17 @@ This audit treats screen space, attention, and keyboard shortcuts as costs. A co
 | Empty-folder creation gateway         | Remove            | No reachable workflow used it; note paths already create required parent folders.                                                                                                                                                                     |
 | Dexie `blocks` table                  | Retain internally | Preserved solely for schema compatibility while existing databases migrate; it is not presented as a feature.                                                                                                                                         |
 
+## Agent Memory
+
+| Surface | Decision | Result |
+| --- | --- | --- |
+| Projects hub | Add | Desktop Agent Memory opens on an explicit, recent-first project catalog instead of silently restoring one webview path. It never scans the device, distinguishes ready and repair states, and shows bounded local counts before opening a project. |
+| Project search | Add | Filters only the owner-private known-project list by name, folder, vault, or state; it is not mislabeled as cross-project knowledge search. |
+| Add project | Keep primary | Opens the operating-system folder chooser and preserves uninitialized, unbound, uncaptured, moved-vault, and ready onboarding states. |
+| Remove from Projects | Add | Removes only the device observation and clearly states that repository metadata, binding, and vault memory are not deleted. |
+| Last-project restoration | Replace | A one-time migration observes the previous explicit path, then removes the `localStorage` key. Multi-project recency now belongs to the shared private local engine. |
+| Project detail navigation | Improve | A persistent Projects back action and the existing sidebar establish Projects → overview → evidence surfaces without losing responsive horizontal navigation. |
+
 ## Deferred surfaces
 
 Cloud sync, collaboration, publishing, a public plugin API, and dedicated mobile clients are deliberately absent. They require security, conflict handling, identity, lifecycle, and platform decisions that should not be represented by premature buttons. The current responsive PWA is the mobile bridge while desktop, website, and browser app mature.

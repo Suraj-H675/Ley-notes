@@ -15,6 +15,7 @@ mod knowledge_view;
 mod learning;
 mod learning_context;
 mod project_activity;
+mod project_catalog;
 mod resume_context;
 mod retrieval;
 mod session;
@@ -64,6 +65,10 @@ pub use project_activity::{
     DEFAULT_PROJECT_ACTIVITY_RESULTS, MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS,
     MAX_PROJECT_ACTIVITY_RESULTS,
 };
+pub use project_catalog::{
+    ObservedProject, ObservedProjectList, ProjectCatalog, DEFAULT_PROJECT_CATALOG_RESULTS,
+    MAX_PROJECT_CATALOG_RESULTS, PROJECT_CATALOG_FILE, PROJECT_CATALOG_SCHEMA_VERSION,
+};
 pub use resume_context::{
     project_resume_context, ProjectResumePack, ResumeCheckpoint, ResumeDecision, ResumeLearning,
     ResumeProblem, ResumeResult, ResumeSession, ResumeTask, DEFAULT_RESUME_CHARACTERS,
@@ -77,15 +82,15 @@ pub use retrieval::{
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
 };
 pub use session::{
-    checkpoint_session, finish_session, generate_request_id, list_sessions, read_session,
-    start_session, AgentSession, AttemptInput, AttemptOutcome, AttemptRecord, CheckpointInput,
-    CommandInput, CommandRecord, DecisionInput, DecisionRecord, FinishSessionInput,
-    MemoryRedaction, PlanItem, PlanItemInput, PlanStatus, ProblemInput, ProblemRecord,
-    ResolutionInput, ResolutionRecord, SessionArtifactCitation, SessionCheckpoint, SessionFinish,
-    SessionMutation, SessionSource, SessionSourceKind, SessionStatus, SessionSummary,
-    StartSessionInput, TaskInput, TaskRecord, TaskStatus, VerificationInput, VerificationRecord,
-    VerificationStatus, SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES,
-    SESSION_PROJECTION_LIMIT_BYTES, SESSION_SCHEMA_VERSION,
+    checkpoint_session, finish_session, generate_request_id, list_sessions, project_session_stats,
+    read_session, start_session, AgentSession, AttemptInput, AttemptOutcome, AttemptRecord,
+    CheckpointInput, CommandInput, CommandRecord, DecisionInput, DecisionRecord,
+    FinishSessionInput, MemoryRedaction, PlanItem, PlanItemInput, PlanStatus, ProblemInput,
+    ProblemRecord, ProjectSessionStats, ResolutionInput, ResolutionRecord, SessionArtifactCitation,
+    SessionCheckpoint, SessionFinish, SessionMutation, SessionSource, SessionSourceKind,
+    SessionStatus, SessionSummary, StartSessionInput, TaskInput, TaskRecord, TaskStatus,
+    VerificationInput, VerificationRecord, VerificationStatus, SESSION_EVENT_LIMIT,
+    SESSION_EVENT_LIMIT_BYTES, SESSION_PROJECTION_LIMIT_BYTES, SESSION_SCHEMA_VERSION,
 };
 pub use session_context::{
     list_session_contexts, read_session_context, SessionContextAttempt, SessionContextCheckpoint,
@@ -244,6 +249,16 @@ pub enum LeyCoreError {
     InvalidCapturePolicy(String),
     #[error("invalid Ley vault binding registry: {0}")]
     InvalidBindingRegistry(String),
+    #[error("invalid Ley project catalog: {0}")]
+    InvalidProjectCatalog(String),
+    #[error(
+        "project identity {project_id} is already active at {observed_root}; the selected copy at {requested_root} needs a new .ley identity"
+    )]
+    DuplicateProjectIdentity {
+        project_id: String,
+        observed_root: PathBuf,
+        requested_root: PathBuf,
+    },
     #[error("no private configuration directory is available on this operating system")]
     ConfigDirectoryUnavailable,
     #[error("project {0} is not bound to a Ley vault; run 'ley bind --vault <path>'")]

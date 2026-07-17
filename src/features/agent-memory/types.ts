@@ -217,6 +217,41 @@ export interface AgentMemoryDashboard {
   allLearnings: LearningList;
 }
 
+export type AgentProjectCatalogState =
+  | "ready"
+  | "unbound"
+  | "needs-capture"
+  | "project-unavailable"
+  | "vault-unavailable"
+  | "identity-changed"
+  | "memory-error";
+
+export interface AgentProjectCatalogItem {
+  projectId: string;
+  projectPath: string;
+  projectName: string;
+  captureMode?: CaptureMode;
+  state: AgentProjectCatalogState;
+  lastOpenedAtUnixMs: number;
+  vaultName?: string;
+  files?: number;
+  graphNodes?: number;
+  sessions?: number;
+  activeSessions?: number;
+  reviewItems?: number;
+  freshness?: string;
+  statusDetail: string;
+}
+
+export interface AgentProjectCatalog {
+  projects: AgentProjectCatalogItem[];
+  totalProjects: number;
+  omittedProjects: number;
+  readyProjects: number;
+  attentionProjects: number;
+  privacyNotice: string;
+}
+
 export type ArtifactKind =
   "source" | "documentation" | "manifest" | "configuration" | "text";
 
@@ -410,6 +445,13 @@ export type AgentProjectInspection =
       projectId: string;
       projectName: string;
       captureMode: CaptureMode;
+    }
+  | {
+      status: "vault-unavailable";
+      projectId: string;
+      projectName: string;
+      captureMode: CaptureMode;
+      previousVaultName: string;
     }
   | {
       status: "needs-capture";
