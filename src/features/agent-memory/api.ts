@@ -141,13 +141,35 @@ export function readAgentProjectActivity(
 export function reviewAgentLearning(
   projectPath: string,
   learningId: string,
+  expectedEventCount: number,
   action: LearningAction,
   note: string,
 ): Promise<AgentMemoryDashboard> {
   return invoke("review_agent_learning", {
     projectPath,
     learningId,
+    expectedEventCount,
     action,
+    note,
+  });
+}
+
+export function correctAgentLearning(
+  projectPath: string,
+  learningId: string,
+  expectedEventCount: number,
+  title: string,
+  guidance: string,
+  confidencePercent: number,
+  note: string,
+): Promise<AgentMemoryDashboard> {
+  return invoke("correct_agent_learning", {
+    projectPath,
+    learningId,
+    expectedEventCount,
+    title,
+    guidance,
+    confidencePercent,
     note,
   });
 }

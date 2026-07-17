@@ -486,6 +486,7 @@ mod tests {
             &verified.learning.learning_id,
             ReviewLearningInput {
                 request_id: request_id('5'),
+                expected_event_count: None,
                 actor: LearningActor::User,
                 action: LearningFeedbackAction::Confirm,
                 note: "Confirmed from the release run.".to_owned(),
@@ -574,6 +575,7 @@ mod tests {
             &verified.learning.learning_id,
             CorrectLearningInput {
                 request_id: request_id('8'),
+                expected_event_count: None,
                 actor: LearningActor::Agent,
                 title: "Verify the workspace release".to_owned(),
                 guidance: "Run the documented workspace release verification.".to_owned(),
@@ -597,6 +599,7 @@ mod tests {
             &verified.learning.learning_id,
             ReviewLearningInput {
                 request_id: request_id('9'),
+                expected_event_count: None,
                 actor: LearningActor::User,
                 action: LearningFeedbackAction::Confirm,
                 note: "Confirmed the corrected workflow.".to_owned(),

@@ -365,6 +365,7 @@ fn learning_correct(arguments: &[String]) -> Result<(), CliError> {
         &learning_id,
         CorrectLearningInput {
             request_id: request_id.unwrap_or_else(generate_learning_request_id),
+            expected_event_count: None,
             actor: actor
                 .ok_or_else(|| CliError::Usage("learning correct requires --actor".to_owned()))?,
             title: title
@@ -434,6 +435,7 @@ fn learning_review(arguments: &[String]) -> Result<(), CliError> {
         &learning_id,
         ReviewLearningInput {
             request_id: request_id.unwrap_or_else(generate_learning_request_id),
+            expected_event_count: None,
             actor: actor
                 .ok_or_else(|| CliError::Usage("learning review requires --actor".to_owned()))?,
             action: action

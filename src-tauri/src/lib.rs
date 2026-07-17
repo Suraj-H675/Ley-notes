@@ -1,19 +1,20 @@
 use ley_core::{
-    diagnose_project, generate_learning_request_id, ingest_project, initialize_project,
-    list_learning_contexts, list_sessions, project_activity_view, project_artifact_inventory,
-    project_graph_view, project_memory_overview, project_resume_context, project_session_stats,
-    read_learning_context, read_session_context, review_learning, search_observed_projects,
-    update_capture_mode, BindingRegistry, BindingSource, CaptureMode, CrossProjectSearch,
-    IngestionResult, LearningActor, LearningContextPack, LearningFeedbackAction, LearningList,
-    LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory,
-    ProjectCatalog, ProjectDiagnostic, ProjectGraphView, ProjectProblemScope, ProjectResumePack,
-    ProjectVaultBinding, ReviewLearningInput, SessionContextPack, SessionSummary,
-    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
-    DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
-    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
-    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    correct_learning, diagnose_project, generate_learning_request_id, ingest_project,
+    initialize_project, list_learning_contexts, list_sessions, project_activity_view,
+    project_artifact_inventory, project_graph_view, project_memory_overview,
+    project_resume_context, project_session_stats, read_learning, read_learning_context,
+    read_session_context, review_learning, search_observed_projects, update_capture_mode,
+    BindingRegistry, BindingSource, CaptureMode, CorrectLearningInput, CrossProjectSearch,
+    IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
+    LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
+    ProjectActivityView, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
+    ProjectGraphView, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
+    ReviewLearningInput, SessionContextPack, SessionSummary, DEFAULT_ARTIFACT_RESULTS,
+    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
+    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
+    DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_RESUME_CHARACTERS,
+    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS, MAX_LEARNING_LIST_RESULTS,
 };
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -626,6 +627,7 @@ fn read_agent_session(
 fn review_agent_learning(
     project_path: String,
     learning_id: String,
+    expected_event_count: u64,
     action: LearningFeedbackAction,
     note: String,
 ) -> Result<AgentMemoryDashboard, String> {
@@ -637,6 +639,7 @@ fn review_agent_learning(
                 &learning_id,
                 ReviewLearningInput {
                     request_id: generate_learning_request_id(),
+                    expected_event_count: Some(expected_event_count),
                     actor: LearningActor::User,
                     action,
                     note,
@@ -646,6 +649,79 @@ fn review_agent_learning(
             load_agent_memory_dashboard(Path::new(&project_path), binding)
         })
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn correct_agent_learning(
+    project_path: String,
+    learning_id: String,
+    expected_event_count: u64,
+    title: String,
+    guidance: String,
+    confidence_percent: u8,
+    note: String,
+) -> Result<AgentMemoryDashboard, String> {
+    if note.trim().is_empty() {
+        return Err("A correction reason is required.".to_owned());
+    }
+    resolved_agent_binding(Path::new(&project_path))
+        .and_then(|binding| {
+            correct_agent_learning_with_binding(
+                Path::new(&project_path),
+                binding,
+                &learning_id,
+                AgentLearningCorrection {
+                    expected_event_count,
+                    title,
+                    guidance,
+                    confidence_percent,
+                    note,
+                },
+            )
+        })
+        .map_err(|error| error.to_string())
+}
+
+struct AgentLearningCorrection {
+    expected_event_count: u64,
+    title: String,
+    guidance: String,
+    confidence_percent: u8,
+    note: String,
+}
+
+fn correct_agent_learning_with_binding(
+    project_path: &Path,
+    binding: ProjectVaultBinding,
+    learning_id: &str,
+    correction: AgentLearningCorrection,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let current = read_learning(project_path, &binding.vault_path, learning_id)?;
+    let evidence = current
+        .evidence
+        .into_iter()
+        .map(|item| LearningEvidenceInput {
+            session_id: item.session_id,
+            record_id: item.record_id,
+            note: item.note,
+        })
+        .collect();
+    correct_learning(
+        project_path,
+        &binding.vault_path,
+        learning_id,
+        CorrectLearningInput {
+            request_id: generate_learning_request_id(),
+            expected_event_count: Some(correction.expected_event_count),
+            actor: LearningActor::User,
+            title: correction.title,
+            guidance: correction.guidance,
+            confidence_percent: correction.confidence_percent,
+            evidence,
+            note: correction.note,
+        },
+    )?;
+    load_agent_memory_dashboard(project_path, binding)
 }
 
 #[tauri::command]
@@ -1204,6 +1280,7 @@ pub fn run() {
             read_agent_learning,
             read_agent_session,
             review_agent_learning,
+            correct_agent_learning,
             bind_agent_project,
             resolve_agent_project_vault,
             unbind_agent_project,
@@ -1507,6 +1584,7 @@ mod tests {
             &learning.learning.learning_id,
             ReviewLearningInput {
                 request_id: format!("req_{}", "4".repeat(32)),
+                expected_event_count: None,
                 actor: LearningActor::User,
                 action: LearningFeedbackAction::Confirm,
                 note: "Verified in the native dashboard.".into(),
@@ -1514,9 +1592,37 @@ mod tests {
             },
         )
         .unwrap();
-        let reviewed = load_agent_memory_dashboard(&project, binding).unwrap();
+        let reviewed = load_agent_memory_dashboard(&project, binding.clone()).unwrap();
         assert_eq!(reviewed.review_inbox.total_matching, 0);
         assert_eq!(reviewed.resume.total_current_trusted_learnings, 1);
+
+        let confirmed = read_learning(&project, &vault, &learning.learning.learning_id).unwrap();
+        let corrected = correct_agent_learning_with_binding(
+            &project,
+            binding,
+            &learning.learning.learning_id,
+            AgentLearningCorrection {
+                expected_event_count: confirmed.event_count,
+                title: "Use the shared local projections".into(),
+                guidance: "Read complete evidence through ley-core before changing memory.".into(),
+                confidence_percent: 94,
+                note: "The first claim did not mention bounded UI projections.".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(corrected.review_inbox.total_matching, 1);
+        assert_eq!(corrected.resume.total_current_trusted_learnings, 0);
+        assert_eq!(
+            corrected.all_learnings.learnings[0].title,
+            "Use the shared local projections"
+        );
+        let correction = read_learning(&project, &vault, &learning.learning.learning_id).unwrap();
+        assert_eq!(correction.event_count, 3);
+        assert_eq!(correction.evidence.len(), 1);
+        assert_eq!(
+            correction.evidence[0].note,
+            "Captured in the dashboard implementation session."
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

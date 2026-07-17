@@ -36,7 +36,7 @@ All proposals start as `tentative` and `review-required`, including user-authore
 
 Artifact-backed lessons are `current` while every cited path and hash still matches the latest approved ingestion. They become `source-changed` after a modification or deletion and re-enter the review inbox even if previously trusted. Session evidence without an artifact citation is visibly `uncited`; user confirmation may still trust it, but it never gains a source-freshness claim.
 
-Every mutation requires a stable `req_` request ID. Event and learning IDs are deterministic. Exact retries replay the original event even if a session or current source snapshot changed later; changed reuse fails. A private project-level lock serializes concurrent writers. Event files are created once, projections are replaced atomically, and all reads validate identity, fingerprints, sequences, text, citations, authority, replacement integrity, and file permissions.
+Every mutation requires a stable `req_` request ID. Event and learning IDs are deterministic. Exact retries replay the original event even if a session or current source snapshot changed later; changed reuse fails. A private project-level lock serializes concurrent writers. User interfaces may additionally supply the event count they inspected; a mismatch under the lock rejects a stale correction or trust decision before mutation. Event files are created once, projections are replaced atomically, and all reads validate identity, fingerprints, sequences, text, citations, authority, replacement integrity, and file permissions.
 
 Recognized credential patterns are redacted before event creation, including titles, guidance, evidence notes, correction notes, and review notes. The ledger stores redaction metadata. Redaction remains a safety layer rather than a guarantee.
 
@@ -48,6 +48,7 @@ The CLI requires actor and provenance to be explicit rather than inferring who i
 - Corrections, disputes, rejection, staleness, and supersession remain auditable.
 - A successful historical citation is preserved while current-source drift remains visible.
 - Concurrent agents cannot overwrite or silently merge one another’s proposals.
+- A desktop trust action cannot approve a concurrent learning version the user did not inspect.
 - The Markdown review file is human-readable but not authoritative.
 - Version 1 does not automatically trust a claim based only on corroboration count.
 - Deletion and promotion into an ordinary note require later explicit workflows.

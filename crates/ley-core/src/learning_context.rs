@@ -81,6 +81,7 @@ pub struct LearningContextPack {
     pub event_count: u64,
     pub text_characters: usize,
     pub estimated_text_tokens: usize,
+    pub claim_truncated: bool,
     pub truncated: bool,
     pub source_boundary: &'static str,
     pub instruction_warning: &'static str,
@@ -136,6 +137,7 @@ pub fn read_learning_context(
     let mut budget = TextBudget::new(max_text_characters);
     let title = budget.take(&learning.title, 256);
     let guidance = budget.take(&learning.guidance, (max_text_characters / 2).min(16_000));
+    let claim_truncated = budget.truncated;
 
     let evidence_count = learning.evidence.len();
     let mut omitted_artifacts = 0;
@@ -210,6 +212,7 @@ pub fn read_learning_context(
         event_count: learning.event_count,
         text_characters,
         estimated_text_tokens: text_characters.div_ceil(4),
+        claim_truncated,
         truncated,
         source_boundary: SOURCE_BOUNDARY,
         instruction_warning: INSTRUCTION_WARNING,
@@ -409,6 +412,7 @@ mod tests {
             &learning.learning.learning_id,
             ReviewLearningInput {
                 request_id: request_id('4'),
+                expected_event_count: None,
                 actor: LearningActor::User,
                 action: LearningFeedbackAction::Confirm,
                 note: "Confirmed".to_owned(),
@@ -439,12 +443,25 @@ mod tests {
         .unwrap();
         assert!(context.trusted_for_reuse);
         assert!(context.truncated);
+        assert!(context.claim_truncated);
         assert!(context.text_characters <= MIN_LEARNING_CONTEXT_CHARACTERS);
         assert_eq!(context.freshness_basis, "latest-captured-snapshot");
         assert!(!context.live_source_checked);
         assert!(context
             .instruction_warning
             .contains("explicitly trusted and current"));
+        let provenance_bounded = read_learning_context(
+            &project,
+            &vault,
+            &learning.learning.learning_id,
+            1,
+            1,
+            1,
+            MAX_LEARNING_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert!(provenance_bounded.truncated);
+        assert!(!provenance_bounded.claim_truncated);
 
         std::fs::write(
             project.join("README.md"),

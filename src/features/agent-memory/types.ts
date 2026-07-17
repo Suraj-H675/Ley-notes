@@ -533,7 +533,10 @@ export interface LearningContext {
   confidencePercent: number;
   freshness: string;
   corroboratingSessions: number;
+  createdAtUnixMs: number;
   updatedAtUnixMs: number;
+  validFromUnixMs: number;
+  validUntilUnixMs?: number;
   evidenceCount: number;
   evidence: Array<{
     sessionId: string;
@@ -555,5 +558,11 @@ export interface LearningContext {
     action: string;
     note: string;
   }>;
+  historyCount: number;
+  eventCount: number;
+  omittedEvidence: number;
+  omittedHistory: number;
+  claimTruncated: boolean;
+  truncated: boolean;
   instructionWarning: string;
 }

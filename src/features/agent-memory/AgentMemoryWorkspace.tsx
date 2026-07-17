@@ -20,6 +20,7 @@ import {
   LockKeyhole,
   MessageSquareWarning,
   Network,
+  PencilLine,
   RefreshCw,
   RotateCcw,
   Scale,
@@ -86,6 +87,11 @@ const ProjectActivityExplorer = lazy(() =>
 const CapturePrivacyPanel = lazy(() =>
   import("./CapturePrivacyPanel").then((module) => ({
     default: module.CapturePrivacyPanel,
+  })),
+);
+const LearningCorrectionEditor = lazy(() =>
+  import("./LearningCorrectionEditor").then((module) => ({
+    default: module.LearningCorrectionEditor,
   })),
 );
 
@@ -1279,6 +1285,7 @@ function LearningInspector({
   const [learning, setLearning] = useState<LearningContext | null>(null);
   const [action, setAction] = useState<LearningAction | null>(null);
   const [note, setNote] = useState("");
+  const [correcting, setCorrecting] = useState(false);
   const [busy, setBusy] = useState(Boolean(learningId));
   const [error, setError] = useState<string | null>(null);
 
@@ -1303,15 +1310,18 @@ function LearningInspector({
   const noteRequired =
     action === "contest" || action === "reject" || action === "mark-stale";
   const canSubmit = action && (!noteRequired || note.trim().length > 0);
+  const terminal =
+    learning?.state === "rejected" || learning?.state === "superseded";
 
   async function submitReview() {
-    if (!learningId || !action || !canSubmit) return;
+    if (!learningId || !learning || !action || !canSubmit) return;
     setBusy(true);
     setError(null);
     try {
       const dashboard = await reviewAgentLearning(
         projectPath,
         learningId,
+        learning.eventCount,
         action,
         note.trim(),
       );
@@ -1321,6 +1331,14 @@ function LearningInspector({
     } finally {
       setBusy(false);
     }
+  }
+
+  function beginCorrection() {
+    if (!learning) return;
+    setAction(null);
+    setNote("");
+    setCorrecting(true);
+    setError(null);
   }
 
   return (
@@ -1333,7 +1351,7 @@ function LearningInspector({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/70 backdrop-blur-sm" />
         <Dialog.Content
-          className="fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-menu outline-none sm:inset-x-6 sm:bottom-6 sm:top-6"
+          className="fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-menu outline-none focus-visible:ring-2 focus-visible:ring-primary sm:inset-x-6 sm:bottom-6 sm:top-6"
           aria-describedby={undefined}
         >
           <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3 sm:px-5">
@@ -1392,9 +1410,63 @@ function LearningInspector({
                     <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                       Guidance
                     </h3>
-                    <p className="mt-2 whitespace-pre-wrap text-body leading-6 text-foreground">
+                    <p className="mt-2 whitespace-pre-wrap break-words text-body leading-6 text-foreground">
                       {learning.guidance}
                     </p>
+                  </section>
+                  <section>
+                    <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      Version timeline
+                    </h3>
+                    <dl className="mt-2 grid gap-2 rounded-lg border border-border bg-background/35 p-3 text-meta sm:grid-cols-3">
+                      <div>
+                        <dt className="text-micro text-muted-foreground">
+                          Created
+                        </dt>
+                        <dd className="mt-0.5 font-medium">
+                          <time
+                            dateTime={isoTime(learning.createdAtUnixMs)}
+                            title={absoluteTime(learning.createdAtUnixMs)}
+                          >
+                            {relativeTime(learning.createdAtUnixMs)}
+                          </time>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-micro text-muted-foreground">
+                          Current version
+                        </dt>
+                        <dd className="mt-0.5 font-medium">
+                          <time
+                            dateTime={isoTime(learning.validFromUnixMs)}
+                            title={absoluteTime(learning.validFromUnixMs)}
+                          >
+                            {relativeTime(learning.validFromUnixMs)}
+                          </time>
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-micro text-muted-foreground">
+                          Ledger
+                        </dt>
+                        <dd className="mt-0.5 font-medium">
+                          {learning.eventCount} immutable{" "}
+                          {learning.eventCount === 1 ? "event" : "events"}
+                        </dd>
+                      </div>
+                    </dl>
+                    {learning.validUntilUnixMs !== undefined && (
+                      <p className="mt-2 text-micro text-muted-foreground">
+                        This version stopped being valid{" "}
+                        <time
+                          dateTime={isoTime(learning.validUntilUnixMs)}
+                          title={absoluteTime(learning.validUntilUnixMs)}
+                        >
+                          {relativeTime(learning.validUntilUnixMs)}
+                        </time>
+                        .
+                      </p>
+                    )}
                   </section>
                   <section>
                     <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
@@ -1441,6 +1513,13 @@ function LearningInspector({
                         ))
                       )}
                     </div>
+                    {learning.omittedEvidence > 0 && (
+                      <p className="mt-2 text-micro text-muted-foreground">
+                        {learning.omittedEvidence} older evidence{" "}
+                        {learning.omittedEvidence === 1 ? "reference is" : "references are"}{" "}
+                        omitted from this bounded inspector.
+                      </p>
+                    )}
                   </section>
                   {learning.history.length > 0 && (
                     <section>
@@ -1454,18 +1533,36 @@ function LearningInspector({
                             className="flex gap-3 text-meta"
                           >
                             <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-border-strong" />
-                            <span>
+                            <span className="min-w-0 break-words">
                               <span className="font-medium">
                                 {humanize(entry.action)}
                               </span>{" "}
                               by {humanize(entry.actor)} ·{" "}
-                              {relativeTime(entry.recordedAtUnixMs)}
+                              <time
+                                dateTime={isoTime(entry.recordedAtUnixMs)}
+                                title={absoluteTime(entry.recordedAtUnixMs)}
+                              >
+                                {relativeTime(entry.recordedAtUnixMs)}
+                              </time>
                               {entry.note ? ` — ${entry.note}` : ""}
                             </span>
                           </li>
                         ))}
                       </ol>
+                      {learning.omittedHistory > 0 && (
+                        <p className="mt-2 text-micro text-muted-foreground">
+                          Showing {learning.history.length} of{" "}
+                          {learning.historyCount} immutable history events.
+                        </p>
+                      )}
                     </section>
+                  )}
+                  {learning.claimTruncated && (
+                    <p className="rounded-lg border border-warning/25 bg-warning/8 p-3 text-micro text-muted-foreground">
+                      The title or guidance was truncated to keep this inspector
+                      bounded. Use the CLI for the complete claim before
+                      correcting or reviewing it.
+                    </p>
                   )}
                   <p className="rounded-lg border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
                     <MessageSquareWarning
@@ -1480,11 +1577,48 @@ function LearningInspector({
           </div>
           {learning && (
             <div className="shrink-0 border-t border-border bg-surface-1 p-4 sm:p-5">
-              {!action ? (
+              {learning.claimTruncated ? (
+                <p className="text-meta text-muted-foreground">
+                  This bounded view omits part of the claim. Inspect the complete
+                  CLI projection before correcting or reviewing it.
+                </p>
+              ) : terminal ? (
+                <p className="text-meta text-muted-foreground">
+                  This {humanize(learning.state)} learning is preserved as
+                  terminal history. Create a new learning rather than rewriting
+                  it.
+                </p>
+              ) : correcting ? (
+                <Suspense
+                  fallback={
+                    <p className="py-4 text-center text-meta text-muted-foreground">
+                      Loading correction editor…
+                    </p>
+                  }
+                >
+                  <LearningCorrectionEditor
+                    projectPath={projectPath}
+                    learning={learning}
+                    onCancel={() => {
+                      setCorrecting(false);
+                      setError(null);
+                    }}
+                    onCorrected={onReviewed}
+                  />
+                </Suspense>
+              ) : !action ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="mr-auto text-meta font-medium">
                     Your decision
                   </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={beginCorrection}
+                  >
+                    <PencilLine size={13} />
+                    Correct
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
@@ -1532,12 +1666,12 @@ function LearningInspector({
                   <textarea
                     id="learning-review-note"
                     name="learning-review-note"
+                    autoComplete="off"
                     value={note}
                     onChange={(event) => setNote(event.target.value)}
                     placeholder={reviewPlaceholder(action)}
                     rows={2}
-                    autoFocus
-                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus:border-primary focus:ring-1 focus:ring-primary"
+                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
                   />
                   {error && (
                     <p
@@ -2282,6 +2416,17 @@ function relativeTime(unixMs: number): string {
   return formatter.format(Math.round(deltaMonths / 12), "year");
 }
 
+function isoTime(unixMs: number): string {
+  return new Date(unixMs).toISOString();
+}
+
+function absoluteTime(unixMs: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(unixMs);
+}
+
 function humanize(value: string): string {
   return value
     .replace(/-/g, " ")
@@ -2293,10 +2438,10 @@ function actionLabel(action: LearningAction): string {
 }
 
 function reviewPlaceholder(action: LearningAction): string {
-  if (action === "confirm") return "Why is this useful or reliable?";
-  if (action === "contest") return "What is uncertain or conflicting?";
-  if (action === "reject") return "Why should agents not reuse this?";
-  return "What changed or became outdated?";
+  if (action === "confirm") return "Explain why this is useful or reliable…";
+  if (action === "contest") return "Describe what is uncertain or conflicting…";
+  if (action === "reject") return "Explain why agents should not reuse this…";
+  return "Describe what changed or became outdated…";
 }
 
 function sourceLabel(session: SessionContext): string {

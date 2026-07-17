@@ -119,6 +119,8 @@ pub struct ProposeLearningInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CorrectLearningInput {
     pub request_id: String,
+    #[serde(default)]
+    pub expected_event_count: Option<u64>,
     pub actor: LearningActor,
     pub title: String,
     pub guidance: String,
@@ -132,6 +134,8 @@ pub struct CorrectLearningInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ReviewLearningInput {
     pub request_id: String,
+    #[serde(default)]
+    pub expected_event_count: Option<u64>,
     pub actor: LearningActor,
     pub action: LearningFeedbackAction,
     #[serde(default)]
@@ -329,6 +333,7 @@ pub fn propose_learning(
         PendingLearningEvent {
             event_id,
             request_id: input.request_id,
+            expected_event_count: None,
             redactions,
             payload,
             allow_create: true,
@@ -374,6 +379,7 @@ pub fn correct_learning(
         PendingLearningEvent {
             event_id,
             request_id: input.request_id,
+            expected_event_count: input.expected_event_count,
             redactions,
             payload,
             allow_create: false,
@@ -438,6 +444,7 @@ pub fn review_learning(
         PendingLearningEvent {
             event_id,
             request_id: input.request_id,
+            expected_event_count: input.expected_event_count,
             redactions,
             payload,
             allow_create: false,
@@ -704,6 +711,7 @@ fn locate_session_record(
 struct PendingLearningEvent {
     event_id: String,
     request_id: String,
+    expected_event_count: Option<u64>,
     redactions: Vec<LearningRedaction>,
     payload: LearningEventPayload,
     allow_create: bool,
@@ -758,6 +766,14 @@ fn mutate_learning(
         .iter()
         .filter(|event| event.learning_id == learning_id)
         .collect::<Vec<_>>();
+    if let Some(expected) = pending.expected_event_count {
+        let actual = learning_events.len() as u64;
+        if actual != expected {
+            return Err(LeyCoreError::InvalidLearningRequest(format!(
+                "learning changed from {expected} events to {actual}; reload before saving"
+            )));
+        }
+    }
     if pending.allow_create && !learning_events.is_empty() {
         return Err(LeyCoreError::LearningIdempotencyConflict(
             pending.request_id,
@@ -2181,6 +2197,7 @@ mod tests {
                 &proposed.learning.learning_id,
                 ReviewLearningInput {
                     request_id: request_id('4'),
+                    expected_event_count: None,
                     actor: LearningActor::Agent,
                     action: LearningFeedbackAction::Confirm,
                     note: String::new(),
@@ -2195,6 +2212,7 @@ mod tests {
             &proposed.learning.learning_id,
             ReviewLearningInput {
                 request_id: request_id('5'),
+                expected_event_count: Some(proposed.learning.event_count),
                 actor: LearningActor::User,
                 action: LearningFeedbackAction::Confirm,
                 note: "I verified this procedure.".to_owned(),
@@ -2205,19 +2223,44 @@ mod tests {
         assert_eq!(confirmed.learning.state, LearningState::Verified);
         assert_eq!(confirmed.learning.trust_state, LearningTrustState::Trusted);
 
+        assert!(matches!(
+            correct_learning(
+                &project,
+                &vault,
+                &proposed.learning.learning_id,
+                CorrectLearningInput {
+                    request_id: request_id('6'),
+                    expected_event_count: Some(proposed.learning.event_count),
+                    actor: LearningActor::User,
+                    title: "Stale correction".to_owned(),
+                    guidance: "This stale editor must not overwrite a newer review.".to_owned(),
+                    confidence_percent: 90,
+                    evidence: vec![LearningEvidenceInput {
+                        session_id: session_id.clone(),
+                        record_id: record_id.clone(),
+                        note: String::new(),
+                    }],
+                    note: "Started before confirmation.".to_owned(),
+                },
+            ),
+            Err(LeyCoreError::InvalidLearningRequest(message))
+                if message.contains("reload before saving")
+        ));
+
         let corrected = correct_learning(
             &project,
             &vault,
             &proposed.learning.learning_id,
             CorrectLearningInput {
-                request_id: request_id('6'),
-                actor: LearningActor::Agent,
+                request_id: request_id('7'),
+                expected_event_count: Some(confirmed.learning.event_count),
+                actor: LearningActor::User,
                 title: "Check and test the workspace".to_owned(),
                 guidance: "Run cargo check --workspace and cargo test --workspace.".to_owned(),
                 confidence_percent: 90,
                 evidence: vec![LearningEvidenceInput {
-                    session_id,
-                    record_id,
+                    session_id: session_id.clone(),
+                    record_id: record_id.clone(),
                     note: String::new(),
                 }],
                 note: "A later correction expanded the verification.".to_owned(),
@@ -2230,6 +2273,23 @@ mod tests {
             LearningTrustState::ReviewRequired
         );
         assert_eq!(corrected.learning.event_count, 3);
+        assert!(matches!(
+            review_learning(
+                &project,
+                &vault,
+                &proposed.learning.learning_id,
+                ReviewLearningInput {
+                    request_id: request_id('8'),
+                    expected_event_count: Some(confirmed.learning.event_count),
+                    actor: LearningActor::User,
+                    action: LearningFeedbackAction::Confirm,
+                    note: "This stale review must not trust unseen text.".to_owned(),
+                    replacement_learning_id: None,
+                },
+            ),
+            Err(LeyCoreError::InvalidLearningRequest(message))
+                if message.contains("reload before saving")
+        ));
     }
 
     #[test]
@@ -2297,6 +2357,7 @@ mod tests {
             &proposed.learning.learning_id,
             ReviewLearningInput {
                 request_id: request_id('4'),
+                expected_event_count: None,
                 actor: LearningActor::User,
                 action: LearningFeedbackAction::Reject,
                 note: "This is not a valid project rule.".to_owned(),
@@ -2311,6 +2372,7 @@ mod tests {
                 &proposed.learning.learning_id,
                 CorrectLearningInput {
                     request_id: request_id('5'),
+                    expected_event_count: None,
                     actor: LearningActor::User,
                     title: "Changed".to_owned(),
                     guidance: "This must not be appended.".to_owned(),
@@ -2359,6 +2421,7 @@ mod tests {
             &original.learning.learning_id,
             ReviewLearningInput {
                 request_id: request_id('5'),
+                expected_event_count: None,
                 actor: LearningActor::User,
                 action: LearningFeedbackAction::Supersede,
                 note: "The replacement reflects the current workflow.".to_owned(),
@@ -2379,6 +2442,7 @@ mod tests {
                 &replacement.learning.learning_id,
                 ReviewLearningInput {
                     request_id: request_id('6'),
+                    expected_event_count: None,
                     actor: LearningActor::User,
                     action: LearningFeedbackAction::Supersede,
                     note: "This cycle must never enter the ledger.".to_owned(),

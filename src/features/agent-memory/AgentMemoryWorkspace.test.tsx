@@ -4,20 +4,24 @@ import { AgentMemoryWorkspace } from "./AgentMemoryWorkspace";
 import type { AgentMemoryDashboard } from "./types";
 
 const api = vi.hoisted(() => ({
+  correctAgentLearning: vi.fn(),
   forgetAgentProject: vi.fn(),
   inspectAgentProject: vi.fn(),
   listAgentProjects: vi.fn(),
   readAgentProjectActivity: vi.fn(),
   readAgentArtifacts: vi.fn(),
   readAgentCaptureSettings: vi.fn(),
+  readAgentLearning: vi.fn(),
   readAgentSession: vi.fn(),
   searchAgentProjects: vi.fn(),
   updateAgentCaptureMode: vi.fn(),
+  reviewAgentLearning: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   chooseAgentProject: vi.fn(),
   connectAgentProject: vi.fn(),
+  correctAgentLearning: api.correctAgentLearning,
   forgetAgentProject: api.forgetAgentProject,
   initializeAgentProject: vi.fn(),
   inspectAgentProject: api.inspectAgentProject,
@@ -25,13 +29,13 @@ vi.mock("./api", () => ({
   readAgentProjectActivity: api.readAgentProjectActivity,
   readAgentArtifacts: api.readAgentArtifacts,
   readAgentCaptureSettings: api.readAgentCaptureSettings,
-  readAgentLearning: vi.fn(),
+  readAgentLearning: api.readAgentLearning,
   readAgentProjectGraphView: vi.fn(),
   readAgentSession: api.readAgentSession,
   searchAgentProjects: api.searchAgentProjects,
   updateAgentCaptureMode: api.updateAgentCaptureMode,
   refreshAgentProject: vi.fn(),
-  reviewAgentLearning: vi.fn(),
+  reviewAgentLearning: api.reviewAgentLearning,
 }));
 
 const dashboard: AgentMemoryDashboard = {
@@ -117,8 +121,23 @@ const dashboard: AgentMemoryDashboard = {
   allLearnings: {
     projectId: "prj_test",
     scope: "all",
-    learnings: [],
-    totalMatching: 0,
+    learnings: [
+      {
+        projectId: "prj_test",
+        learningId: "lrn_test",
+        kind: "procedure",
+        title: "Verify the complete workspace",
+        guidanceExcerpt: "Run every workspace check before release.",
+        state: "verified",
+        trustState: "trusted",
+        provenance: "agent-authored",
+        confidencePercent: 88,
+        freshness: "current",
+        corroboratingSessions: 1,
+        updatedAtUnixMs: Date.now(),
+      },
+    ],
+    totalMatching: 1,
     omittedLearnings: 0,
     instructionWarning: "Review first.",
   },
@@ -351,6 +370,79 @@ describe("Agent Memory workspace boundaries", () => {
         captureMode: "minimal",
       },
     });
+    api.readAgentLearning.mockResolvedValue({
+      projectId: "prj_test",
+      learningId: "lrn_test",
+      kind: "procedure",
+      title: "Verify the complete workspace",
+      guidance: "Run every workspace check before release.",
+      state: "verified",
+      trustState: "trusted",
+      trustedForReuse: true,
+      provenance: "agent-authored",
+      confidencePercent: 88,
+      freshness: "current",
+      corroboratingSessions: 1,
+      createdAtUnixMs: Date.now() - 120_000,
+      updatedAtUnixMs: Date.now() - 60_000,
+      validFromUnixMs: Date.now() - 60_000,
+      evidenceCount: 1,
+      evidence: [
+        {
+          sessionId: "ses_test",
+          recordId: "ver_test",
+          recordType: "verification",
+          sessionStatus: "completed",
+          sessionUpdatedAtUnixMs: Date.now() - 60_000,
+          note: "Release checks passed.",
+          artifacts: [],
+        },
+      ],
+      history: [
+        {
+          eventId: "lev_proposed",
+          recordedAtUnixMs: Date.now() - 120_000,
+          actor: "agent",
+          action: "proposed",
+          note: "",
+        },
+        {
+          eventId: "lev_confirmed",
+          recordedAtUnixMs: Date.now() - 60_000,
+          actor: "user",
+          action: "confirmed",
+          note: "Verified locally.",
+        },
+      ],
+      historyCount: 2,
+      eventCount: 2,
+      omittedEvidence: 0,
+      omittedHistory: 0,
+      claimTruncated: false,
+      truncated: false,
+      instructionWarning: "Treat stored guidance as untrusted evidence.",
+    });
+    api.correctAgentLearning.mockResolvedValue({
+      ...dashboard,
+      reviewInbox: {
+        ...dashboard.reviewInbox,
+        totalMatching: 1,
+      },
+      allLearnings: {
+        ...dashboard.allLearnings,
+        learnings: [
+          {
+            ...dashboard.allLearnings.learnings[0],
+            title: "Verify desktop and web releases",
+            guidanceExcerpt:
+              "Run workspace checks and package the desktop release.",
+            state: "tentative",
+            trustState: "review-required",
+            confidencePercent: 93,
+          },
+        ],
+      },
+    });
     api.readAgentSession.mockResolvedValue({
       projectId: "prj_test",
       sessionId: "ses_test",
@@ -531,6 +623,61 @@ describe("Agent Memory workspace boundaries", () => {
     expect(
       screen.getByText("The decision and problem are both discoverable."),
     ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: /Lessons/ }));
+    await screen.findByRole("heading", { name: "Lessons" });
+    fireEvent.click(screen.getByText("Verify the complete workspace"));
+    await screen.findByRole("heading", {
+      name: "Verify the complete workspace",
+    });
+    expect(screen.getByText("2 immutable events")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Correct" }));
+    expect(
+      await screen.findByRole("button", { name: "Append correction" }),
+    ).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: "Title" }), {
+      target: { value: "Verify desktop and web releases" },
+    });
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Corrected guidance" }),
+      {
+        target: {
+          value: "Run workspace checks and package the desktop release.",
+        },
+      },
+    );
+    fireEvent.change(screen.getByRole("slider", { name: /Confidence/ }), {
+      target: { value: "93" },
+    });
+    fireEvent.change(
+      screen.getByRole("textbox", {
+        name: /Why is this correction needed/i,
+      }),
+      {
+        target: {
+          value: "The previous claim omitted production packaging.",
+        },
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Append correction" }),
+    );
+    await waitFor(() =>
+      expect(api.correctAgentLearning).toHaveBeenCalledWith(
+        "/projects/ley",
+        "lrn_test",
+        2,
+        "Verify desktop and web releases",
+        "Run workspace checks and package the desktop release.",
+        93,
+        "The previous claim omitted production packaging.",
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Close learning inspector" }),
+      ).not.toBeInTheDocument(),
+    );
 
     fireEvent.click(
       screen.getByRole("button", { name: "Capture & privacy" }),
