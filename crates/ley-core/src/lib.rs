@@ -13,6 +13,7 @@ mod graph;
 mod ingestion;
 mod retrieval;
 mod session;
+mod session_context;
 
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
@@ -44,6 +45,14 @@ pub use session::{
     StartSessionInput, TaskInput, TaskRecord, TaskStatus, VerificationInput, VerificationRecord,
     VerificationStatus, SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES,
     SESSION_PROJECTION_LIMIT_BYTES, SESSION_SCHEMA_VERSION,
+};
+pub use session_context::{
+    list_session_contexts, read_session_context, SessionContextCheckpoint, SessionContextCitation,
+    SessionContextCommand, SessionContextDecision, SessionContextFinish, SessionContextPack,
+    SessionContextProblem, SessionContextTask, SessionContextVerification, SessionList,
+    SessionListItem, DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    DEFAULT_SESSION_LIST_RESULTS, MAX_SESSION_CONTEXT_CHARACTERS, MAX_SESSION_CONTEXT_CHECKPOINTS,
+    MAX_SESSION_LIST_RESULTS, MIN_SESSION_CONTEXT_CHARACTERS,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";

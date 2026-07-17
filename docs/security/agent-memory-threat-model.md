@@ -50,7 +50,7 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Cross-project memory access | One project/binding is fixed at MCP process start; tools have no project/vault selector; resource URI includes only the stable project ID | Actual-host multi-project adversarial tests |
 | Prompt injection in stored material | Typed results mark content `untrusted-project-evidence`, repeat a non-instruction warning, and never promote retrieved text to server instructions | Injection corpus across every host adapter |
 | Stale source presented as current | Every result identifies immutable artifact/graph snapshots and capture time and says `liveSourceChecked: false` | Source-change UX, re-ingestion hooks, and stale-result evals |
-| Oversized MCP context | Queries, result counts, token estimates, snippets, evidence ranges, characters, graph depth, and visited nodes are capped | Serialized-byte limits and large-graph latency corpus |
+| Oversized MCP context | Queries, result counts, token estimates, snippets, evidence ranges, session checkpoints/text, graph depth, and visited nodes are capped; every serialized tool result has a 256 KB hard limit | Large-graph and long-session latency corpus |
 | MCP argument path traversal | Evidence reads accept only an exact current-manifest artifact path and use no-follow capability reads | Encoded/platform-specific traversal corpus |
 | MCP output leaks machine paths | Results contain project-relative citations and stable IDs; tool errors are sanitized; project/vault paths never enter schemas | Cross-platform output snapshot scanning |
 | Duplicate or reordered session writes | Deterministic event IDs and request fingerprints; exact retries replay; changed reuse fails; project lock; contiguous sequence validation | Multi-process hook retry and process-kill matrix |
@@ -60,6 +60,7 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Session path or symlink escape | Stable ID-only store paths; no-follow capability directories and files; touched paths must exactly match the current artifact manifest | Encoded path and concurrent replacement corpus |
 | Uncited session artifact claims | Touched paths become current-snapshot citations with post-redaction content hash and line range | Source-change and deleted-artifact scenarios |
 | Session history corruption | Strict schemas, IDs, request fingerprints, timestamps, record IDs, limits, and event ordering are verified on every read | Property tests and malformed-event fuzzing |
+| Stored session prompt injection | Session packs use an `untrusted-agent-memory` boundary and repeat a non-instruction warning; MCP never promotes memory into server instructions | Injection corpus across goals, decisions, problems, final responses, and handoffs |
 | Memory poisoning | No inference becomes trusted automatically | Provenance, review, correction, corroboration, supersession |
 | Local MCP compromise | Local stdio only; exact host launch command; fixed project scope; read-only tools/resources; no Roots, sampling, network listener, write tools, subscriptions, or ambient project discovery | Host-adapter permission UX and sandbox profiles |
 
