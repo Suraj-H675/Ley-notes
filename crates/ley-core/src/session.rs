@@ -1,4 +1,6 @@
-use crate::ingestion::{load_project_memory, redact_secrets};
+use crate::ingestion::{
+    load_project_memory, lock_project_memory_lifecycle, redact_secrets, ProjectMemoryLifecycleLock,
+};
 use crate::{diagnose_project, project_memory_overview, LeyCoreError, RedactionFinding};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
@@ -1146,6 +1148,7 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 struct SessionStore {
+    _lifecycle: ProjectMemoryLifecycleLock,
     project_id: String,
     project_dir: Dir,
     sessions_dir: Dir,
@@ -1174,6 +1177,7 @@ impl SessionStore {
                 path: vault.as_ref().to_path_buf(),
                 source,
             })?;
+        let lifecycle = lock_project_memory_lifecycle(&vault_path, project_id, false, false)?;
         let vault_dir =
             Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
                 LeyCoreError::Io {
@@ -1198,6 +1202,7 @@ impl SessionStore {
             }
         };
         Ok(Some(Self {
+            _lifecycle: lifecycle,
             project_id: project_id.to_owned(),
             project_dir,
             sessions_dir,

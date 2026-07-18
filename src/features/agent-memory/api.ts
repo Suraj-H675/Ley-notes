@@ -66,6 +66,12 @@ export function updateAgentCaptureMode(
   });
 }
 
+export function eraseAgentProjectMemory(
+  projectPath: string,
+): Promise<AgentProjectInspection> {
+  return invoke("erase_agent_project_memory", { projectPath });
+}
+
 export function inspectAgentProject(
   projectPath: string,
 ): Promise<AgentProjectInspection> {

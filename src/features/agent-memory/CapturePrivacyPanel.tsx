@@ -9,13 +9,19 @@ import {
   LockKeyhole,
   RefreshCw,
   ShieldCheck,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/lib/classnames";
-import { readAgentCaptureSettings, updateAgentCaptureMode } from "./api";
+import {
+  eraseAgentProjectMemory,
+  readAgentCaptureSettings,
+  updateAgentCaptureMode,
+} from "./api";
 import type {
   AgentCaptureSettings,
   AgentMemoryDashboard,
+  AgentProjectInspection,
   CaptureMode,
 } from "./types";
 
@@ -61,10 +67,12 @@ export function CapturePrivacyPanel({
   projectPath,
   dashboard,
   onUpdated,
+  onErased,
 }: {
   projectPath: string;
   dashboard: AgentMemoryDashboard;
   onUpdated: (dashboard: AgentMemoryDashboard) => void;
+  onErased: (inspection: AgentProjectInspection) => void;
 }) {
   const [settings, setSettings] = useState<AgentCaptureSettings | null>(null);
   const [selected, setSelected] = useState<CaptureMode>(
@@ -73,6 +81,10 @@ export function CapturePrivacyPanel({
   const [fullConsent, setFullConsent] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [eraseArmed, setEraseArmed] = useState(false);
+  const [eraseConfirmation, setEraseConfirmation] = useState("");
+  const [erasing, setErasing] = useState(false);
+  const [eraseError, setEraseError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -116,6 +128,20 @@ export function CapturePrivacyPanel({
       setError(errorMessage(cause));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function eraseMemory() {
+    if (!settings || erasing || eraseConfirmation !== settings.projectName) {
+      return;
+    }
+    setErasing(true);
+    setEraseError(null);
+    try {
+      onErased(await eraseAgentProjectMemory(projectPath));
+    } catch (cause) {
+      setEraseError(errorMessage(cause));
+      setErasing(false);
     }
   }
 
@@ -395,6 +421,106 @@ export function CapturePrivacyPanel({
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="erase-memory-title">
+        <div className="overflow-hidden rounded-2xl border border-destructive/25 bg-surface-1 shadow-panel">
+          <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <div className="max-w-2xl">
+              <p className="text-micro font-semibold uppercase tracking-[0.14em] text-destructive">
+                Local data control
+              </p>
+              <h3
+                id="erase-memory-title"
+                className="mt-1 text-lg font-semibold tracking-tight"
+              >
+                Erase this project’s Agent Memory
+              </h3>
+              <p className="mt-1 text-meta leading-5 text-muted-foreground">
+                Permanently removes captured artifacts, graph history, sessions,
+                and lessons from this vault. Your project files, notes,{" "}
+                <span className="font-mono text-micro">.ley</span> settings, and
+                private vault binding stay in place.
+              </p>
+            </div>
+            <Button
+              variant={eraseArmed ? "destructive" : "outline"}
+              disabled={saving || erasing}
+              onClick={() => {
+                setEraseArmed((current) => !current);
+                setEraseConfirmation("");
+                setEraseError(null);
+              }}
+            >
+              <Trash2 size={14} aria-hidden="true" />
+              {eraseArmed ? "Cancel erasure" : "Erase memory…"}
+            </Button>
+          </div>
+
+          {eraseArmed && (
+            <div className="border-t border-destructive/20 bg-destructive/[0.035] p-5 sm:p-6">
+              <div className="max-w-2xl">
+                <p className="text-body font-semibold">
+                  This cannot be undone by Ley
+                </p>
+                <p className="mt-1 text-meta leading-5 text-muted-foreground">
+                  Stop connected Codex, Claude Code, and Gemini sessions first.
+                  Existing backups, filesystem snapshots, or copies outside this
+                  vault are not securely wiped.
+                </p>
+                <label className="mt-4 block">
+                  <span className="text-micro font-semibold text-muted-foreground-strong">
+                    Type{" "}
+                    <span className="font-mono text-foreground">
+                      {settings.projectName}
+                    </span>{" "}
+                    to confirm
+                  </span>
+                  <input
+                    type="text"
+                    value={eraseConfirmation}
+                    disabled={erasing}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) =>
+                      setEraseConfirmation(event.target.value)
+                    }
+                    className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-meta outline-none transition-[border-color,box-shadow] focus:border-destructive/60 focus:ring-2 focus:ring-destructive/15 disabled:opacity-60 sm:max-w-md"
+                  />
+                </label>
+                {eraseError && (
+                  <p role="alert" className="mt-3 text-meta text-destructive">
+                    {eraseError}
+                  </p>
+                )}
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <Button
+                    variant="destructive"
+                    disabled={
+                      erasing || eraseConfirmation !== settings.projectName
+                    }
+                    onClick={() => void eraseMemory()}
+                  >
+                    {erasing ? (
+                      <RefreshCw
+                        size={14}
+                        className="animate-spin motion-reduce:animate-none"
+                      />
+                    ) : (
+                      <Trash2 size={14} aria-hidden="true" />
+                    )}
+                    {erasing
+                      ? "Erasing local memory"
+                      : "Permanently erase memory"}
+                  </Button>
+                  <span className="text-micro text-muted-foreground">
+                    Recapture remains available afterward.
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </div>

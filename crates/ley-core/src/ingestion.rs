@@ -32,6 +32,7 @@ const GRAPH_HISTORY_FILE: &str = "history-v1.json";
 const GRAPH_HISTORY_SCHEMA_VERSION: u32 = 1;
 const GRAPH_HISTORY_LIMIT_BYTES: u64 = 524_288;
 const MAX_GRAPH_HISTORY_ENTRIES: usize = 512;
+const LIFECYCLE_LOCK_SUFFIX: &str = ".lifecycle-v1.lock";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -142,6 +143,7 @@ struct SnapshotIdentity<'a> {
 }
 
 struct ArtifactStore {
+    _lifecycle: ProjectMemoryLifecycleLock,
     artifacts_dir: Dir,
     content_dir: Dir,
     snapshots_dir: Dir,
@@ -150,6 +152,10 @@ struct ArtifactStore {
 }
 
 struct IngestionLock {
+    file: File,
+}
+
+pub(crate) struct ProjectMemoryLifecycleLock {
     file: File,
 }
 
@@ -183,6 +189,180 @@ impl Drop for IngestionLock {
     fn drop(&mut self) {
         let _ = File::unlock(&self.file);
     }
+}
+
+impl Drop for ProjectMemoryLifecycleLock {
+    fn drop(&mut self) {
+        let _ = File::unlock(&self.file);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMemoryErasure {
+    pub project_id: String,
+    pub erased: bool,
+    pub project_metadata_preserved: bool,
+    pub binding_preserved: bool,
+}
+
+pub fn erase_project_memory(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<ProjectMemoryErasure, LeyCoreError> {
+    use cap_fs_ext::DirExt;
+
+    let diagnostic = diagnose_project(project_start)?;
+    let vault_path = vault
+        .as_ref()
+        .canonicalize()
+        .map_err(|source| LeyCoreError::Io {
+            path: vault.as_ref().to_path_buf(),
+            source,
+        })?;
+    if !vault_path.is_dir() {
+        return Err(LeyCoreError::NotDirectory(vault.as_ref().to_path_buf()));
+    }
+    let _lifecycle =
+        lock_project_memory_lifecycle(&vault_path, &diagnostic.identity.project_id, false, true)?;
+    let vault_dir = Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
+        LeyCoreError::Io {
+            path: vault_path.clone(),
+            source,
+        }
+    })?;
+    let ley_dir = vault_dir
+        .open_dir_nofollow(STORE_ROOT)
+        .map_err(|source| LeyCoreError::Io {
+            path: vault_path.join(STORE_ROOT),
+            source,
+        })?;
+    let memory_dir = ley_dir
+        .open_dir_nofollow(AGENT_MEMORY_DIRECTORY)
+        .map_err(|source| LeyCoreError::Io {
+            path: vault_path.join(STORE_ROOT).join(AGENT_MEMORY_DIRECTORY),
+            source,
+        })?;
+    let projects_dir = memory_dir
+        .open_dir_nofollow(PROJECTS_DIRECTORY)
+        .map_err(|source| LeyCoreError::Io {
+            path: vault_path
+                .join(STORE_ROOT)
+                .join(AGENT_MEMORY_DIRECTORY)
+                .join(PROJECTS_DIRECTORY),
+            source,
+        })?;
+    projects_dir
+        .open_dir_nofollow(&diagnostic.identity.project_id)
+        .map_err(|source| LeyCoreError::Io {
+            path: PathBuf::from(&diagnostic.identity.project_id),
+            source,
+        })?;
+    projects_dir
+        .remove_dir_all(&diagnostic.identity.project_id)
+        .map_err(|source| LeyCoreError::Io {
+            path: PathBuf::from(&diagnostic.identity.project_id),
+            source,
+        })?;
+    Ok(ProjectMemoryErasure {
+        project_id: diagnostic.identity.project_id,
+        erased: true,
+        project_metadata_preserved: true,
+        binding_preserved: true,
+    })
+}
+
+pub(crate) fn lock_project_memory_lifecycle(
+    vault: &Path,
+    project_id: &str,
+    create_store: bool,
+    exclusive: bool,
+) -> Result<ProjectMemoryLifecycleLock, LeyCoreError> {
+    use cap_fs_ext::DirExt;
+
+    validate_project_id(project_id)?;
+    let vault_dir =
+        Dir::open_ambient_dir(vault, ambient_authority()).map_err(|source| LeyCoreError::Io {
+            path: vault.to_path_buf(),
+            source,
+        })?;
+    let projects_dir = if create_store {
+        let ley_dir = open_or_create_private_dir(&vault_dir, STORE_ROOT, vault)?;
+        let memory_dir = open_or_create_private_dir(&ley_dir, AGENT_MEMORY_DIRECTORY, vault)?;
+        open_or_create_private_dir(&memory_dir, PROJECTS_DIRECTORY, vault)?
+    } else {
+        let open_error = |path: PathBuf, source: std::io::Error| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                LeyCoreError::ProjectMemoryUnavailable(
+                    "no project memory exists; run 'ley ingest' first".to_owned(),
+                )
+            } else {
+                LeyCoreError::Io { path, source }
+            }
+        };
+        let ley_dir = vault_dir
+            .open_dir_nofollow(STORE_ROOT)
+            .map_err(|source| open_error(vault.join(STORE_ROOT), source))?;
+        let memory_dir = ley_dir
+            .open_dir_nofollow(AGENT_MEMORY_DIRECTORY)
+            .map_err(|source| {
+                open_error(vault.join(STORE_ROOT).join(AGENT_MEMORY_DIRECTORY), source)
+            })?;
+        let projects_dir = memory_dir
+            .open_dir_nofollow(PROJECTS_DIRECTORY)
+            .map_err(|source| {
+                open_error(
+                    vault
+                        .join(STORE_ROOT)
+                        .join(AGENT_MEMORY_DIRECTORY)
+                        .join(PROJECTS_DIRECTORY),
+                    source,
+                )
+            })?;
+        projects_dir
+            .open_dir_nofollow(project_id)
+            .map_err(|source| open_error(PathBuf::from(project_id), source))?;
+        projects_dir
+    };
+    let lock_name = format!("{project_id}{LIFECYCLE_LOCK_SUFFIX}");
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .create(true)
+        .follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = projects_dir
+        .open_with(&lock_name, &options)
+        .map_err(|source| store_io(&lock_name, source))?;
+    ensure_private_file_permissions(&lock, &lock_name)?;
+    let file = lock.into_std();
+    if exclusive {
+        file.lock().map_err(|source| store_io(&lock_name, source))?;
+    } else {
+        File::lock_shared(&file).map_err(|source| store_io(&lock_name, source))?;
+    }
+    if !create_store {
+        projects_dir
+            .open_dir_nofollow(project_id)
+            .map_err(|source| {
+                if source.kind() == std::io::ErrorKind::NotFound {
+                    LeyCoreError::ProjectMemoryUnavailable(
+                        "project memory was erased before this operation began".to_owned(),
+                    )
+                } else {
+                    LeyCoreError::Io {
+                        path: PathBuf::from(project_id),
+                        source,
+                    }
+                }
+            })?;
+    }
+    Ok(ProjectMemoryLifecycleLock { file })
 }
 
 pub fn ingest_project(
@@ -612,6 +792,7 @@ impl GraphHistoryEntry {
 impl ArtifactStore {
     fn open(vault: &Path, project_id: &str) -> Result<Self, LeyCoreError> {
         validate_project_id(project_id)?;
+        let lifecycle = lock_project_memory_lifecycle(vault, project_id, true, false)?;
         let vault_dir = Dir::open_ambient_dir(vault, ambient_authority()).map_err(|source| {
             LeyCoreError::Io {
                 path: vault.to_path_buf(),
@@ -629,6 +810,7 @@ impl ArtifactStore {
         let graph_snapshots_dir =
             open_or_create_private_dir(&graph_dir, SNAPSHOTS_DIRECTORY, vault)?;
         Ok(Self {
+            _lifecycle: lifecycle,
             artifacts_dir,
             content_dir,
             snapshots_dir,
@@ -641,6 +823,7 @@ impl ArtifactStore {
         use cap_fs_ext::DirExt;
 
         validate_project_id(project_id)?;
+        let lifecycle = lock_project_memory_lifecycle(vault, project_id, false, false)?;
         let vault_dir = Dir::open_ambient_dir(vault, ambient_authority()).map_err(|source| {
             LeyCoreError::Io {
                 path: vault.to_path_buf(),
@@ -665,6 +848,7 @@ impl ArtifactStore {
         let graph_dir = open(&project_dir, GRAPH_DIRECTORY)?;
         let graph_snapshots_dir = open(&graph_dir, SNAPSHOTS_DIRECTORY)?;
         Ok(Self {
+            _lifecycle: lifecycle,
             artifacts_dir,
             content_dir,
             snapshots_dir,
@@ -1719,7 +1903,8 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{initialize_project, CaptureMode, LEY_DIRECTORY};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{mpsc, Arc, Barrier};
+    use std::time::Duration;
     use tempfile::tempdir;
 
     fn setup_project(mode: CaptureMode) -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -1752,6 +1937,98 @@ mod tests {
             .join(project_id)
             .join(GRAPH_DIRECTORY)
             .join(GRAPH_MANIFEST_FILE)
+    }
+
+    #[test]
+    fn erasure_removes_all_project_memory_but_preserves_source_and_allows_recapture() {
+        let (_base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(project.join("README.md"), "# Keep this project\n").unwrap();
+        let first = ingest_project(&project, &vault).unwrap();
+        let project_store = vault
+            .join(STORE_ROOT)
+            .join(AGENT_MEMORY_DIRECTORY)
+            .join(PROJECTS_DIRECTORY)
+            .join(&first.project_id);
+        std::fs::create_dir_all(project_store.join("sessions/ses_fixture/events")).unwrap();
+        std::fs::write(
+            project_store.join("sessions/ses_fixture/events/private.json"),
+            "session memory",
+        )
+        .unwrap();
+        std::fs::create_dir_all(project_store.join("learnings/events")).unwrap();
+        std::fs::write(
+            project_store.join("learnings/events/private.json"),
+            "learning memory",
+        )
+        .unwrap();
+
+        let erased = erase_project_memory(&project, &vault).unwrap();
+        assert!(erased.erased);
+        assert!(erased.project_metadata_preserved);
+        assert!(erased.binding_preserved);
+        assert!(!project_store.exists());
+        assert_eq!(
+            std::fs::read_to_string(project.join("README.md")).unwrap(),
+            "# Keep this project\n"
+        );
+        assert!(project.join(LEY_DIRECTORY).join("project.json").is_file());
+        assert!(matches!(
+            crate::project_memory_overview(&project, &vault),
+            Err(LeyCoreError::ProjectMemoryUnavailable(_))
+        ));
+
+        let recaptured = ingest_project(&project, &vault).unwrap();
+        assert!(recaptured.changed);
+        assert!(project_store.is_dir());
+    }
+
+    #[test]
+    fn erasure_waits_for_active_memory_users_before_removing_the_store() {
+        let (_base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(project.join("README.md"), "# Locked memory\n").unwrap();
+        let ingested = ingest_project(&project, &vault).unwrap();
+        let reader =
+            lock_project_memory_lifecycle(&vault, &ingested.project_id, false, false).unwrap();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let erase_project = project.clone();
+        let erase_vault = vault.clone();
+        let worker = std::thread::spawn(move || {
+            let result = erase_project_memory(erase_project, erase_vault);
+            finished_tx.send(result).unwrap();
+        });
+
+        assert!(finished_rx.recv_timeout(Duration::from_millis(80)).is_err());
+        drop(reader);
+        assert!(
+            finished_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap()
+                .erased
+        );
+        worker.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn erasure_refuses_a_symlinked_project_store_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let (base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(project.join("README.md"), "# Symlink defense\n").unwrap();
+        let ingested = ingest_project(&project, &vault).unwrap();
+        let project_store = vault
+            .join(STORE_ROOT)
+            .join(AGENT_MEMORY_DIRECTORY)
+            .join(PROJECTS_DIRECTORY)
+            .join(&ingested.project_id);
+        let retained = base.path().join("must-remain");
+        std::fs::rename(&project_store, &retained).unwrap();
+        symlink(&retained, &project_store).unwrap();
+
+        assert!(erase_project_memory(&project, &vault).is_err());
+        assert!(retained.join(ARTIFACTS_DIRECTORY).is_dir());
+        assert!(project_store.is_symlink());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use ley_core::{
-    correct_learning, diagnose_project, generate_learning_request_id, generate_request_id,
-    ingest_project, initialize_project, list_learning_contexts, list_sessions,
+    correct_learning, diagnose_project, erase_project_memory, generate_learning_request_id,
+    generate_request_id, ingest_project, initialize_project, list_learning_contexts, list_sessions,
     project_activity_view, project_artifact_inventory, project_graph_history,
     project_graph_view_filtered, project_memory_overview, project_resume_context,
     project_session_stats, read_learning, read_learning_context, read_project_cited_evidence,
@@ -476,6 +476,14 @@ fn update_agent_capture_mode(
     })?;
     load_agent_memory_dashboard(Path::new(&project_path), binding)
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn erase_agent_project_memory(project_path: String) -> Result<AgentProjectInspection, String> {
+    let binding =
+        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
+    erase_project_memory(&project_path, &binding.vault_path).map_err(|error| error.to_string())?;
+    inspect_agent_project(project_path)
 }
 
 #[tauri::command]
@@ -1372,6 +1380,7 @@ pub fn run() {
             forget_agent_project,
             read_agent_capture_settings,
             update_agent_capture_mode,
+            erase_agent_project_memory,
             search_agent_projects,
             inspect_agent_project,
             initialize_agent_project,

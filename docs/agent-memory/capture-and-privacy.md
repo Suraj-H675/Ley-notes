@@ -18,10 +18,14 @@ The panel runs the same deterministic preview as `ley preview`. Preview reads ca
 
 Applying a mode serializes local writers with a private project-specific OS lock, rechecks the project identity and visible mode, writes the repository-local policy atomically, and immediately runs the same redacted ingestion used by the CLI. The durable artifact manifest records the complete policy and fingerprint. A stale interface cannot overwrite a mode changed by another local client; reload the panel and decide again.
 
-Mode changes preserve custom roots, ignore behavior, and byte limits. Minimal re-capture stops source blobs from appearing in the current snapshot, but immutable historical evidence is not garbage-collected automatically. Ley must add a separate reviewed retention/deletion workflow before claiming old immutable evidence has been erased.
+Mode changes preserve custom roots, ignore behavior, and byte limits. Minimal re-capture stops source blobs from appearing in the current snapshot, but does not erase historical evidence. Use **Erase this project’s Agent Memory** for the separate reviewed deletion workflow: after exact-name confirmation, Ley removes that project’s captured artifacts, graph history, sessions, and lessons from the bound vault while preserving project files, notes, `.ley` policy, and the private binding. The project returns to **Needs capture**.
+
+Erasure waits for current-version memory readers and writers through a project lifecycle lock. Stop connected agent sessions first, especially older Ley processes that do not implement that lock. Ley cannot securely wipe backups, filesystem snapshots, SSD remnants, or copies outside the selected vault.
 
 The desktop project graph indexes changed immutable graph/artifact pairs so an earlier capture remains inspectable. Selecting a historical capture never reads today's working tree. A node or relationship can reveal only an exact citation already present in that selected graph, from its matching retained artifact snapshot. Excerpts stay redacted and bounded. Minimal captures can still show graph structure and citations, but source inspection is unavailable because that mode intentionally retains no source blob.
 
 ## Cloud-agent boundary
 
 Ley never uploads captured data independently. A cloud agent such as Claude, Codex, or Gemini may receive bounded context only when the user or host asks that agent to retrieve it. Capture mode controls local retention; it does not override the connected provider's handling of deliberately retrieved context.
+
+See [ADR 0020](../adr/0020-reviewed-project-memory-erasure.md) for the erasure boundary and concurrency contract.

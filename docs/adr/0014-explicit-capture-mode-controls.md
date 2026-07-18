@@ -32,4 +32,4 @@ The policy write is atomic and revalidates the `.ley` directory immediately befo
 - Users see the exact local boundary before applying a change.
 - Minimal mode materially reduces retained project content without deleting structured continuity records.
 - Full Evidence remains an explicit high-sensitivity permission and does not imply automatic transcript collection.
-- Editing approved roots, ignore rules, byte ceilings, raw-evidence retention cleanup, and reviewed deletion remain separate future controls.
+- Editing approved roots, ignore rules, byte ceilings, and fine-grained retention remain separate future controls. [ADR 0020](0020-reviewed-project-memory-erasure.md) now defines reviewed whole-project Agent Memory erasure.

@@ -5,6 +5,7 @@ import type { AgentMemoryDashboard } from "./types";
 
 const api = vi.hoisted(() => ({
   correctAgentLearning: vi.fn(),
+  eraseAgentProjectMemory: vi.fn(),
   forgetAgentProject: vi.fn(),
   inspectAgentProject: vi.fn(),
   listAgentProjects: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("./api", () => ({
   chooseAgentProject: vi.fn(),
   connectAgentProject: vi.fn(),
   correctAgentLearning: api.correctAgentLearning,
+  eraseAgentProjectMemory: api.eraseAgentProjectMemory,
   forgetAgentProject: api.forgetAgentProject,
   initializeAgentProject: vi.fn(),
   inspectAgentProject: api.inspectAgentProject,
@@ -699,16 +701,14 @@ describe("Agent Memory workspace boundaries", () => {
       name: "Verify the complete workspace",
     });
     expect(screen.getByText("2 immutable events")).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Promote to note" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Promote to note" }));
     expect(
       await screen.findByRole("button", { name: "Create & open note" }),
     ).toBeEnabled();
-    expect(screen.getByText("Destination · Agent Memory/Lessons")).toBeVisible();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Create & open note" }),
-    );
+    expect(
+      screen.getByText("Destination · Agent Memory/Lessons"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Create & open note" }));
     await waitFor(() =>
       expect(promoteLearning).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -764,9 +764,7 @@ describe("Agent Memory workspace boundaries", () => {
         },
       },
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Append correction" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Append correction" }));
     await waitFor(() =>
       expect(api.correctAgentLearning).toHaveBeenCalledWith(
         "/projects/ley",
@@ -784,9 +782,7 @@ describe("Agent Memory workspace boundaries", () => {
       ).not.toBeInTheDocument(),
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Capture & privacy" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Capture & privacy" }));
     await screen.findByRole("heading", {
       name: "Decide what this project remembers",
     });
@@ -804,9 +800,7 @@ describe("Agent Memory workspace boundaries", () => {
       screen.getByRole("button", { name: "Apply & recapture" }),
     ).toBeEnabled();
     fireEvent.click(screen.getByRole("radio", { name: /Minimal/ }));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Apply & recapture" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply & recapture" }));
     await waitFor(() =>
       expect(api.updateAgentCaptureMode).toHaveBeenCalledWith(
         "/projects/ley",
@@ -816,9 +810,7 @@ describe("Agent Memory workspace boundaries", () => {
       ),
     );
     await waitFor(() =>
-      expect(
-        screen.getByText("Minimal is active"),
-      ).toBeVisible(),
+      expect(screen.getByText("Minimal is active")).toBeVisible(),
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));

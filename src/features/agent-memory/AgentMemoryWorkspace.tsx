@@ -514,6 +514,10 @@ export function AgentMemoryWorkspace({
                         onUpdated={(next) =>
                           setInspection({ status: "ready", dashboard: next })
                         }
+                        onErased={(next) => {
+                          setInspection(next);
+                          setSection("overview");
+                        }}
                       />
                     </Suspense>
                   )}

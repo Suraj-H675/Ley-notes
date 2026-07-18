@@ -1,4 +1,6 @@
-use crate::ingestion::{load_project_memory, redact_secrets};
+use crate::ingestion::{
+    load_project_memory, lock_project_memory_lifecycle, redact_secrets, ProjectMemoryLifecycleLock,
+};
 use crate::{
     diagnose_project, project_memory_overview, read_session, LeyCoreError, RedactionFinding,
     SessionArtifactCitation, SessionStatus,
@@ -1163,6 +1165,7 @@ fn refresh_freshness_from_memory(
 }
 
 struct LearningStore {
+    _lifecycle: ProjectMemoryLifecycleLock,
     project_id: String,
     project_dir: Dir,
     learning_dir: Dir,
@@ -1192,6 +1195,7 @@ impl LearningStore {
                 path: vault.as_ref().to_path_buf(),
                 source,
             })?;
+        let lifecycle = lock_project_memory_lifecycle(&vault_path, project_id, false, false)?;
         let vault_dir =
             Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
                 LeyCoreError::Io {
@@ -1223,6 +1227,7 @@ impl LearningStore {
                 .map_err(|source| learning_io(EVENTS_DIRECTORY, source))?
         };
         Ok(Some(Self {
+            _lifecycle: lifecycle,
             project_id: project_id.to_owned(),
             project_dir,
             learning_dir,

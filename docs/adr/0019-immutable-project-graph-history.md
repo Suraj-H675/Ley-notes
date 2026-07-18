@@ -23,5 +23,5 @@ Graph filters also need to be applied by the shared engine. Filtering only rende
 - A user can reopen the evidence Ley actually used, even after the working tree changes or deletes the file.
 - Historical results still do not claim that live source was checked. Re-capture is the only way to update the current snapshot.
 - The history index is rebuildable from retained immutable graph snapshots in a future repair workflow, but v1 does not scan the store on every read.
-- Switching capture mode does not erase earlier immutable evidence. Retention and secure deletion remain a separate user-authority design.
+- Switching capture mode does not erase earlier immutable evidence. [ADR 0020](0020-reviewed-project-memory-erasure.md) provides a separate user-authorized whole-project erasure flow without claiming forensic secure wipe.
 - Agents continue to receive bounded cited projections; this desktop inspection surface does not expand MCP authority.

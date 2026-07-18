@@ -41,9 +41,10 @@ pub use host_adapter::{
     process_host_hook, AgentHost, HostHookDisposition, HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
 };
 pub use ingestion::{
-    ingest_project, read_project_graph, ArtifactKind, ArtifactRecord, ArtifactSkipReason,
-    IngestionResult, RedactionFinding, RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY,
-    ARTIFACT_MANIFEST_LIMIT_BYTES, ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    erase_project_memory, ingest_project, read_project_graph, ArtifactKind, ArtifactRecord,
+    ArtifactSkipReason, IngestionResult, ProjectMemoryErasure, RedactionFinding, RenamedArtifact,
+    SkippedArtifact, AGENT_MEMORY_DIRECTORY, ARTIFACT_MANIFEST_LIMIT_BYTES,
+    ARTIFACT_MANIFEST_SCHEMA_VERSION,
 };
 pub use knowledge_view::{
     project_artifact_inventory, project_graph_history, project_graph_view,

@@ -49,5 +49,5 @@ Repository reads use `cap-std` sandboxed directory capabilities and refuse final
 - Deleted/renamed source remains inspectable through old snapshot and content files.
 - Ingestion duplicates allowed source text into the selected vault in Structured/Full Evidence modes. The explicit capture mode and bind/ingest commands are therefore privacy-relevant consent boundaries.
 - Secret redaction can produce false positives and false negatives. Ley reports detector kinds and line numbers without storing matched values, and must retain ignored-file preview plus later secret-evaluation fixtures.
-- Immutable evidence is not garbage-collected yet. A future reviewed retention/delete command must never silently remove user evidence.
+- Immutable evidence is not garbage-collected by capture-mode changes. [ADR 0020](0020-reviewed-project-memory-erasure.md) adds a separate exact-name whole-project erasure boundary; it never silently removes evidence.
 - This ADR does not claim AST symbols, Git relations, semantic facts, or MCP retrieval; those are subsequent projections.
