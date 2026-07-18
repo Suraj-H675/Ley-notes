@@ -1,17 +1,19 @@
 use ley_core::{
     checkpoint_session, correct_learning, diagnose_project, finish_session,
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
-    learning_review_inbox, list_learnings, list_sessions, preview_capture, project_resume_context,
-    propose_learning, read_learning, read_project_graph, read_session, rename_session,
-    review_learning, start_session, BindingRegistry, CaptureMode, CheckpointInput, CommandInput,
-    CorrectLearningInput, FinishSessionInput, GraphNodeKind, LearningActor, LearningEvidenceInput,
-    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
-    LeyCoreError, ProposeLearningInput, RenameSessionInput, ReviewLearningInput, SessionSource,
-    SessionSourceKind, SessionStatus, StartSessionInput, VerificationInput, VerificationStatus,
-    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    learning_review_inbox, list_learnings, list_sessions, preview_capture, process_host_hook,
+    project_resume_context, propose_learning, read_learning, read_project_graph, read_session,
+    rename_session, review_learning, start_session, AgentHost, BindingRegistry, CaptureMode,
+    CheckpointInput, CommandInput, CorrectLearningInput, FinishSessionInput, GraphNodeKind,
+    LearningActor, LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance,
+    LearningState, LearningTrustState, LeyCoreError, ProposeLearningInput, RenameSessionInput,
+    ReviewLearningInput, SessionSource, SessionSourceKind, SessionStatus, StartSessionInput,
+    VerificationInput, VerificationStatus, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS,
 };
-use ley_mcp::run_stdio;
+use ley_mcp::{run_stdio, run_unavailable_stdio};
 use std::env;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 fn main() {
@@ -33,6 +35,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "unbind" => unbind(&arguments[1..]),
         "ingest" => ingest(&arguments[1..]),
         "graph" => graph(&arguments[1..]),
+        "hook" => hook(&arguments[1..]),
         "mcp" => mcp(&arguments[1..]),
         "session" => session(&arguments[1..]),
         "learning" => learning(&arguments[1..]),
@@ -49,6 +52,72 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         }
         other => Err(CliError::Usage(format!("unknown command '{other}'"))),
     }
+}
+
+fn hook(arguments: &[String]) -> Result<(), CliError> {
+    let mut host = None;
+    let mut project = None;
+    let mut vault = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--host" => {
+                index += 1;
+                host = Some(AgentHost::parse(required_value(
+                    arguments, index, "--host",
+                )?)?);
+            }
+            "--vault" => {
+                index += 1;
+                vault = Some(PathBuf::from(required_value(arguments, index, "--vault")?));
+            }
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown option '{value}'")))
+            }
+            value if project.is_none() => project = Some(PathBuf::from(value)),
+            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+        }
+        index += 1;
+    }
+    let host = host.ok_or_else(|| CliError::Usage("hook requires --host HOST".to_owned()))?;
+    let project = project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+
+    // Hooks are intended to be installable at user/plugin scope. Projects that
+    // have not explicitly initialized and bound Ley must remain untouched and
+    // must not produce a warning on every agent turn.
+    match diagnose_project(&project) {
+        Ok(_) => {}
+        Err(LeyCoreError::ProjectNotFound(_)) | Err(LeyCoreError::NotDirectory(_)) => {
+            println!("{{}}");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    }
+    let registry = BindingRegistry::system_default()?;
+    let binding = match registry.resolve(&project, vault.as_deref()) {
+        Ok(binding) => binding,
+        Err(LeyCoreError::VaultNotBound(_)) | Err(LeyCoreError::BoundVaultUnavailable { .. }) => {
+            println!("{{}}");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(1_048_577)
+        .read_to_end(&mut bytes)
+        .map_err(CliError::HookInput)?;
+    if bytes.len() > 1_048_576 {
+        return Err(CliError::Usage("hook input cannot exceed 1 MiB".to_owned()));
+    }
+    let payload = serde_json::from_slice(&bytes).map_err(CliError::HookJson)?;
+    let result = process_host_hook(&project, &binding.vault_path, host, payload)?;
+    println!(
+        "{}",
+        serde_json::to_string(&result.output).expect("hook output is serializable")
+    );
+    Ok(())
 }
 
 fn resume(arguments: &[String]) -> Result<(), CliError> {
@@ -761,14 +830,36 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
         ));
     }
     let registry = BindingRegistry::system_default()?;
-    let binding = registry.resolve(&parsed.project, parsed.vault.as_deref())?;
-    run_stdio(
+    let binding = match registry.resolve(&parsed.project, parsed.vault.as_deref()) {
+        Ok(binding) => binding,
+        Err(LeyCoreError::ProjectNotFound(_))
+        | Err(LeyCoreError::NotDirectory(_))
+        | Err(LeyCoreError::VaultNotBound(_))
+        | Err(LeyCoreError::BoundVaultUnavailable { .. }) => {
+            return run_unavailable_stdio(
+                "Ley is inactive for this workspace. Initialize the project, bind a filesystem vault, and capture a snapshot to enable local memory tools.",
+            )
+            .map_err(CliError::Mcp)
+        }
+        Err(error) => return Err(error.into()),
+    };
+    match run_stdio(
         parsed.project,
         binding.vault_path,
         allow_session_writes,
         allow_learning_proposals,
-    )
-    .map_err(CliError::Mcp)
+    ) {
+        Ok(()) => Ok(()),
+        Err(ley_mcp::McpServerError::Project(
+            LeyCoreError::ProjectMemoryUnavailable(_)
+            | LeyCoreError::InvalidArtifactStore(_)
+            | LeyCoreError::InvalidProjectGraph(_),
+        )) => run_unavailable_stdio(
+            "Ley found this workspace, but its captured memory is unavailable or inconsistent. Run 'ley doctor' and then a deliberate 'ley ingest' before using agent memory tools.",
+        )
+        .map_err(CliError::Mcp),
+        Err(error) => Err(CliError::Mcp(error)),
+    }
 }
 
 fn session(arguments: &[String]) -> Result<(), CliError> {
@@ -1638,6 +1729,7 @@ fn print_help() {
     println!("  ley unbind [path] [--json]");
     println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley graph [path] [--vault TEMPORARY_VAULT] [--json]");
+    println!("  ley hook [path] --host codex|claude|gemini [--vault TEMPORARY_VAULT]");
     println!("  ley mcp [path] [--vault TEMPORARY_VAULT] [--allow-session-writes]");
     println!("      [--allow-learning-proposals]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
@@ -1671,6 +1763,8 @@ enum CliError {
     Core(LeyCoreError),
     Mcp(ley_mcp::McpServerError),
     CurrentDirectory(std::io::Error),
+    HookInput(std::io::Error),
+    HookJson(serde_json::Error),
     InputFile {
         path: PathBuf,
         source: std::io::Error,
@@ -1686,6 +1780,8 @@ impl std::fmt::Display for CliError {
             Self::CurrentDirectory(error) => {
                 write!(formatter, "could not read current directory: {error}")
             }
+            Self::HookInput(error) => write!(formatter, "could not read hook input: {error}"),
+            Self::HookJson(error) => write!(formatter, "hook input is not valid JSON: {error}"),
             Self::InputFile { path, source } => {
                 write!(formatter, "could not read {}: {source}", path.display())
             }

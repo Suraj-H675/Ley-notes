@@ -28,6 +28,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Vault-native templates for new notes and daily notes
 - Sparse local revision snapshots with a user-facing recovery panel
 - Desktop Agent Memory workspace with an explicit multi-project catalog, local cross-project search, capture/privacy controls, deterministic refresh, complete session history, append-only user naming, bounded continuity briefs, checkpoint/decision/problem/attempt/outcome inspection, cited artifacts, trusted lessons, temporal provenance inspection, version-guarded corrections, promotion into ordinary Markdown, and append-only human review
+- Installable Codex, Claude Code, and Gemini CLI integrations that combine local MCP, stable lifecycle hooks, and a portable structured-memory skill without scraping transcripts
 - An honest browser Agent Memory boundary: the PWA keeps notes usable but does not pretend a web page can serve external local agents or read arbitrary coding projects
 - Offline-capable PWA and a separate public website
 
@@ -37,6 +38,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 .
 ├── crates/               # Shared Rust core, `ley` CLI, and local stdio MCP server
 ├── docs/                 # Architecture, decisions, security, and product research
+├── integrations/         # Installable Codex, Claude Code, and Gemini CLI packages
 ├── schemas/              # Versioned open agent-memory contracts
 ├── src/
 │   ├── app/              # Application composition and workspace shell
@@ -116,6 +118,8 @@ Add `--allow-session-writes` to the MCP arguments only when that host should app
 Add the independent `--allow-learning-proposals` flag only when that host should suggest cited, review-required lessons. It adds no confirmation, correction, rejection, supersession, deletion, or promotion authority. See [ADR 0010](docs/adr/0010-explicit-mcp-learning-proposal-consent.md).
 
 The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), [ADR 0008](docs/adr/0008-explicit-mcp-session-write-consent.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
+
+For automatic session continuity, use the installable Codex, Claude Code, or Gemini CLI package. Each package adds the same local MCP tools, a lifecycle adapter, and the Ley workflow skill. Hooks use documented stable session/final-response fields, ignore transcript paths, no-op outside explicitly initialized and bound projects, and replay retries idempotently. See [Connect Ley to coding agents](docs/agent-memory/host-integrations.md) and [ADR 0018](docs/adr/0018-stable-lifecycle-host-adapters.md).
 
 ## Data model
 

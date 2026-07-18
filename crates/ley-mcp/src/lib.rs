@@ -70,6 +70,34 @@ pub struct LeyMcpServer {
     tool_router: ToolRouter<Self>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LeyUnavailableMcpServer {
+    instructions: Arc<str>,
+}
+
+impl LeyUnavailableMcpServer {
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            instructions: Arc::from(reason.into()),
+        }
+    }
+}
+
+impl ServerHandler for LeyUnavailableMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::default())
+            .with_protocol_version(ProtocolVersion::V_2025_11_25)
+            .with_server_info(
+                Implementation::new("ley", env!("CARGO_PKG_VERSION"))
+                    .with_title("Ley local project memory")
+                    .with_description(
+                        "Inactive local Ley connection; initialize and bind this workspace to enable tools",
+                    ),
+            )
+            .with_instructions(self.instructions.to_string())
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SearchContextParams {
@@ -1213,6 +1241,24 @@ pub fn run_stdio(
     })
 }
 
+pub fn run_unavailable_stdio(reason: impl Into<String>) -> Result<(), McpServerError> {
+    let server = LeyUnavailableMcpServer::new(reason);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let service = server
+            .serve(rmcp::transport::stdio())
+            .await
+            .map_err(|error| McpServerError::Transport(error.to_string()))?;
+        service
+            .waiting()
+            .await
+            .map_err(|error| McpServerError::Task(error.to_string()))?;
+        Ok(())
+    })
+}
+
 fn map_edge_kinds(kinds: Option<Vec<McpGraphEdgeKind>>) -> Option<Vec<GraphEdgeKind>> {
     kinds.map(|kinds| kinds.into_iter().map(Into::into).collect())
 }
@@ -1877,6 +1923,14 @@ mod tests {
         let result = tool_result::<String>(Ok("x".repeat(MAX_TOOL_RESULT_BYTES)));
         assert_eq!(result.is_error, Some(true));
         assert_eq!(result.structured_content.unwrap()["retryable"], true);
+    }
+
+    #[test]
+    fn unavailable_server_advertises_no_tools_or_resources() {
+        let info = LeyUnavailableMcpServer::new("Set up Ley first.").get_info();
+        assert!(info.capabilities.tools.is_none());
+        assert!(info.capabilities.resources.is_none());
+        assert_eq!(info.instructions.as_deref(), Some("Set up Ley first."));
     }
 
     #[derive(Debug, Clone, Default)]

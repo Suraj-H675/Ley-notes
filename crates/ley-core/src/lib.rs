@@ -11,6 +11,7 @@ use uuid::Uuid;
 mod binding;
 mod cross_project_search;
 mod graph;
+mod host_adapter;
 mod ingestion;
 mod knowledge_view;
 mod learning;
@@ -35,6 +36,9 @@ pub use graph::{
     FactProvenance, GitChange, GitState, GraphCitation, GraphDiagnostic, GraphEdge, GraphEdgeKind,
     GraphNode, GraphNodeKind, ProjectGraph, PROJECT_GRAPH_LIMIT_BYTES,
     PROJECT_GRAPH_SCHEMA_VERSION,
+};
+pub use host_adapter::{
+    process_host_hook, AgentHost, HostHookDisposition, HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
 };
 pub use ingestion::{
     ingest_project, read_project_graph, ArtifactKind, ArtifactRecord, ArtifactSkipReason,

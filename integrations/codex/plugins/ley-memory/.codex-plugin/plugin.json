@@ -1,0 +1,19 @@
+{
+  "name": "ley-memory",
+  "version": "0.1.0",
+  "description": "Private, local project memory and cited continuity for Codex.",
+  "author": {
+    "name": "Suraj"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Ley Memory",
+    "shortDescription": "Local project memory that survives Codex sessions.",
+    "longDescription": "Ley Memory connects Codex to a user-owned local vault through MCP and lifecycle hooks. It loads bounded cited context, captures stable turn summaries, and keeps learning approval under user control.",
+    "developerName": "Suraj",
+    "category": "Productivity",
+    "capabilities": ["MCP", "Lifecycle hooks", "Agent skill"],
+    "defaultPrompt": "Use Ley to resume this project's durable local context before continuing."
+  },
+  "mcpServers": "./.mcp.json"
+}

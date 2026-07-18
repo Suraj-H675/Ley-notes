@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "ley": {
+      "command": "ley",
+      "args": [
+        "mcp",
+        ".",
+        "--allow-session-writes",
+        "--allow-learning-proposals"
+      ]
+    }
+  }
+}

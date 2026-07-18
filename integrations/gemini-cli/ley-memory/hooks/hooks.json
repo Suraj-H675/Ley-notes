@@ -1,0 +1,33 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "sequential": true,
+        "hooks": [
+          {
+            "name": "ley-load-memory",
+            "type": "command",
+            "command": "ley hook --host gemini \"${workspacePath}\"",
+            "timeout": 20000,
+            "description": "Load bounded local Ley project memory."
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "*",
+        "sequential": true,
+        "hooks": [
+          {
+            "name": "ley-save-continuity",
+            "type": "command",
+            "command": "ley hook --host gemini \"${workspacePath}\"",
+            "timeout": 20000,
+            "description": "Save a bounded local continuity checkpoint."
+          }
+        ]
+      }
+    ]
+  }
+}

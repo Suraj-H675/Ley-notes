@@ -11,7 +11,7 @@ MCP Roots are client-supplied workspace hints, not an authorization boundary, an
 
 ## Decision
 
-`ley mcp [project] [--vault <temporary-vault>]` starts a local stdio MCP server using protocol version `2025-11-25`. Startup resolves exactly one initialized project and its persisted or explicit temporary vault binding. The process refuses to start without an existing, internally consistent artifact and graph snapshot. It never discovers projects, consumes MCP Roots, or accepts a project/vault selector in a tool call.
+`ley mcp [project] [--vault <temporary-vault>]` starts a local stdio MCP server using protocol version `2025-11-25`. Startup resolves exactly one initialized project and its persisted or explicit temporary vault binding. A ready server requires an existing, internally consistent artifact and graph snapshot. ADR 0018 later adds one packaging-safe fallback: outside a ready project, the process can complete MCP initialization with zero capabilities, tools, and resources so a global host integration does not fail startup. That inactive process still never discovers or creates projects, consumes MCP Roots, or accepts a project/vault selector in a tool call.
 
 The server exposes seven tools:
 

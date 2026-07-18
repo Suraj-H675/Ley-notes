@@ -1,0 +1,16 @@
+{
+  "name": "ley-memory",
+  "version": "0.1.0",
+  "description": "Private, local project memory and cited continuity for Gemini CLI.",
+  "mcpServers": {
+    "ley": {
+      "command": "ley",
+      "args": [
+        "mcp",
+        "${workspacePath}",
+        "--allow-session-writes",
+        "--allow-learning-proposals"
+      ]
+    }
+  }
+}

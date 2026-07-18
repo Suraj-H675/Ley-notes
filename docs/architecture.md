@@ -25,6 +25,7 @@ All surfaces follow the [local storage and data boundaries](privacy-and-storage.
 | `crates/ley-core`    | Identity, ingestion, graph, retrieval, sessions, and learning ledger    | capability I/O and deterministic parsers    |
 | `crates/ley-mcp`     | Fixed-project stdio retrieval and opt-in session capture                | `ley-core`, official Rust MCP SDK            |
 | `crates/ley-cli`     | Human/agent command surface and MCP process entry point                 | `ley-core`, `ley-mcp`                        |
+| `integrations/`      | Installable Codex, Claude Code, and Gemini CLI MCP/hook/skill packages  | published `ley` CLI contract                 |
 
 Feature-specific hooks are colocated with their feature. Only genuinely reusable hooks belong in `shared/hooks`. Tests for pure domain behavior remain beside the module they verify.
 
@@ -49,6 +50,8 @@ Capture & privacy settings are loaded only when their project surface opens. The
 MCP session writes are absent by default. `--allow-session-writes` enables only start, checkpoint, and finish routes at process construction, so an existing read-only configuration cannot gain authority from a tool argument or stored instruction. Write tools return compact receipts and delegate to the same session engine as the CLI.
 
 MCP learning proposals use an independent startup capability. `--allow-learning-proposals` adds one route that hardcodes agent authority and produces only tentative, review-required records. Confirmation, correction, rejection, supersession, deletion, and promotion remain absent. Default lesson listing includes only user-trusted records whose artifact citations still match the latest captured snapshot; explicit review/all scopes remain visibly untrusted.
+
+The lifecycle adapter is a separate stdout-clean CLI surface. `ley hook --host ...` accepts the current host's stable JSON event, ignores transcript paths, and maps the host/session pair to a deterministic project-scoped Ley session. Startup uses the existing bounded resume projection; completed turns append only the host's bounded final assistant response as a redacted fallback. Uninitialized and unbound working directories are explicit no-ops, and payload paths never select the project. In those workspaces the packaged MCP command serves a protocol-valid zero-capability connection with no tools or resources rather than failing host startup or discovering a project. Installable host packages combine this adapter with the fixed-project MCP server and a shared workflow skill; rich structured memory still comes from typed MCP checkpoints rather than transcript inference.
 
 Project resume context composes these existing stores without creating a new authority layer. It prioritizes active and paused sessions before recent history, projects only the newest checkpoint and handoff details needed to continue, and includes only verified/trusted/current artifact-backed lessons. Stable IDs link every compact item back to the bounded session, learning, graph, or artifact readers. Both CLI and MCP use the same projection and budget rules.
 

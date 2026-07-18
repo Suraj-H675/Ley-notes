@@ -1861,6 +1861,7 @@ dependencies = [
  "ley-core",
  "ley-mcp",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

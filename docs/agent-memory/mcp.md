@@ -32,7 +32,7 @@ Configure one server entry per project. Use absolute command and project paths b
 
 This JSON shows the portable server-entry shape supported by MCP hosts. A host may represent the same command and arguments in TOML or its settings UI. Ley does not publish guessed configuration for fast-changing hosts. Use that host's current MCP documentation to enter the same local command.
 
-The process resolves the private project-to-vault binding at startup. A temporary non-persistent vault can be selected by adding `--vault` and the absolute vault path to `args`. The server refuses missing or inconsistent snapshots, and a moved vault requires `ley bind` again.
+The process resolves the private project-to-vault binding at startup. A temporary non-persistent vault can be selected by adding `--vault` and the absolute vault path to `args`. With a valid binding and snapshot, the full fixed-project server starts. In an uninitialized, unbound, moved-vault, missing-snapshot, or inconsistent-snapshot workspace, packaged integrations receive a protocol-valid inactive server with zero tools and resources; it never creates or scans memory. Rebind and ingest deliberately to enable the full tool surface.
 
 ## Enable structured session capture
 

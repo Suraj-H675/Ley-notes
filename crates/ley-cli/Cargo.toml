@@ -13,3 +13,6 @@ path = "src/main.rs"
 ley-core = { path = "../ley-core" }
 ley-mcp = { path = "../ley-mcp" }
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
