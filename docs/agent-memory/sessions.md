@@ -133,6 +133,12 @@ The vault also contains `session.md` for review and `session-v1.json` for local 
 
 Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, snapshot-pinned artifact citations, and naming history. Older checkpoints, older naming revisions, and truncated text are disclosed instead of being presented as complete history.
 
+### Link an inspected session into notes
+
+Use **To notes** in the desktop session inspector to review a title and create a user-owned Markdown handoff under `Agent Memory/Sessions`. The accessible action remains **Link session to notes** when its visible label collapses in a narrow header. The note carries portable project/session IDs, status and event count at export, timestamps, and the `ley/session` tag. Its body preserves the inspected goal, outcome, handoff, unresolved work, visible checkpoints, verification, and artifact trail while quoting stored agent text beneath an evidence-not-instructions warning.
+
+Ley first canonically verifies that the open notes vault is the project’s bound Agent Memory vault. If a project from another vault was opened through the multi-project catalog, the write is refused until that vault is opened. Repeating the action opens the existing linked note by project/session ID even after a rename or move; it never overwrites an unrelated title. The note is a bounded export, discloses omitted or clipped context, and does not silently synchronize later session events. The immutable session remains authoritative. See [ADR 0021](../adr/0021-vault-verified-agent-memory-note-links.md).
+
 ## Retry a write safely
 
 Supply `--request-id req_01234567890123456789012345678901` when another process may repeat a start, compact checkpoint, or finish call. The same ID and content replay the original event. The same ID with different content fails instead of creating ambiguous history.

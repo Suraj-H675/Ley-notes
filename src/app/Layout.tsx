@@ -55,12 +55,13 @@ import { useIsPageBookmarked } from "@/features/bookmarks/useNoteBookmarks";
 import { togglePageBookmark } from "@/core/vault/note-bookmarks";
 import { startNavigationSession } from "@/core/vault/navigation-session";
 import type { CollectionRequest } from "@/features/collections/CollectionModal";
-import type { PromotedLearningNoteDraft } from "@/features/agent-memory/types";
+import type {
+  PromotedLearningNoteDraft,
+  PromotedSessionNoteDraft,
+} from "@/features/agent-memory/types";
 import { promoteLearningNote } from "@/features/agent-memory/promote-learning-note";
-import {
-  primaryModifierLabel,
-  shortcutLabel,
-} from "@/shared/lib/shortcut";
+import { promoteSessionNote } from "@/features/agent-memory/promote-session-note";
+import { primaryModifierLabel, shortcutLabel } from "@/shared/lib/shortcut";
 
 const GraphView = lazy(() =>
   import("@/features/graph/GraphView").then((module) => ({
@@ -214,6 +215,14 @@ export function Layout({
 
   async function promoteLearningToNote(draft: PromotedLearningNoteDraft) {
     const { page: note } = await promoteLearningNote(draft);
+    const nav = useNavStore.getState();
+    nav.openPage(note.id);
+    nav.pushRecent(note.id);
+    setAgentMemoryOpen(false);
+  }
+
+  async function promoteSessionToNote(draft: PromotedSessionNoteDraft) {
+    const { page: note } = await promoteSessionNote(draft);
     const nav = useNavStore.getState();
     nav.openPage(note.id);
     nav.pushRecent(note.id);
@@ -641,6 +650,7 @@ export function Layout({
               vaultName={vaultName}
               onClose={() => setAgentMemoryOpen(false)}
               onPromoteLearning={promoteLearningToNote}
+              onPromoteSession={promoteSessionToNote}
             />
           </Suspense>
         </FeatureErrorBoundary>

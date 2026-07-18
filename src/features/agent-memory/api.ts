@@ -78,6 +78,16 @@ export function inspectAgentProject(
   return invoke("inspect_agent_project", { projectPath });
 }
 
+export function verifyAgentProjectNoteVault(
+  projectPath: string,
+  openVaultPath: string,
+): Promise<void> {
+  return invoke("verify_agent_project_note_vault", {
+    projectPath,
+    openVaultPath,
+  });
+}
+
 export function initializeAgentProject(
   projectPath: string,
   vaultPath: string,

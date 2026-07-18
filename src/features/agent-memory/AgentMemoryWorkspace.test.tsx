@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   renameAgentSession: vi.fn(),
   searchAgentProjects: vi.fn(),
   updateAgentCaptureMode: vi.fn(),
+  verifyAgentProjectNoteVault: vi.fn(),
   reviewAgentLearning: vi.fn(),
 }));
 
@@ -40,6 +41,7 @@ vi.mock("./api", () => ({
   renameAgentSession: api.renameAgentSession,
   searchAgentProjects: api.searchAgentProjects,
   updateAgentCaptureMode: api.updateAgentCaptureMode,
+  verifyAgentProjectNoteVault: api.verifyAgentProjectNoteVault,
   refreshAgentProject: vi.fn(),
   reviewAgentLearning: api.reviewAgentLearning,
 }));
@@ -153,6 +155,7 @@ describe("Agent Memory workspace boundaries", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+    api.verifyAgentProjectNoteVault.mockResolvedValue(undefined);
   });
 
   it("explains why browser vaults cannot connect to local agents", () => {
@@ -164,6 +167,7 @@ describe("Agent Memory workspace boundaries", () => {
         vaultName="Notes"
         onClose={vi.fn()}
         onPromoteLearning={vi.fn()}
+        onPromoteSession={vi.fn()}
       />,
     );
 
@@ -554,6 +558,7 @@ describe("Agent Memory workspace boundaries", () => {
         vaultName="Private vault"
         onClose={vi.fn()}
         onPromoteLearning={promoteLearning}
+        onPromoteSession={vi.fn()}
       />,
     );
 
@@ -622,6 +627,17 @@ describe("Agent Memory workspace boundaries", () => {
     expect(screen.getByText("All session summaries render.")).toBeVisible();
     expect(screen.getByText("Implementation session")).toBeVisible();
     expect(screen.getByText("Clarify the implementation focus.")).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Link session to notes" }),
+    );
+    expect(
+      await screen.findByText("Destination · Agent Memory/Sessions"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/verifies that the open notes vault/i),
+    ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
     expect(
@@ -727,6 +743,13 @@ describe("Agent Memory workspace boundaries", () => {
         }),
       ),
     );
+    expect(api.verifyAgentProjectNoteVault).toHaveBeenCalledWith(
+      "/projects/ley",
+      "/vault",
+    );
+    expect(
+      api.verifyAgentProjectNoteVault.mock.invocationCallOrder[0],
+    ).toBeLessThan(promoteLearning.mock.invocationCallOrder[0]);
     await waitFor(() =>
       expect(
         screen.queryByRole("button", { name: "Close learning inspector" }),

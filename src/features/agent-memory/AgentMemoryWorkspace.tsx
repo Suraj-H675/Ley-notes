@@ -43,6 +43,7 @@ import {
   readAgentSession,
   refreshAgentProject,
   reviewAgentLearning,
+  verifyAgentProjectNoteVault,
 } from "./api";
 import { ProjectsHub } from "./ProjectsHub";
 import type {
@@ -55,6 +56,7 @@ import type {
   LearningContext,
   LearningSummary,
   PromotedLearningNoteDraft,
+  PromotedSessionNoteDraft,
   ResumeSession,
   SessionContext,
   SessionSummary,
@@ -97,6 +99,11 @@ const SessionRenameEditor = lazy(() =>
     default: module.SessionRenameEditor,
   })),
 );
+const SessionPromotionEditor = lazy(() =>
+  import("./SessionPromotionEditor").then((module) => ({
+    default: module.SessionPromotionEditor,
+  })),
+);
 const LearningCorrectionEditor = lazy(() =>
   import("./LearningCorrectionEditor").then((module) => ({
     default: module.LearningCorrectionEditor,
@@ -115,6 +122,7 @@ export function AgentMemoryWorkspace({
   vaultName,
   onClose,
   onPromoteLearning,
+  onPromoteSession,
 }: {
   open: boolean;
   vaultMode: "desktop" | "browser-folder" | "browser-local";
@@ -122,6 +130,7 @@ export function AgentMemoryWorkspace({
   vaultName: string;
   onClose: () => void;
   onPromoteLearning: (draft: PromotedLearningNoteDraft) => Promise<void>;
+  onPromoteSession: (draft: PromotedSessionNoteDraft) => Promise<void>;
 }) {
   const [section, setSection] = useState<Section>("overview");
   const [projectPath, setProjectPath] = useState<string | null>(null);
@@ -292,6 +301,18 @@ export function AgentMemoryWorkspace({
 
   async function refresh() {
     await makeReady("capture");
+  }
+
+  async function promoteLearningToBoundVault(draft: PromotedLearningNoteDraft) {
+    if (!projectPath) throw new Error("Open a project before linking a note.");
+    await verifyAgentProjectNoteVault(projectPath, vaultPath);
+    await onPromoteLearning(draft);
+  }
+
+  async function promoteSessionToBoundVault(draft: PromotedSessionNoteDraft) {
+    if (!projectPath) throw new Error("Open a project before linking a note.");
+    await verifyAgentProjectNoteVault(projectPath, vaultPath);
+    await onPromoteSession(draft);
   }
 
   function returnToProjects() {
@@ -531,8 +552,10 @@ export function AgentMemoryWorkspace({
               key={`session-${sessionId ?? "closed"}`}
               sessionId={sessionId}
               projectPath={projectPath}
+              projectName={dashboard.overview.projectName}
               onClose={() => setSessionId(null)}
               onEvidence={openEvidence}
+              onPromote={promoteSessionToBoundVault}
               onRenamed={(next) =>
                 setInspection({ status: "ready", dashboard: next })
               }
@@ -551,7 +574,7 @@ export function AgentMemoryWorkspace({
                 setSessionId(nextSessionId);
               }}
               onArtifact={openArtifact}
-              onPromote={onPromoteLearning}
+              onPromote={promoteLearningToBoundVault}
               onReviewed={(next) => {
                 setInspection({ status: "ready", dashboard: next });
                 setLearningId(null);
@@ -1019,19 +1042,25 @@ function ReviewInbox({
 function SessionInspector({
   sessionId,
   projectPath,
+  projectName,
   onClose,
   onEvidence,
+  onPromote,
   onRenamed,
 }: {
   sessionId: string | null;
   projectPath: string;
+  projectName: string;
   onClose: () => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
+  onPromote: (draft: PromotedSessionNoteDraft) => Promise<void>;
   onRenamed: (dashboard: AgentMemoryDashboard) => void;
 }) {
   const [session, setSession] = useState<SessionContext | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameDirty, setRenameDirty] = useState(false);
+  const [promoting, setPromoting] = useState(false);
+  const [promotionDirty, setPromotionDirty] = useState(false);
   const [busy, setBusy] = useState(Boolean(sessionId));
   const [error, setError] = useState<string | null>(null);
 
@@ -1062,9 +1091,8 @@ function SessionInspector({
       onOpenChange={(next) => {
         if (
           !next &&
-          (!renaming ||
-            !renameDirty ||
-            window.confirm("Discard your unsaved session rename?"))
+          ((!(renaming && renameDirty) && !(promoting && promotionDirty)) ||
+            window.confirm("Discard your unsaved note or rename changes?"))
         ) {
           onClose();
         }
@@ -1089,18 +1117,46 @@ function SessionInspector({
               {session && (
                 <Button
                   size="sm"
+                  variant={promoting ? "outline" : "ghost"}
+                  className="h-8"
+                  aria-expanded={promoting}
+                  aria-controls="session-note-link-panel"
+                  aria-label="Link session to notes"
+                  onClick={() => {
+                    if (
+                      ((promoting && promotionDirty) ||
+                        (renaming && renameDirty)) &&
+                      !window.confirm("Discard your unsaved changes?")
+                    ) {
+                      return;
+                    }
+                    setPromotionDirty(false);
+                    setRenameDirty(false);
+                    setRenaming(false);
+                    setPromoting((current) => !current);
+                  }}
+                >
+                  <FilePlus2 size={13} aria-hidden="true" />
+                  <span className="hidden min-[420px]:inline">To notes</span>
+                </Button>
+              )}
+              {session && (
+                <Button
+                  size="sm"
                   variant={renaming ? "outline" : "ghost"}
                   className="h-8"
                   aria-expanded={renaming}
                   onClick={() => {
                     if (
-                      renaming &&
-                      renameDirty &&
-                      !window.confirm("Discard your unsaved session rename?")
+                      ((renaming && renameDirty) ||
+                        (promoting && promotionDirty)) &&
+                      !window.confirm("Discard your unsaved changes?")
                     ) {
                       return;
                     }
                     setRenameDirty(false);
+                    setPromotionDirty(false);
+                    setPromoting(false);
                     setRenaming((current) => !current);
                   }}
                 >
@@ -1457,6 +1513,31 @@ function SessionInspector({
                       .catch((cause) => setError(errorMessage(cause)))
                       .finally(() => setBusy(false));
                   }}
+                />
+              </Suspense>
+            </div>
+          )}
+          {promoting && session && (
+            <div
+              id="session-note-link-panel"
+              className="shrink-0 border-t border-border bg-surface-1"
+            >
+              <Suspense fallback={<KnowledgeSurfaceFallback />}>
+                <SessionPromotionEditor
+                  projectName={projectName}
+                  session={session}
+                  onCancel={() => {
+                    if (
+                      promotionDirty &&
+                      !window.confirm("Discard your unsaved session note?")
+                    ) {
+                      return;
+                    }
+                    setPromotionDirty(false);
+                    setPromoting(false);
+                  }}
+                  onDirtyChange={setPromotionDirty}
+                  onPromote={onPromote}
                 />
               </Suspense>
             </div>

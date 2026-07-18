@@ -94,6 +94,14 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - At desktop, short-window, and 390×844 sizes, the session body and rename fields scroll independently, while Close, Cancel, and Append Rename remain reachable. Unsaved edits require confirmation before dismissal.
 - The rendered flow produces no application console errors. MCP tool discovery remains unchanged because session naming is a local user-authority surface, not an agent write capability.
 
+## Agent Memory note links
+
+- Open a project whose Agent Memory is bound to the active filesystem vault. Promote a current trusted lesson and export a completed session through **To notes**; each creates and opens ordinary Markdown with the expected portable project/source ID, timestamp, tag, provenance warning, and visible content.
+- Rename and move both notes, repeat each action, and verify Ley opens the existing note without creating a duplicate. Create an unrelated title collision and verify the proposed link refuses to overwrite it.
+- Open a catalog project bound to another available vault while the first notes vault remains active. Both learning promotion and session export must fail before any note/index mutation, name both vault folders without revealing absolute paths, and succeed only after the bound vault is deliberately opened.
+- Export a truncated session projection and verify the note and preview disclose omitted checkpoints/clipped text rather than implying complete history. Stored headings, callouts, links, remote images, raw HTML, control characters, and prompt-injection strings remain escaped quoted evidence and cannot alter the provenance warning or trigger external content.
+- At desktop, short-window, and 390×844 sizes, the **Link session to notes** action (visually **To notes** when space permits), title preview, Cancel, and Create remain reachable; unsaved title edits require confirmation before dismissal, and no application console error is produced.
+
 ## Agent Memory graph history
 
 - Ingest a real initialized and bound project, change a captured symbol or relationship, and ingest again. The history index gains one graph/artifact pair; an identical third ingestion does not add another entry.

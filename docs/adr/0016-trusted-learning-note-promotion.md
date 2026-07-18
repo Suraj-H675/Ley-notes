@@ -17,12 +17,13 @@ The note receives portable YAML provenance: source kind, project and learning ID
 
 The authoritative learning ledger is not modified. The promoted note becomes normal user-owned Markdown and can be edited, moved, linked, or deleted independently. Ley does not silently synchronize later learning corrections into that note.
 
-Promotion is idempotent by `ley-learning-id`. If the user already promoted the lesson and later renamed or moved its note, Ley opens that existing note. If an unrelated note already owns the requested title, creation fails and asks for another title instead of overwriting or silently reusing it.
+Promotion is idempotent by `ley-learning-id`. If the user already promoted the lesson and later renamed or moved its note, Ley opens that existing note. If an unrelated note already owns the requested title, creation fails and asks for another title instead of overwriting or silently reusing it. Before either path, Ley canonically verifies that the open note vault is the project’s private bound vault as defined by [ADR 0021](0021-vault-verified-agent-memory-note-links.md).
 
 ## Consequences
 
 - Reviewed procedural memory can join the normal notes, backlinks, search, tags, graph, and revision workflows.
 - The Agent Memory/human-note trust boundary remains explicit.
+- Project memory cannot be promoted into an unrelated currently open vault.
 - Repeated promotion does not create duplicate notes.
 - A promoted note is a historical, attributed snapshot rather than a live mirror.
 - Updating a promoted note from a later learning version remains an explicit future workflow.

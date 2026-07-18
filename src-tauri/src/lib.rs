@@ -231,6 +231,28 @@ fn resolved_agent_binding(project_path: &Path) -> Result<ProjectVaultBinding, Le
     BindingRegistry::system_default()?.resolve(project_path, None)
 }
 
+fn verify_open_vault_binding(
+    binding: &ProjectVaultBinding,
+    open_vault_path: &str,
+) -> Result<(), String> {
+    let open_vault = canonical_vault(open_vault_path)?;
+    if binding.vault_path == open_vault {
+        return Ok(());
+    }
+    let bound_name = binding
+        .vault_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("the bound vault");
+    let open_name = open_vault
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("the open vault");
+    Err(format!(
+        "This project’s Agent Memory belongs to “{bound_name}”, but notes are open in “{open_name}”. Open the bound vault before creating a linked note."
+    ))
+}
+
 fn agent_project_catalog_item(
     observed: ley_core::ObservedProject,
     registry: &BindingRegistry,
@@ -555,6 +577,16 @@ fn inspect_agent_project(project_path: String) -> Result<AgentProjectInspection,
         }
         Err(error) => Err(error.to_string()),
     }
+}
+
+#[tauri::command]
+fn verify_agent_project_note_vault(
+    project_path: String,
+    open_vault_path: String,
+) -> Result<(), String> {
+    let binding =
+        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
+    verify_open_vault_binding(&binding, &open_vault_path)
 }
 
 #[tauri::command]
@@ -1383,6 +1415,7 @@ pub fn run() {
             erase_agent_project_memory,
             search_agent_projects,
             inspect_agent_project,
+            verify_agent_project_note_vault,
             initialize_agent_project,
             connect_agent_project,
             refresh_agent_project,
@@ -1420,6 +1453,32 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linked_agent_notes_require_the_canonically_bound_vault() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-native-agent-note-vault-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let bound = root.join("Bound vault");
+        let other = root.join("Other vault");
+        fs::create_dir_all(&bound).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let binding = ProjectVaultBinding {
+            project_id: "prj_1234567890abcdef1234567890abcdef".to_owned(),
+            vault_path: bound.canonicalize().unwrap(),
+            source: BindingSource::Persisted,
+        };
+
+        verify_open_vault_binding(&binding, bound.to_str().unwrap()).unwrap();
+        let error = verify_open_vault_binding(&binding, other.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("Bound vault"));
+        assert!(error.contains("Other vault"));
+        assert!(!error.contains(root.to_str().unwrap()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn filesystem_vault_lifecycle_is_real_and_confined() {

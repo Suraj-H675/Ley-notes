@@ -52,7 +52,7 @@ Every desktop correction and review decision is tied to the ledger event count v
 
 Once a learning is verified, trusted, current, and fully visible, **Promote to note** creates an ordinary Markdown note under `Agent Memory/Lessons`. The note contains the exact reviewed guidance, portable YAML provenance, confidence and validity at promotion, and bounded source identifiers. Supporting evidence notes are not copied. The learning ledger remains unchanged, while the new note becomes user-owned and participates in normal search, links, tags, graph, revisions, moves, and deletion.
 
-Promotion is duplicate-safe by learning ID. Repeating it opens the existing promoted note even after that note was renamed or moved. An unrelated note with the requested title is never overwritten. Later learning corrections do not silently rewrite a promoted note; promotion is an attributed snapshot, not hidden synchronization.
+Promotion is duplicate-safe by learning ID. Repeating it opens the existing promoted note even after that note was renamed or moved. An unrelated note with the requested title is never overwritten. Before writing or reopening, Ley verifies that the open note vault canonically matches the project’s private Agent Memory binding; it refuses to copy memory into another currently open vault. Later learning corrections do not silently rewrite a promoted note; promotion is an attributed snapshot, not hidden synchronization. See [ADR 0021](../adr/0021-vault-verified-agent-memory-note-links.md).
 
 Use `--json` with propose, correct, review, list, or show for an automation-safe response. Supply `--request-id req_<32 lowercase hex characters>` when a caller needs retry-safe delivery; reusing the same ID with changed content fails.
 
