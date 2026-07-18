@@ -508,7 +508,7 @@ export function CanvasModal({
           className="fixed inset-0 z-[85] flex flex-col bg-background text-foreground outline-none"
         >
           <Dialog.Title className="sr-only">Canvas</Dialog.Title>
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-surface-1 px-2 sm:px-3">
+          <header className="app-chrome flex h-12 shrink-0 items-center gap-2 px-2 sm:px-3">
             <LayoutDashboard size={16} className="text-primary" />
             <span className="font-semibold">Canvas</span>
             <span className="hidden truncate text-meta text-muted-foreground sm:inline">
@@ -557,7 +557,7 @@ export function CanvasModal({
             </div>
           </header>
           <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-            <aside className="flex max-h-[46vh] w-full shrink-0 flex-col overflow-y-auto border-b border-border bg-surface-1 p-3 md:max-h-none md:w-72 md:border-b-0 md:border-r">
+            <aside className="app-sidebar flex max-h-[46vh] w-full shrink-0 flex-col overflow-y-auto border-b border-border p-3 md:max-h-none md:w-72 md:border-b-0 md:border-r">
               <div className="mb-2 text-micro font-medium uppercase tracking-[0.12em] text-muted-foreground">
                 Canvases
               </div>

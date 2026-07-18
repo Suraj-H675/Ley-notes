@@ -162,8 +162,8 @@ export function SettingsModal({
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-background/60 backdrop-blur-sm" />
-        <Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[51] flex max-h-[min(760px,92vh)] w-[520px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-surface-1 shadow-menu outline-none">
+        <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-50" />
+        <Dialog.Content aria-describedby={undefined} className="app-modal-surface fixed left-1/2 top-1/2 z-[51] flex max-h-[min(760px,92vh)] w-[520px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border outline-none">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <Dialog.Title className="text-body font-semibold">Settings</Dialog.Title>
           <Dialog.Close

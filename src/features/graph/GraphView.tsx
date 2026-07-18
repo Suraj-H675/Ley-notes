@@ -9,6 +9,7 @@ import { Maximize2 } from 'lucide-react';
 import { useGraphData, applyLocalFilter } from './useGraphData';
 import { layoutGraph } from '@/core/graph/layout';
 import { GraphCanvas } from './GraphCanvas';
+import { shortcutLabel } from '@/shared/lib/shortcut';
 
 export function GraphView({ activePageId, onOpenFullGraph }: { activePageId: string | null; onOpenFullGraph: () => void }) {
   const [localMode, setLocalMode] = useState(false);
@@ -39,7 +40,7 @@ export function GraphView({ activePageId, onOpenFullGraph }: { activePageId: str
           type="button"
           onClick={onOpenFullGraph}
           className="flex items-center gap-1 rounded-sm border border-border bg-surface-2 px-1.5 py-0.5 text-micro text-muted-foreground hover:bg-surface-3"
-          title="Open full graph (⌘G)"
+          title={`Open full graph (${shortcutLabel('G')})`}
         >
           <Maximize2 size={10} />
         </button>

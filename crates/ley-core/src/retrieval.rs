@@ -1,7 +1,9 @@
 use crate::graph::{
     FactProvenance, GitState, GraphCitation, GraphEdge, GraphEdgeKind, GraphNode, GraphNodeKind,
 };
-use crate::ingestion::{load_project_memory, ArtifactRecord, LoadedProjectMemory};
+use crate::ingestion::{
+    load_project_memory, load_project_memory_at_graph_snapshot, ArtifactRecord, LoadedProjectMemory,
+};
 use crate::{CaptureMode, LeyCoreError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -199,21 +201,7 @@ pub fn read_project_evidence(
     end_line: u64,
     max_characters: usize,
 ) -> Result<EvidenceExcerpt, LeyCoreError> {
-    if artifact_path.is_empty() {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "artifactPath must not be empty".to_owned(),
-        ));
-    }
-    if start_line == 0 || end_line < start_line || end_line - start_line + 1 > MAX_EVIDENCE_LINES {
-        return Err(LeyCoreError::InvalidRetrievalRequest(format!(
-            "line range must be one-based, ordered, and no larger than {MAX_EVIDENCE_LINES} lines"
-        )));
-    }
-    if !(256..=MAX_EVIDENCE_CHARACTERS).contains(&max_characters) {
-        return Err(LeyCoreError::InvalidRetrievalRequest(format!(
-            "maxCharacters must be between 256 and {MAX_EVIDENCE_CHARACTERS}"
-        )));
-    }
+    validate_evidence_request(artifact_path, start_line, end_line, max_characters)?;
     let memory = load_project_memory(project_start, vault)?;
     let artifact = memory
         .manifest
@@ -238,6 +226,84 @@ pub fn read_project_evidence(
         end_line,
         max_characters,
     )
+}
+
+pub fn read_project_graph_evidence(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    graph_snapshot_id: &str,
+    citation: &GraphCitation,
+    context_lines: u64,
+    max_characters: usize,
+) -> Result<EvidenceExcerpt, LeyCoreError> {
+    if context_lines > 20 {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "contextLines must be between 0 and 20".to_owned(),
+        ));
+    }
+    let memory =
+        load_project_memory_at_graph_snapshot(project_start, vault, Some(graph_snapshot_id))?;
+    let belongs_to_graph = memory
+        .graph
+        .nodes
+        .iter()
+        .filter_map(|node| node.citation.as_ref())
+        .chain(
+            memory
+                .graph
+                .edges
+                .iter()
+                .filter_map(|edge| edge.citation.as_ref()),
+        )
+        .any(|stored| stored == citation);
+    if !belongs_to_graph {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "citation does not belong to the selected graph snapshot".to_owned(),
+        ));
+    }
+    let artifact = memory
+        .manifest
+        .files
+        .iter()
+        .find(|artifact| artifact.path == citation.artifact_path)
+        .ok_or_else(|| {
+            LeyCoreError::InvalidArtifactStore(
+                "graph citation refers to an artifact outside its snapshot".to_owned(),
+            )
+        })?;
+    if artifact.content_hash != citation.content_hash
+        || citation.artifact_snapshot_id != memory.manifest.snapshot_id
+    {
+        return Err(LeyCoreError::InvalidArtifactStore(
+            "graph citation does not match its captured artifact".to_owned(),
+        ));
+    }
+    let start_line = citation.start_line.saturating_sub(context_lines).max(1);
+    let expanded_end = citation.end_line.saturating_add(context_lines);
+    let maximum_end = start_line.saturating_add(MAX_EVIDENCE_LINES - 1);
+    let end_line = expanded_end.min(maximum_end);
+    validate_evidence_request(
+        &citation.artifact_path,
+        start_line,
+        end_line,
+        max_characters,
+    )?;
+    let text = memory.read_artifact_text(artifact)?.ok_or_else(|| {
+        LeyCoreError::ProjectMemoryUnavailable(format!(
+            "source text is not retained for {} in Minimal capture mode",
+            citation.artifact_path
+        ))
+    })?;
+    let mut excerpt = excerpt_from_text(
+        &memory,
+        artifact,
+        &text,
+        start_line,
+        end_line,
+        max_characters,
+    )?;
+    excerpt.truncated |= expanded_end > maximum_end;
+    Ok(excerpt)
 }
 
 pub fn traverse_project_graph(
@@ -893,6 +959,30 @@ fn validate_query(query: &str) -> Result<(), LeyCoreError> {
     Ok(())
 }
 
+fn validate_evidence_request(
+    artifact_path: &str,
+    start_line: u64,
+    end_line: u64,
+    max_characters: usize,
+) -> Result<(), LeyCoreError> {
+    if artifact_path.is_empty() {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "artifactPath must not be empty".to_owned(),
+        ));
+    }
+    if start_line == 0 || end_line < start_line || end_line - start_line + 1 > MAX_EVIDENCE_LINES {
+        return Err(LeyCoreError::InvalidRetrievalRequest(format!(
+            "line range must be one-based, ordered, and no larger than {MAX_EVIDENCE_LINES} lines"
+        )));
+    }
+    if !(256..=MAX_EVIDENCE_CHARACTERS).contains(&max_characters) {
+        return Err(LeyCoreError::InvalidRetrievalRequest(format!(
+            "maxCharacters must be between 256 and {MAX_EVIDENCE_CHARACTERS}"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_limits(limits: RetrievalLimits) -> Result<(), LeyCoreError> {
     if !(1..=MAX_CONTEXT_RESULTS).contains(&limits.max_results) {
         return Err(LeyCoreError::InvalidRetrievalRequest(format!(
@@ -934,7 +1024,7 @@ fn validate_node_query(query: &str) -> Result<(), LeyCoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ingest_project, initialize_project, CaptureMode};
+    use crate::{ingest_project, initialize_project, read_project_graph, CaptureMode};
     use tempfile::tempdir;
 
     fn setup_memory(
@@ -1000,6 +1090,56 @@ mod tests {
                     .is_some_and(|snippet| snippet.contains("durable checkpoint"))
                 && item.citation.start_line > 0
         }));
+    }
+
+    #[test]
+    fn graph_source_inspector_reads_the_selected_captured_snapshot() {
+        let (_base, project, vault) = setup_memory(CaptureMode::Structured);
+        let first_graph = read_project_graph(&project, &vault).unwrap();
+        let citation = first_graph
+            .nodes
+            .iter()
+            .find(|node| node.name == "recall")
+            .and_then(|node| node.citation.clone())
+            .unwrap();
+        std::fs::write(
+            project.join("memory.py"),
+            "def replacement():\n    return \"new source\"\n",
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let excerpt = read_project_graph_evidence(
+            &project,
+            &vault,
+            &first_graph.graph_snapshot_id,
+            &citation,
+            2,
+            4_000,
+        )
+        .unwrap();
+        assert!(excerpt.text.contains("def recall"));
+        assert!(excerpt.text.contains("checkpoint()"));
+        assert!(!excerpt.text.contains("new source"));
+        assert_eq!(
+            excerpt.artifact_snapshot_id,
+            first_graph.artifact_snapshot_id
+        );
+        assert!(!excerpt.live_source_checked);
+
+        let mut forged = citation;
+        forged.start_line += 1;
+        assert!(matches!(
+            read_project_graph_evidence(
+                &project,
+                &vault,
+                &first_graph.graph_snapshot_id,
+                &forged,
+                2,
+                4_000,
+            ),
+            Err(LeyCoreError::InvalidRetrievalRequest(_))
+        ));
     }
 
     #[test]

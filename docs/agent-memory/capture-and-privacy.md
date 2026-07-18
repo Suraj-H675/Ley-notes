@@ -20,6 +20,8 @@ Applying a mode serializes local writers with a private project-specific OS lock
 
 Mode changes preserve custom roots, ignore behavior, and byte limits. Minimal re-capture stops source blobs from appearing in the current snapshot, but immutable historical evidence is not garbage-collected automatically. Ley must add a separate reviewed retention/deletion workflow before claiming old immutable evidence has been erased.
 
+The desktop project graph indexes changed immutable graph/artifact pairs so an earlier capture remains inspectable. Selecting a historical capture never reads today's working tree. A node or relationship can reveal only an exact citation already present in that selected graph, from its matching retained artifact snapshot. Excerpts stay redacted and bounded. Minimal captures can still show graph structure and citations, but source inspection is unavailable because that mode intentionally retains no source blob.
+
 ## Cloud-agent boundary
 
 Ley never uploads captured data independently. A cloud agent such as Claude, Codex, or Gemini may receive bounded context only when the user or host asks that agent to retrieve it. Capture mode controls local retention; it does not override the connected provider's handling of deliberately retrieved context.

@@ -20,6 +20,7 @@ import type { EditorPane } from '@/shared/state/nav';
 import { ensureMarkdownBlockReference } from '@/core/parser/destinations';
 import { addDestinationBookmark } from '@/core/vault/bookmarks';
 import { nanoid } from '@/shared/lib/nanoid';
+import { shortcutLabel } from '@/shared/lib/shortcut';
 
 interface CodeMirrorEditorProps {
   pageId: string;
@@ -224,16 +225,16 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
     <div className="relative flex h-full w-full flex-col">
       <div ref={containerRef} className="min-h-0 w-full flex-1 overflow-hidden bg-background" data-testid="cm-editor" />
       {externalContent !== null && <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-amber-400/30 bg-amber-400/8 px-3 py-2 text-micro text-muted-foreground-strong" role="alert"><span className="min-w-48 flex-1">This note changed outside Ley while you had unsaved edits.</span><button type="button" onClick={reloadExternalContent} className="rounded-md border border-border bg-background px-2 py-1 hover:bg-surface-2">Reload disk</button><button type="button" onClick={() => void keepLocalContent()} className="rounded-md bg-primary px-2 py-1 font-medium text-primary-foreground">Keep mine</button></div>}
-      <div className="flex shrink-0 items-center justify-center gap-0.5 border-t border-border bg-surface-1/95 p-1 backdrop-blur" role="toolbar" aria-label="Markdown formatting">
-        <FormatButton label="Bold" shortcut="⌘B" format="bold" controller={controllerRef}><Bold size={13} /></FormatButton>
-        <FormatButton label="Italic" shortcut="⌘I" format="italic" controller={controllerRef}><Italic size={13} /></FormatButton>
-        <FormatButton label="Link note" shortcut="⌘K" format="wiki-link" controller={controllerRef}><Link2 size={13} /></FormatButton>
+      <div className="app-chrome flex shrink-0 items-center justify-center gap-0.5 p-1" role="toolbar" aria-label="Markdown formatting">
+        <FormatButton label="Bold" shortcut={shortcutLabel('B')} format="bold" controller={controllerRef}><Bold size={13} /></FormatButton>
+        <FormatButton label="Italic" shortcut={shortcutLabel('I')} format="italic" controller={controllerRef}><Italic size={13} /></FormatButton>
+        <FormatButton label="Link note" shortcut={shortcutLabel('K')} format="wiki-link" controller={controllerRef}><Link2 size={13} /></FormatButton>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { const controller = controllerRef.current; if (!controller) return; controller.insertText('#'); startCompletion(controller.view); }} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Add tag" title="Add tag"><Hash size={13} /><span className="hidden sm:inline">Tag</span></button>
-        <FormatButton label="Inline code" shortcut="⌘⇧`" format="code" controller={controllerRef}><Braces size={13} /></FormatButton>
+        <FormatButton label="Inline code" shortcut={shortcutLabel('Shift `')} format="code" controller={controllerRef}><Braces size={13} /></FormatButton>
         <span className="mx-0.5 h-4 w-px bg-border" />
         <FormatButton label="Cycle task" format="task" controller={controllerRef}><ListChecks size={13} /></FormatButton>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => void bookmarkBlockAtCursor()} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Bookmark block at cursor" title="Bookmark block at cursor"><BookmarkPlus size={13} /><span className="hidden lg:inline">Bookmark</span></button>
-        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => controllerRef.current?.openSearch()} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Find and replace" title="Find and replace (⌘F)"><Search size={13} /><span className="hidden sm:inline">Find</span></button>
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => controllerRef.current?.openSearch()} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Find and replace" title={`Find and replace (${shortcutLabel('F')})`}><Search size={13} /><span className="hidden sm:inline">Find</span></button>
       </div>
       {attachmentStatus && <div className="absolute bottom-12 right-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-meta text-foreground shadow-menu" role="status">{attachmentStatus}</div>}
       {syncStatus && <button type="button" onClick={() => setSyncStatus(null)} className="absolute bottom-12 left-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-left text-meta text-foreground shadow-menu" role="status">{syncStatus}</button>}

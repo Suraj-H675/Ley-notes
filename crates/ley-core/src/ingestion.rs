@@ -28,6 +28,10 @@ const MANIFEST_FILE: &str = "manifest-v1.json";
 const INGEST_LOCK_FILE: &str = "ingest-v1.lock";
 const GRAPH_DIRECTORY: &str = "graph";
 const GRAPH_MANIFEST_FILE: &str = "graph-v1.json";
+const GRAPH_HISTORY_FILE: &str = "history-v1.json";
+const GRAPH_HISTORY_SCHEMA_VERSION: u32 = 1;
+const GRAPH_HISTORY_LIMIT_BYTES: u64 = 524_288;
+const MAX_GRAPH_HISTORY_ENTRIES: usize = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -153,6 +157,26 @@ pub(crate) struct LoadedProjectMemory {
     pub(crate) manifest: ArtifactManifest,
     pub(crate) graph: ProjectGraph,
     content_dir: Dir,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct GraphHistoryEntry {
+    pub(crate) graph_snapshot_id: String,
+    pub(crate) artifact_snapshot_id: String,
+    pub(crate) generated_at_unix_ms: u64,
+    pub(crate) nodes: usize,
+    pub(crate) edges: usize,
+    pub(crate) branch: Option<String>,
+    pub(crate) head: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GraphHistoryIndex {
+    schema_version: u32,
+    project_id: String,
+    entries: Vec<GraphHistoryEntry>,
 }
 
 impl Drop for IngestionLock {
@@ -419,6 +443,14 @@ pub(crate) fn load_project_memory(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<LoadedProjectMemory, LeyCoreError> {
+    load_project_memory_at_graph_snapshot(project_start, vault, None)
+}
+
+pub(crate) fn load_project_memory_at_graph_snapshot(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    graph_snapshot_id: Option<&str>,
+) -> Result<LoadedProjectMemory, LeyCoreError> {
     let diagnostic = diagnose_project(project_start)?;
     let vault_path = vault
         .as_ref()
@@ -432,23 +464,43 @@ pub(crate) fn load_project_memory(
     }
     let store = ArtifactStore::open_existing(&vault_path, &diagnostic.identity.project_id)?;
     let _lock = store.read_lock()?;
-    let manifest = store.read_manifest()?.ok_or_else(|| {
-        LeyCoreError::ProjectMemoryUnavailable(
-            "no artifact snapshot exists; run 'ley ingest' first".to_owned(),
-        )
-    })?;
-    validate_manifest(&manifest, &diagnostic.identity.project_id)?;
-    store.verify_snapshot(&manifest)?;
-    let graph = store.read_graph()?.ok_or_else(|| {
-        LeyCoreError::ProjectMemoryUnavailable(
-            "no project graph exists; run 'ley ingest' first".to_owned(),
-        )
-    })?;
+    let graph = match graph_snapshot_id {
+        Some(snapshot_id) => {
+            validate_graph_snapshot_id(snapshot_id)?;
+            store.read_graph_snapshot(snapshot_id)?.ok_or_else(|| {
+                LeyCoreError::InvalidRetrievalRequest(format!(
+                    "graph snapshot is not retained: {snapshot_id}"
+                ))
+            })?
+        }
+        None => store.read_graph()?.ok_or_else(|| {
+            LeyCoreError::ProjectMemoryUnavailable(
+                "no project graph exists; run 'ley ingest' first".to_owned(),
+            )
+        })?,
+    };
     validate_project_graph(&graph, &diagnostic.identity.project_id)?;
     store.verify_graph_snapshot(&graph)?;
+    let manifest = match graph_snapshot_id {
+        Some(_) => store
+            .read_manifest_snapshot(&graph.artifact_snapshot_id)?
+            .ok_or_else(|| {
+                LeyCoreError::InvalidArtifactStore(format!(
+                    "artifact snapshot is not retained: {}",
+                    graph.artifact_snapshot_id
+                ))
+            })?,
+        None => store.read_manifest()?.ok_or_else(|| {
+            LeyCoreError::ProjectMemoryUnavailable(
+                "no artifact snapshot exists; run 'ley ingest' first".to_owned(),
+            )
+        })?,
+    };
+    validate_manifest(&manifest, &diagnostic.identity.project_id)?;
+    store.verify_snapshot(&manifest)?;
     if graph.artifact_snapshot_id != manifest.snapshot_id {
         return Err(LeyCoreError::ProjectMemoryUnavailable(
-            "artifact and graph snapshots are temporarily inconsistent; rerun ingestion".to_owned(),
+            "artifact and graph snapshots are inconsistent".to_owned(),
         ));
     }
     Ok(LoadedProjectMemory {
@@ -456,6 +508,51 @@ pub(crate) fn load_project_memory(
         graph,
         content_dir: store.content_dir,
     })
+}
+
+pub(crate) fn load_project_graph_history(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<(ProjectGraph, Vec<GraphHistoryEntry>), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let vault_path = vault
+        .as_ref()
+        .canonicalize()
+        .map_err(|source| LeyCoreError::Io {
+            path: vault.as_ref().to_path_buf(),
+            source,
+        })?;
+    if !vault_path.is_dir() {
+        return Err(LeyCoreError::NotDirectory(vault.as_ref().to_path_buf()));
+    }
+    let store = ArtifactStore::open_existing(&vault_path, &diagnostic.identity.project_id)?;
+    let _lock = store.read_lock()?;
+    let current = store.read_graph()?.ok_or_else(|| {
+        LeyCoreError::ProjectMemoryUnavailable(
+            "no project graph exists; run 'ley ingest' first".to_owned(),
+        )
+    })?;
+    validate_project_graph(&current, &diagnostic.identity.project_id)?;
+    store.verify_graph_snapshot(&current)?;
+    let mut entries = store
+        .read_graph_history(&diagnostic.identity.project_id)?
+        .map(|history| history.entries)
+        .unwrap_or_default();
+    if !entries
+        .iter()
+        .any(|entry| entry.graph_snapshot_id == current.graph_snapshot_id)
+    {
+        entries.push(GraphHistoryEntry::from_graph(&current));
+    }
+    entries.sort_by(|left, right| {
+        right
+            .generated_at_unix_ms
+            .cmp(&left.generated_at_unix_ms)
+            .then_with(|| right.graph_snapshot_id.cmp(&left.graph_snapshot_id))
+    });
+    entries.dedup_by(|left, right| left.graph_snapshot_id == right.graph_snapshot_id);
+    entries.truncate(MAX_GRAPH_HISTORY_ENTRIES);
+    Ok((current, entries))
 }
 
 impl LoadedProjectMemory {
@@ -495,6 +592,20 @@ impl LoadedProjectMemory {
                 artifact.path
             ))
         })
+    }
+}
+
+impl GraphHistoryEntry {
+    fn from_graph(graph: &ProjectGraph) -> Self {
+        Self {
+            graph_snapshot_id: graph.graph_snapshot_id.clone(),
+            artifact_snapshot_id: graph.artifact_snapshot_id.clone(),
+            generated_at_unix_ms: graph.generated_at_unix_ms,
+            nodes: graph.nodes.len(),
+            edges: graph.edges.len(),
+            branch: graph.git.as_ref().and_then(|git| git.branch.clone()),
+            head: graph.git.as_ref().and_then(|git| git.head.clone()),
+        }
     }
 }
 
@@ -616,6 +727,24 @@ impl ArtifactStore {
             .map_err(|source| LeyCoreError::InvalidArtifactStore(source.to_string()))
     }
 
+    fn read_manifest_snapshot(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Option<ArtifactManifest>, LeyCoreError> {
+        validate_artifact_snapshot_id(snapshot_id)?;
+        let Some(bytes) = read_optional_store_file(
+            &self.snapshots_dir,
+            &format!("{snapshot_id}.json"),
+            ARTIFACT_MANIFEST_LIMIT_BYTES,
+        )?
+        else {
+            return Ok(None);
+        };
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|source| LeyCoreError::InvalidArtifactStore(source.to_string()))
+    }
+
     fn write_blob_if_absent(&self, name: &str, body: &[u8]) -> Result<(), LeyCoreError> {
         write_immutable_private(&self.content_dir, name, body)
     }
@@ -687,6 +816,39 @@ impl ArtifactStore {
             .map_err(|source| LeyCoreError::InvalidProjectGraph(source.to_string()))
     }
 
+    fn read_graph_snapshot(&self, snapshot_id: &str) -> Result<Option<ProjectGraph>, LeyCoreError> {
+        validate_graph_snapshot_id(snapshot_id)?;
+        let Some(bytes) = read_optional_store_file(
+            &self.graph_snapshots_dir,
+            &format!("{snapshot_id}.json"),
+            PROJECT_GRAPH_LIMIT_BYTES,
+        )?
+        else {
+            return Ok(None);
+        };
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|source| LeyCoreError::InvalidProjectGraph(source.to_string()))
+    }
+
+    fn read_graph_history(
+        &self,
+        expected_project_id: &str,
+    ) -> Result<Option<GraphHistoryIndex>, LeyCoreError> {
+        let Some(bytes) = read_optional_store_file(
+            &self.graph_dir,
+            GRAPH_HISTORY_FILE,
+            GRAPH_HISTORY_LIMIT_BYTES,
+        )?
+        else {
+            return Ok(None);
+        };
+        let history = serde_json::from_slice::<GraphHistoryIndex>(&bytes)
+            .map_err(|source| LeyCoreError::InvalidProjectGraph(source.to_string()))?;
+        validate_graph_history(&history, expected_project_id)?;
+        Ok(Some(history))
+    }
+
     fn verify_graph_snapshot(&self, graph: &ProjectGraph) -> Result<(), LeyCoreError> {
         let name = format!("{}.json", graph.graph_snapshot_id);
         let body = graph_body(graph)?;
@@ -710,17 +872,80 @@ impl ArtifactStore {
         previous: Option<&ProjectGraph>,
         graph: &ProjectGraph,
     ) -> Result<bool, LeyCoreError> {
-        if previous.is_some_and(|old| old.graph_snapshot_id == graph.graph_snapshot_id) {
-            return Ok(false);
+        let changed = previous.is_none_or(|old| old.graph_snapshot_id != graph.graph_snapshot_id);
+        let body = if changed {
+            let body = graph_body(graph)?;
+            write_immutable_private(
+                &self.graph_snapshots_dir,
+                &format!("{}.json", graph.graph_snapshot_id),
+                &body,
+            )?;
+            Some(body)
+        } else {
+            None
+        };
+        if let Some(body) = body {
+            write_atomic_private(&self.graph_dir, GRAPH_MANIFEST_FILE, &body)?;
         }
-        let body = graph_body(graph)?;
-        write_immutable_private(
-            &self.graph_snapshots_dir,
-            &format!("{}.json", graph.graph_snapshot_id),
-            &body,
-        )?;
-        write_atomic_private(&self.graph_dir, GRAPH_MANIFEST_FILE, &body)?;
-        Ok(true)
+        // The current pointer remains the authoritative graph. Updating it
+        // before the rebuildable history index prevents a failed pointer write
+        // from advertising a capture that never became current.
+        self.update_graph_history(previous, graph)?;
+        Ok(changed)
+    }
+
+    fn update_graph_history(
+        &self,
+        previous: Option<&ProjectGraph>,
+        graph: &ProjectGraph,
+    ) -> Result<(), LeyCoreError> {
+        let existing = self.read_graph_history(&graph.project_id)?;
+        let mut history = existing.clone().unwrap_or(GraphHistoryIndex {
+            schema_version: GRAPH_HISTORY_SCHEMA_VERSION,
+            project_id: graph.project_id.clone(),
+            entries: Vec::new(),
+        });
+        if let Some(previous) = previous.filter(|candidate| {
+            !history
+                .entries
+                .iter()
+                .any(|entry| entry.graph_snapshot_id == candidate.graph_snapshot_id)
+        }) {
+            history
+                .entries
+                .push(GraphHistoryEntry::from_graph(previous));
+        }
+        if !history
+            .entries
+            .iter()
+            .any(|entry| entry.graph_snapshot_id == graph.graph_snapshot_id)
+        {
+            history.entries.push(GraphHistoryEntry::from_graph(graph));
+        }
+        history.entries.sort_by(|left, right| {
+            left.generated_at_unix_ms
+                .cmp(&right.generated_at_unix_ms)
+                .then_with(|| left.graph_snapshot_id.cmp(&right.graph_snapshot_id))
+        });
+        if history.entries.len() > MAX_GRAPH_HISTORY_ENTRIES {
+            history
+                .entries
+                .drain(..history.entries.len() - MAX_GRAPH_HISTORY_ENTRIES);
+        }
+        validate_graph_history(&history, &graph.project_id)?;
+        if existing.as_ref() == Some(&history) {
+            return Ok(());
+        }
+        let mut body = serde_json::to_vec_pretty(&history)
+            .map_err(|error| LeyCoreError::InvalidProjectGraph(error.to_string()))?;
+        body.push(b'\n');
+        if body.len() as u64 > GRAPH_HISTORY_LIMIT_BYTES {
+            return Err(LeyCoreError::MetadataTooLarge {
+                path: PathBuf::from(GRAPH_HISTORY_FILE),
+                limit_bytes: GRAPH_HISTORY_LIMIT_BYTES,
+            });
+        }
+        write_atomic_private(&self.graph_dir, GRAPH_HISTORY_FILE, &body)
     }
 }
 
@@ -1071,6 +1296,80 @@ fn validate_manifest(
                 skipped.path
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_graph_history(
+    history: &GraphHistoryIndex,
+    expected_project_id: &str,
+) -> Result<(), LeyCoreError> {
+    if history.schema_version != GRAPH_HISTORY_SCHEMA_VERSION {
+        return Err(LeyCoreError::InvalidProjectGraph(format!(
+            "unsupported graph history schema version {}",
+            history.schema_version
+        )));
+    }
+    validate_project_id(&history.project_id)?;
+    if history.project_id != expected_project_id {
+        return Err(LeyCoreError::InvalidProjectGraph(
+            "graph history project ID does not match the initialized project".to_owned(),
+        ));
+    }
+    if history.entries.is_empty() || history.entries.len() > MAX_GRAPH_HISTORY_ENTRIES {
+        return Err(LeyCoreError::InvalidProjectGraph(format!(
+            "graph history must contain 1 to {MAX_GRAPH_HISTORY_ENTRIES} entries"
+        )));
+    }
+    let mut ids = BTreeSet::new();
+    let mut previous_order: Option<(u64, &str)> = None;
+    for entry in &history.entries {
+        validate_graph_snapshot_id(&entry.graph_snapshot_id)?;
+        validate_artifact_snapshot_id(&entry.artifact_snapshot_id)?;
+        if !ids.insert(entry.graph_snapshot_id.as_str()) {
+            return Err(LeyCoreError::InvalidProjectGraph(
+                "graph history contains a duplicate snapshot".to_owned(),
+            ));
+        }
+        if entry.nodes == 0 {
+            return Err(LeyCoreError::InvalidProjectGraph(
+                "graph history contains an empty graph".to_owned(),
+            ));
+        }
+        if entry.branch.iter().chain(entry.head.iter()).any(|value| {
+            value.is_empty() || value.chars().count() > 512 || value.chars().any(char::is_control)
+        }) {
+            return Err(LeyCoreError::InvalidProjectGraph(
+                "graph history contains invalid Git identity".to_owned(),
+            ));
+        }
+        let order = (entry.generated_at_unix_ms, entry.graph_snapshot_id.as_str());
+        if previous_order.is_some_and(|previous| previous >= order) {
+            return Err(LeyCoreError::InvalidProjectGraph(
+                "graph history entries must be ordered and unique".to_owned(),
+            ));
+        }
+        previous_order = Some(order);
+    }
+    Ok(())
+}
+
+fn validate_artifact_snapshot_id(value: &str) -> Result<(), LeyCoreError> {
+    validate_snapshot_id(value, "snp_").map_err(LeyCoreError::InvalidArtifactStore)
+}
+
+fn validate_graph_snapshot_id(value: &str) -> Result<(), LeyCoreError> {
+    validate_snapshot_id(value, "grf_").map_err(LeyCoreError::InvalidProjectGraph)
+}
+
+fn validate_snapshot_id(value: &str, prefix: &str) -> Result<(), String> {
+    if value.len() != prefix.len() + 64
+        || !value.starts_with(prefix)
+        || !value[prefix.len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(format!("{prefix} snapshot ID is invalid"));
     }
     Ok(())
 }

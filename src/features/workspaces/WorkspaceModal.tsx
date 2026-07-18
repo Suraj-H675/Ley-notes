@@ -148,8 +148,8 @@ export function WorkspaceModal({ open, splitPercent, onSplitPercentChange, onClo
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/70 backdrop-blur-sm" />
-        <Dialog.Content aria-describedby="workspace-description" className="fixed left-1/2 top-1/2 z-[81] flex max-h-[calc(100vh-24px)] w-[min(720px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-surface-1 shadow-menu outline-none">
+        <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[80]" />
+        <Dialog.Content aria-describedby="workspace-description" className="app-modal-surface fixed left-1/2 top-1/2 z-[81] flex max-h-[calc(100vh-24px)] w-[min(720px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border outline-none">
           <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-4 sm:px-5">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-secondary/20 bg-secondary/10 text-secondary">
               <PanelsTopLeft size={19} />

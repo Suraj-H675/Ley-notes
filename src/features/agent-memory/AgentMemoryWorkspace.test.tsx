@@ -31,6 +31,8 @@ vi.mock("./api", () => ({
   readAgentArtifacts: api.readAgentArtifacts,
   readAgentCaptureSettings: api.readAgentCaptureSettings,
   readAgentLearning: api.readAgentLearning,
+  readAgentProjectGraphEvidence: vi.fn(),
+  readAgentProjectGraphHistory: vi.fn(),
   readAgentProjectGraphView: vi.fn(),
   readAgentSession: api.readAgentSession,
   renameAgentSession: api.renameAgentSession,

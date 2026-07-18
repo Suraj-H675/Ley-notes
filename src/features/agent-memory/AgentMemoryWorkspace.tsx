@@ -317,7 +317,7 @@ export function AgentMemoryWorkspace({
           className="fixed inset-0 z-[60] flex min-h-0 flex-col overflow-hidden bg-background text-foreground outline-none"
           aria-describedby={undefined}
         >
-          <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface-1/95 px-3 sm:px-5">
+          <header className="app-chrome flex h-14 shrink-0 items-center justify-between px-3 sm:px-5">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
                 <BrainCircuit size={17} aria-hidden="true" />
@@ -583,7 +583,7 @@ function AgentMemoryNav({
     },
   ];
   return (
-    <aside className="shrink-0 border-b border-border bg-surface-1 md:flex md:w-56 md:flex-col md:border-b-0 md:border-r">
+    <aside className="app-sidebar shrink-0 border-b border-border md:flex md:w-56 md:flex-col md:border-b-0 md:border-r">
       <nav
         className="flex gap-1 overflow-x-auto p-2 md:flex-col md:overflow-visible md:p-3"
         aria-label="Agent Memory sections"
@@ -1021,9 +1021,9 @@ function SessionInspector({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/70 backdrop-blur-sm" />
+        <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[80]" />
         <Dialog.Content
-          className="fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-menu outline-none sm:inset-x-6 sm:bottom-6 sm:top-6"
+          className="app-modal-surface fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-4xl flex-col overflow-hidden rounded-2xl border outline-none sm:inset-x-6 sm:bottom-6 sm:top-6"
           aria-describedby={undefined}
         >
           <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
@@ -1507,9 +1507,9 @@ function LearningInspector({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[80] bg-background/70 backdrop-blur-sm" />
+        <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[80]" />
         <Dialog.Content
-          className="fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-menu outline-none focus-visible:ring-2 focus-visible:ring-primary sm:inset-x-6 sm:bottom-6 sm:top-6"
+          className="app-modal-surface fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-3xl flex-col overflow-hidden rounded-2xl border outline-none focus-visible:ring-2 focus-visible:ring-primary sm:inset-x-6 sm:bottom-6 sm:top-6"
           aria-describedby={undefined}
         >
           <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3 sm:px-5">

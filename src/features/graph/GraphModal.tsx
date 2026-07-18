@@ -116,7 +116,7 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
         <Dialog.Content aria-describedby={undefined} className="fixed inset-0 z-50 flex flex-col bg-background outline-none">
       <Dialog.Title className="sr-only">Graph view</Dialog.Title>
       {/* Header */}
-      <header className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-surface-1 px-3">
+      <header className="app-chrome flex h-11 shrink-0 items-center justify-between px-3">
         <div className="flex items-center gap-2">
           <Maximize2 size={14} className="text-muted-foreground" />
           <span className="text-body font-semibold">Graph view</span>

@@ -94,6 +94,15 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - At desktop, short-window, and 390×844 sizes, the session body and rename fields scroll independently, while Close, Cancel, and Append Rename remain reachable. Unsaved edits require confirmation before dismissal.
 - The rendered flow produces no application console errors. MCP tool discovery remains unchanged because session naming is a local user-authority surface, not an agent write capability.
 
+## Agent Memory graph history
+
+- Ingest a real initialized and bound project, change a captured symbol or relationship, and ingest again. The history index gains one graph/artifact pair; an identical third ingestion does not add another entry.
+- Open the project graph in Ley Desktop. Switch from Current to the earlier capture and confirm the historical banner, counts, nodes, edges, Git identity, and capture time all come from that immutable snapshot while the working tree remains untouched.
+- Combine node-kind, relationship, provenance, and text filters. Backend-reported filtered counts agree with the rendered bounded graph, and reset restores the complete selected capture.
+- Select a node and a relationship, navigate between their endpoints, and open each citation. The excerpt has the recorded relative path, hash, line numbers, snapshot ID, and redacted captured text—even after the live source changes.
+- Attempt a citation borrowed from another node or capture and verify that the shared engine rejects it. Open a Minimal capture and verify that the inspector explains why no source text exists instead of reading the live file.
+- At desktop, short-window, and 390×844 sizes, filters scroll independently, the graph remains usable, the inspector stays reachable without document overflow, focus indicators remain visible, and reduced-motion/reduced-transparency preferences preserve the interaction.
+
 ## Release evidence
 
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.

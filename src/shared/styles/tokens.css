@@ -55,6 +55,14 @@
   --shadow-panel: 0 1px 0 hsl(220 20% 4% / 0.4), 0 0 0 1px hsl(220 10% 100% / 0.04);
   --shadow-popover: 0 8px 24px hsl(220 20% 4% / 0.32), 0 0 0 1px hsl(220 10% 100% / 0.06);
   --shadow-menu: 0 12px 32px hsl(220 20% 4% / 0.4), 0 0 0 1px hsl(220 10% 100% / 0.06);
+
+  /* Functional materials. Opacity is centralized so desktop chrome and
+     floating workspaces retain the same depth language. */
+  --material-chrome: 220 13% 12% / 0.82;
+  --material-sidebar: 220 13% 12% / 0.94;
+  --material-floating: 220 13% 12% / 0.88;
+  --material-scrim: 220 14% 5% / 0.68;
+  --material-highlight: 220 14% 100% / 0.065;
 }
 
 :root[data-theme='light'] {
@@ -85,4 +93,10 @@
   --shadow-panel: 0 1px 0 hsl(220 14% 70% / 0.4), 0 0 0 1px hsl(220 10% 14% / 0.04);
   --shadow-popover: 0 8px 24px hsl(220 20% 14% / 0.12), 0 0 0 1px hsl(220 10% 14% / 0.06);
   --shadow-menu: 0 12px 32px hsl(220 20% 14% / 0.16), 0 0 0 1px hsl(220 10% 14% / 0.06);
+
+  --material-chrome: 0 0% 100% / 0.82;
+  --material-sidebar: 0 0% 100% / 0.94;
+  --material-floating: 0 0% 100% / 0.9;
+  --material-scrim: 220 16% 18% / 0.34;
+  --material-highlight: 0 0% 100% / 0.72;
 }

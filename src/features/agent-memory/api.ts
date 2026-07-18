@@ -10,7 +10,11 @@ import type {
   LearningContext,
   ProjectActivityView,
   ProjectArtifactInventory,
+  ProjectGraphEvidenceExcerpt,
+  ProjectGraphFilters,
+  ProjectGraphHistory,
   ProjectGraphView,
+  GraphCitation,
   ProjectProblemScope,
   SessionContext,
 } from "./types";
@@ -132,12 +136,39 @@ export function readAgentArtifacts(
 export function readAgentProjectGraphView(
   projectPath: string,
   query = "",
+  graphSnapshotId?: string,
+  filters?: ProjectGraphFilters,
 ): Promise<ProjectGraphView> {
   return invoke("read_agent_project_graph_view", {
     projectPath,
+    graphSnapshotId,
     query,
     maxNodes: 180,
     maxEdges: 600,
+    filters,
+  });
+}
+
+export function readAgentProjectGraphHistory(
+  projectPath: string,
+): Promise<ProjectGraphHistory> {
+  return invoke("read_agent_project_graph_history", {
+    projectPath,
+    maxResults: 100,
+  });
+}
+
+export function readAgentProjectGraphEvidence(
+  projectPath: string,
+  graphSnapshotId: string,
+  citation: GraphCitation,
+): Promise<ProjectGraphEvidenceExcerpt> {
+  return invoke("read_agent_project_graph_evidence", {
+    projectPath,
+    graphSnapshotId,
+    citation,
+    contextLines: 3,
+    maxCharacters: 8_000,
   });
 }
 

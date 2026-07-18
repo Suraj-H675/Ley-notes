@@ -343,8 +343,8 @@ function PageNode({
 
       <Dialog.Root open={moveOpen} onOpenChange={(open) => { setMoveOpen(open); if (!open) setError(null); }}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[90] bg-background/70 backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] w-[420px] max-w-[calc(100vw-24px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface-1 p-5 shadow-menu outline-none">
+          <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[90]" />
+          <Dialog.Content className="app-modal-surface fixed left-1/2 top-1/2 z-[91] w-[420px] max-w-[calc(100vw-24px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border p-5 outline-none">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <Dialog.Title className="text-body font-semibold text-foreground">Move “{page.title}”</Dialog.Title>
@@ -366,8 +366,8 @@ function PageNode({
 
       <Dialog.Root open={deleteOpen} onOpenChange={setDeleteOpen}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-[90] bg-background/70 backdrop-blur-sm" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-[91] w-[420px] max-w-[calc(100vw-24px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-surface-1 p-5 shadow-menu outline-none">
+          <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[90]" />
+          <Dialog.Content className="app-modal-surface fixed left-1/2 top-1/2 z-[91] w-[420px] max-w-[calc(100vw-24px)] -translate-x-1/2 -translate-y-1/2 rounded-xl border p-5 outline-none">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <Dialog.Title className="text-body font-semibold text-foreground">Move note to trash?</Dialog.Title>

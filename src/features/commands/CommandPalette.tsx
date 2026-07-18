@@ -17,6 +17,7 @@ import {
   TableProperties,
 } from "lucide-react";
 import { Kbd } from "@/shared/components/Kbd";
+import { shortcutLabel } from "@/shared/lib/shortcut";
 import * as Dialog from "@radix-ui/react-dialog";
 
 interface PaletteCommand {
@@ -75,7 +76,7 @@ export function CommandPalette({
         label: "Create new note",
         detail: "Add a Markdown note to the vault",
         icon: <FilePlus2 size={15} />,
-        shortcut: "⌘N",
+        shortcut: shortcutLabel("N"),
         run: onNewNote,
       },
       {
@@ -83,7 +84,7 @@ export function CommandPalette({
         label: "Open quick switcher",
         detail: "Find a note by title or content",
         icon: <FolderSearch size={15} />,
-        shortcut: "⌘O",
+        shortcut: shortcutLabel("O"),
         keywords: "search find note",
         run: onQuickSwitcher,
       },
@@ -92,7 +93,7 @@ export function CommandPalette({
         label: "Open today's daily note",
         detail: "Capture thoughts and activity for today",
         icon: <CalendarDays size={15} />,
-        shortcut: "⌘D",
+        shortcut: shortcutLabel("D"),
         run: onDailyNote,
       },
       {
@@ -100,7 +101,7 @@ export function CommandPalette({
         label: "Open graph view",
         detail: "Explore the connections in this vault",
         icon: <Network size={15} />,
-        shortcut: "⌘G",
+        shortcut: shortcutLabel("G"),
         run: onGraph,
       },
       {
@@ -188,7 +189,7 @@ export function CommandPalette({
         label: "Open settings",
         detail: "Configure Ley and this vault",
         icon: <Settings size={15} />,
-        shortcut: "⌘,",
+        shortcut: shortcutLabel(","),
         run: onSettings,
       },
     ],
@@ -245,10 +246,10 @@ export function CommandPalette({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[70] bg-background/65 backdrop-blur-sm" />
+        <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[70]" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-[12vh] z-[71] w-[600px] max-w-[calc(100vw-24px)] -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-surface-1 shadow-menu outline-none"
+          className="app-modal-surface app-modal-top fixed left-1/2 top-[12vh] z-[71] w-[600px] max-w-[calc(100vw-24px)] -translate-x-1/2 overflow-hidden rounded-xl border outline-none"
         >
           <Dialog.Title className="sr-only">Command palette</Dialog.Title>
           <div className="flex items-center gap-2 border-b border-border px-3">

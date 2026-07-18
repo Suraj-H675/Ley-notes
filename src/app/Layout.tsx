@@ -22,6 +22,7 @@ import {
   Network,
   X,
   BrainCircuit,
+  Ellipsis,
 } from "lucide-react";
 import { useUIStore } from "@/shared/state/ui";
 import { useNavStore } from "@/shared/state/nav";
@@ -56,6 +57,10 @@ import { startNavigationSession } from "@/core/vault/navigation-session";
 import type { CollectionRequest } from "@/features/collections/CollectionModal";
 import type { PromotedLearningNoteDraft } from "@/features/agent-memory/types";
 import { promoteLearningNote } from "@/features/agent-memory/promote-learning-note";
+import {
+  primaryModifierLabel,
+  shortcutLabel,
+} from "@/shared/lib/shortcut";
 
 const GraphView = lazy(() =>
   import("@/features/graph/GraphView").then((module) => ({
@@ -231,12 +236,13 @@ export function Layout({
   }
 
   const isEmpty = (pages?.length ?? 0) === 0;
+  const modifier = primaryModifierLabel();
 
   return (
     <div className="flex h-full w-full flex-col bg-background text-foreground">
       {/* Title bar */}
-      <header className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-surface-1 px-3">
-        <div className="flex items-center gap-2">
+      <header className="app-chrome flex h-11 shrink-0 items-center justify-between gap-3 px-3">
+        <div className="flex min-w-0 items-center gap-2">
           <Button
             size="sm"
             variant="ghost"
@@ -244,25 +250,38 @@ export function Layout({
             aria-label="Toggle sidebar"
             title="Toggle sidebar"
           >
-            <PanelLeft size={14} />
+            <PanelLeft size={14} aria-hidden="true" />
           </Button>
           <span className="text-body font-semibold tracking-tight">Ley</span>
+          <span
+            className="hidden max-w-36 truncate text-micro text-muted-foreground sm:inline"
+            title={vaultName}
+          >
+            {vaultName}
+          </span>
         </div>
-        <div className="flex items-center gap-1">
+        <nav
+          className="flex min-w-0 items-center gap-1"
+          aria-label="Workspace actions"
+        >
           <button
             type="button"
             onClick={() => openSearch()}
             aria-label="Open note"
-            title="Open note (⌘O)"
-            className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-meta text-muted-foreground hover:bg-surface-3"
+            title={`Open note (${shortcutLabel("O")})`}
+            className="flex h-7 touch-manipulation items-center gap-1.5 rounded-md border border-border bg-surface-2/80 px-2 text-meta text-muted-foreground outline-none transition-[transform,background-color,border-color,color] hover:border-border-strong hover:bg-surface-3 hover:text-foreground active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
           >
-            <Search size={12} />
+            <Search size={12} aria-hidden="true" />
             <span className="hidden sm:inline">Open note</span>
             <span className="hidden sm:flex">
-              <Kbd>⌘</Kbd>
+              <Kbd>{modifier}</Kbd>
               <Kbd>O</Kbd>
             </span>
           </button>
+          <span
+            className="mx-0.5 hidden h-4 w-px bg-border md:block"
+            aria-hidden="true"
+          />
           <Button
             size="sm"
             variant="ghost"
@@ -271,33 +290,32 @@ export function Layout({
               setNewNoteOpen(true);
             }}
             aria-label="New note"
-            title="New note (⌘N)"
+            title={`New note (${shortcutLabel("N")})`}
           >
-            <FilePlus2 size={14} />
-            <span className="hidden xl:inline">
-              <Kbd>⌘N</Kbd>
-            </span>
+            <FilePlus2 size={14} aria-hidden="true" />
           </Button>
           <Button
             size="sm"
             variant="ghost"
             onClick={openDailyNote}
             aria-label="Open daily note"
-            title="Open today's daily note"
+            title={`Open today's daily note (${shortcutLabel("D")})`}
           >
-            <CalendarPlus size={14} />
-            <span className="hidden md:inline">
-              <Kbd>⌘D</Kbd>
-            </span>
+            <CalendarPlus size={14} aria-hidden="true" />
           </Button>
+          <span
+            className="mx-0.5 hidden h-4 w-px bg-border sm:block"
+            aria-hidden="true"
+          />
           <Button
             size="sm"
             variant="ghost"
+            className="hidden sm:inline-flex"
             onClick={() => setCanvasOpen(true)}
             aria-label="Canvas"
             title="Canvas"
           >
-            <LayoutDashboard size={14} />
+            <LayoutDashboard size={14} aria-hidden="true" />
           </Button>
           <Button
             size="sm"
@@ -307,37 +325,41 @@ export function Layout({
             aria-label="Workspace layouts"
             title="Workspace layouts"
           >
-            <PanelsTopLeft size={14} />
+            <PanelsTopLeft size={14} aria-hidden="true" />
           </Button>
           <Button
             size="sm"
             variant="ghost"
+            className="hidden sm:inline-flex"
             onClick={() => setAgentMemoryOpen(true)}
             aria-label="Agent Memory"
             title="Agent Memory"
           >
-            <BrainCircuit size={14} />
+            <BrainCircuit size={14} aria-hidden="true" />
           </Button>
           <Button
             size="sm"
             variant="ghost"
+            className="hidden sm:inline-flex"
             onClick={() => setGraphOpen(true)}
             aria-label="Graph view"
-            title="Graph view (⌘G)"
+            title={`Graph view (${shortcutLabel("G")})`}
           >
-            <Network size={14} />
-            <span className="hidden md:inline">
-              <Kbd>⌘G</Kbd>
-            </span>
+            <Network size={14} aria-hidden="true" />
           </Button>
+          <span
+            className="mx-0.5 hidden h-4 w-px bg-border md:block"
+            aria-hidden="true"
+          />
           <Button
             size="sm"
             variant="ghost"
+            className="hidden sm:inline-flex"
             onClick={() => setSettingsOpen(true)}
             aria-label="Settings"
-            title="Settings (⌘,)"
+            title={`Settings (${shortcutLabel(",")})`}
           >
-            <SettingsIcon size={14} />
+            <SettingsIcon size={14} aria-hidden="true" />
           </Button>
           <Button
             size="sm"
@@ -346,15 +368,25 @@ export function Layout({
             onClick={toggleRightDock}
             aria-label="Toggle right dock"
           >
-            <PanelRight size={14} />
+            <PanelRight size={14} aria-hidden="true" />
           </Button>
-        </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="sm:hidden"
+            onClick={() => setCommandOpen(true)}
+            aria-label="More workspace actions"
+            title="More workspace actions"
+          >
+            <Ellipsis size={16} aria-hidden="true" />
+          </Button>
+        </nav>
       </header>
 
       {/* Main: sidebar / editor / right dock */}
       <div className="flex flex-1 overflow-hidden">
         {sidebarOpen && (
-          <aside className="fixed inset-y-10 left-0 z-30 flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-surface-1 py-3 shadow-menu md:static md:w-64 md:shadow-none">
+          <aside className="app-sidebar fixed inset-y-11 left-0 z-30 flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border py-3 shadow-menu md:static md:w-64 md:shadow-none">
             <FileTree
               onNewPage={(folder) => {
                 setNewNoteFolder(folder ?? "");
@@ -461,8 +493,8 @@ export function Layout({
         </main>
 
         {rightDockOpen && (
-          <aside className="hidden w-80 shrink-0 flex-col border-l border-border bg-surface-1 lg:flex">
-            <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
+          <aside className="app-sidebar hidden w-80 shrink-0 flex-col border-l border-border lg:flex">
+            <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border/70 px-2">
               {(["backlinks", "outline", "history", "graph"] as const).map(
                 (t) => (
                   <button
@@ -471,8 +503,8 @@ export function Layout({
                     onClick={() => setRightDockTab(t)}
                     className={
                       rightDockTab === t
-                        ? "rounded-sm bg-surface-3 px-2 py-0.5 text-meta font-medium text-foreground"
-                        : "rounded-sm px-2 py-0.5 text-meta text-muted-foreground hover:bg-surface-2 hover:text-foreground"
+                        ? "rounded-md bg-surface-3 px-2 py-1 text-meta font-medium text-foreground shadow-sm outline-none transition-transform active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                        : "rounded-md px-2 py-1 text-meta text-muted-foreground outline-none transition-[transform,background-color,color] hover:bg-surface-2 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
                     }
                   >
                     {t.charAt(0).toUpperCase() + t.slice(1)}
@@ -643,11 +675,11 @@ function PaneHeader({
         <button
           type="button"
           onClick={onClose}
-          className="rounded p-0.5 hover:bg-surface-3 hover:text-foreground"
+          className="rounded p-0.5 outline-none transition-transform hover:bg-surface-3 hover:text-foreground active:scale-90 motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
           aria-label="Close split"
           title="Close split"
         >
-          <X size={12} />
+          <X size={12} aria-hidden="true" />
         </button>
       )}
     </div>
@@ -713,7 +745,7 @@ function SplitDivider({
         if (event.key === "ArrowLeft") commit(value - 2);
         if (event.key === "ArrowRight") commit(value + 2);
       }}
-      className="relative z-10 hidden w-px shrink-0 cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-1 before:w-2 hover:bg-primary focus:bg-primary lg:block"
+      className="relative z-10 hidden w-px shrink-0 cursor-col-resize touch-none bg-border outline-none before:absolute before:inset-y-0 before:-left-1 before:w-2 hover:bg-primary focus-visible:bg-primary focus-visible:ring-2 focus-visible:ring-primary/35 lg:block"
     />
   );
 }

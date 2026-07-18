@@ -46,10 +46,12 @@ pub use ingestion::{
     ARTIFACT_MANIFEST_LIMIT_BYTES, ARTIFACT_MANIFEST_SCHEMA_VERSION,
 };
 pub use knowledge_view::{
-    project_artifact_inventory, project_graph_view, ArtifactInventoryItem,
-    ProjectArtifactInventory, ProjectGraphView, ProjectGraphViewNode, SkippedArtifactInventoryItem,
-    DEFAULT_ARTIFACT_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
-    MAX_ARTIFACT_RESULTS, MAX_GRAPH_VIEW_EDGES, MAX_GRAPH_VIEW_NODES,
+    project_artifact_inventory, project_graph_history, project_graph_view,
+    project_graph_view_filtered, ArtifactInventoryItem, ProjectArtifactInventory,
+    ProjectGraphFilters, ProjectGraphHistory, ProjectGraphHistoryEntry, ProjectGraphView,
+    ProjectGraphViewNode, SkippedArtifactInventoryItem, DEFAULT_ARTIFACT_RESULTS,
+    DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
+    MAX_ARTIFACT_RESULTS, MAX_GRAPH_HISTORY_RESULTS, MAX_GRAPH_VIEW_EDGES, MAX_GRAPH_VIEW_NODES,
     MAX_KNOWLEDGE_QUERY_CHARACTERS,
 };
 pub use learning::{
@@ -87,8 +89,8 @@ pub use resume_context::{
 };
 pub use retrieval::{
     find_project_context, find_project_graph_path, project_memory_overview, read_project_evidence,
-    traverse_project_graph, ContextItem, ContextItemKind, ContextPack, EvidenceExcerpt,
-    GraphDirection, GraphPath, GraphTraversal, MemoryOverview, RetrievalLimits,
+    read_project_graph_evidence, traverse_project_graph, ContextItem, ContextItemKind, ContextPack,
+    EvidenceExcerpt, GraphDirection, GraphPath, GraphTraversal, MemoryOverview, RetrievalLimits,
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
 };
 pub use session::{

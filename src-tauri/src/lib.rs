@@ -1,16 +1,18 @@
 use ley_core::{
     correct_learning, diagnose_project, generate_learning_request_id, generate_request_id,
     ingest_project, initialize_project, list_learning_contexts, list_sessions,
-    project_activity_view, project_artifact_inventory, project_graph_view, project_memory_overview,
-    project_resume_context, project_session_stats, read_learning, read_learning_context,
+    project_activity_view, project_artifact_inventory, project_graph_history,
+    project_graph_view_filtered, project_memory_overview, project_resume_context,
+    project_session_stats, read_learning, read_learning_context, read_project_graph_evidence,
     read_session_context, rename_session, review_learning, search_observed_projects,
     update_capture_mode, BindingRegistry, BindingSource, CaptureMode, CorrectLearningInput,
-    CrossProjectSearch, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
-    LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
-    ProjectActivityView, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
-    ProjectGraphView, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
-    RenameSessionInput, ReviewLearningInput, SessionContextPack, SessionSummary,
-    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
+    CrossProjectSearch, EvidenceExcerpt, GraphCitation, IngestionResult, LearningActor,
+    LearningContextPack, LearningEvidenceInput, LearningFeedbackAction, LearningList,
+    LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory,
+    ProjectCatalog, ProjectDiagnostic, ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView,
+    ProjectProblemScope, ProjectResumePack, ProjectVaultBinding, RenameSessionInput,
+    ReviewLearningInput, SessionContextPack, SessionSummary, DEFAULT_ARTIFACT_RESULTS,
+    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
     DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
@@ -818,20 +820,66 @@ fn read_agent_artifacts(
 fn read_agent_project_graph_view(
     project_path: String,
     vault_override: Option<String>,
+    graph_snapshot_id: Option<String>,
     query: Option<String>,
     max_nodes: Option<usize>,
     max_edges: Option<usize>,
+    filters: Option<ProjectGraphFilters>,
 ) -> Result<ProjectGraphView, String> {
     let override_path = vault_override.as_deref().map(Path::new);
     let binding = BindingRegistry::system_default()
         .and_then(|registry| registry.resolve(&project_path, override_path))
         .map_err(|error| error.to_string())?;
-    project_graph_view(
+    project_graph_view_filtered(
         project_path,
         binding.vault_path,
+        graph_snapshot_id.as_deref(),
         query.as_deref().unwrap_or_default(),
         max_nodes.unwrap_or(DEFAULT_GRAPH_VIEW_NODES),
         max_edges.unwrap_or(DEFAULT_GRAPH_VIEW_EDGES),
+        &filters.unwrap_or_default(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn read_agent_project_graph_history(
+    project_path: String,
+    vault_override: Option<String>,
+    max_results: Option<usize>,
+) -> Result<ProjectGraphHistory, String> {
+    let override_path = vault_override.as_deref().map(Path::new);
+    let binding = BindingRegistry::system_default()
+        .and_then(|registry| registry.resolve(&project_path, override_path))
+        .map_err(|error| error.to_string())?;
+    project_graph_history(
+        project_path,
+        binding.vault_path,
+        max_results.unwrap_or(DEFAULT_GRAPH_HISTORY_RESULTS),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn read_agent_project_graph_evidence(
+    project_path: String,
+    vault_override: Option<String>,
+    graph_snapshot_id: String,
+    citation: GraphCitation,
+    context_lines: Option<u64>,
+    max_characters: Option<usize>,
+) -> Result<EvidenceExcerpt, String> {
+    let override_path = vault_override.as_deref().map(Path::new);
+    let binding = BindingRegistry::system_default()
+        .and_then(|registry| registry.resolve(&project_path, override_path))
+        .map_err(|error| error.to_string())?;
+    read_project_graph_evidence(
+        project_path,
+        binding.vault_path,
+        &graph_snapshot_id,
+        &citation,
+        context_lines.unwrap_or(3),
+        max_characters.unwrap_or(8_000),
     )
     .map_err(|error| error.to_string())
 }
@@ -1317,7 +1365,9 @@ pub fn run() {
             unbind_agent_project,
             ingest_agent_project,
             read_agent_artifacts,
+            read_agent_project_graph_history,
             read_agent_project_graph_view,
+            read_agent_project_graph_evidence,
             read_agent_project_activity,
             scan_vault,
             scan_canvases,

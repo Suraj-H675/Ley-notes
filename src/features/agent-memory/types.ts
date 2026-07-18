@@ -359,6 +359,22 @@ export type ProjectGraphNodeKind =
   | "external-symbol"
   | "external-module";
 
+export type ProjectGraphEdgeKind =
+  | "contains"
+  | "defines"
+  | "imports"
+  | "calls"
+  | "inherits"
+  | "implements"
+  | "references"
+  | "depends-on";
+
+export type ProjectGraphProvenance =
+  | "deterministic"
+  | "user-authored"
+  | "agent-authored"
+  | "inferred";
+
 export interface GraphCitation {
   artifactPath: string;
   startLine: number;
@@ -378,9 +394,26 @@ export interface ProjectGraphViewNode {
   symbolKind?: string;
   packageManager?: string;
   citation?: GraphCitation;
-  provenance: "deterministic" | "user-authored" | "agent-authored" | "inferred";
+  provenance: ProjectGraphProvenance;
   confidence: number;
   degree: number;
+}
+
+export interface ProjectGraphViewEdge {
+  id: string;
+  kind: ProjectGraphEdgeKind;
+  source: string;
+  target: string;
+  label?: string;
+  citation?: GraphCitation;
+  provenance: ProjectGraphProvenance;
+  confidence: number;
+}
+
+export interface ProjectGraphFilters {
+  nodeKinds: ProjectGraphNodeKind[];
+  edgeKinds: ProjectGraphEdgeKind[];
+  provenances: ProjectGraphProvenance[];
 }
 
 export interface ProjectGraphView {
@@ -392,18 +425,11 @@ export interface ProjectGraphView {
   query: string;
   selection: string;
   nodes: ProjectGraphViewNode[];
-  edges: Array<{
-    id: string;
-    kind: string;
-    source: string;
-    target: string;
-    label?: string;
-    citation?: GraphCitation;
-    provenance: string;
-    confidence: number;
-  }>;
+  edges: ProjectGraphViewEdge[];
   totalNodes: number;
   totalEdges: number;
+  filteredNodes: number;
+  filteredEdges: number;
   matchingNodes: number;
   omittedNodes: number;
   omittedEdges: number;
@@ -427,6 +453,39 @@ export interface ProjectGraphView {
   };
   liveSourceChecked: boolean;
   instructionWarning: string;
+}
+
+export interface ProjectGraphHistory {
+  projectId: string;
+  projectName: string;
+  currentGraphSnapshotId: string;
+  entries: Array<{
+    graphSnapshotId: string;
+    artifactSnapshotId: string;
+    generatedAtUnixMs: number;
+    nodes: number;
+    edges: number;
+    branch?: string;
+    head?: string;
+    current: boolean;
+  }>;
+  totalEntries: number;
+  omittedEntries: number;
+  liveSourceChecked: boolean;
+  instructionWarning: string;
+}
+
+export interface ProjectGraphEvidenceExcerpt {
+  projectId: string;
+  artifactSnapshotId: string;
+  artifactPath: string;
+  text: string;
+  citation: GraphCitation;
+  truncated: boolean;
+  freshness: string;
+  liveSourceChecked: boolean;
+  sourceBoundary: string;
+  warning: string;
 }
 
 export type ProjectProblemScope = "all" | "open" | "resolved";

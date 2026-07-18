@@ -154,10 +154,10 @@ export function SearchModal({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-background/60 backdrop-blur-sm" />
+        <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-50" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-20 z-[51] flex w-[520px] max-w-[92vw] -translate-x-1/2 flex-col overflow-hidden rounded-lg border border-border bg-surface-1 shadow-menu outline-none"
+          className="app-modal-surface app-modal-top fixed left-1/2 top-20 z-[51] flex w-[520px] max-w-[92vw] -translate-x-1/2 flex-col overflow-hidden rounded-xl border outline-none"
         >
           <Dialog.Title className="sr-only">Open a note</Dialog.Title>
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
