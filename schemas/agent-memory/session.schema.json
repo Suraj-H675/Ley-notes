@@ -8,6 +8,7 @@
     "schemaVersion",
     "projectId",
     "sessionId",
+    "originalName",
     "name",
     "goal",
     "status",
@@ -16,12 +17,18 @@
     "startedAtUnixMs",
     "updatedAtUnixMs",
     "eventCount",
-    "checkpoints"
+    "checkpoints",
+    "renames"
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
     "projectId": { "$ref": "#/$defs/projectId" },
     "sessionId": { "$ref": "#/$defs/sessionId" },
+    "originalName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
     "name": {
       "type": "string",
       "minLength": 1,
@@ -47,6 +54,11 @@
       "type": "array",
       "maxItems": 9999,
       "items": { "$ref": "#/$defs/checkpoint" }
+    },
+    "renames": {
+      "type": "array",
+      "maxItems": 9999,
+      "items": { "$ref": "#/$defs/rename" }
     },
     "finish": { "$ref": "#/$defs/finish" }
   },
@@ -99,6 +111,17 @@
           "minLength": 1,
           "maxLength": 128
         }
+      }
+    },
+    "rename": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventId", "recordedAtUnixMs", "name", "note"],
+      "properties": {
+        "eventId": { "$ref": "#/$defs/eventId" },
+        "recordedAtUnixMs": { "$ref": "#/$defs/timestamp" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "note": { "type": "string", "minLength": 1, "maxLength": 4000 }
       }
     },
     "checkpoint": {

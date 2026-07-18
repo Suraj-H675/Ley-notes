@@ -79,6 +79,7 @@ export interface SessionSummary {
 export interface SessionContext {
   projectId: string;
   sessionId: string;
+  originalName: string;
   name: string;
   goal: string;
   status: "active" | "completed" | "paused" | "abandoned";
@@ -92,6 +93,13 @@ export interface SessionContext {
   updatedAtUnixMs: number;
   eventCount: number;
   checkpointCount: number;
+  renameCount: number;
+  renames: Array<{
+    recordedAtUnixMs: number;
+    name: string;
+    note: string;
+  }>;
+  omittedRenames: number;
   checkpoints: Array<{
     checkpointId: string;
     recordedAtUnixMs: number;

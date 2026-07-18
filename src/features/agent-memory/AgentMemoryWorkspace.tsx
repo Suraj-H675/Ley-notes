@@ -91,6 +91,11 @@ const CapturePrivacyPanel = lazy(() =>
     default: module.CapturePrivacyPanel,
   })),
 );
+const SessionRenameEditor = lazy(() =>
+  import("./SessionRenameEditor").then((module) => ({
+    default: module.SessionRenameEditor,
+  })),
+);
 const LearningCorrectionEditor = lazy(() =>
   import("./LearningCorrectionEditor").then((module) => ({
     default: module.LearningCorrectionEditor,
@@ -485,6 +490,9 @@ export function AgentMemoryWorkspace({
               sessionId={sessionId}
               projectPath={projectPath}
               onClose={() => setSessionId(null)}
+              onRenamed={(next) =>
+                setInspection({ status: "ready", dashboard: next })
+              }
             />
           )}
 
@@ -964,12 +972,16 @@ function SessionInspector({
   sessionId,
   projectPath,
   onClose,
+  onRenamed,
 }: {
   sessionId: string | null;
   projectPath: string;
   onClose: () => void;
+  onRenamed: (dashboard: AgentMemoryDashboard) => void;
 }) {
   const [session, setSession] = useState<SessionContext | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const [renameDirty, setRenameDirty] = useState(false);
   const [busy, setBusy] = useState(Boolean(sessionId));
   const [error, setError] = useState<string | null>(null);
 
@@ -978,7 +990,10 @@ function SessionInspector({
     let current = true;
     void readAgentSession(projectPath, sessionId)
       .then((next) => {
-        if (current) setSession(next);
+        if (current) {
+          setSession(next);
+          setError(null);
+        }
       })
       .catch((cause) => {
         if (current) setError(errorMessage(cause));
@@ -995,7 +1010,14 @@ function SessionInspector({
     <Dialog.Root
       open={Boolean(sessionId)}
       onOpenChange={(next) => {
-        if (!next) onClose();
+        if (
+          !next &&
+          (!renaming ||
+            !renameDirty ||
+            window.confirm("Discard your unsaved session rename?"))
+        ) {
+          onClose();
+        }
       }}
     >
       <Dialog.Portal>
@@ -1004,7 +1026,7 @@ function SessionInspector({
           className="fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-surface-1 shadow-menu outline-none sm:inset-x-6 sm:bottom-6 sm:top-6"
           aria-describedby={undefined}
         >
-          <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-3 sm:px-5">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
             <div className="min-w-0">
               <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 Session provenance
@@ -1013,15 +1035,39 @@ function SessionInspector({
                 {session?.name ?? "Loading session…"}
               </Dialog.Title>
             </div>
-            <Dialog.Close
-              className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              aria-label="Close session inspector"
-            >
-              <X size={15} />
-            </Dialog.Close>
+            <div className="flex shrink-0 items-center gap-1">
+              {session && (
+                <Button
+                  size="sm"
+                  variant={renaming ? "outline" : "ghost"}
+                  className="h-8"
+                  aria-expanded={renaming}
+                  onClick={() => {
+                    if (
+                      renaming &&
+                      renameDirty &&
+                      !window.confirm("Discard your unsaved session rename?")
+                    ) {
+                      return;
+                    }
+                    setRenameDirty(false);
+                    setRenaming((current) => !current);
+                  }}
+                >
+                  <PencilLine size={13} aria-hidden="true" />
+                  Rename
+                </Button>
+              )}
+              <Dialog.Close
+                className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                aria-label="Close session inspector"
+              >
+                <X size={15} />
+              </Dialog.Close>
+            </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
             {busy && !session ? (
               <div className="py-20 text-center text-meta text-muted-foreground">
                 Replaying structured session events…
@@ -1031,6 +1077,14 @@ function SessionInspector({
             ) : (
               session && (
                 <div className="space-y-7">
+                  {error && (
+                    <p
+                      className="rounded-lg border border-destructive/25 bg-destructive/8 p-3 text-micro text-destructive"
+                      role="alert"
+                    >
+                      {error}
+                    </p>
+                  )}
                   <section className="rounded-xl border border-border bg-background/35 p-4 sm:p-5">
                     <div className="flex flex-wrap items-center gap-3">
                       <SessionStatus status={session.status} />
@@ -1056,6 +1110,53 @@ function SessionInspector({
                       <span>~{session.estimatedTextTokens} context tokens</span>
                     </div>
                   </section>
+
+                  {session.renameCount > 0 && (
+                    <section aria-labelledby="session-naming-history-title">
+                      <SectionLabel
+                        id="session-naming-history-title"
+                        icon={PencilLine}
+                        label="Naming history"
+                      />
+                      <div className="mt-2 rounded-xl border border-border bg-surface-1 p-4 shadow-panel">
+                        <div className="border-b border-border pb-3">
+                          <p className="text-micro font-medium text-muted-foreground">
+                            Original name
+                          </p>
+                          <p className="mt-1 text-meta font-medium">
+                            {session.originalName}
+                          </p>
+                        </div>
+                        <ol className="mt-3 space-y-3">
+                          {session.renames.map((rename, index) => (
+                            <li
+                              key={`${rename.recordedAtUnixMs}:${index}`}
+                              className="grid gap-1 sm:grid-cols-[minmax(0,1fr)_auto]"
+                            >
+                              <div className="min-w-0">
+                                <p className="break-words text-meta font-medium">
+                                  {rename.name}
+                                </p>
+                                <p className="mt-0.5 whitespace-pre-wrap text-micro leading-5 text-muted-foreground">
+                                  {rename.note}
+                                </p>
+                              </div>
+                              <time className="text-micro text-muted-foreground">
+                                {relativeTime(rename.recordedAtUnixMs)}
+                              </time>
+                            </li>
+                          ))}
+                        </ol>
+                        {session.omittedRenames > 0 && (
+                          <p className="mt-3 border-t border-border pt-3 text-micro text-muted-foreground">
+                            {session.omittedRenames} older renames are preserved
+                            in the session log but omitted from this bounded
+                            view.
+                          </p>
+                        )}
+                      </div>
+                    </section>
+                  )}
 
                   {session.finish && (
                     <section aria-labelledby="session-outcome-title">
@@ -1276,6 +1377,38 @@ function SessionInspector({
               )
             )}
           </div>
+          {renaming && session && (
+            <div className="shrink-0 border-t border-border bg-surface-1">
+              <Suspense fallback={<KnowledgeSurfaceFallback />}>
+                <SessionRenameEditor
+                  projectPath={projectPath}
+                  session={session}
+                  onCancel={() => {
+                    if (
+                      renameDirty &&
+                      !window.confirm("Discard your unsaved session rename?")
+                    ) {
+                      return;
+                    }
+                    setRenameDirty(false);
+                    setRenaming(false);
+                  }}
+                  onDirtyChange={setRenameDirty}
+                  onRenamed={(dashboard) => {
+                    onRenamed(dashboard);
+                    setRenameDirty(false);
+                    setRenaming(false);
+                    setBusy(true);
+                    setError(null);
+                    void readAgentSession(projectPath, session.sessionId)
+                      .then(setSession)
+                      .catch((cause) => setError(errorMessage(cause)))
+                      .finally(() => setBusy(false));
+                  }}
+                />
+              </Suspense>
+            </div>
+          )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

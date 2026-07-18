@@ -227,6 +227,16 @@ pub struct FinishSessionInput {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RenameSessionInput {
+    pub request_id: String,
+    #[serde(default)]
+    pub expected_event_count: Option<u64>,
+    pub name: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MemoryRedaction {
     pub field: String,
     pub kind: String,
@@ -352,10 +362,20 @@ pub struct SessionFinish {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionRename {
+    pub event_id: String,
+    pub recorded_at_unix_ms: u64,
+    pub name: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentSession {
     pub schema_version: u32,
     pub project_id: String,
     pub session_id: String,
+    pub original_name: String,
     pub name: String,
     pub goal: String,
     pub status: SessionStatus,
@@ -367,6 +387,7 @@ pub struct AgentSession {
     pub finished_at_unix_ms: Option<u64>,
     pub event_count: u64,
     pub checkpoints: Vec<SessionCheckpoint>,
+    pub renames: Vec<SessionRename>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish: Option<SessionFinish>,
 }
@@ -427,6 +448,7 @@ enum SessionEventPayload {
     },
     CheckpointRecorded(SessionCheckpoint),
     SessionFinished(SessionFinish),
+    SessionRenamed(SessionRename),
 }
 
 pub fn generate_request_id() -> String {
@@ -470,6 +492,7 @@ pub fn start_session(
             redactions,
             payload,
             allow_create: true,
+            expected_event_count: None,
         },
         vault,
     )
@@ -502,6 +525,7 @@ pub fn checkpoint_session(
             redactions,
             payload: SessionEventPayload::CheckpointRecorded(checkpoint),
             allow_create: false,
+            expected_event_count: None,
         },
         vault,
     )
@@ -553,6 +577,45 @@ pub fn finish_session(
             redactions,
             payload: SessionEventPayload::SessionFinished(finish),
             allow_create: false,
+            expected_event_count: None,
+        },
+        vault,
+    )
+}
+
+pub fn rename_session(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RenameSessionInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    let diagnostic = diagnose_project(&project_start)?;
+    project_memory_overview(&diagnostic.root, &vault)?;
+    let event_id = deterministic_id(
+        "evt",
+        &format!("{session_id}:{}:session-renamed", input.request_id),
+        64,
+    );
+    let recorded_at = unix_time_ms();
+    let mut redactions = Vec::new();
+    let rename = SessionRename {
+        event_id: event_id.clone(),
+        recorded_at_unix_ms: recorded_at,
+        name: sanitize_text("name", &input.name, 1, 128, &mut redactions)?,
+        note: sanitize_text("note", &input.note, 1, 4_000, &mut redactions)?,
+    };
+    mutate_session(
+        &diagnostic.identity.project_id,
+        session_id,
+        PendingEvent {
+            event_id,
+            request_id: input.request_id,
+            redactions,
+            payload: SessionEventPayload::SessionRenamed(rename),
+            allow_create: false,
+            expected_event_count: input.expected_event_count,
         },
         vault,
     )
@@ -939,6 +1002,7 @@ struct PendingEvent {
     redactions: Vec<MemoryRedaction>,
     payload: SessionEventPayload,
     allow_create: bool,
+    expected_event_count: Option<u64>,
 }
 
 fn mutate_session(
@@ -985,6 +1049,14 @@ fn mutate_session(
     {
         return Err(LeyCoreError::SessionIdempotencyConflict(pending.request_id));
     }
+    if let Some(expected) = pending.expected_event_count {
+        let actual = existing.len() as u64;
+        if actual != expected {
+            return Err(LeyCoreError::InvalidSessionRequest(format!(
+                "session changed from {expected} events to {actual}; reload before saving"
+            )));
+        }
+    }
     let sequence = existing.len() as u64 + 1;
     if sequence as usize > SESSION_EVENT_LIMIT {
         return Err(LeyCoreError::InvalidSessionStore(format!(
@@ -999,11 +1071,21 @@ fn mutate_session(
     }
     if !existing.is_empty() {
         let current = replay_events(&existing, project_id, session_id)?;
-        if current.status != SessionStatus::Active {
+        if current.status != SessionStatus::Active
+            && !matches!(&pending.payload, SessionEventPayload::SessionRenamed(_))
+        {
             return Err(LeyCoreError::InvalidSessionRequest(format!(
                 "session {session_id} is already {}",
                 enum_label(current.status)
             )));
+        }
+        if let SessionEventPayload::SessionRenamed(rename) = &pending.payload {
+            if current.name == rename.name {
+                return Err(LeyCoreError::InvalidSessionRequest(format!(
+                    "session {session_id} is already named {}",
+                    rename.name
+                )));
+            }
         }
     }
     let minimum_recorded_at = existing
@@ -1055,6 +1137,10 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
         SessionEventPayload::SessionFinished(finish) => {
             finish.recorded_at_unix_ms = finish.recorded_at_unix_ms.max(minimum);
             finish.recorded_at_unix_ms
+        }
+        SessionEventPayload::SessionRenamed(rename) => {
+            rename.recorded_at_unix_ms = rename.recorded_at_unix_ms.max(minimum);
+            rename.recorded_at_unix_ms
         }
     }
 }
@@ -1346,6 +1432,7 @@ fn replay_events(
         project_id: project_id.to_owned(),
         session_id: session_id.to_owned(),
         name: name.clone(),
+        original_name: name.clone(),
         goal: goal.clone(),
         status: SessionStatus::Active,
         source: source.clone(),
@@ -1355,10 +1442,13 @@ fn replay_events(
         finished_at_unix_ms: None,
         event_count: events.len() as u64,
         checkpoints: Vec::new(),
+        renames: Vec::new(),
         finish: None,
     };
     for event in &events[1..] {
-        if session.status != SessionStatus::Active {
+        if session.status != SessionStatus::Active
+            && !matches!(&event.payload, SessionEventPayload::SessionRenamed(_))
+        {
             return Err(LeyCoreError::InvalidSessionStore(
                 "events cannot follow a finished session".to_owned(),
             ));
@@ -1376,6 +1466,10 @@ fn replay_events(
                 session.status = finish.status;
                 session.finished_at_unix_ms = Some(finish.recorded_at_unix_ms);
                 session.finish = Some(finish.clone());
+            }
+            SessionEventPayload::SessionRenamed(rename) => {
+                session.name = rename.name.clone();
+                session.renames.push(rename.clone());
             }
         }
         session.updated_at_unix_ms = event.recorded_at_unix_ms;
@@ -1414,6 +1508,7 @@ fn validate_event(
         SessionEventPayload::SessionStarted { .. } => "session-started",
         SessionEventPayload::CheckpointRecorded(_) => "checkpoint-recorded",
         SessionEventPayload::SessionFinished(_) => "session-finished",
+        SessionEventPayload::SessionRenamed(_) => "session-renamed",
     };
     let expected_event = deterministic_id(
         "evt",
@@ -1476,6 +1571,15 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
             validate_stored_text("finish.finalResponse", &finish.final_response, 0, 32_000)?;
             validate_stored_text("finish.handoff", &finish.handoff, 0, 16_000)?;
             validate_stored_list("finish.unresolved", &finish.unresolved, 100, 4_000)?;
+        }
+        SessionEventPayload::SessionRenamed(rename) => {
+            if rename.event_id != event.event_id
+                || rename.recorded_at_unix_ms != event.recorded_at_unix_ms
+            {
+                return invalid_session_store("session rename identity is invalid");
+            }
+            validate_stored_text("rename.name", &rename.name, 1, 128)?;
+            validate_stored_text("rename.note", &rename.note, 1, 4_000)?;
         }
     }
     Ok(())
@@ -1806,6 +1910,11 @@ fn request_fingerprint(
             finish.recorded_at_unix_ms = 0;
             SessionEventPayload::SessionFinished(finish)
         }
+        SessionEventPayload::SessionRenamed(rename) => {
+            let mut rename = rename.clone();
+            rename.recorded_at_unix_ms = 0;
+            SessionEventPayload::SessionRenamed(rename)
+        }
     };
     let bytes = serde_json::to_vec(&(project_id, session_id, request_id, stable_payload))
         .map_err(|error| LeyCoreError::InvalidSessionStore(error.to_string()))?;
@@ -1845,6 +1954,21 @@ fn render_session_markdown(session: &AgentSession) -> String {
     output.push_str(&markdown_inline(&session.name));
     output.push_str("\n\n## Goal\n\n");
     push_quote(&mut output, &session.goal);
+    if !session.renames.is_empty() {
+        output.push_str("\n## Naming history\n\n");
+        output.push_str(&format!(
+            "- Original: {}\n",
+            markdown_inline(&session.original_name)
+        ));
+        for rename in &session.renames {
+            output.push_str(&format!(
+                "- {}: {} — {}\n",
+                rename.recorded_at_unix_ms,
+                markdown_inline(&rename.name),
+                markdown_inline(&rename.note)
+            ));
+        }
+    }
     output.push_str("\n## Capture source\n\n");
     output.push_str(&format!("- Kind: `{}`\n", enum_label(session.source.kind)));
     if let Some(host) = &session.source.host {
@@ -2426,10 +2550,78 @@ mod tests {
             .unwrap()
             .replayed
         );
+        let rename_request = request_id('4');
+        let renamed = rename_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            RenameSessionInput {
+                request_id: rename_request.clone(),
+                expected_event_count: Some(finished.session.event_count),
+                name: "Ship durable session memory".to_owned(),
+                note: "The original agent suggestion was too generic.".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(renamed.session.original_name, "Implementation session");
+        assert_eq!(renamed.session.name, "Ship durable session memory");
+        assert_eq!(renamed.session.renames.len(), 1);
+        assert_eq!(renamed.session.event_count, 4);
+        assert!(
+            rename_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                RenameSessionInput {
+                    request_id: rename_request,
+                    expected_event_count: Some(finished.session.event_count),
+                    name: "Ship durable session memory".to_owned(),
+                    note: "The original agent suggestion was too generic.".to_owned(),
+                },
+            )
+            .unwrap()
+            .replayed
+        );
+        assert!(matches!(
+            rename_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                RenameSessionInput {
+                    request_id: request_id('5'),
+                    expected_event_count: Some(finished.session.event_count),
+                    name: "Stale rename".to_owned(),
+                    note: "This must not overwrite the inspected version.".to_owned(),
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("reload before saving")
+        ));
+        assert!(matches!(
+            rename_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                RenameSessionInput {
+                    request_id: request_id('6'),
+                    expected_event_count: Some(renamed.session.event_count),
+                    name: "Ship durable session memory".to_owned(),
+                    note: "This would not change the current name.".to_owned(),
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("already named")
+        ));
+        assert_eq!(
+            read_session(&project, &vault, &started.session.session_id)
+                .unwrap()
+                .event_count,
+            4
+        );
 
         let directory = session_directory(&project, &vault, &started.session.session_id);
         let markdown = std::fs::read_to_string(directory.join(SESSION_MARKDOWN_FILE)).unwrap();
-        assert!(markdown.contains("# Implementation session"));
+        assert!(markdown.contains("# Ship durable session memory"));
         assert!(markdown.contains("## Problems and outcomes"));
         assert!(markdown.contains("README.md"));
         assert!(markdown.contains("### Final response"));
@@ -2440,7 +2632,7 @@ mod tests {
             read_session(&project, &vault, &started.session.session_id)
                 .unwrap()
                 .event_count,
-            3
+            4
         );
         let listed = list_sessions(&project, &vault).unwrap();
         assert_eq!(listed.len(), 1);

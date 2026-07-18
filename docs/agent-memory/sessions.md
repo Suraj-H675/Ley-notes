@@ -51,6 +51,22 @@ ley session finish ses_01234567890123456789012345678901 \
 
 Use `paused` when another session should continue the work. Use `abandoned` when the approach should not continue.
 
+## Rename a session without rewriting history
+
+The agent-suggested name is not permanent. Rename a session from its desktop inspector, or use the manual CLI:
+
+```bash
+ley session rename ses_01234567890123456789012345678901 \
+  /path/to/project \
+  --name "Ship offline search" \
+  --note "The completed scope is clearer than the original working title" \
+  --expected-events 4
+```
+
+Ley appends the new name and required reason as another immutable event. The original name and every later naming revision remain visible, while the stable `ses_` ID, citations, learnings, and captured work do not change. Renaming also works after a session is completed, paused, or abandoned.
+
+`--expected-events` is optional for deliberate CLI automation and recommended whenever the caller previously read the session. The desktop always sends it. If an agent or another process appends an event first, Ley rejects the stale rename and asks the caller to reload. MCP session-write permission does not include rename authority.
+
 ## Record decisions and problem outcomes
 
 Pass a JSON document to record the complete checkpoint model:
@@ -115,7 +131,7 @@ ley session show ses_01234567890123456789012345678901 \
 
 The vault also contains `session.md` for review and `session-v1.json` for local tools. Both files are derived. Preserve the immutable event files when repairing or migrating memory.
 
-Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, and snapshot-pinned artifact citations. Older checkpoints and truncated text are disclosed instead of being presented as complete history.
+Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, snapshot-pinned artifact citations, and naming history. Older checkpoints, older naming revisions, and truncated text are disclosed instead of being presented as complete history.
 
 ## Retry a write safely
 

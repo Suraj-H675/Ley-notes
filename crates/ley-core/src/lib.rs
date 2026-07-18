@@ -89,23 +89,24 @@ pub use retrieval::{
 };
 pub use session::{
     checkpoint_session, finish_session, generate_request_id, list_sessions, project_session_stats,
-    read_session, start_session, AgentSession, AttemptInput, AttemptOutcome, AttemptRecord,
-    CheckpointInput, CommandInput, CommandRecord, DecisionInput, DecisionRecord,
+    read_session, rename_session, start_session, AgentSession, AttemptInput, AttemptOutcome,
+    AttemptRecord, CheckpointInput, CommandInput, CommandRecord, DecisionInput, DecisionRecord,
     FinishSessionInput, MemoryRedaction, PlanItem, PlanItemInput, PlanStatus, ProblemInput,
-    ProblemRecord, ProjectSessionStats, ResolutionInput, ResolutionRecord, SessionArtifactCitation,
-    SessionCheckpoint, SessionFinish, SessionMutation, SessionSource, SessionSourceKind,
-    SessionStatus, SessionSummary, StartSessionInput, TaskInput, TaskRecord, TaskStatus,
-    VerificationInput, VerificationRecord, VerificationStatus, SESSION_EVENT_LIMIT,
-    SESSION_EVENT_LIMIT_BYTES, SESSION_PROJECTION_LIMIT_BYTES, SESSION_SCHEMA_VERSION,
+    ProblemRecord, ProjectSessionStats, RenameSessionInput, ResolutionInput, ResolutionRecord,
+    SessionArtifactCitation, SessionCheckpoint, SessionFinish, SessionMutation, SessionRename,
+    SessionSource, SessionSourceKind, SessionStatus, SessionSummary, StartSessionInput, TaskInput,
+    TaskRecord, TaskStatus, VerificationInput, VerificationRecord, VerificationStatus,
+    SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES, SESSION_PROJECTION_LIMIT_BYTES,
+    SESSION_SCHEMA_VERSION,
 };
 pub use session_context::{
     list_session_contexts, read_session_context, SessionContextAttempt, SessionContextCheckpoint,
     SessionContextCitation, SessionContextCommand, SessionContextDecision, SessionContextFinish,
-    SessionContextPack, SessionContextProblem, SessionContextResolution, SessionContextTask,
-    SessionContextVerification, SessionList, SessionListItem, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_LIST_RESULTS,
-    MAX_SESSION_CONTEXT_CHARACTERS, MAX_SESSION_CONTEXT_CHECKPOINTS, MAX_SESSION_LIST_RESULTS,
-    MIN_SESSION_CONTEXT_CHARACTERS,
+    SessionContextPack, SessionContextProblem, SessionContextRename, SessionContextResolution,
+    SessionContextTask, SessionContextVerification, SessionList, SessionListItem,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    DEFAULT_SESSION_LIST_RESULTS, MAX_SESSION_CONTEXT_CHARACTERS, MAX_SESSION_CONTEXT_CHECKPOINTS,
+    MAX_SESSION_CONTEXT_RENAMES, MAX_SESSION_LIST_RESULTS, MIN_SESSION_CONTEXT_CHARACTERS,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";

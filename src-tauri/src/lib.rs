@@ -1,20 +1,21 @@
 use ley_core::{
-    correct_learning, diagnose_project, generate_learning_request_id, ingest_project,
-    initialize_project, list_learning_contexts, list_sessions, project_activity_view,
-    project_artifact_inventory, project_graph_view, project_memory_overview,
+    correct_learning, diagnose_project, generate_learning_request_id, generate_request_id,
+    ingest_project, initialize_project, list_learning_contexts, list_sessions,
+    project_activity_view, project_artifact_inventory, project_graph_view, project_memory_overview,
     project_resume_context, project_session_stats, read_learning, read_learning_context,
-    read_session_context, review_learning, search_observed_projects, update_capture_mode,
-    BindingRegistry, BindingSource, CaptureMode, CorrectLearningInput, CrossProjectSearch,
-    IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
+    read_session_context, rename_session, review_learning, search_observed_projects,
+    update_capture_mode, BindingRegistry, BindingSource, CaptureMode, CorrectLearningInput,
+    CrossProjectSearch, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
     LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
     ProjectActivityView, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
     ProjectGraphView, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
-    ReviewLearningInput, SessionContextPack, SessionSummary, DEFAULT_ARTIFACT_RESULTS,
-    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
-    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
-    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
-    DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_RESUME_CHARACTERS,
-    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    RenameSessionInput, ReviewLearningInput, SessionContextPack, SessionSummary,
+    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
+    DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
+    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
+    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS, MAX_LEARNING_LIST_RESULTS,
 };
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -619,6 +620,35 @@ fn read_agent_session(
                 DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
                 DEFAULT_SESSION_CONTEXT_CHARACTERS,
             )
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn rename_agent_session(
+    project_path: String,
+    session_id: String,
+    expected_event_count: u64,
+    name: String,
+    note: String,
+) -> Result<AgentMemoryDashboard, String> {
+    if note.trim().is_empty() {
+        return Err("A rename reason is required.".to_owned());
+    }
+    resolved_agent_binding(Path::new(&project_path))
+        .and_then(|binding| {
+            rename_session(
+                &project_path,
+                &binding.vault_path,
+                &session_id,
+                RenameSessionInput {
+                    request_id: generate_request_id(),
+                    expected_event_count: Some(expected_event_count),
+                    name,
+                    note,
+                },
+            )?;
+            load_agent_memory_dashboard(Path::new(&project_path), binding)
         })
         .map_err(|error| error.to_string())
 }
@@ -1279,6 +1309,7 @@ pub fn run() {
             refresh_agent_project,
             read_agent_learning,
             read_agent_session,
+            rename_agent_session,
             review_agent_learning,
             correct_agent_learning,
             bind_agent_project,
@@ -1498,8 +1529,8 @@ mod tests {
         use ley_core::{
             checkpoint_session, propose_learning, review_learning, start_session, CheckpointInput,
             LearningActor, LearningEvidenceInput, LearningFeedbackAction, LearningKind,
-            LearningProvenance, ProposeLearningInput, ReviewLearningInput, SessionSource,
-            StartSessionInput,
+            LearningProvenance, ProposeLearningInput, RenameSessionInput, ReviewLearningInput,
+            SessionSource, StartSessionInput,
         };
 
         let root =
@@ -1572,9 +1603,23 @@ mod tests {
             source: BindingSource::Override,
         };
 
+        rename_session(
+            &project,
+            &vault,
+            &session.session.session_id,
+            RenameSessionInput {
+                request_id: format!("req_{}", "5".repeat(32)),
+                expected_event_count: Some(checkpoint.session.event_count),
+                name: "Ship memory dashboard".into(),
+                note: "The completed session now has a more specific name.".into(),
+            },
+        )
+        .unwrap();
         let pending = load_agent_memory_dashboard(&project, binding.clone()).unwrap();
         assert_eq!(pending.resume.total_sessions, 1);
         assert_eq!(pending.sessions.len(), 1);
+        assert_eq!(pending.sessions[0].name, "Ship memory dashboard");
+        assert_eq!(pending.resume.sessions[0].name, "Ship memory dashboard");
         assert_eq!(pending.review_inbox.total_matching, 1);
         assert_eq!(pending.overview.files, 1);
 

@@ -102,6 +102,22 @@ export function readAgentSession(
   return invoke("read_agent_session", { projectPath, sessionId });
 }
 
+export function renameAgentSession(
+  projectPath: string,
+  sessionId: string,
+  expectedEventCount: number,
+  name: string,
+  note: string,
+): Promise<AgentMemoryDashboard> {
+  return invoke("rename_agent_session", {
+    projectPath,
+    sessionId,
+    expectedEventCount,
+    name,
+    note,
+  });
+}
+
 export function readAgentArtifacts(
   projectPath: string,
   query = "",

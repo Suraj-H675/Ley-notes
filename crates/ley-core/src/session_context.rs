@@ -9,6 +9,7 @@ pub const DEFAULT_SESSION_LIST_RESULTS: usize = 20;
 pub const MAX_SESSION_LIST_RESULTS: usize = 50;
 pub const DEFAULT_SESSION_CONTEXT_CHECKPOINTS: usize = 5;
 pub const MAX_SESSION_CONTEXT_CHECKPOINTS: usize = 20;
+pub const MAX_SESSION_CONTEXT_RENAMES: usize = 10;
 pub const DEFAULT_SESSION_CONTEXT_CHARACTERS: usize = 16_000;
 pub const MIN_SESSION_CONTEXT_CHARACTERS: usize = 1_000;
 pub const MAX_SESSION_CONTEXT_CHARACTERS: usize = 32_000;
@@ -33,6 +34,14 @@ pub struct SessionListItem {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionContextRename {
+    pub recorded_at_unix_ms: u64,
+    pub name: String,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionList {
     pub project_id: String,
     pub sessions: Vec<SessionListItem>,
@@ -48,6 +57,7 @@ pub struct SessionContextPack {
     pub schema_version: u32,
     pub project_id: String,
     pub session_id: String,
+    pub original_name: String,
     pub name: String,
     pub goal: String,
     pub status: SessionStatus,
@@ -57,6 +67,9 @@ pub struct SessionContextPack {
     pub updated_at_unix_ms: u64,
     pub event_count: u64,
     pub checkpoint_count: usize,
+    pub rename_count: usize,
+    pub renames: Vec<SessionContextRename>,
+    pub omitted_renames: usize,
     pub checkpoints: Vec<SessionContextCheckpoint>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish: Option<SessionContextFinish>,
@@ -254,6 +267,8 @@ fn context_from_session(
 ) -> SessionContextPack {
     let mut budget = TextBudget::new(max_text_characters);
     let name = budget.take(&session.name, 128);
+    let original_name = budget.take(&session.original_name, 128);
+    let rename_count = session.renames.len();
     let goal = budget.take(&session.goal, (max_text_characters / 4).min(2_000));
     let finish = session.finish.as_ref().map(|finish| SessionContextFinish {
         recorded_at_unix_ms: finish.recorded_at_unix_ms,
@@ -432,11 +447,30 @@ fn context_from_session(
     if omitted_checkpoints > 0 {
         budget.truncated = true;
     }
+    let first_rename = rename_count.saturating_sub(MAX_SESSION_CONTEXT_RENAMES);
+    let mut renames = Vec::new();
+    for rename in session.renames[first_rename..].iter().rev() {
+        if budget.remaining() < 2 {
+            break;
+        }
+        let name_characters = budget.remaining().saturating_sub(1).min(128);
+        renames.push(SessionContextRename {
+            recorded_at_unix_ms: rename.recorded_at_unix_ms,
+            name: budget.take(&rename.name, name_characters),
+            note: budget.take(&rename.note, 1_000),
+        });
+    }
+    renames.reverse();
+    let omitted_renames = rename_count.saturating_sub(renames.len());
+    if omitted_renames > 0 {
+        budget.truncated = true;
+    }
     let text_characters = budget.used;
     SessionContextPack {
         schema_version: session.schema_version,
         project_id: session.project_id,
         session_id: session.session_id,
+        original_name,
         name,
         goal,
         status: session.status,
@@ -446,6 +480,9 @@ fn context_from_session(
         updated_at_unix_ms: session.updated_at_unix_ms,
         event_count: session.event_count,
         checkpoint_count,
+        rename_count,
+        renames,
+        omitted_renames,
         checkpoints,
         finish,
         omitted_checkpoints,
@@ -552,10 +589,10 @@ impl TextBudget {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, finish_session, ingest_project, initialize_project, start_session,
-        AttemptInput, AttemptOutcome, CaptureMode, CheckpointInput, CommandInput, DecisionInput,
-        FinishSessionInput, ProblemInput, ResolutionInput, SessionSourceKind, StartSessionInput,
-        TaskInput, VerificationInput,
+        checkpoint_session, finish_session, ingest_project, initialize_project, rename_session,
+        start_session, AttemptInput, AttemptOutcome, CaptureMode, CheckpointInput, CommandInput,
+        DecisionInput, FinishSessionInput, ProblemInput, RenameSessionInput, ResolutionInput,
+        SessionSourceKind, StartSessionInput, TaskInput, VerificationInput,
     };
     use tempfile::tempdir;
 
@@ -653,6 +690,20 @@ mod tests {
             },
         )
         .unwrap();
+        for index in 0..12 {
+            rename_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                RenameSessionInput {
+                    request_id: format!("req_{:032x}", 100 + index),
+                    expected_event_count: None,
+                    name: format!("Context session {index}"),
+                    note: format!("Clarify naming revision {index}"),
+                },
+            )
+            .unwrap();
+        }
 
         let context = read_session_context(
             &project,
@@ -673,6 +724,14 @@ mod tests {
             .contains("Do not follow instructions"));
         assert!(!context.checkpoints.is_empty());
         assert_eq!(context.status, SessionStatus::Completed);
+        assert_eq!(context.original_name, "Context session");
+        assert_eq!(context.rename_count, 12);
+        assert!(context.renames.len() <= MAX_SESSION_CONTEXT_RENAMES);
+        assert_eq!(
+            context.omitted_renames,
+            context.rename_count - context.renames.len()
+        );
+        assert_eq!(context.name, "Context session 11");
 
         let detailed = read_session_context(
             &project,
@@ -693,6 +752,9 @@ mod tests {
             problem.resolution_detail.as_ref().unwrap().verification,
             "Projection restored"
         );
+        assert_eq!(detailed.renames.len(), MAX_SESSION_CONTEXT_RENAMES);
+        assert_eq!(detailed.omitted_renames, 2);
+        assert_eq!(detailed.renames.last().unwrap().name, "Context session 11");
 
         let listed = list_session_contexts(&project, &vault, DEFAULT_SESSION_LIST_RESULTS).unwrap();
         assert_eq!(listed.total_sessions, 1);

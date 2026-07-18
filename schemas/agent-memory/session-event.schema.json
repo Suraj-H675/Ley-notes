@@ -57,7 +57,8 @@
       "enum": [
         "session-started",
         "checkpoint-recorded",
-        "session-finished"
+        "session-finished",
+        "session-renamed"
       ]
     },
     "data": {
@@ -73,6 +74,17 @@
       "then": {
         "properties": {
           "data": { "$ref": "#/$defs/sessionStarted" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "kind": { "const": "session-renamed" } },
+        "required": ["kind"]
+      },
+      "then": {
+        "properties": {
+          "data": { "$ref": "#/$defs/sessionRenamed" }
         }
       }
     },
@@ -157,6 +169,17 @@
         "artifactSnapshotId": {
           "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/snapshotId"
         }
+      }
+    },
+    "sessionRenamed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventId", "recordedAtUnixMs", "name", "note"],
+      "properties": {
+        "eventId": { "type": "string", "pattern": "^evt_[0-9a-f]{64}$" },
+        "recordedAtUnixMs": { "type": "integer", "minimum": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "note": { "type": "string", "minLength": 1, "maxLength": 4000 }
       }
     }
   }

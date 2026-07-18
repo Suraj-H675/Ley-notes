@@ -86,6 +86,14 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Rapid consecutive autosaves are serialized per note, navigation flushes the pending edit, and the newest Markdown, backlinks, and tag rows agree after the save settles.
 - An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.
 
+## Agent Memory session naming
+
+- Finish a real filesystem-backed CLI session, rename it with the inspected event count, and reopen it. The event directory gains exactly one immutable event; `originalName`, the stable session ID, citations, terminal status, reason, and prior work remain unchanged.
+- Retry the accepted request ID and confirm it replays without another event. Attempt a stale event count and the current name again under new request IDs; both fail without changing history.
+- In Ley Desktop, open a completed session, inspect its original name and prior naming revisions, then append a new name and required reason. The dashboard, resume card, inspector title, event count, and naming history update from the shared engine.
+- At desktop, short-window, and 390×844 sizes, the session body and rename fields scroll independently, while Close, Cancel, and Append Rename remain reachable. Unsaved edits require confirmation before dismissal.
+- The rendered flow produces no application console errors. MCP tool discovery remains unchanged because session naming is a local user-authority surface, not an agent write capability.
+
 ## Release evidence
 
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.

@@ -2,12 +2,12 @@ use ley_core::{
     checkpoint_session, correct_learning, diagnose_project, finish_session,
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
     learning_review_inbox, list_learnings, list_sessions, preview_capture, project_resume_context,
-    propose_learning, read_learning, read_project_graph, read_session, review_learning,
-    start_session, BindingRegistry, CaptureMode, CheckpointInput, CommandInput,
+    propose_learning, read_learning, read_project_graph, read_session, rename_session,
+    review_learning, start_session, BindingRegistry, CaptureMode, CheckpointInput, CommandInput,
     CorrectLearningInput, FinishSessionInput, GraphNodeKind, LearningActor, LearningEvidenceInput,
     LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
-    LeyCoreError, ProposeLearningInput, ReviewLearningInput, SessionSource, SessionSourceKind,
-    SessionStatus, StartSessionInput, VerificationInput, VerificationStatus,
+    LeyCoreError, ProposeLearningInput, RenameSessionInput, ReviewLearningInput, SessionSource,
+    SessionSourceKind, SessionStatus, StartSessionInput, VerificationInput, VerificationStatus,
     DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
 };
 use ley_mcp::run_stdio;
@@ -781,6 +781,7 @@ fn session(arguments: &[String]) -> Result<(), CliError> {
         "start" => session_start(&arguments[1..]),
         "checkpoint" => session_checkpoint(&arguments[1..]),
         "finish" => session_finish(&arguments[1..]),
+        "rename" => session_rename(&arguments[1..]),
         "list" => session_list(&arguments[1..]),
         "show" => session_show(&arguments[1..]),
         other => Err(CliError::Usage(format!(
@@ -845,6 +846,64 @@ fn session_start(arguments: &[String]) -> Result<(), CliError> {
         },
     )?;
     print_session_mutation(&result, common.json, "Started")
+}
+
+fn session_rename(arguments: &[String]) -> Result<(), CliError> {
+    let mut common = SessionArguments::default();
+    let mut session_id = None;
+    let mut name = None;
+    let mut note = None;
+    let mut request_id = None;
+    let mut expected_event_count = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--name" => {
+                index += 1;
+                name = Some(required_value(arguments, index, "--name")?.to_owned());
+            }
+            "--note" => {
+                index += 1;
+                note = Some(required_value(arguments, index, "--note")?.to_owned());
+            }
+            "--request-id" => {
+                index += 1;
+                request_id = Some(required_value(arguments, index, "--request-id")?.to_owned());
+            }
+            "--expected-events" => {
+                index += 1;
+                expected_event_count = Some(
+                    required_value(arguments, index, "--expected-events")?
+                        .parse::<u64>()
+                        .map_err(|_| {
+                            CliError::Usage("--expected-events must be an integer".to_owned())
+                        })?,
+                );
+            }
+            value if session_id.is_none() && value.starts_with("ses_") => {
+                session_id = Some(value.to_owned())
+            }
+            value => parse_session_common(arguments, &mut index, value, &mut common)?,
+        }
+        index += 1;
+    }
+    let session_id =
+        session_id.ok_or_else(|| CliError::Usage("session rename requires SESSION".to_owned()))?;
+    let binding = resolve_session_binding(&common)?;
+    let result = rename_session(
+        &common.project_path()?,
+        &binding.vault_path,
+        &session_id,
+        RenameSessionInput {
+            request_id: request_id.unwrap_or_else(generate_request_id),
+            expected_event_count,
+            name: name
+                .ok_or_else(|| CliError::Usage("session rename requires --name".to_owned()))?,
+            note: note
+                .ok_or_else(|| CliError::Usage("session rename requires --note".to_owned()))?,
+        },
+    )?;
+    print_session_mutation(&result, common.json, "Renamed")
 }
 
 fn session_checkpoint(arguments: &[String]) -> Result<(), CliError> {
@@ -1585,6 +1644,7 @@ fn print_help() {
     println!("  ley session checkpoint SESSION [path] --summary TEXT [--touched PATH]...");
     println!("  ley session checkpoint SESSION [path] --data CHECKPOINT.json");
     println!("  ley session finish SESSION [path] --summary TEXT [--status STATUS]");
+    println!("  ley session rename SESSION [path] --name NAME --note REASON [--expected-events N]");
     println!("  ley session list [path] [--json]");
     println!("  ley session show SESSION [path] [--json]");
     println!("  ley resume [path] [--max-sessions N] [--max-learnings N] [--json]");
