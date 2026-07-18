@@ -8,6 +8,7 @@ import {
   CircleDot,
   Files,
   FolderOpen,
+  GitCommitHorizontal,
   History,
   Inbox,
   LockKeyhole,
@@ -391,7 +392,7 @@ function SearchResultCard({
     <button
       type="button"
       onClick={onOpen}
-      className="group min-w-0 overflow-hidden rounded-xl border border-border bg-background/45 p-3.5 text-left outline-none transition hover:border-primary/35 hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
+      className="group min-w-0 touch-manipulation overflow-hidden rounded-xl border border-border bg-background/45 p-3.5 text-left outline-none transition-[transform,border-color,background-color] hover:border-primary/35 hover:bg-surface-2 active:scale-[0.99] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -439,6 +440,12 @@ function resultKindMeta(kind: AgentProjectSearchResultKind) {
         label: "Session",
         icon: History,
         className: "bg-sky-500/10 text-sky-500",
+      };
+    case "revision":
+      return {
+        label: "Captured revision",
+        icon: GitCommitHorizontal,
+        className: "bg-indigo-500/10 text-indigo-500",
       };
     case "decision":
       return {

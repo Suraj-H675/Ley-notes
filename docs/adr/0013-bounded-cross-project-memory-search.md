@@ -19,7 +19,7 @@ The desktop app exposes a separate local cross-project search command. It reads 
 
 Unavailable, unbound, identity-changed, or invalid projects are skipped and counted. They do not cause another project's binding or memory to be reused.
 
-Search covers structured session names and goals, decisions, problems and outcomes, learning summaries, captured artifacts, symbols, and dependencies. Existing bounded projections remain the source of truth. Results carry project identity, local navigation metadata, optional session or learning identity, and immutable artifact citations where available.
+Search covers structured session names and goals, checkpoint project revisions, decisions, problems and outcomes, learning summaries, captured artifacts, symbols, and dependencies. Revision matching accepts captured Git HEADs and branches as well as immutable graph and artifact snapshot IDs. It reuses the same complete session replay already required for session-name search, rather than adding an unbounded second scan. Existing bounded projections remain the source of truth. Results carry project identity, local navigation metadata, optional session or learning identity, and immutable artifact citations where available.
 
 The response is globally capped at 30 results by default and 50 by hard limit. Queries are capped at 256 visible characters. Per-project artifact and activity projections retain their own limits; the response reports truncation whenever a source or the global result set is incomplete. The native command runs on a blocking worker rather than freezing the webview.
 
@@ -28,6 +28,7 @@ This capability is desktop-only. It is not added to the fixed-project MCP server
 ## Consequences
 
 - Users can recover knowledge without first remembering its project.
+- A pasted commit SHA, branch, or Ley snapshot ID can recover the session checkpoint that used it.
 - Project-card filtering remains a distinct lightweight navigation control.
 - Search never expands the set of observed roots or refreshes capture implicitly.
 - Missing projects and moved vaults degrade honestly instead of aborting all useful results.

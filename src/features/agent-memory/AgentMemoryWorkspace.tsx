@@ -236,11 +236,12 @@ export function AgentMemoryWorkspace({
     }
     if (
       destination.kind === "session" ||
+      destination.kind === "revision" ||
       destination.kind === "decision" ||
       destination.kind === "problem"
     ) {
       setSection(
-        destination.kind === "session"
+        destination.kind === "session" || destination.kind === "revision"
           ? "sessions"
           : destination.kind === "decision"
             ? "decisions"

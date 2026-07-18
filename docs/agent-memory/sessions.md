@@ -135,6 +135,8 @@ The vault also contains `session.md` for review and `session-v1.json` for local 
 
 Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, snapshot-pinned artifact citations, captured project revisions, and naming history. Selecting a captured revision opens the exact retained Project Graph view used by that checkpoint; it does not substitute today's graph. Older checkpoints, older naming revisions, and truncated text are disclosed instead of being presented as complete history.
 
+The desktop **Projects** search also indexes those checkpoint revisions. Paste a full or partial captured Git SHA, a branch name, a graph snapshot ID, or an artifact snapshot ID to recover the owning session across explicitly observed and currently bound projects. Opening a revision result enters that session first so its checkpoint context remains visible.
+
 ### Link an inspected session into notes
 
 Use **To notes** in the desktop session inspector to review a title and create a user-owned Markdown handoff under `Agent Memory/Sessions`. The accessible action remains **Link session to notes** when its visible label collapses in a narrow header. The note carries portable project/session IDs, status and event count at export, timestamps, and the `ley/session` tag. Its body preserves the inspected goal, outcome, handoff, unresolved work, visible checkpoints, verification, and artifact trail while quoting stored agent text beneath an evidence-not-instructions warning.

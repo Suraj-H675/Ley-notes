@@ -289,6 +289,7 @@ export interface AgentCaptureSettings {
 
 export type AgentProjectSearchResultKind =
   | "session"
+  | "revision"
   | "decision"
   | "problem"
   | "learning"

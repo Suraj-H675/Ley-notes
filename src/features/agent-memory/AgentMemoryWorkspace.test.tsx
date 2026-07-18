@@ -235,6 +235,17 @@ describe("Agent Memory workspace boundaries", () => {
             endColumn: 1,
           },
         },
+        {
+          projectId: "prj_test",
+          projectName: "Ley",
+          projectPath: "/projects/ley",
+          kind: "revision",
+          entityId: "chk_test",
+          title: "abcdef0123 · main",
+          excerpt: "Pinned immutable graph capture for Build continuity.",
+          updatedAtUnixMs: Date.now(),
+          sessionId: "ses_test",
+        },
       ],
       searchedProjects: 1,
       skippedProjects: 0,
@@ -581,11 +592,12 @@ describe("Agent Memory workspace boundaries", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Search memory" }));
     expect(await screen.findByText("Keep context bounded")).toBeVisible();
+    expect(await screen.findByText("abcdef0123 · main")).toBeVisible();
     expect(screen.getByText("src/app.ts:1")).toBeVisible();
     expect(api.searchAgentProjects).toHaveBeenCalledWith("bounded context");
     fireEvent.click(
       screen.getByRole("button", {
-        name: /Keep context bounded.*Ley.*Decision/i,
+        name: /abcdef0123.*main/i,
       }),
     );
     await screen.findByRole("heading", { name: "Build continuity" });

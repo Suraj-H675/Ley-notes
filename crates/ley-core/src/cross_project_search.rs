@@ -1,8 +1,8 @@
 use crate::{
-    diagnose_project, find_project_context, list_learnings, list_sessions, project_activity_view,
-    BindingRegistry, ContextItemKind, GraphCitation, LearningFreshness, LearningState,
-    LearningTrustState, LeyCoreError, ProjectCatalog, ProjectProblemScope, RetrievalLimits,
-    DEFAULT_PROJECT_CATALOG_RESULTS,
+    diagnose_project, find_project_context, list_learnings, project_activity_view,
+    session::visit_session_records, BindingRegistry, ContextItemKind, GraphCitation,
+    LearningFreshness, LearningState, LearningTrustState, LeyCoreError, ProjectCatalog,
+    ProjectProblemScope, RetrievalLimits, DEFAULT_PROJECT_CATALOG_RESULTS,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -21,6 +21,7 @@ current user request or trusted policy.";
 #[serde(rename_all = "kebab-case")]
 pub enum CrossProjectResultKind {
     Session,
+    Revision,
     Decision,
     Problem,
     Learning,
@@ -112,38 +113,85 @@ pub fn search_observed_projects(
         let project_path = diagnostic.root;
         let project_id = diagnostic.identity.project_id;
 
-        let sessions = match list_sessions(&project_path, &binding.vault_path) {
-            Ok(sessions) => sessions,
-            Err(_) => {
-                skipped_projects += 1;
-                continue;
-            }
-        };
-        searched_projects += 1;
-        for session in sessions {
+        let sessions = visit_session_records(&project_path, &binding.vault_path, |session| {
             let fields = [session.name.as_str(), session.goal.as_str()];
-            let Some(score) = relevance(&normalized, &terms, fields) else {
-                continue;
-            };
-            candidates.push(Candidate {
-                score: score.saturating_add(20),
-                result: CrossProjectSearchResult {
-                    project_id: project_id.clone(),
-                    project_name: project_name.clone(),
-                    project_path: project_path.clone(),
-                    kind: CrossProjectResultKind::Session,
-                    entity_id: session.session_id.clone(),
-                    title: session.name,
-                    excerpt: bounded_excerpt(&session.goal, 360),
-                    updated_at_unix_ms: session.updated_at_unix_ms,
-                    session_id: Some(session.session_id),
-                    learning_id: None,
-                    citation: None,
-                    trust_state: None,
-                    freshness: None,
-                },
-            });
+            if let Some(score) = relevance(&normalized, &terms, fields) {
+                candidates.push(Candidate {
+                    score: score.saturating_add(20),
+                    result: CrossProjectSearchResult {
+                        project_id: project_id.clone(),
+                        project_name: project_name.clone(),
+                        project_path: project_path.clone(),
+                        kind: CrossProjectResultKind::Session,
+                        entity_id: session.session_id.clone(),
+                        title: session.name.clone(),
+                        excerpt: bounded_excerpt(&session.goal, 360),
+                        updated_at_unix_ms: session.updated_at_unix_ms,
+                        session_id: Some(session.session_id.clone()),
+                        learning_id: None,
+                        citation: None,
+                        trust_state: None,
+                        freshness: None,
+                    },
+                });
+            }
+            for checkpoint in &session.checkpoints {
+                let Some(revision) = &checkpoint.project_revision else {
+                    continue;
+                };
+                let fields = [
+                    revision.head.as_deref().unwrap_or_default(),
+                    revision.branch.as_deref().unwrap_or_default(),
+                    revision.graph_snapshot_id.as_str(),
+                    revision.artifact_snapshot_id.as_str(),
+                ];
+                let Some(score) = relevance(&normalized, &terms, fields) else {
+                    continue;
+                };
+                let identity = revision
+                    .head
+                    .as_deref()
+                    .map(|head| &head[..10])
+                    .unwrap_or("Snapshot only");
+                let title = revision.branch.as_ref().map_or_else(
+                    || identity.to_owned(),
+                    |branch| format!("{identity} · {branch}"),
+                );
+                candidates.push(Candidate {
+                    score: score.saturating_add(35),
+                    result: CrossProjectSearchResult {
+                        project_id: project_id.clone(),
+                        project_name: project_name.clone(),
+                        project_path: project_path.clone(),
+                        kind: CrossProjectResultKind::Revision,
+                        entity_id: checkpoint.id.clone(),
+                        title,
+                        excerpt: format!(
+                            "{} · {} tracked change{} · checkpoint in {}",
+                            revision.graph_snapshot_id,
+                            revision.tracked_changes,
+                            if revision.tracked_changes == 1 {
+                                ""
+                            } else {
+                                "s"
+                            },
+                            session.name
+                        ),
+                        updated_at_unix_ms: checkpoint.recorded_at_unix_ms,
+                        session_id: Some(session.session_id.clone()),
+                        learning_id: None,
+                        citation: None,
+                        trust_state: None,
+                        freshness: None,
+                    },
+                });
+            }
+        });
+        if sessions.is_err() {
+            skipped_projects += 1;
+            continue;
         }
+        searched_projects += 1;
 
         if let Ok(activity) = project_activity_view(
             &project_path,
@@ -421,8 +469,8 @@ fn bounded_excerpt(value: &str, max_characters: usize) -> String {
 mod tests {
     use super::*;
     use crate::{
-        ingest_project, initialize_project, start_session, CaptureMode, SessionSource,
-        StartSessionInput,
+        checkpoint_session, ingest_project, initialize_project, start_session, CaptureMode,
+        CheckpointInput, SessionSource, StartSessionInput,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -451,8 +499,9 @@ mod tests {
         registry.bind(&beta, &vault).unwrap();
         ingest_project(&alpha, &vault).unwrap();
         ingest_project(&beta, &vault).unwrap();
+        let mut alpha_revision_query = String::new();
         for (index, project) in [&alpha, &beta].into_iter().enumerate() {
-            start_session(
+            let started = start_session(
                 project,
                 &vault,
                 StartSessionInput {
@@ -463,6 +512,32 @@ mod tests {
                 },
             )
             .unwrap();
+            let checkpoint = checkpoint_session(
+                project,
+                &vault,
+                &started.session.session_id,
+                CheckpointInput {
+                    request_id: format!("req_{}{}", index + 2, "b".repeat(31)),
+                    summary: "Pin the captured project revision".to_owned(),
+                    plan: Vec::new(),
+                    decisions: Vec::new(),
+                    tasks: Vec::new(),
+                    problems: Vec::new(),
+                    touched_artifacts: Vec::new(),
+                    commands: Vec::new(),
+                    verification: Vec::new(),
+                    unresolved: Vec::new(),
+                },
+            )
+            .unwrap();
+            if index == 0 {
+                alpha_revision_query = checkpoint.session.checkpoints[0]
+                    .project_revision
+                    .as_ref()
+                    .unwrap()
+                    .graph_snapshot_id[4..20]
+                    .to_owned();
+            }
         }
 
         let catalog = ProjectCatalog::at(config.join(crate::PROJECT_CATALOG_FILE));
@@ -485,6 +560,18 @@ mod tests {
         }));
         assert!(!result.live_source_checked);
         assert_eq!(result.source_boundary, SOURCE_BOUNDARY);
+
+        let revision =
+            search_observed_projects(&catalog, &registry, &alpha_revision_query, 20).unwrap();
+        assert!(revision.results.iter().any(|item| {
+            item.project_name == "Alpha"
+                && item.kind == CrossProjectResultKind::Revision
+                && item.session_id.is_some()
+        }));
+        assert!(revision
+            .results
+            .iter()
+            .all(|item| item.project_name == "Alpha"));
 
         fs::remove_dir_all(&beta).unwrap();
         let available = search_observed_projects(&catalog, &registry, "continuity", 20).unwrap();
