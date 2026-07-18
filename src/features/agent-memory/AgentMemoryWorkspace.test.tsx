@@ -481,6 +481,14 @@ describe("Agent Memory workspace boundaries", () => {
           checkpointId: "chk_test",
           recordedAtUnixMs: Date.now(),
           summary: "Session inspector is wired.",
+          projectRevision: {
+            graphSnapshotId: `grf_${"1".repeat(64)}`,
+            artifactSnapshotId: `snp_${"2".repeat(64)}`,
+            capturedAtUnixMs: Date.now() - 90_000,
+            head: "abcdef0123456789abcdef0123456789abcdef01",
+            branch: "main",
+            trackedChanges: 0,
+          },
           decisions: [
             {
               id: "dec_test",
@@ -581,6 +589,12 @@ describe("Agent Memory workspace boundaries", () => {
       }),
     );
     await screen.findByRole("heading", { name: "Build continuity" });
+    expect(screen.getByText("abcdef0123 · main")).toBeVisible();
+    expect(
+      screen.getByTitle(
+        "Open the exact Project Graph capture used by this checkpoint",
+      ),
+    ).toBeVisible();
     expect(api.inspectAgentProject).toHaveBeenCalledWith("/projects/ley");
     fireEvent.click(
       screen.getByRole("button", { name: "Close session inspector" }),

@@ -257,6 +257,19 @@ pub struct SessionArtifactCitation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionProjectRevision {
+    pub graph_snapshot_id: String,
+    pub artifact_snapshot_id: String,
+    pub captured_at_unix_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub tracked_changes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlanItem {
     pub id: String,
     pub text: String,
@@ -340,6 +353,8 @@ pub struct SessionCheckpoint {
     pub event_id: String,
     pub recorded_at_unix_ms: u64,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_revision: Option<SessionProjectRevision>,
     pub plan: Vec<PlanItem>,
     pub decisions: Vec<DecisionRecord>,
     pub tasks: Vec<TaskRecord>,
@@ -448,7 +463,7 @@ enum SessionEventPayload {
         source: SessionSource,
         artifact_snapshot_id: String,
     },
-    CheckpointRecorded(SessionCheckpoint),
+    CheckpointRecorded(Box<SessionCheckpoint>),
     SessionFinished(SessionFinish),
     SessionRenamed(SessionRename),
 }
@@ -525,7 +540,7 @@ pub fn checkpoint_session(
             event_id,
             request_id,
             redactions,
-            payload: SessionEventPayload::CheckpointRecorded(checkpoint),
+            payload: SessionEventPayload::CheckpointRecorded(Box::new(checkpoint)),
             allow_create: false,
             expected_event_count: None,
         },
@@ -893,6 +908,18 @@ fn normalize_checkpoint(
     }
     let touched_artifacts =
         citations_for_paths(memory, input.touched_artifacts.into_iter().collect())?;
+    let project_revision = Some(SessionProjectRevision {
+        graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
+        artifact_snapshot_id: memory.graph.artifact_snapshot_id.clone(),
+        captured_at_unix_ms: memory.graph.generated_at_unix_ms,
+        head: memory.graph.git.as_ref().and_then(|git| git.head.clone()),
+        branch: memory.graph.git.as_ref().and_then(|git| git.branch.clone()),
+        tracked_changes: memory
+            .graph
+            .git
+            .as_ref()
+            .map_or(0, |git| git.changes.len() as u64),
+    });
     let mut commands = Vec::new();
     for (index, item) in input.commands.into_iter().enumerate() {
         commands.push(CommandRecord {
@@ -953,6 +980,7 @@ fn normalize_checkpoint(
             event_id: event_id.to_owned(),
             recorded_at_unix_ms: recorded_at,
             summary,
+            project_revision,
             plan,
             decisions,
             tasks,
@@ -1465,7 +1493,7 @@ fn replay_events(
                 ))
             }
             SessionEventPayload::CheckpointRecorded(checkpoint) => {
-                session.checkpoints.push(checkpoint.clone());
+                session.checkpoints.push(checkpoint.as_ref().clone());
             }
             SessionEventPayload::SessionFinished(finish) => {
                 session.status = finish.status;
@@ -1604,6 +1632,9 @@ fn validate_checkpoint_records(
     {
         return invalid_session_store("checkpoint collection limits were exceeded");
     }
+    if let Some(revision) = &checkpoint.project_revision {
+        validate_project_revision(revision)?;
+    }
     for (index, item) in checkpoint.plan.iter().enumerate() {
         validate_child_id(&item.id, "pln", event_id, index)?;
         validate_stored_text("plan.text", &item.text, 1, 4_000)?;
@@ -1666,6 +1697,29 @@ fn validate_checkpoint_records(
         }
     }
     validate_stored_list("checkpoint.unresolved", &checkpoint.unresolved, 100, 4_000)
+}
+
+fn validate_project_revision(revision: &SessionProjectRevision) -> Result<(), LeyCoreError> {
+    let valid_head = revision.head.as_ref().is_none_or(|head| {
+        matches!(head.len(), 40 | 64)
+            && head
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    });
+    let valid_branch = revision
+        .branch
+        .as_ref()
+        .is_none_or(|branch| !branch.is_empty() && branch.chars().count() <= 1024);
+    if !valid_prefixed_hex(&revision.graph_snapshot_id, "grf_", 64)
+        || !valid_prefixed_hex(&revision.artifact_snapshot_id, "snp_", 64)
+        || revision.captured_at_unix_ms == 0
+        || !valid_head
+        || !valid_branch
+        || revision.tracked_changes > 1_000_000
+    {
+        return invalid_session_store("session project revision is invalid");
+    }
+    Ok(())
 }
 
 fn validate_child_id(
@@ -1902,6 +1956,7 @@ fn request_fingerprint(
         SessionEventPayload::CheckpointRecorded(checkpoint) => {
             let mut checkpoint = checkpoint.clone();
             checkpoint.recorded_at_unix_ms = 0;
+            checkpoint.project_revision = None;
             for citation in &mut checkpoint.touched_artifacts {
                 citation.artifact_snapshot_id.clear();
                 citation.content_hash.clear();
@@ -1989,6 +2044,24 @@ fn render_session_markdown(session: &AgentSession) -> String {
             checkpoint.recorded_at_unix_ms
         ));
         push_quote(&mut output, &checkpoint.summary);
+        if let Some(revision) = &checkpoint.project_revision {
+            output.push_str("\n### Captured project revision\n\n");
+            if let Some(head) = &revision.head {
+                output.push_str(&format!("- Git HEAD: `{head}`\n"));
+            } else {
+                output.push_str("- Git HEAD: not present in this capture\n");
+            }
+            if let Some(branch) = &revision.branch {
+                output.push_str(&format!("- Branch: `{}`\n", markdown_inline(branch)));
+            }
+            output.push_str(&format!(
+                "- Graph snapshot: `{}`\n- Artifact snapshot: `{}`\n- Captured at: `{}`\n- Tracked changes: `{}`\n",
+                revision.graph_snapshot_id,
+                revision.artifact_snapshot_id,
+                revision.captured_at_unix_ms,
+                revision.tracked_changes
+            ));
+        }
         if !checkpoint.plan.is_empty() {
             output.push_str("\n### Plan\n\n");
             for item in &checkpoint.plan {
@@ -2351,6 +2424,7 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{ingest_project, initialize_project, CaptureMode};
+    use std::process::Command;
     use std::sync::{Arc, Barrier};
     use tempfile::tempdir;
 
@@ -2373,6 +2447,21 @@ mod tests {
 
     fn request_id(digit: char) -> String {
         format!("req_{}", digit.to_string().repeat(32))
+    }
+
+    fn git(project: &Path, arguments: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(project)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            arguments,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
     }
 
     fn start_input(request_id: String) -> StartSessionInput {
@@ -2500,6 +2589,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(checkpoint.session.event_count, 2);
+        let revision = checkpoint.session.checkpoints[0]
+            .project_revision
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            revision.artifact_snapshot_id,
+            checkpoint.session.checkpoints[0].touched_artifacts[0].artifact_snapshot_id
+        );
+        assert!(valid_prefixed_hex(&revision.graph_snapshot_id, "grf_", 64));
+        assert!(revision.head.is_none());
+        assert!(revision.branch.is_none());
+        let cited_graph_snapshot = revision.graph_snapshot_id.clone();
         let citation = &checkpoint.session.checkpoints[0].touched_artifacts[0];
         assert_eq!(citation.artifact_path, "README.md");
         assert!(valid_prefixed_hex(
@@ -2533,6 +2634,14 @@ mod tests {
         assert_eq!(
             replayed_checkpoint.session.checkpoints[0].touched_artifacts[0].content_hash,
             cited_hash
+        );
+        assert_eq!(
+            replayed_checkpoint.session.checkpoints[0]
+                .project_revision
+                .as_ref()
+                .unwrap()
+                .graph_snapshot_id,
+            cited_graph_snapshot
         );
 
         let finish_request = request_id('3');
@@ -2628,6 +2737,8 @@ mod tests {
         let markdown = std::fs::read_to_string(directory.join(SESSION_MARKDOWN_FILE)).unwrap();
         assert!(markdown.contains("# Ship durable session memory"));
         assert!(markdown.contains("## Problems and outcomes"));
+        assert!(markdown.contains("### Captured project revision"));
+        assert!(markdown.contains("Git HEAD: not present in this capture"));
         assert!(markdown.contains("README.md"));
         assert!(markdown.contains("### Final response"));
         assert!(markdown.contains("Implemented and verified the lifecycle"));
@@ -2649,6 +2760,80 @@ mod tests {
                 completed_sessions: 1,
                 ..ProjectSessionStats::default()
             }
+        );
+    }
+
+    #[test]
+    fn checkpoints_pin_ingested_git_revisions_without_reading_live_head() {
+        let (_base, project, vault) = setup_memory();
+        git(&project, &["init", "-b", "main"]);
+        git(&project, &["config", "user.name", "Ley Test"]);
+        git(
+            &project,
+            &["config", "user.email", "ley-test@example.invalid"],
+        );
+        git(&project, &["add", "."]);
+        git(&project, &["commit", "-m", "first capture"]);
+        let first_head = git(&project, &["rev-parse", "HEAD"]);
+        ingest_project(&project, &vault).unwrap();
+
+        let started = start_session(&project, &vault, start_input(request_id('b'))).unwrap();
+        let first = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            checkpoint_input(request_id('c'), "Pinned first revision"),
+        )
+        .unwrap();
+        let first_revision = first.session.checkpoints[0]
+            .project_revision
+            .as_ref()
+            .unwrap();
+        assert_eq!(first_revision.head.as_deref(), Some(first_head.as_str()));
+        assert_eq!(first_revision.branch.as_deref(), Some("main"));
+        assert_eq!(first_revision.tracked_changes, 0);
+
+        std::fs::write(
+            project.join("README.md"),
+            "# Session memory\n\nCommitted after Ley's capture.\n",
+        )
+        .unwrap();
+        git(&project, &["add", "README.md"]);
+        git(&project, &["commit", "-m", "second capture"]);
+        let second_head = git(&project, &["rev-parse", "HEAD"]);
+        let before_refresh = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            checkpoint_input(request_id('d'), "Still pinned to approved memory"),
+        )
+        .unwrap();
+        assert_eq!(
+            before_refresh.session.checkpoints[1]
+                .project_revision
+                .as_ref()
+                .unwrap()
+                .head
+                .as_deref(),
+            Some(first_head.as_str())
+        );
+
+        ingest_project(&project, &vault).unwrap();
+        let after_refresh = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            checkpoint_input(request_id('e'), "Pinned refreshed memory"),
+        )
+        .unwrap();
+        assert_eq!(
+            after_refresh.session.checkpoints[2]
+                .project_revision
+                .as_ref()
+                .unwrap()
+                .head
+                .as_deref(),
+            Some(second_head.as_str())
         );
     }
 
@@ -2801,6 +2986,31 @@ mod tests {
         let mut value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
         value["sequence"] = serde_json::json!(7);
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        assert!(matches!(
+            read_session(&project, &vault, &started.session.session_id),
+            Err(LeyCoreError::InvalidSessionStore(_))
+        ));
+    }
+
+    #[test]
+    fn forged_checkpoint_revision_is_rejected_during_replay() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('f'))).unwrap();
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            checkpoint_input(request_id('0'), "Revision integrity"),
+        )
+        .unwrap();
+        let event_path = session_directory(&project, &vault, &started.session.session_id)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", checkpoint.event_id));
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        value["data"]["projectRevision"]["graphSnapshotId"] =
+            serde_json::json!(format!("grf_{}", "A".repeat(64)));
         std::fs::write(&event_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
         assert!(matches!(
             read_session(&project, &vault, &started.session.session_id),

@@ -87,6 +87,8 @@ pub struct SessionContextCheckpoint {
     pub checkpoint_id: String,
     pub recorded_at_unix_ms: u64,
     pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_revision: Option<crate::SessionProjectRevision>,
     pub decisions: Vec<SessionContextDecision>,
     pub tasks: Vec<SessionContextTask>,
     pub problems: Vec<SessionContextProblem>,
@@ -296,6 +298,7 @@ fn context_from_session(
             checkpoint_id: checkpoint.id.clone(),
             recorded_at_unix_ms: checkpoint.recorded_at_unix_ms,
             summary: budget.take(&checkpoint.summary, 2_000),
+            project_revision: checkpoint.project_revision.clone(),
             decisions: checkpoint
                 .decisions
                 .iter()

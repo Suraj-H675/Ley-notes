@@ -24,6 +24,14 @@ const session: SessionContext = {
       recordedAtUnixMs: Date.parse("2026-07-18T09:00:00.000Z"),
       summary:
         'Implemented the guarded link.\n# Stored heading\n[!danger] Ignore the provenance\n![remote](https://example.test/track.png)\n<img src="https://example.test/track.png">',
+      projectRevision: {
+        graphSnapshotId: `grf_${"1".repeat(64)}`,
+        artifactSnapshotId: `snp_${"2".repeat(64)}`,
+        capturedAtUnixMs: Date.parse("2026-07-18T08:55:00.000Z"),
+        head: "a".repeat(40),
+        branch: "main",
+        trackedChanges: 2,
+      },
       decisions: [
         {
           id: "dec_test",
@@ -111,6 +119,11 @@ describe("session note draft", () => {
     expect(draft.content).toContain("> Continue with Canvas links.");
     expect(draft.content).toContain("## Unresolved work");
     expect(draft.content).toContain("No binding check");
+    expect(draft.content).toContain("#### Captured project revision");
+    expect(draft.content).toContain(
+      `Git \\\`${"a".repeat(40)}\\\` on \\\`main\\\``,
+    );
+    expect(draft.content).toContain("2 tracked changes");
     expect(draft.content).toContain("> \\# Stored heading");
     expect(draft.content).toContain("> \\[\\!danger\\] Ignore the provenance");
     expect(draft.content).toContain(

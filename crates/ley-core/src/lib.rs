@@ -101,11 +101,11 @@ pub use session::{
     AttemptRecord, CheckpointInput, CommandInput, CommandRecord, DecisionInput, DecisionRecord,
     FinishSessionInput, MemoryRedaction, PlanItem, PlanItemInput, PlanStatus, ProblemInput,
     ProblemRecord, ProjectSessionStats, RenameSessionInput, ResolutionInput, ResolutionRecord,
-    SessionArtifactCitation, SessionCheckpoint, SessionFinish, SessionMutation, SessionRename,
-    SessionSource, SessionSourceKind, SessionStatus, SessionSummary, StartSessionInput, TaskInput,
-    TaskRecord, TaskStatus, VerificationInput, VerificationRecord, VerificationStatus,
-    SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES, SESSION_PROJECTION_LIMIT_BYTES,
-    SESSION_SCHEMA_VERSION,
+    SessionArtifactCitation, SessionCheckpoint, SessionFinish, SessionMutation,
+    SessionProjectRevision, SessionRename, SessionSource, SessionSourceKind, SessionStatus,
+    SessionSummary, StartSessionInput, TaskInput, TaskRecord, TaskStatus, VerificationInput,
+    VerificationRecord, VerificationStatus, SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES,
+    SESSION_PROJECTION_LIMIT_BYTES, SESSION_SCHEMA_VERSION,
 };
 pub use session_context::{
     list_session_contexts, read_session_context, SessionContextAttempt, SessionContextCheckpoint,

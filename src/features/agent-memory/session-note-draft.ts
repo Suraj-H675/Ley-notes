@@ -88,6 +88,11 @@ function checkpointsSection(session: SessionContext): string {
     const records = [
       `### Checkpoint ${index + 1} · ${new Date(checkpoint.recordedAtUnixMs).toISOString()}`,
       quote(checkpoint.summary),
+      checkpoint.projectRevision
+        ? recordGroup("Captured project revision", [
+            revisionLabel(checkpoint.projectRevision),
+          ])
+        : "",
       recordGroup(
         "Decisions",
         checkpoint.decisions.map(
@@ -132,6 +137,21 @@ function evidenceSection(session: SessionContext): string {
     return `## Evidence boundary\n\n- No retained artifact citation appears in this bounded session projection.`;
   }
   return `## Captured artifact trail\n\n${citations.map((citation) => `- ${citation}`).join("\n")}`;
+}
+
+function revisionLabel(
+  revision: NonNullable<
+    SessionContext["checkpoints"][number]["projectRevision"]
+  >,
+): string {
+  const identity = revision.head
+    ? `Git ${inlineCode(revision.head)}${revision.branch ? ` on ${inlineCode(revision.branch)}` : ""}`
+    : "No Git HEAD was present in this capture";
+  const changes =
+    revision.trackedChanges === 0
+      ? "clean tracked tree"
+      : `${revision.trackedChanges} tracked change${revision.trackedChanges === 1 ? "" : "s"}`;
+  return `${identity} · graph ${inlineCode(revision.graphSnapshotId)} · artifact snapshot ${inlineCode(revision.artifactSnapshotId)} · captured ${inlineCode(new Date(revision.capturedAtUnixMs).toISOString())} · ${changes}`;
 }
 
 function recordGroup(title: string, records: string[]): string {

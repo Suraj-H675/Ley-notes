@@ -104,6 +104,14 @@ export interface SessionContext {
     checkpointId: string;
     recordedAtUnixMs: number;
     summary: string;
+    projectRevision?: {
+      graphSnapshotId: string;
+      artifactSnapshotId: string;
+      capturedAtUnixMs: number;
+      head?: string;
+      branch?: string;
+      trackedChanges: number;
+    };
     decisions: Array<{ id: string; title: string; decision: string }>;
     tasks: Array<{ id: string; title: string; status: string }>;
     problems: Array<{

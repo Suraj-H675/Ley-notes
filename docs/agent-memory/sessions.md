@@ -114,6 +114,8 @@ The document must match [checkpoint-input.schema.json](../../schemas/agent-memor
 
 Artifact paths must exist in the current captured snapshot. Ley stores a snapshot-pinned citation instead of the unverified path alone.
 
+Ley also derives a project revision for every new checkpoint. It pins the exact immutable graph and artifact snapshots used while accepting that checkpoint, plus the Git HEAD, branch, and captured tracked-change count when the approved capture came from a Git repository. Agents do not submit this metadata, and Ley does not read live Git during checkpoint recording. A checkpoint made after the source changes but before the next ingestion therefore continues to cite the earlier approved capture. Replaying the same request after a later ingestion returns the original event and revision.
+
 ## Inspect captured sessions
 
 List sessions for a project:
@@ -131,13 +133,13 @@ ley session show ses_01234567890123456789012345678901 \
 
 The vault also contains `session.md` for review and `session-v1.json` for local tools. Both files are derived. Preserve the immutable event files when repairing or migrating memory.
 
-Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, snapshot-pinned artifact citations, and naming history. Older checkpoints, older naming revisions, and truncated text are disclosed instead of being presented as complete history.
+Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, snapshot-pinned artifact citations, captured project revisions, and naming history. Selecting a captured revision opens the exact retained Project Graph view used by that checkpoint; it does not substitute today's graph. Older checkpoints, older naming revisions, and truncated text are disclosed instead of being presented as complete history.
 
 ### Link an inspected session into notes
 
 Use **To notes** in the desktop session inspector to review a title and create a user-owned Markdown handoff under `Agent Memory/Sessions`. The accessible action remains **Link session to notes** when its visible label collapses in a narrow header. The note carries portable project/session IDs, status and event count at export, timestamps, and the `ley/session` tag. Its body preserves the inspected goal, outcome, handoff, unresolved work, visible checkpoints, verification, and artifact trail while quoting stored agent text beneath an evidence-not-instructions warning.
 
-Ley first canonically verifies that the open notes vault is the project’s bound Agent Memory vault. If a project from another vault was opened through the multi-project catalog, the write is refused until that vault is opened. Repeating the action opens the existing linked note by project/session ID even after a rename or move; it never overwrites an unrelated title. The note is a bounded export, discloses omitted or clipped context, and does not silently synchronize later session events. The immutable session remains authoritative. See [ADR 0021](../adr/0021-vault-verified-agent-memory-note-links.md).
+Ley first canonically verifies that the open notes vault is the project’s bound Agent Memory vault. If a project from another vault was opened through the multi-project catalog, the write is refused until that vault is opened. Repeating the action opens the existing linked note by project/session ID even after a rename or move; it never overwrites an unrelated title. The note is a bounded export, discloses omitted or clipped context, and does not silently synchronize later session events. The immutable session remains authoritative. See [ADR 0021](../adr/0021-vault-verified-agent-memory-note-links.md) and [ADR 0022](../adr/0022-checkpoint-project-revision-citations.md).
 
 ## Retry a write safely
 

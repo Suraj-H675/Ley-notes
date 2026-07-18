@@ -150,7 +150,8 @@ export function AgentMemoryWorkspace({
     requestId: number;
   } | null>(null);
   const [graphFocus, setGraphFocus] = useState<{
-    evidence: ArtifactEvidenceReference;
+    evidence?: ArtifactEvidenceReference;
+    graphSnapshotId?: string;
     requestId: number;
   } | null>(null);
 
@@ -276,6 +277,13 @@ export function AgentMemoryWorkspace({
     setSessionId(null);
     setLearningId(null);
     setGraphFocus({ evidence, requestId: Date.now() });
+    setSection("graph");
+  }
+
+  function openProjectRevision(graphSnapshotId: string) {
+    setSessionId(null);
+    setLearningId(null);
+    setGraphFocus({ graphSnapshotId, requestId: Date.now() });
     setSection("graph");
   }
 
@@ -555,6 +563,7 @@ export function AgentMemoryWorkspace({
               projectName={dashboard.overview.projectName}
               onClose={() => setSessionId(null)}
               onEvidence={openEvidence}
+              onProjectRevision={openProjectRevision}
               onPromote={promoteSessionToBoundVault}
               onRenamed={(next) =>
                 setInspection({ status: "ready", dashboard: next })
@@ -1045,6 +1054,7 @@ function SessionInspector({
   projectName,
   onClose,
   onEvidence,
+  onProjectRevision,
   onPromote,
   onRenamed,
 }: {
@@ -1053,6 +1063,7 @@ function SessionInspector({
   projectName: string;
   onClose: () => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
+  onProjectRevision: (graphSnapshotId: string) => void;
   onPromote: (draft: PromotedSessionNoteDraft) => Promise<void>;
   onRenamed: (dashboard: AgentMemoryDashboard) => void;
 }) {
@@ -1400,6 +1411,13 @@ function SessionInspector({
                               )}
                             </div>
 
+                            {checkpoint.projectRevision && (
+                              <ProjectRevisionButton
+                                revision={checkpoint.projectRevision}
+                                onOpen={onProjectRevision}
+                              />
+                            )}
+
                             {checkpoint.touchedArtifacts.length > 0 && (
                               <div className="mt-4 border-t border-border pt-4">
                                 <p className="text-micro font-medium text-muted-foreground">
@@ -1545,6 +1563,57 @@ function SessionInspector({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function ProjectRevisionButton({
+  revision,
+  onOpen,
+}: {
+  revision: NonNullable<
+    SessionContext["checkpoints"][number]["projectRevision"]
+  >;
+  onOpen: (graphSnapshotId: string) => void;
+}) {
+  const shortHead = revision.head?.slice(0, 10);
+  const changeLabel =
+    revision.trackedChanges === 0
+      ? "clean tracked tree"
+      : `${revision.trackedChanges.toLocaleString()} tracked change${revision.trackedChanges === 1 ? "" : "s"}`;
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <p className="text-micro font-medium text-muted-foreground">
+        Captured Project Revision
+      </p>
+      <button
+        type="button"
+        onClick={() => onOpen(revision.graphSnapshotId)}
+        className="mt-2 flex w-full touch-manipulation items-center gap-3 rounded-xl border border-border bg-surface-2 px-3 py-2.5 text-left outline-none transition-[transform,border-color,background-color] hover:border-primary/35 hover:bg-primary/7 active:scale-[0.99] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+        title="Open the exact Project Graph capture used by this checkpoint"
+        aria-label={`Open captured project revision ${shortHead ?? revision.graphSnapshotId}`}
+      >
+        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+          <GitBranch size={16} aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span
+            className="block truncate font-mono text-meta font-medium text-foreground"
+            translate="no"
+          >
+            {shortHead ?? "Snapshot only"}
+            {revision.branch ? ` · ${revision.branch}` : ""}
+          </span>
+          <span className="mt-0.5 block text-micro text-muted-foreground">
+            Captured {absoluteTime(revision.capturedAtUnixMs)} · {changeLabel}
+          </span>
+        </span>
+        <ChevronRight
+          size={16}
+          className="shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
+      </button>
+    </div>
   );
 }
 

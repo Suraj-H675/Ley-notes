@@ -108,14 +108,15 @@ export function ProjectKnowledgeGraph({
 }: {
   projectPath: string;
   focus?: {
-    evidence: ArtifactEvidenceReference;
+    evidence?: ArtifactEvidenceReference;
+    graphSnapshotId?: string;
     requestId: number;
   } | null;
   onOpenArtifact?: (path: string) => void;
 }) {
-  const [query, setQuery] = useState(focus?.evidence.artifactPath ?? "");
+  const [query, setQuery] = useState(focus?.evidence?.artifactPath ?? "");
   const [deferredQuery, setDeferredQuery] = useState(
-    focus?.evidence.artifactPath ?? "",
+    focus?.evidence?.artifactPath ?? "",
   );
   const [historyResult, setHistoryResult] = useState<{
     projectPath: string;
@@ -148,15 +149,18 @@ export function ProjectKnowledgeGraph({
   const focusedCapture = focus
     ? history?.entries.find(
         (entry) =>
-          entry.artifactSnapshotId === focus.evidence.artifactSnapshotId,
+          entry.graphSnapshotId === focus.graphSnapshotId ||
+          entry.artifactSnapshotId === focus.evidence?.artifactSnapshotId,
       )
     : undefined;
   const selectedSnapshotId =
     snapshotSelection?.projectPath === projectPath
       ? snapshotSelection.snapshotId
-      : focusedCapture && !focusedCapture.current
-        ? focusedCapture.graphSnapshotId
-        : null;
+      : focus?.graphSnapshotId
+        ? focus.graphSnapshotId
+        : focusedCapture && !focusedCapture.current
+          ? focusedCapture.graphSnapshotId
+          : null;
   const filterKey = `${filters.nodeKinds.join(",")}|${filters.edgeKinds.join(",")}|${filters.provenances.join(",")}`;
   const requestKey = `${projectPath}\u0000${selectedSnapshotId ?? "current"}\u0000${deferredQuery}\u0000${filterKey}`;
   const loading = completedRequest !== requestKey;
@@ -513,6 +517,7 @@ export function ProjectKnowledgeGraph({
             )}
             {view &&
               focus &&
+              focus.evidence &&
               dismissedFocusId !== focus.requestId &&
               !inspection && (
                 <FocusedEvidenceInspector

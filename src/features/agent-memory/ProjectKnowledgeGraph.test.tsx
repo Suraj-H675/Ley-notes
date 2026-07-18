@@ -293,4 +293,27 @@ describe("ProjectKnowledgeGraph", () => {
     fireEvent.click(screen.getByText("Open artifact record"));
     expect(onOpenArtifact).toHaveBeenCalledWith("src/main.rs");
   });
+
+  it("opens the exact graph snapshot pinned by a session checkpoint", async () => {
+    render(
+      <ProjectKnowledgeGraph
+        projectPath="/projects/ley"
+        focus={{
+          requestId: 8,
+          graphSnapshotId: historicalId,
+        }}
+      />,
+    );
+
+    expect(await screen.findByText("Node old_symbol")).toBeVisible();
+    expect(screen.getByText("Viewing an immutable capture")).toBeVisible();
+    await waitFor(() =>
+      expect(api.readView).toHaveBeenLastCalledWith(
+        "/projects/ley",
+        "",
+        historicalId,
+        expect.any(Object),
+      ),
+    );
+  });
 });
