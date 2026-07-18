@@ -18,6 +18,7 @@ import {
   GitBranch,
   History,
   Inbox,
+  LayoutDashboard,
   LockKeyhole,
   MessageSquareWarning,
   Network,
@@ -61,6 +62,7 @@ import type {
   SessionContext,
   SessionSummary,
 } from "./types";
+import type { SessionCanvasLinkRequest } from "./link-session-canvas";
 
 const LAST_AGENT_PROJECT_KEY = "ley:last-agent-project";
 type Section =
@@ -104,6 +106,11 @@ const SessionPromotionEditor = lazy(() =>
     default: module.SessionPromotionEditor,
   })),
 );
+const SessionCanvasEditor = lazy(() =>
+  import("./SessionCanvasEditor").then((module) => ({
+    default: module.SessionCanvasEditor,
+  })),
+);
 const LearningCorrectionEditor = lazy(() =>
   import("./LearningCorrectionEditor").then((module) => ({
     default: module.LearningCorrectionEditor,
@@ -123,6 +130,7 @@ export function AgentMemoryWorkspace({
   onClose,
   onPromoteLearning,
   onPromoteSession,
+  onLinkSessionCanvas,
 }: {
   open: boolean;
   vaultMode: "desktop" | "browser-folder" | "browser-local";
@@ -131,6 +139,7 @@ export function AgentMemoryWorkspace({
   onClose: () => void;
   onPromoteLearning: (draft: PromotedLearningNoteDraft) => Promise<void>;
   onPromoteSession: (draft: PromotedSessionNoteDraft) => Promise<void>;
+  onLinkSessionCanvas: (request: SessionCanvasLinkRequest) => Promise<void>;
 }) {
   const [section, setSection] = useState<Section>("overview");
   const [projectPath, setProjectPath] = useState<string | null>(null);
@@ -322,6 +331,13 @@ export function AgentMemoryWorkspace({
     if (!projectPath) throw new Error("Open a project before linking a note.");
     await verifyAgentProjectNoteVault(projectPath, vaultPath);
     await onPromoteSession(draft);
+  }
+
+  async function linkSessionToBoundCanvas(request: SessionCanvasLinkRequest) {
+    if (!projectPath)
+      throw new Error("Open a project before linking a Canvas.");
+    await verifyAgentProjectNoteVault(projectPath, vaultPath);
+    await onLinkSessionCanvas(request);
   }
 
   function returnToProjects() {
@@ -566,6 +582,7 @@ export function AgentMemoryWorkspace({
               onEvidence={openEvidence}
               onProjectRevision={openProjectRevision}
               onPromote={promoteSessionToBoundVault}
+              onLinkCanvas={linkSessionToBoundCanvas}
               onRenamed={(next) =>
                 setInspection({ status: "ready", dashboard: next })
               }
@@ -1057,6 +1074,7 @@ function SessionInspector({
   onEvidence,
   onProjectRevision,
   onPromote,
+  onLinkCanvas,
   onRenamed,
 }: {
   sessionId: string | null;
@@ -1066,6 +1084,7 @@ function SessionInspector({
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
   onProjectRevision: (graphSnapshotId: string) => void;
   onPromote: (draft: PromotedSessionNoteDraft) => Promise<void>;
+  onLinkCanvas: (request: SessionCanvasLinkRequest) => Promise<void>;
   onRenamed: (dashboard: AgentMemoryDashboard) => void;
 }) {
   const [session, setSession] = useState<SessionContext | null>(null);
@@ -1073,6 +1092,8 @@ function SessionInspector({
   const [renameDirty, setRenameDirty] = useState(false);
   const [promoting, setPromoting] = useState(false);
   const [promotionDirty, setPromotionDirty] = useState(false);
+  const [canvasLinking, setCanvasLinking] = useState(false);
+  const [canvasDirty, setCanvasDirty] = useState(false);
   const [busy, setBusy] = useState(Boolean(sessionId));
   const [error, setError] = useState<string | null>(null);
 
@@ -1103,8 +1124,10 @@ function SessionInspector({
       onOpenChange={(next) => {
         if (
           !next &&
-          ((!(renaming && renameDirty) && !(promoting && promotionDirty)) ||
-            window.confirm("Discard your unsaved note or rename changes?"))
+          ((!(renaming && renameDirty) &&
+            !(promoting && promotionDirty) &&
+            !(canvasLinking && canvasDirty)) ||
+            window.confirm("Discard your unsaved session changes?"))
         ) {
           onClose();
         }
@@ -1137,19 +1160,51 @@ function SessionInspector({
                   onClick={() => {
                     if (
                       ((promoting && promotionDirty) ||
-                        (renaming && renameDirty)) &&
+                        (renaming && renameDirty) ||
+                        (canvasLinking && canvasDirty)) &&
                       !window.confirm("Discard your unsaved changes?")
                     ) {
                       return;
                     }
                     setPromotionDirty(false);
                     setRenameDirty(false);
+                    setCanvasDirty(false);
                     setRenaming(false);
+                    setCanvasLinking(false);
                     setPromoting((current) => !current);
                   }}
                 >
                   <FilePlus2 size={13} aria-hidden="true" />
                   <span className="hidden min-[420px]:inline">To notes</span>
+                </Button>
+              )}
+              {session && (
+                <Button
+                  size="sm"
+                  variant={canvasLinking ? "outline" : "ghost"}
+                  className="h-8"
+                  aria-expanded={canvasLinking}
+                  aria-controls="session-canvas-link-panel"
+                  aria-label="Link session to Canvas"
+                  onClick={() => {
+                    if (
+                      ((canvasLinking && canvasDirty) ||
+                        (renaming && renameDirty) ||
+                        (promoting && promotionDirty)) &&
+                      !window.confirm("Discard your unsaved changes?")
+                    ) {
+                      return;
+                    }
+                    setCanvasDirty(false);
+                    setRenameDirty(false);
+                    setPromotionDirty(false);
+                    setRenaming(false);
+                    setPromoting(false);
+                    setCanvasLinking((current) => !current);
+                  }}
+                >
+                  <LayoutDashboard size={13} aria-hidden="true" />
+                  <span className="hidden min-[520px]:inline">To Canvas</span>
                 </Button>
               )}
               {session && (
@@ -1161,14 +1216,17 @@ function SessionInspector({
                   onClick={() => {
                     if (
                       ((renaming && renameDirty) ||
-                        (promoting && promotionDirty)) &&
+                        (promoting && promotionDirty) ||
+                        (canvasLinking && canvasDirty)) &&
                       !window.confirm("Discard your unsaved changes?")
                     ) {
                       return;
                     }
                     setRenameDirty(false);
                     setPromotionDirty(false);
+                    setCanvasDirty(false);
                     setPromoting(false);
+                    setCanvasLinking(false);
                     setRenaming((current) => !current);
                   }}
                 >
@@ -1557,6 +1615,31 @@ function SessionInspector({
                   }}
                   onDirtyChange={setPromotionDirty}
                   onPromote={onPromote}
+                />
+              </Suspense>
+            </div>
+          )}
+          {canvasLinking && session && (
+            <div
+              id="session-canvas-link-panel"
+              className="shrink-0 border-t border-border bg-surface-1"
+            >
+              <Suspense fallback={<KnowledgeSurfaceFallback />}>
+                <SessionCanvasEditor
+                  projectName={projectName}
+                  session={session}
+                  onCancel={() => {
+                    if (
+                      canvasDirty &&
+                      !window.confirm("Discard your unsaved Canvas link?")
+                    ) {
+                      return;
+                    }
+                    setCanvasDirty(false);
+                    setCanvasLinking(false);
+                  }}
+                  onDirtyChange={setCanvasDirty}
+                  onLink={onLinkCanvas}
                 />
               </Suspense>
             </div>

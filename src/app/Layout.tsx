@@ -61,6 +61,10 @@ import type {
 } from "@/features/agent-memory/types";
 import { promoteLearningNote } from "@/features/agent-memory/promote-learning-note";
 import { promoteSessionNote } from "@/features/agent-memory/promote-session-note";
+import {
+  linkSessionToCanvas,
+  type SessionCanvasLinkRequest,
+} from "@/features/agent-memory/link-session-canvas";
 import { primaryModifierLabel, shortcutLabel } from "@/shared/lib/shortcut";
 
 const GraphView = lazy(() =>
@@ -145,6 +149,7 @@ export function Layout({
   const [newNoteOpen, setNewNoteOpen] = useState(false);
   const [newNoteFolder, setNewNoteFolder] = useState("");
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const [canvasTargetPath, setCanvasTargetPath] = useState<string | null>(null);
   const [collectionRequest, setCollectionRequest] =
     useState<CollectionRequest | null>(null);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
@@ -227,6 +232,18 @@ export function Layout({
     nav.openPage(note.id);
     nav.pushRecent(note.id);
     setAgentMemoryOpen(false);
+  }
+
+  async function linkAgentSessionToCanvas(request: SessionCanvasLinkRequest) {
+    const result = await linkSessionToCanvas(request);
+    setAgentMemoryOpen(false);
+    setCanvasTargetPath(result.canvas.path);
+    setCanvasOpen(true);
+  }
+
+  function openCanvas() {
+    setCanvasTargetPath(null);
+    setCanvasOpen(true);
   }
 
   function openSearch(query = "") {
@@ -320,7 +337,7 @@ export function Layout({
             size="sm"
             variant="ghost"
             className="hidden sm:inline-flex"
-            onClick={() => setCanvasOpen(true)}
+            onClick={openCanvas}
             aria-label="Canvas"
             title="Canvas"
           >
@@ -585,7 +602,7 @@ export function Layout({
         onQuickSwitcher={() => openSearch()}
         onDailyNote={openDailyNote}
         onGraph={() => setGraphOpen(true)}
-        onCanvas={() => setCanvasOpen(true)}
+        onCanvas={openCanvas}
         onCollection={() =>
           setCollectionRequest({ query: "", title: "All notes" })
         }
@@ -611,7 +628,14 @@ export function Layout({
       {canvasOpen && (
         <FeatureErrorBoundary feature="Canvas" overlay>
           <Suspense fallback={null}>
-            <CanvasModal open onClose={() => setCanvasOpen(false)} />
+            <CanvasModal
+              open
+              initialPath={canvasTargetPath}
+              onClose={() => {
+                setCanvasOpen(false);
+                setCanvasTargetPath(null);
+              }}
+            />
           </Suspense>
         </FeatureErrorBoundary>
       )}
@@ -651,6 +675,7 @@ export function Layout({
               onClose={() => setAgentMemoryOpen(false)}
               onPromoteLearning={promoteLearningToNote}
               onPromoteSession={promoteSessionToNote}
+              onLinkSessionCanvas={linkAgentSessionToCanvas}
             />
           </Suspense>
         </FeatureErrorBoundary>

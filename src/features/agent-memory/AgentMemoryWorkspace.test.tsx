@@ -168,6 +168,7 @@ describe("Agent Memory workspace boundaries", () => {
         onClose={vi.fn()}
         onPromoteLearning={vi.fn()}
         onPromoteSession={vi.fn()}
+        onLinkSessionCanvas={vi.fn()}
       />,
     );
 
@@ -569,6 +570,11 @@ describe("Agent Memory workspace boundaries", () => {
     });
 
     const promoteLearning = vi.fn().mockResolvedValue(undefined);
+    const linkSessionCanvas = vi
+      .fn()
+      .mockRejectedValue(
+        new Error("Keep the inspector open after the boundary check."),
+      );
     render(
       <AgentMemoryWorkspace
         open
@@ -578,6 +584,7 @@ describe("Agent Memory workspace boundaries", () => {
         onClose={vi.fn()}
         onPromoteLearning={promoteLearning}
         onPromoteSession={vi.fn()}
+        onLinkSessionCanvas={linkSessionCanvas}
       />,
     );
 
@@ -663,6 +670,27 @@ describe("Agent Memory workspace boundaries", () => {
     expect(
       screen.getByText(/verifies that the open notes vault/i),
     ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Link session to Canvas" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Link & open Canvas" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Link & open Canvas" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Keep the inspector open",
+    );
+    expect(api.verifyAgentProjectNoteVault).toHaveBeenCalledWith(
+      "/projects/ley",
+      "/vault",
+    );
+    expect(
+      api.verifyAgentProjectNoteVault.mock.invocationCallOrder[0],
+    ).toBeLessThan(linkSessionCanvas.mock.invocationCallOrder[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));

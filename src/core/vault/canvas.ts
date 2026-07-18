@@ -99,6 +99,7 @@ export interface CanvasSummary {
   name: string;
   updatedAt: number;
   document: CanvasDocument;
+  readError?: "invalid-json";
 }
 
 export async function listCanvases(): Promise<CanvasSummary[]> {
@@ -128,7 +129,10 @@ export async function createCanvas(name: string): Promise<CanvasSummary> {
   const existing = (await listCanvases()).find(
     (canvas) => canvas.path.toLowerCase() === path.toLowerCase(),
   );
-  if (existing) return existing;
+  if (existing) {
+    assertCanvasWritable(existing);
+    return existing;
+  }
   const document: CanvasDocument = { nodes: [], edges: [] };
   await saveCanvas(path, document);
   return { path, name: cleanName, updatedAt: Date.now(), document };
@@ -151,6 +155,62 @@ export async function saveCanvas(
 export async function deleteCanvas(path: string): Promise<void> {
   if (!(await trashActiveCanvasFile(path)))
     await db.settings.delete(`canvas:${path}`);
+}
+
+export async function addFileToCanvas(
+  canvasPath: string,
+  filePath: string,
+): Promise<{ canvas: CanvasSummary; added: boolean }> {
+  const canvases = await listCanvases();
+  const canvas = canvases.find((candidate) => candidate.path === canvasPath);
+  if (!canvas) {
+    throw new Error(
+      "That Canvas is no longer available. Choose another Canvas and try again.",
+    );
+  }
+  assertCanvasWritable(canvas);
+  const alreadyLinked = canvas.document.nodes.some(
+    (node) => node.type === "file" && node.file === filePath,
+  );
+  if (alreadyLinked) return { canvas, added: false };
+
+  const document: CanvasDocument = {
+    ...canvas.document,
+    nodes: [
+      ...canvas.document.nodes,
+      newFileCanvasNode(
+        filePath,
+        nextCanvasCardPosition(canvasContentNodeCount(canvas.document.nodes)),
+      ),
+    ],
+  };
+  await saveCanvas(canvas.path, document);
+  return {
+    canvas: { ...canvas, document, updatedAt: Date.now() },
+    added: true,
+  };
+}
+
+function assertCanvasWritable(canvas: CanvasSummary): void {
+  if (canvas.readError) {
+    throw new Error(
+      `“${canvas.name}” is not valid JSON Canvas. Ley left it unchanged; repair it or choose another Canvas.`,
+    );
+  }
+}
+
+export function nextCanvasCardPosition(index: number): {
+  x: number;
+  y: number;
+} {
+  return {
+    x: 80 + (index % 3) * 340,
+    y: 80 + Math.floor(index / 3) * 220,
+  };
+}
+
+export function canvasContentNodeCount(nodes: CanvasNode[]): number {
+  return nodes.filter((node) => node.type !== "group").length;
 }
 
 export function newTextCanvasNode(position: {
@@ -224,12 +284,20 @@ function summary(
       .at(-1)
       ?.replace(/\.canvas$/i, "") ?? "Untitled canvas";
   let parsed: unknown;
+  let readError: CanvasSummary["readError"];
   try {
     parsed = JSON.parse(content);
   } catch {
     parsed = { nodes: [], edges: [] };
+    readError = "invalid-json";
   }
-  return { path, name: filename, updatedAt, document: normalizeCanvas(parsed) };
+  return {
+    path,
+    name: filename,
+    updatedAt,
+    document: normalizeCanvas(parsed),
+    ...(readError ? { readError } : {}),
+  };
 }
 
 export function normalizeCanvas(input: unknown): CanvasDocument {

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { db } from "@/infrastructure/database/db";
 import { resetDb } from "@/test/helpers";
 import {
+  addFileToCanvas,
   createCanvas,
   deleteCanvas,
   listCanvases,
@@ -28,6 +30,62 @@ describe("JSON Canvas persistence", () => {
 
     await deleteCanvas(canvas.path);
     expect(await listCanvases()).toEqual([]);
+  });
+
+  it("adds a standard file node once and reuses it on retries", async () => {
+    const canvas = await createCanvas("Agent map");
+    const first = await addFileToCanvas(
+      canvas.path,
+      "Agent Memory/Sessions/Handoff.md",
+    );
+    const repeated = await addFileToCanvas(
+      canvas.path,
+      "Agent Memory/Sessions/Handoff.md",
+    );
+
+    expect(first.added).toBe(true);
+    expect(repeated.added).toBe(false);
+    expect(repeated.canvas.document.nodes).toEqual([
+      expect.objectContaining({
+        type: "file",
+        file: "Agent Memory/Sessions/Handoff.md",
+        x: 80,
+        y: 80,
+        width: 280,
+        height: 120,
+      }),
+    ]);
+    expect((await listCanvases())[0].document.nodes).toHaveLength(1);
+  });
+
+  it("refuses to recreate a Canvas that disappeared before the write", async () => {
+    await expect(
+      addFileToCanvas(
+        "canvases/missing.canvas",
+        "Agent Memory/Sessions/Handoff.md",
+      ),
+    ).rejects.toThrow("no longer available");
+    expect(await listCanvases()).toEqual([]);
+  });
+
+  it("never overwrites malformed Canvas content through a file-card shortcut", async () => {
+    await db.settings.put({
+      key: "canvas:canvases/damaged.canvas",
+      value: { content: "{not json", updatedAt: 1 },
+    });
+
+    await expect(
+      addFileToCanvas(
+        "canvases/damaged.canvas",
+        "Agent Memory/Sessions/Handoff.md",
+      ),
+    ).rejects.toThrow("not valid JSON Canvas");
+    await expect(createCanvas("Damaged")).rejects.toThrow(
+      "not valid JSON Canvas",
+    );
+    expect(
+      (await db.settings.get("canvas:canvases/damaged.canvas"))?.value,
+    ).toEqual({ content: "{not json", updatedAt: 1 });
   });
 
   it("round-trips every JSON Canvas 1.0 node and edge field Ley supports", () => {

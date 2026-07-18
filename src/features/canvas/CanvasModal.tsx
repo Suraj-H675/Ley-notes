@@ -23,6 +23,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  canvasContentNodeCount,
   canvasColorValue,
   createCanvas,
   deleteCanvas,
@@ -31,6 +32,7 @@ import {
   newGroupCanvasNode,
   newLinkCanvasNode,
   newTextCanvasNode,
+  nextCanvasCardPosition,
   saveCanvas,
   type CanvasDocument,
   type CanvasSide,
@@ -49,9 +51,11 @@ const canvasPalette = [undefined, "1", "2", "3", "4", "5", "6"] as const;
 
 export function CanvasModal({
   open,
+  initialPath,
   onClose,
 }: {
   open: boolean;
+  initialPath?: string | null;
   onClose: () => void;
 }) {
   const queriedPages = usePages();
@@ -82,9 +86,10 @@ export function CanvasModal({
     void listCanvases().then((items) => {
       if (!active) return;
       setCanvases(items);
-      const first = items[0];
-      setActivePath(first?.path ?? null);
-      setDocument(first?.document ?? { nodes: [], edges: [] });
+      const selected =
+        items.find((canvas) => canvas.path === initialPath) ?? items[0];
+      setActivePath(selected?.path ?? null);
+      setDocument(selected?.document ?? { nodes: [], edges: [] });
       setSelectedNodeIds([]);
       setSelectedEdgeId(null);
       setPendingConnection(null);
@@ -93,7 +98,7 @@ export function CanvasModal({
     return () => {
       active = false;
     };
-  }, [open]);
+  }, [initialPath, open]);
 
   useEffect(() => {
     if (!open) return;
@@ -361,7 +366,9 @@ export function CanvasModal({
       ...current,
       nodes: [
         ...current.nodes,
-        newTextCanvasNode(nextCardPosition(contentNodeCount(current.nodes))),
+        newTextCanvasNode(
+          nextCanvasCardPosition(canvasContentNodeCount(current.nodes)),
+        ),
       ],
     }));
     setDirty(true);
@@ -387,7 +394,7 @@ export function CanvasModal({
         ...current.nodes,
         newLinkCanvasNode(
           value,
-          nextCardPosition(contentNodeCount(current.nodes)),
+          nextCanvasCardPosition(canvasContentNodeCount(current.nodes)),
         ),
       ],
     }));
@@ -439,7 +446,7 @@ export function CanvasModal({
         ...current.nodes,
         newFileCanvasNode(
           page.path,
-          nextCardPosition(contentNodeCount(current.nodes)),
+          nextCanvasCardPosition(canvasContentNodeCount(current.nodes)),
         ),
       ],
     }));
@@ -778,14 +785,6 @@ export function CanvasModal({
       </Dialog.Portal>
     </Dialog.Root>
   );
-}
-
-function nextCardPosition(index: number): { x: number; y: number } {
-  return { x: 80 + (index % 3) * 340, y: 80 + Math.floor(index / 3) * 220 };
-}
-
-function contentNodeCount(nodes: CanvasDocument["nodes"]): number {
-  return nodes.filter((node) => node.type !== "group").length;
 }
 
 function groupAroundContent(nodes: CanvasDocument["nodes"]) {
