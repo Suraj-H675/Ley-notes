@@ -18,6 +18,7 @@ import {
 import { cn } from "@/shared/lib/classnames";
 import { readAgentProjectActivity } from "./api";
 import type {
+  ArtifactEvidenceReference,
   ProjectActivityCitation,
   ProjectActivityView,
   ProjectDecision,
@@ -32,10 +33,12 @@ export function ProjectActivityExplorer({
   mode,
   projectPath,
   onSession,
+  onEvidence = () => undefined,
 }: {
   mode: ActivityMode;
   projectPath: string;
   onSession: (sessionId: string) => void;
+  onEvidence?: (evidence: ArtifactEvidenceReference) => void;
 }) {
   const [query, setQuery] = useState("");
   const [deferredQuery, setDeferredQuery] = useState("");
@@ -157,12 +160,14 @@ export function ProjectActivityExplorer({
         <DecisionList
           activity={visibleActivity}
           onSession={onSession}
+          onEvidence={onEvidence}
           query={deferredQuery}
         />
       ) : (
         <ProblemList
           activity={visibleActivity}
           onSession={onSession}
+          onEvidence={onEvidence}
           query={deferredQuery}
           scope={scope}
         />
@@ -190,10 +195,12 @@ export function ProjectActivityExplorer({
 function DecisionList({
   activity,
   onSession,
+  onEvidence,
   query,
 }: {
   activity: ProjectActivityView | null;
   onSession: (sessionId: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
   query: string;
 }) {
   if (!activity || activity.decisions.length === 0) {
@@ -216,6 +223,7 @@ function DecisionList({
           key={`${decision.sessionId}:${decision.recordId}`}
           decision={decision}
           onSession={onSession}
+          onEvidence={onEvidence}
         />
       ))}
       {activity.omittedDecisions > 0 && (
@@ -228,9 +236,11 @@ function DecisionList({
 function DecisionCard({
   decision,
   onSession,
+  onEvidence,
 }: {
   decision: ProjectDecision;
   onSession: (sessionId: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
 }) {
   return (
     <article className="overflow-hidden rounded-xl border border-border bg-surface-1 shadow-panel">
@@ -288,7 +298,10 @@ function DecisionCard({
               </ul>
             </div>
           )}
-          <CitationList citations={decision.artifactCitations} />
+          <CitationList
+            citations={decision.artifactCitations}
+            onEvidence={onEvidence}
+          />
           {(decision.detailTruncated ||
             decision.omittedAlternatives > 0 ||
             decision.omittedArtifactCitations > 0) && (
@@ -303,11 +316,13 @@ function DecisionCard({
 function ProblemList({
   activity,
   onSession,
+  onEvidence,
   query,
   scope,
 }: {
   activity: ProjectActivityView | null;
   onSession: (sessionId: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
   query: string;
   scope: ProjectProblemScope;
 }) {
@@ -339,6 +354,7 @@ function ProblemList({
           key={`${problem.sessionId}:${problem.recordId}`}
           problem={problem}
           onSession={onSession}
+          onEvidence={onEvidence}
         />
       ))}
       {activity.omittedProblems > 0 && (
@@ -351,9 +367,11 @@ function ProblemList({
 function ProblemCard({
   problem,
   onSession,
+  onEvidence,
 }: {
   problem: ProjectProblem;
   onSession: (sessionId: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
 }) {
   const resolved = Boolean(problem.resolution);
   return (
@@ -438,7 +456,10 @@ function ProblemCard({
               />
             </div>
           )}
-          <CitationList citations={problem.artifactCitations} />
+          <CitationList
+            citations={problem.artifactCitations}
+            onEvidence={onEvidence}
+          />
           {(problem.detailTruncated ||
             problem.omittedAttempts > 0 ||
             problem.omittedArtifactCitations > 0) && (
@@ -541,7 +562,13 @@ function OutcomeBadge({
   );
 }
 
-function CitationList({ citations }: { citations: ProjectActivityCitation[] }) {
+function CitationList({
+  citations,
+  onEvidence,
+}: {
+  citations: ProjectActivityCitation[];
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
+}) {
   if (citations.length === 0) return null;
   return (
     <div>
@@ -550,9 +577,11 @@ function CitationList({ citations }: { citations: ProjectActivityCitation[] }) {
       </p>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {citations.map((citation) => (
-          <span
+          <button
+            type="button"
             key={`${citation.artifactPath}:${citation.startLine}:${citation.endLine}`}
-            className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-background/55 px-2 py-1 font-mono text-[10px] text-muted-foreground"
+            onClick={() => onEvidence(citation)}
+            className="inline-flex max-w-full touch-manipulation items-center gap-1.5 rounded-md border border-border bg-background/55 px-2 py-1 text-left font-mono text-[10px] text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
             title={`Snapshot ${citation.artifactSnapshotId} · ${shortId(citation.contentHash)}`}
           >
             <FileCode2 size={11} className="shrink-0" aria-hidden="true" />
@@ -562,7 +591,7 @@ function CitationList({ citations }: { citations: ProjectActivityCitation[] }) {
                 ? `–${citation.endLine}`
                 : ""}
             </span>
-          </span>
+          </button>
         ))}
       </div>
     </div>

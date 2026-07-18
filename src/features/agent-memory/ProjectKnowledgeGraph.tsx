@@ -14,6 +14,7 @@ import {
   Check,
   ChevronDown,
   Clock3,
+  FileCode2,
   Filter,
   GitBranch,
   Network,
@@ -22,11 +23,14 @@ import {
   X,
 } from "lucide-react";
 import {
+  readAgentCitedEvidence,
   readAgentProjectGraphEvidence,
   readAgentProjectGraphHistory,
   readAgentProjectGraphView,
 } from "./api";
+import { cn } from "@/shared/lib/classnames";
 import type {
+  ArtifactEvidenceReference,
   GraphCitation,
   ProjectGraphEdgeKind,
   ProjectGraphEvidenceExcerpt,
@@ -99,11 +103,20 @@ const NUMBER = new Intl.NumberFormat();
 
 export function ProjectKnowledgeGraph({
   projectPath,
+  focus = null,
+  onOpenArtifact = () => undefined,
 }: {
   projectPath: string;
+  focus?: {
+    evidence: ArtifactEvidenceReference;
+    requestId: number;
+  } | null;
+  onOpenArtifact?: (path: string) => void;
 }) {
-  const [query, setQuery] = useState("");
-  const [deferredQuery, setDeferredQuery] = useState("");
+  const [query, setQuery] = useState(focus?.evidence.artifactPath ?? "");
+  const [deferredQuery, setDeferredQuery] = useState(
+    focus?.evidence.artifactPath ?? "",
+  );
   const [historyResult, setHistoryResult] = useState<{
     projectPath: string;
     data?: ProjectGraphHistory;
@@ -120,6 +133,7 @@ export function ProjectKnowledgeGraph({
   });
   const [view, setView] = useState<ProjectGraphView | null>(null);
   const [inspection, setInspection] = useState<InspectionTarget | null>(null);
+  const [dismissedFocusId, setDismissedFocusId] = useState<number | null>(null);
   const [completedRequest, setCompletedRequest] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -131,10 +145,18 @@ export function ProjectKnowledgeGraph({
     historyResult?.projectPath === projectPath
       ? (historyResult.error ?? null)
       : null;
+  const focusedCapture = focus
+    ? history?.entries.find(
+        (entry) =>
+          entry.artifactSnapshotId === focus.evidence.artifactSnapshotId,
+      )
+    : undefined;
   const selectedSnapshotId =
     snapshotSelection?.projectPath === projectPath
       ? snapshotSelection.snapshotId
-      : null;
+      : focusedCapture && !focusedCapture.current
+        ? focusedCapture.graphSnapshotId
+        : null;
   const filterKey = `${filters.nodeKinds.join(",")}|${filters.edgeKinds.join(",")}|${filters.provenances.join(",")}`;
   const requestKey = `${projectPath}\u0000${selectedSnapshotId ?? "current"}\u0000${deferredQuery}\u0000${filterKey}`;
   const loading = completedRequest !== requestKey;
@@ -444,8 +466,7 @@ export function ProjectKnowledgeGraph({
                   zoomable
                   nodeColor={(node) => {
                     const source = node.data?.source as
-                      | ProjectGraphViewNode
-                      | undefined;
+                      ProjectGraphViewNode | undefined;
                     return source ? KIND_COLORS[source.kind] : "#64748b";
                   }}
                   maskColor="color-mix(in srgb, var(--background) 72%, transparent)"
@@ -490,6 +511,17 @@ export function ProjectKnowledgeGraph({
                 onClose={() => setInspection(null)}
               />
             )}
+            {view &&
+              focus &&
+              dismissedFocusId !== focus.requestId &&
+              !inspection && (
+                <FocusedEvidenceInspector
+                  projectPath={projectPath}
+                  evidence={focus.evidence}
+                  onOpenArtifact={onOpenArtifact}
+                  onClose={() => setDismissedFocusId(focus.requestId)}
+                />
+              )}
           </div>
 
           {view && (
@@ -544,9 +576,7 @@ export function ProjectKnowledgeGraph({
             />
             Capture diagnostics
             <span className="rounded-full bg-warning/10 px-1.5 text-micro tabular-nums text-warning">
-              {NUMBER.format(
-                view.diagnostics.length + view.omittedDiagnostics,
-              )}
+              {NUMBER.format(view.diagnostics.length + view.omittedDiagnostics)}
             </span>
           </summary>
           <div className="divide-y divide-warning/15 border-t border-warning/15">
@@ -712,6 +742,67 @@ function FilterGroup<T extends string>({
   );
 }
 
+function FocusedEvidenceInspector({
+  projectPath,
+  evidence,
+  onOpenArtifact,
+  onClose,
+}: {
+  projectPath: string;
+  evidence: ArtifactEvidenceReference;
+  onOpenArtifact: (path: string) => void;
+  onClose: () => void;
+}) {
+  const citation: GraphCitation = {
+    ...evidence,
+    startColumn: 1,
+    endColumn: 1,
+  };
+  return (
+    <aside
+      aria-label="Memory evidence inspector"
+      className="graph-source-inspector absolute inset-x-3 bottom-3 z-10 max-h-[82%] overflow-y-auto overscroll-contain rounded-xl border p-4 sm:inset-x-auto sm:right-3 sm:w-[27rem]"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <span className="text-micro font-semibold uppercase tracking-wider text-primary">
+            Memory evidence
+          </span>
+          <h3 className="mt-0.5 break-words text-body font-semibold text-pretty">
+            Captured source at the time
+          </h3>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close memory evidence"
+          className="flex size-8 shrink-0 touch-manipulation items-center justify-center rounded-md text-muted-foreground outline-none transition-transform hover:bg-surface-2 hover:text-foreground active:scale-90 motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <X size={15} aria-hidden="true" />
+        </button>
+      </div>
+      <p className="mt-3 text-micro leading-5 text-muted-foreground">
+        This excerpt is read from the immutable local snapshot cited by the
+        session—not from today&apos;s working tree.
+      </p>
+      <CapturedSource
+        projectPath={projectPath}
+        graphSnapshotId=""
+        citation={citation}
+        direct
+      />
+      <button
+        type="button"
+        onClick={() => onOpenArtifact(evidence.artifactPath)}
+        className="mt-3 inline-flex h-9 touch-manipulation items-center gap-2 rounded-lg border border-border bg-surface-1 px-3 text-micro font-semibold text-foreground outline-none transition-[transform,border-color,background-color] hover:border-primary/35 hover:bg-surface-2 active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        <FileCode2 size={14} aria-hidden="true" />
+        Open artifact record
+      </button>
+    </aside>
+  );
+}
+
 function GraphInspector({
   projectPath,
   graphSnapshotId,
@@ -830,9 +921,7 @@ function GraphInspector({
           <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
             <button
               type="button"
-              onClick={() =>
-                onInspect({ kind: "node", value: sourceNode })
-              }
+              onClick={() => onInspect({ kind: "node", value: sourceNode })}
               className="min-w-0 touch-manipulation truncate rounded-lg border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
               translate="no"
             >
@@ -843,9 +932,7 @@ function GraphInspector({
             </span>
             <button
               type="button"
-              onClick={() =>
-                onInspect({ kind: "node", value: targetNode })
-              }
+              onClick={() => onInspect({ kind: "node", value: targetNode })}
               className="min-w-0 touch-manipulation truncate rounded-lg border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
               translate="no"
             >
@@ -869,9 +956,7 @@ function GraphInspector({
                 <button
                   key={connection.id}
                   type="button"
-                  onClick={() =>
-                    onInspect({ kind: "edge", value: connection })
-                  }
+                  onClick={() => onInspect({ kind: "edge", value: connection })}
                   className="flex min-w-0 touch-manipulation items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-micro outline-none transition-transform hover:bg-surface-2 active:scale-[0.985] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   <span className="min-w-0 truncate">
@@ -907,12 +992,14 @@ function CapturedSource({
   projectPath,
   graphSnapshotId,
   citation,
+  direct = false,
 }: {
   projectPath: string;
   graphSnapshotId: string;
   citation: GraphCitation;
+  direct?: boolean;
 }) {
-  const evidenceKey = `${projectPath}\u0000${graphSnapshotId}\u0000${citation.artifactSnapshotId}\u0000${citation.artifactPath}\u0000${citation.startLine}\u0000${citation.endLine}\u0000${citation.contentHash}`;
+  const evidenceKey = `${projectPath}\u0000${direct ? "direct" : graphSnapshotId}\u0000${citation.artifactSnapshotId}\u0000${citation.artifactPath}\u0000${citation.startLine}\u0000${citation.endLine}\u0000${citation.contentHash}`;
   const [result, setResult] = useState<{
     key: string;
     evidence?: ProjectGraphEvidenceExcerpt;
@@ -925,11 +1012,10 @@ function CapturedSource({
 
   useEffect(() => {
     let current = true;
-    void readAgentProjectGraphEvidence(
-      projectPath,
-      graphSnapshotId,
-      citation,
-    )
+    const request = direct
+      ? readAgentCitedEvidence(projectPath, citation)
+      : readAgentProjectGraphEvidence(projectPath, graphSnapshotId, citation);
+    void request
       .then((next) => {
         if (current) setResult({ key: evidenceKey, evidence: next });
       })
@@ -943,7 +1029,7 @@ function CapturedSource({
     return () => {
       current = false;
     };
-  }, [citation, evidenceKey, graphSnapshotId, projectPath]);
+  }, [citation, direct, evidenceKey, graphSnapshotId, projectPath]);
 
   return (
     <div className="mt-4 overflow-hidden rounded-lg border border-border bg-surface-1">
@@ -985,7 +1071,13 @@ function CapturedSource({
               {sourceLines(evidence).map((line) => (
                 <div
                   key={`${line.number}:${line.text}`}
-                  className="grid min-w-max grid-cols-[3.25rem_minmax(0,1fr)] px-2"
+                  className={cn(
+                    "grid min-w-max grid-cols-[3.25rem_minmax(0,1fr)] border-l-2 px-2",
+                    line.number >= citation.startLine &&
+                      line.number <= citation.endLine
+                      ? "border-primary bg-primary/8"
+                      : "border-transparent",
+                  )}
                 >
                   <span
                     aria-hidden="true"

@@ -9,12 +9,14 @@ import type {
 } from "./types";
 
 const api = vi.hoisted(() => ({
+  readCitedEvidence: vi.fn(),
   readEvidence: vi.fn(),
   readHistory: vi.fn(),
   readView: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
+  readAgentCitedEvidence: api.readCitedEvidence,
   readAgentProjectGraphEvidence: api.readEvidence,
   readAgentProjectGraphHistory: api.readHistory,
   readAgentProjectGraphView: api.readView,
@@ -210,6 +212,7 @@ describe("ProjectKnowledgeGraph", () => {
       ) => Promise.resolve(graphView(snapshotId ?? currentId)),
     );
     api.readEvidence.mockResolvedValue(evidence);
+    api.readCitedEvidence.mockResolvedValue(evidence);
   });
 
   it("time-travels, applies filters in the engine, and inspects captured source", async () => {
@@ -233,7 +236,9 @@ describe("ProjectKnowledgeGraph", () => {
     fireEvent.click(screen.getByText("Graph filters"));
     fireEvent.click(screen.getByLabelText("Project"));
     await waitFor(() => {
-      const filters = api.readView.mock.calls.at(-1)?.[3] as ProjectGraphFilters;
+      const filters = api.readView.mock.calls.at(
+        -1,
+      )?.[3] as ProjectGraphFilters;
       expect(filters.nodeKinds).not.toContain("project");
       expect(filters.nodeKinds).toContain("symbol");
     });
@@ -251,5 +256,41 @@ describe("ProjectKnowledgeGraph", () => {
     expect(
       screen.getByText(/Redacted snapshot evidence · live source not checked/),
     ).toBeVisible();
+  });
+
+  it("opens an exact session citation against its immutable artifact snapshot", async () => {
+    const onOpenArtifact = vi.fn();
+    render(
+      <ProjectKnowledgeGraph
+        projectPath="/projects/ley"
+        focus={{
+          requestId: 7,
+          evidence: {
+            artifactPath: "src/main.rs",
+            artifactSnapshotId: artifactId,
+            contentHash,
+            startLine: 1,
+            endLine: 1,
+          },
+        }}
+        onOpenArtifact={onOpenArtifact}
+      />,
+    );
+
+    expect(
+      await screen.findByText("Captured source at the time"),
+    ).toBeVisible();
+    expect(await screen.findByText("fn old_symbol() {}")).toBeVisible();
+    expect(api.readCitedEvidence).toHaveBeenCalledWith(
+      "/projects/ley",
+      expect.objectContaining({
+        artifactPath: "src/main.rs",
+        artifactSnapshotId: artifactId,
+        contentHash,
+      }),
+    );
+
+    fireEvent.click(screen.getByText("Open artifact record"));
+    expect(onOpenArtifact).toHaveBeenCalledWith("src/main.rs");
   });
 });

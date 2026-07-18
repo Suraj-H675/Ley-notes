@@ -370,10 +370,7 @@ export type ProjectGraphEdgeKind =
   | "depends-on";
 
 export type ProjectGraphProvenance =
-  | "deterministic"
-  | "user-authored"
-  | "agent-authored"
-  | "inferred";
+  "deterministic" | "user-authored" | "agent-authored" | "inferred";
 
 export interface GraphCitation {
   artifactPath: string;
@@ -491,6 +488,14 @@ export interface ProjectGraphEvidenceExcerpt {
 export type ProjectProblemScope = "all" | "open" | "resolved";
 
 export interface ProjectActivityCitation {
+  artifactPath: string;
+  artifactSnapshotId: string;
+  contentHash: string;
+  startLine: number;
+  endLine: number;
+}
+
+export interface ArtifactEvidenceReference {
   artifactPath: string;
   artifactSnapshotId: string;
   contentHash: string;

@@ -50,6 +50,7 @@ import type {
   AgentProjectCatalog,
   AgentProjectInspection,
   AgentProjectSearchResult,
+  ArtifactEvidenceReference,
   LearningAction,
   LearningContext,
   LearningSummary,
@@ -135,15 +136,17 @@ export function AgentMemoryWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [learningId, setLearningId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [artifactFocus, setArtifactFocus] = useState<{
+    path: string;
+    requestId: number;
+  } | null>(null);
+  const [graphFocus, setGraphFocus] = useState<{
+    evidence: ArtifactEvidenceReference;
+    requestId: number;
+  } | null>(null);
 
   useEffect(() => {
-    if (
-      !open ||
-      vaultMode !== "desktop" ||
-      projectPath ||
-      catalog
-    )
-      return;
+    if (!open || vaultMode !== "desktop" || projectPath || catalog) return;
     let current = true;
     const legacyProjectPath =
       localStorage.getItem(LAST_AGENT_PROJECT_KEY) ?? undefined;
@@ -162,13 +165,7 @@ export function AgentMemoryWorkspace({
     return () => {
       current = false;
     };
-  }, [
-    catalog,
-    catalogRevision,
-    open,
-    projectPath,
-    vaultMode,
-  ]);
+  }, [catalog, catalogRevision, open, projectPath, vaultMode]);
 
   useEffect(() => {
     if (
@@ -221,6 +218,8 @@ export function AgentMemoryWorkspace({
     setInspection(null);
     setInspectedPath(null);
     setProjectPath(nextProjectPath);
+    setArtifactFocus(null);
+    setGraphFocus(null);
     if (!destination) {
       setSection("overview");
       return;
@@ -243,7 +242,32 @@ export function AgentMemoryWorkspace({
       setLearningId(destination.learningId ?? null);
     } else {
       setSection(destination.kind === "artifact" ? "artifacts" : "graph");
+      if (destination.kind === "artifact") {
+        setArtifactFocus({
+          path: destination.citation?.artifactPath ?? destination.title,
+          requestId: Date.now(),
+        });
+      } else if (destination.citation) {
+        setGraphFocus({
+          evidence: destination.citation,
+          requestId: Date.now(),
+        });
+      }
     }
+  }
+
+  function openArtifact(path: string) {
+    setSessionId(null);
+    setLearningId(null);
+    setArtifactFocus({ path, requestId: Date.now() });
+    setSection("artifacts");
+  }
+
+  function openEvidence(evidence: ArtifactEvidenceReference) {
+    setSessionId(null);
+    setLearningId(null);
+    setGraphFocus({ evidence, requestId: Date.now() });
+    setSection("graph");
   }
 
   async function makeReady(kind: "initialize" | "connect" | "capture") {
@@ -414,7 +438,11 @@ export function AgentMemoryWorkspace({
                 section={section}
                 dashboard={inspection.dashboard}
                 busy={busy}
-                onSection={setSection}
+                onSection={(nextSection) => {
+                  if (nextSection === "artifacts") setArtifactFocus(null);
+                  if (nextSection === "graph") setGraphFocus(null);
+                  setSection(nextSection);
+                }}
                 onChangeProject={returnToProjects}
               />
               <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
@@ -442,6 +470,7 @@ export function AgentMemoryWorkspace({
                           mode={section}
                           projectPath={projectPath}
                           onSession={setSessionId}
+                          onEvidence={openEvidence}
                         />
                       </Suspense>
                     )}
@@ -453,12 +482,21 @@ export function AgentMemoryWorkspace({
                   )}
                   {section === "artifacts" && projectPath && (
                     <Suspense fallback={<KnowledgeSurfaceFallback />}>
-                      <ArtifactExplorer projectPath={projectPath} />
+                      <ArtifactExplorer
+                        key={`artifacts-${artifactFocus?.requestId ?? "browse"}`}
+                        projectPath={projectPath}
+                        focus={artifactFocus}
+                      />
                     </Suspense>
                   )}
                   {section === "graph" && projectPath && (
                     <Suspense fallback={<KnowledgeSurfaceFallback />}>
-                      <ProjectKnowledgeGraph projectPath={projectPath} />
+                      <ProjectKnowledgeGraph
+                        key={`graph-${graphFocus?.requestId ?? "browse"}`}
+                        projectPath={projectPath}
+                        focus={graphFocus}
+                        onOpenArtifact={openArtifact}
+                      />
                     </Suspense>
                   )}
                   {section === "review" && (
@@ -490,6 +528,7 @@ export function AgentMemoryWorkspace({
               sessionId={sessionId}
               projectPath={projectPath}
               onClose={() => setSessionId(null)}
+              onEvidence={openEvidence}
               onRenamed={(next) =>
                 setInspection({ status: "ready", dashboard: next })
               }
@@ -503,6 +542,11 @@ export function AgentMemoryWorkspace({
               projectPath={projectPath}
               projectName={dashboard.overview.projectName}
               onClose={() => setLearningId(null)}
+              onSession={(nextSessionId) => {
+                setLearningId(null);
+                setSessionId(nextSessionId);
+              }}
+              onArtifact={openArtifact}
               onPromote={onPromoteLearning}
               onReviewed={(next) => {
                 setInspection({ status: "ready", dashboard: next });
@@ -972,11 +1016,13 @@ function SessionInspector({
   sessionId,
   projectPath,
   onClose,
+  onEvidence,
   onRenamed,
 }: {
   sessionId: string | null;
   projectPath: string;
   onClose: () => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
   onRenamed: (dashboard: AgentMemoryDashboard) => void;
 }) {
   const [session, setSession] = useState<SessionContext | null>(null);
@@ -1302,14 +1348,16 @@ function SessionInspector({
                                 <div className="mt-2 flex flex-wrap gap-1.5">
                                   {checkpoint.touchedArtifacts.map(
                                     (artifact) => (
-                                      <span
+                                      <button
+                                        type="button"
                                         key={`${artifact.artifactPath}:${artifact.startLine}`}
                                         title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
-                                        className="max-w-full truncate rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-micro text-muted-foreground"
+                                        onClick={() => onEvidence(artifact)}
+                                        className="max-w-full touch-manipulation truncate rounded-md border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
                                       >
                                         {artifact.artifactPath}:
                                         {artifact.startLine}
-                                      </span>
+                                      </button>
                                     ),
                                   )}
                                 </div>
@@ -1420,6 +1468,8 @@ function LearningInspector({
   projectPath,
   projectName,
   onClose,
+  onSession,
+  onArtifact,
   onPromote,
   onReviewed,
 }: {
@@ -1427,6 +1477,8 @@ function LearningInspector({
   projectPath: string;
   projectName: string;
   onClose: () => void;
+  onSession: (sessionId: string) => void;
+  onArtifact: (path: string) => void;
   onPromote: (draft: PromotedLearningNoteDraft) => Promise<void>;
   onReviewed: (dashboard: AgentMemoryDashboard) => void;
 }) {
@@ -1641,13 +1693,24 @@ function LearningInspector({
                             key={`${evidence.sessionId}:${evidence.recordId}`}
                             className="rounded-lg border border-border bg-background/35 p-3"
                           >
-                            <div className="flex flex-wrap items-center gap-2 text-micro text-muted-foreground">
-                              <span className="rounded bg-surface-3 px-1.5 py-0.5 font-medium text-muted-foreground-strong">
-                                {humanize(evidence.recordType)}
-                              </span>
-                              <span>
-                                {relativeTime(evidence.sessionUpdatedAtUnixMs)}
-                              </span>
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded bg-surface-3 px-1.5 py-0.5 font-medium text-muted-foreground-strong">
+                                  {humanize(evidence.recordType)}
+                                </span>
+                                <span>
+                                  {relativeTime(
+                                    evidence.sessionUpdatedAtUnixMs,
+                                  )}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => onSession(evidence.sessionId)}
+                                className="touch-manipulation rounded font-semibold text-primary outline-none transition-transform hover:underline active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                              >
+                                Open session
+                              </button>
                             </div>
                             {evidence.note && (
                               <p className="mt-2 text-meta leading-5 text-muted-foreground-strong">
@@ -1657,13 +1720,17 @@ function LearningInspector({
                             {evidence.artifacts.length > 0 && (
                               <div className="mt-2 flex flex-wrap gap-1.5">
                                 {evidence.artifacts.map((artifact) => (
-                                  <span
+                                  <button
+                                    type="button"
                                     key={`${artifact.artifactPath}:${artifact.startLine}`}
                                     title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
-                                    className="max-w-full truncate rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-micro text-muted-foreground"
+                                    onClick={() =>
+                                      onArtifact(artifact.artifactPath)
+                                    }
+                                    className="max-w-full touch-manipulation truncate rounded-md border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
                                   >
                                     {artifact.artifactPath}:{artifact.startLine}
-                                  </span>
+                                  </button>
                                 ))}
                               </div>
                             )}
@@ -1674,7 +1741,9 @@ function LearningInspector({
                     {learning.omittedEvidence > 0 && (
                       <p className="mt-2 text-micro text-muted-foreground">
                         {learning.omittedEvidence} older evidence{" "}
-                        {learning.omittedEvidence === 1 ? "reference is" : "references are"}{" "}
+                        {learning.omittedEvidence === 1
+                          ? "reference is"
+                          : "references are"}{" "}
                         omitted from this bounded inspector.
                       </p>
                     )}
@@ -1737,8 +1806,8 @@ function LearningInspector({
             <div className="shrink-0 border-t border-border bg-surface-1 p-4 sm:p-5">
               {learning.claimTruncated ? (
                 <p className="text-meta text-muted-foreground">
-                  This bounded view omits part of the claim. Inspect the complete
-                  CLI projection before correcting or reviewing it.
+                  This bounded view omits part of the claim. Inspect the
+                  complete CLI projection before correcting or reviewing it.
                 </p>
               ) : terminal ? (
                 <p className="text-meta text-muted-foreground">
@@ -1800,11 +1869,7 @@ function LearningInspector({
                       Promote to note
                     </Button>
                   )}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={beginCorrection}
-                  >
+                  <Button size="sm" variant="outline" onClick={beginCorrection}>
                     <PencilLine size={13} />
                     Correct
                   </Button>
@@ -1935,7 +2000,7 @@ function ProjectOnboarding({
         ? "Connect this project"
         : inspection.status === "vault-unavailable"
           ? "Reconnect this project"
-        : "Create the first snapshot";
+          : "Create the first snapshot";
   const body = !inspection
     ? projectPath
       ? "Ley is validating this project’s local identity, private vault binding, and captured memory."
@@ -1946,9 +2011,9 @@ function ProjectOnboarding({
         ? `“${inspection.projectName}” is initialized but has no private vault binding. Connect it to “${vaultName}” and capture its approved files.`
         : inspection.status === "vault-unavailable"
           ? `“${inspection.projectName}” was connected to “${inspection.previousVaultName}”, which moved or is unavailable. Reconnect it to the open vault, “${vaultName}”, and rebuild its local snapshot.`
-        : inspection.status === "needs-capture"
-          ? `“${inspection.projectName}” is connected to “${inspection.binding.vaultName}” but has not been captured yet.`
-          : "This project is ready.";
+          : inspection.status === "needs-capture"
+            ? `“${inspection.projectName}” is connected to “${inspection.binding.vaultName}” but has not been captured yet.`
+            : "This project is ready.";
   return (
     <main className="min-h-0 flex-1 overflow-y-auto px-4 py-10 sm:px-6">
       <div className="mx-auto flex min-h-full max-w-xl items-center justify-center">
@@ -1978,11 +2043,7 @@ function ProjectOnboarding({
           <div className="mt-6 flex flex-wrap gap-2">
             {!inspection ? (
               <>
-                <Button
-                  variant="primary"
-                  disabled={busy}
-                  onClick={onChoose}
-                >
+                <Button variant="primary" disabled={busy} onClick={onChoose}>
                   {busy ? (
                     <RefreshCw
                       size={14}
@@ -2029,7 +2090,7 @@ function ProjectOnboarding({
                         ? "Connect & capture"
                         : inspection.status === "vault-unavailable"
                           ? "Reconnect & capture"
-                        : "Capture project"}
+                          : "Capture project"}
                 </Button>
                 <Button variant="outline" disabled={busy} onClick={onChoose}>
                   Choose another

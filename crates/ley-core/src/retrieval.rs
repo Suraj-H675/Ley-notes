@@ -2,7 +2,8 @@ use crate::graph::{
     FactProvenance, GitState, GraphCitation, GraphEdge, GraphEdgeKind, GraphNode, GraphNodeKind,
 };
 use crate::ingestion::{
-    load_project_memory, load_project_memory_at_graph_snapshot, ArtifactRecord, LoadedProjectMemory,
+    load_project_graph_history, load_project_memory, load_project_memory_at_graph_snapshot,
+    ArtifactRecord, LoadedProjectMemory,
 };
 use crate::{CaptureMode, LeyCoreError};
 use serde::{Deserialize, Serialize};
@@ -276,6 +277,77 @@ pub fn read_project_graph_evidence(
     {
         return Err(LeyCoreError::InvalidArtifactStore(
             "graph citation does not match its captured artifact".to_owned(),
+        ));
+    }
+    let start_line = citation.start_line.saturating_sub(context_lines).max(1);
+    let expanded_end = citation.end_line.saturating_add(context_lines);
+    let maximum_end = start_line.saturating_add(MAX_EVIDENCE_LINES - 1);
+    let end_line = expanded_end.min(maximum_end);
+    validate_evidence_request(
+        &citation.artifact_path,
+        start_line,
+        end_line,
+        max_characters,
+    )?;
+    let text = memory.read_artifact_text(artifact)?.ok_or_else(|| {
+        LeyCoreError::ProjectMemoryUnavailable(format!(
+            "source text is not retained for {} in Minimal capture mode",
+            citation.artifact_path
+        ))
+    })?;
+    let mut excerpt = excerpt_from_text(
+        &memory,
+        artifact,
+        &text,
+        start_line,
+        end_line,
+        max_characters,
+    )?;
+    excerpt.truncated |= expanded_end > maximum_end;
+    Ok(excerpt)
+}
+
+pub fn read_project_cited_evidence(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    citation: &GraphCitation,
+    context_lines: u64,
+    max_characters: usize,
+) -> Result<EvidenceExcerpt, LeyCoreError> {
+    if context_lines > 20 {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "contextLines must be between 0 and 20".to_owned(),
+        ));
+    }
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let (_, history) = load_project_graph_history(project_start, vault)?;
+    let graph_snapshot_id = history
+        .iter()
+        .find(|entry| entry.artifact_snapshot_id == citation.artifact_snapshot_id)
+        .map(|entry| entry.graph_snapshot_id.as_str())
+        .ok_or_else(|| {
+            LeyCoreError::InvalidRetrievalRequest(format!(
+                "artifact snapshot is not retained: {}",
+                citation.artifact_snapshot_id
+            ))
+        })?;
+    let memory =
+        load_project_memory_at_graph_snapshot(project_start, vault, Some(graph_snapshot_id))?;
+    let artifact = memory
+        .manifest
+        .files
+        .iter()
+        .find(|artifact| artifact.path == citation.artifact_path)
+        .ok_or_else(|| {
+            LeyCoreError::InvalidRetrievalRequest(format!(
+                "artifact is not in the cited snapshot: {}",
+                citation.artifact_path
+            ))
+        })?;
+    if artifact.content_hash != citation.content_hash {
+        return Err(LeyCoreError::InvalidArtifactStore(
+            "citation content hash does not match its captured artifact".to_owned(),
         ));
     }
     let start_line = citation.start_line.saturating_sub(context_lines).max(1);
@@ -1061,6 +1133,39 @@ mod tests {
 
         assert!(project_memory_overview(&project, &vault).is_err());
         assert_eq!(std::fs::read_dir(&vault).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn cited_evidence_reads_the_immutable_snapshot_after_live_source_changes() {
+        let (_base, project, vault) = setup_memory(CaptureMode::Structured);
+        let first_graph = read_project_graph(&project, &vault).unwrap();
+        let citation = first_graph
+            .nodes
+            .iter()
+            .filter_map(|node| node.citation.as_ref())
+            .find(|citation| citation.artifact_path == "README.md")
+            .unwrap()
+            .clone();
+
+        std::fs::write(
+            project.join("README.md"),
+            "# Replaced project\n\nThis is newer live source.\n",
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let excerpt = read_project_cited_evidence(&project, &vault, &citation, 0, 8_000).unwrap();
+        assert!(excerpt.text.contains("Memory project"));
+        assert!(!excerpt.text.contains("newer live source"));
+        assert_eq!(excerpt.artifact_snapshot_id, citation.artifact_snapshot_id);
+        assert!(!excerpt.live_source_checked);
+
+        let mut forged = citation;
+        forged.content_hash = format!("sha256:{}", "0".repeat(64));
+        let error = read_project_cited_evidence(&project, &vault, &forged, 0, 8_000).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("content hash does not match its captured artifact"));
     }
 
     #[test]

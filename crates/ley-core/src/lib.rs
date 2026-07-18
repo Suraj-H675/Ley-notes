@@ -88,9 +88,10 @@ pub use resume_context::{
     MAX_RESUME_SESSIONS, MIN_RESUME_CHARACTERS,
 };
 pub use retrieval::{
-    find_project_context, find_project_graph_path, project_memory_overview, read_project_evidence,
-    read_project_graph_evidence, traverse_project_graph, ContextItem, ContextItemKind, ContextPack,
-    EvidenceExcerpt, GraphDirection, GraphPath, GraphTraversal, MemoryOverview, RetrievalLimits,
+    find_project_context, find_project_graph_path, project_memory_overview,
+    read_project_cited_evidence, read_project_evidence, read_project_graph_evidence,
+    traverse_project_graph, ContextItem, ContextItemKind, ContextPack, EvidenceExcerpt,
+    GraphDirection, GraphPath, GraphTraversal, MemoryOverview, RetrievalLimits,
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
 };
 pub use session::{

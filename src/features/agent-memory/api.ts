@@ -172,6 +172,18 @@ export function readAgentProjectGraphEvidence(
   });
 }
 
+export function readAgentCitedEvidence(
+  projectPath: string,
+  citation: GraphCitation,
+): Promise<ProjectGraphEvidenceExcerpt> {
+  return invoke("read_agent_cited_evidence", {
+    projectPath,
+    citation,
+    contextLines: 3,
+    maxCharacters: 8_000,
+  });
+}
+
 export function readAgentProjectActivity(
   projectPath: string,
   query = "",

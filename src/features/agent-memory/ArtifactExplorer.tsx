@@ -13,9 +13,15 @@ import type { ProjectArtifactInventory } from "./types";
 
 type InventoryView = "captured" | "skipped";
 
-export function ArtifactExplorer({ projectPath }: { projectPath: string }) {
-  const [query, setQuery] = useState("");
-  const [deferredQuery, setDeferredQuery] = useState("");
+export function ArtifactExplorer({
+  projectPath,
+  focus = null,
+}: {
+  projectPath: string;
+  focus?: { path: string; requestId: number } | null;
+}) {
+  const [query, setQuery] = useState(focus?.path ?? "");
+  const [deferredQuery, setDeferredQuery] = useState(focus?.path ?? "");
   const [view, setView] = useState<InventoryView>("captured");
   const [inventory, setInventory] = useState<ProjectArtifactInventory | null>(
     null,
@@ -116,12 +122,28 @@ export function ArtifactExplorer({ projectPath }: { projectPath: string }) {
         </p>
       </div>
 
+      {focus && (
+        <div className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/6 px-4 py-3 text-meta">
+          <FileCode2
+            size={17}
+            className="mt-0.5 shrink-0 text-primary"
+            aria-hidden="true"
+          />
+          <div className="min-w-0">
+            <p className="font-semibold">Following a memory reference</p>
+            <p className="mt-0.5 break-all font-mono text-micro text-muted-foreground">
+              {focus.path}
+            </p>
+          </div>
+        </div>
+      )}
+
       {error && !loading ? (
         <ErrorState message={error} />
       ) : !inventory && loading ? (
         <ArtifactSkeleton />
       ) : view === "captured" ? (
-        <CapturedArtifacts inventory={inventory} />
+        <CapturedArtifacts inventory={inventory} focusPath={focus?.path} />
       ) : (
         <SkippedArtifacts inventory={inventory} />
       )}
@@ -146,8 +168,10 @@ export function ArtifactExplorer({ projectPath }: { projectPath: string }) {
 
 function CapturedArtifacts({
   inventory,
+  focusPath,
 }: {
   inventory: ProjectArtifactInventory | null;
+  focusPath?: string;
 }) {
   if (!inventory || inventory.artifacts.length === 0) {
     return (
@@ -168,7 +192,14 @@ function CapturedArtifacts({
       </div>
       <div className="divide-y divide-border/70">
         {inventory.artifacts.map((artifact) => (
-          <details key={artifact.path} className="group">
+          <details
+            key={artifact.path}
+            open={artifact.path === focusPath}
+            className={cn(
+              "group",
+              artifact.path === focusPath && "bg-primary/[0.035]",
+            )}
+          >
             <summary className="grid cursor-pointer list-none gap-2 px-4 py-3 outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary sm:grid-cols-[minmax(0,1fr)_8rem_7rem_6rem] sm:items-center sm:gap-4">
               <span className="flex min-w-0 items-center gap-2.5">
                 <FileCode2
