@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AgentCaptureSettings,
   AgentMemoryDashboard,
+  AgentSessionErasure,
   AgentProjectSearch,
   AgentProjectCatalog,
   AgentProjectInspection,
@@ -135,6 +136,20 @@ export function renameAgentSession(
     expectedEventCount,
     name,
     note,
+  });
+}
+
+export function eraseAgentSession(
+  projectPath: string,
+  sessionId: string,
+  expectedEventCount: number,
+  expectedName: string,
+): Promise<AgentSessionErasure> {
+  return invoke("erase_agent_session", {
+    projectPath,
+    sessionId,
+    expectedEventCount,
+    expectedName,
   });
 }
 

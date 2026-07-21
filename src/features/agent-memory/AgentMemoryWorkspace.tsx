@@ -28,6 +28,7 @@ import {
   Scale,
   ShieldCheck,
   Sparkles,
+  Trash2,
   X,
   XCircle,
 } from "lucide-react";
@@ -109,6 +110,11 @@ const SessionPromotionEditor = lazy(() =>
 const SessionCanvasEditor = lazy(() =>
   import("./SessionCanvasEditor").then((module) => ({
     default: module.SessionCanvasEditor,
+  })),
+);
+const SessionErasureEditor = lazy(() =>
+  import("./SessionErasureEditor").then((module) => ({
+    default: module.SessionErasureEditor,
   })),
 );
 const LearningCorrectionEditor = lazy(() =>
@@ -586,6 +592,10 @@ export function AgentMemoryWorkspace({
               onRenamed={(next) =>
                 setInspection({ status: "ready", dashboard: next })
               }
+              onErased={(next) => {
+                setInspection({ status: "ready", dashboard: next });
+                setSessionId(null);
+              }}
             />
           )}
 
@@ -1076,6 +1086,7 @@ function SessionInspector({
   onPromote,
   onLinkCanvas,
   onRenamed,
+  onErased,
 }: {
   sessionId: string | null;
   projectPath: string;
@@ -1086,6 +1097,7 @@ function SessionInspector({
   onPromote: (draft: PromotedSessionNoteDraft) => Promise<void>;
   onLinkCanvas: (request: SessionCanvasLinkRequest) => Promise<void>;
   onRenamed: (dashboard: AgentMemoryDashboard) => void;
+  onErased: (dashboard: AgentMemoryDashboard) => void;
 }) {
   const [session, setSession] = useState<SessionContext | null>(null);
   const [renaming, setRenaming] = useState(false);
@@ -1094,6 +1106,8 @@ function SessionInspector({
   const [promotionDirty, setPromotionDirty] = useState(false);
   const [canvasLinking, setCanvasLinking] = useState(false);
   const [canvasDirty, setCanvasDirty] = useState(false);
+  const [erasing, setErasing] = useState(false);
+  const [erasureDirty, setErasureDirty] = useState(false);
   const [busy, setBusy] = useState(Boolean(sessionId));
   const [error, setError] = useState<string | null>(null);
 
@@ -1126,7 +1140,8 @@ function SessionInspector({
           !next &&
           ((!(renaming && renameDirty) &&
             !(promoting && promotionDirty) &&
-            !(canvasLinking && canvasDirty)) ||
+            !(canvasLinking && canvasDirty) &&
+            !(erasing && erasureDirty)) ||
             window.confirm("Discard your unsaved session changes?"))
         ) {
           onClose();
@@ -1161,7 +1176,8 @@ function SessionInspector({
                     if (
                       ((promoting && promotionDirty) ||
                         (renaming && renameDirty) ||
-                        (canvasLinking && canvasDirty)) &&
+                        (canvasLinking && canvasDirty) ||
+                        (erasing && erasureDirty)) &&
                       !window.confirm("Discard your unsaved changes?")
                     ) {
                       return;
@@ -1169,8 +1185,10 @@ function SessionInspector({
                     setPromotionDirty(false);
                     setRenameDirty(false);
                     setCanvasDirty(false);
+                    setErasureDirty(false);
                     setRenaming(false);
                     setCanvasLinking(false);
+                    setErasing(false);
                     setPromoting((current) => !current);
                   }}
                 >
@@ -1190,7 +1208,8 @@ function SessionInspector({
                     if (
                       ((canvasLinking && canvasDirty) ||
                         (renaming && renameDirty) ||
-                        (promoting && promotionDirty)) &&
+                        (promoting && promotionDirty) ||
+                        (erasing && erasureDirty)) &&
                       !window.confirm("Discard your unsaved changes?")
                     ) {
                       return;
@@ -1198,8 +1217,10 @@ function SessionInspector({
                     setCanvasDirty(false);
                     setRenameDirty(false);
                     setPromotionDirty(false);
+                    setErasureDirty(false);
                     setRenaming(false);
                     setPromoting(false);
+                    setErasing(false);
                     setCanvasLinking((current) => !current);
                   }}
                 >
@@ -1217,7 +1238,8 @@ function SessionInspector({
                     if (
                       ((renaming && renameDirty) ||
                         (promoting && promotionDirty) ||
-                        (canvasLinking && canvasDirty)) &&
+                        (canvasLinking && canvasDirty) ||
+                        (erasing && erasureDirty)) &&
                       !window.confirm("Discard your unsaved changes?")
                     ) {
                       return;
@@ -1225,8 +1247,10 @@ function SessionInspector({
                     setRenameDirty(false);
                     setPromotionDirty(false);
                     setCanvasDirty(false);
+                    setErasureDirty(false);
                     setPromoting(false);
                     setCanvasLinking(false);
+                    setErasing(false);
                     setRenaming((current) => !current);
                   }}
                 >
@@ -1558,6 +1582,52 @@ function SessionInspector({
                     />
                     {session.instructionWarning}
                   </p>
+                  <section
+                    aria-labelledby="session-local-data-title"
+                    className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="max-w-2xl">
+                      <h3
+                        id="session-local-data-title"
+                        className="text-meta font-semibold"
+                      >
+                        Local session data
+                      </h3>
+                      <p className="mt-1 text-micro leading-5 text-muted-foreground">
+                        Forget this private session and every lesson derived
+                        from it without removing unrelated project memory.
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 text-destructive hover:border-destructive/35 hover:bg-destructive/8"
+                      aria-expanded={erasing}
+                      aria-controls="session-erasure-panel"
+                      onClick={() => {
+                        if (
+                          ((erasing && erasureDirty) ||
+                            (renaming && renameDirty) ||
+                            (promoting && promotionDirty) ||
+                            (canvasLinking && canvasDirty)) &&
+                          !window.confirm("Discard your unsaved changes?")
+                        ) {
+                          return;
+                        }
+                        setErasureDirty(false);
+                        setRenameDirty(false);
+                        setPromotionDirty(false);
+                        setCanvasDirty(false);
+                        setRenaming(false);
+                        setPromoting(false);
+                        setCanvasLinking(false);
+                        setErasing((current) => !current);
+                      }}
+                    >
+                      <Trash2 size={13} aria-hidden="true" />
+                      Erase session memory…
+                    </Button>
+                  </section>
                 </div>
               )
             )}
@@ -1640,6 +1710,31 @@ function SessionInspector({
                   }}
                   onDirtyChange={setCanvasDirty}
                   onLink={onLinkCanvas}
+                />
+              </Suspense>
+            </div>
+          )}
+          {erasing && session && (
+            <div
+              id="session-erasure-panel"
+              className="shrink-0 border-t border-destructive/20 bg-surface-1"
+            >
+              <Suspense fallback={<KnowledgeSurfaceFallback />}>
+                <SessionErasureEditor
+                  projectPath={projectPath}
+                  session={session}
+                  onCancel={() => {
+                    if (
+                      erasureDirty &&
+                      !window.confirm("Discard this erasure confirmation?")
+                    ) {
+                      return;
+                    }
+                    setErasureDirty(false);
+                    setErasing(false);
+                  }}
+                  onDirtyChange={setErasureDirty}
+                  onErased={(result) => onErased(result.dashboard)}
                 />
               </Suspense>
             </div>

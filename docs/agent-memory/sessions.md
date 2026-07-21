@@ -67,6 +67,23 @@ Ley appends the new name and required reason as another immutable event. The ori
 
 `--expected-events` is optional for deliberate CLI automation and recommended whenever the caller previously read the session. The desktop always sends it. If an agent or another process appends an event first, Ley rejects the stale rename and asks the caller to reload. MCP session-write permission does not include rename authority.
 
+## Erase one session’s Agent Memory
+
+The desktop session inspector exposes **Erase session memory** as a reviewed destructive action. It requires the exact current session name and rejects the operation if another writer appended an event after the inspector loaded.
+
+The equivalent local CLI command is intentionally explicit:
+
+```bash
+ley session erase ses_01234567890123456789012345678901 \
+  /path/to/project \
+  --confirm-name "Ship offline search" \
+  --expected-events 4
+```
+
+Ley physically removes that structured session and every learning whose proposal or correction cited it. It also removes any learning whose supersession chain would otherwise point to one of those erased records. Unrelated sessions, unrelated learnings, captured project artifacts, graph history, source files, `.ley` policy, and the vault binding remain.
+
+Ordinary Markdown handoffs and JSON Canvas documents are user-owned copies and remain. Delete those through the normal note or Canvas workflow if they should also be forgotten. Session erasure is not a forensic wipe and cannot remove backups, filesystem snapshots, provider-retained context, storage remnants, or external copies. MCP and automatic host adapters cannot erase sessions. See [ADR 0024](../adr/0024-reviewed-session-memory-erasure.md).
+
 ## Record decisions and problem outcomes
 
 Pass a JSON document to record the complete checkpoint model:

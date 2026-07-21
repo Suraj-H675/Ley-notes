@@ -1,23 +1,24 @@
 use ley_core::{
-    correct_learning, diagnose_project, erase_project_memory, generate_learning_request_id,
-    generate_request_id, ingest_project, initialize_project, list_learning_contexts, list_sessions,
-    project_activity_view, project_artifact_inventory, project_graph_history,
-    project_graph_view_filtered, project_memory_overview, project_resume_context,
-    project_session_stats, read_learning, read_learning_context, read_project_cited_evidence,
-    read_project_graph_evidence, read_session_context, rename_session, review_learning,
-    search_observed_projects, update_capture_mode, BindingRegistry, BindingSource, CaptureMode,
-    CorrectLearningInput, CrossProjectSearch, EvidenceExcerpt, GraphCitation, IngestionResult,
-    LearningActor, LearningContextPack, LearningEvidenceInput, LearningFeedbackAction,
-    LearningList, LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView,
-    ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic, ProjectGraphFilters,
-    ProjectGraphHistory, ProjectGraphView, ProjectProblemScope, ProjectResumePack,
-    ProjectVaultBinding, RenameSessionInput, ReviewLearningInput, SessionContextPack,
-    SessionSummary, DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS,
-    DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
-    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
-    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
-    DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_RESUME_CHARACTERS,
-    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    correct_learning, diagnose_project, erase_project_memory, erase_session_memory,
+    generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
+    list_learning_contexts, list_sessions, project_activity_view, project_artifact_inventory,
+    project_graph_history, project_graph_view_filtered, project_memory_overview,
+    project_resume_context, project_session_stats, read_learning, read_learning_context,
+    read_project_cited_evidence, read_project_graph_evidence, read_session_context, rename_session,
+    review_learning, search_observed_projects, update_capture_mode, BindingRegistry, BindingSource,
+    CaptureMode, CorrectLearningInput, CrossProjectSearch, EraseSessionMemoryInput,
+    EvidenceExcerpt, GraphCitation, IngestionResult, LearningActor, LearningContextPack,
+    LearningEvidenceInput, LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError,
+    MemoryOverview, ProjectActivityView, ProjectArtifactInventory, ProjectCatalog,
+    ProjectDiagnostic, ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView,
+    ProjectProblemScope, ProjectResumePack, ProjectVaultBinding, RenameSessionInput,
+    ReviewLearningInput, SessionContextPack, SessionMemoryErasure, SessionSummary,
+    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS,
+    DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
+    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
+    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS, MAX_LEARNING_LIST_RESULTS,
 };
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
@@ -99,6 +100,13 @@ struct AgentMemoryDashboard {
     sessions: Vec<SessionSummary>,
     review_inbox: LearningList,
     all_learnings: LearningList,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSessionErasure {
+    dashboard: AgentMemoryDashboard,
+    erasure: SessionMemoryErasure,
 }
 
 #[derive(Serialize)]
@@ -691,6 +699,30 @@ fn rename_agent_session(
                 },
             )?;
             load_agent_memory_dashboard(Path::new(&project_path), binding)
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn erase_agent_session(
+    project_path: String,
+    session_id: String,
+    expected_event_count: u64,
+    expected_name: String,
+) -> Result<AgentSessionErasure, String> {
+    resolved_agent_binding(Path::new(&project_path))
+        .and_then(|binding| {
+            let erasure = erase_session_memory(
+                &project_path,
+                &binding.vault_path,
+                &session_id,
+                EraseSessionMemoryInput {
+                    expected_event_count,
+                    expected_name,
+                },
+            )?;
+            let dashboard = load_agent_memory_dashboard(Path::new(&project_path), binding)?;
+            Ok(AgentSessionErasure { dashboard, erasure })
         })
         .map_err(|error| error.to_string())
 }
@@ -1422,6 +1454,7 @@ pub fn run() {
             read_agent_learning,
             read_agent_session,
             rename_agent_session,
+            erase_agent_session,
             review_agent_learning,
             correct_agent_learning,
             bind_agent_project,

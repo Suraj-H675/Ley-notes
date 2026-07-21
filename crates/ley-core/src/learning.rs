@@ -1262,81 +1262,206 @@ impl LearningStore {
     }
 
     fn read_events(&self) -> Result<Vec<LearningEvent>, LeyCoreError> {
-        let entries = self
-            .events_dir
-            .entries()
-            .map_err(|source| learning_io(EVENTS_DIRECTORY, source))?;
-        let mut events = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|source| learning_io(EVENTS_DIRECTORY, source))?;
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                return Err(LeyCoreError::InvalidLearningStore(
-                    "learning event filename is not UTF-8".to_owned(),
-                ));
-            };
-            if !name.ends_with(".json")
-                || !entry
-                    .file_type()
-                    .map_err(|source| learning_io(name, source))?
-                    .is_file()
-            {
-                return Err(LeyCoreError::InvalidLearningStore(format!(
-                    "unexpected learning event entry: {name}"
-                )));
-            }
-            if events.len() >= LEARNING_EVENT_LIMIT {
-                return Err(LeyCoreError::InvalidLearningStore(format!(
-                    "project exceeds {LEARNING_EVENT_LIMIT} learning events"
-                )));
-            }
-            let bytes = read_private_file(&self.events_dir, name, LEARNING_EVENT_LIMIT_BYTES)?
-                .ok_or_else(|| {
-                    LeyCoreError::InvalidLearningStore(format!(
-                        "learning event disappeared while reading: {name}"
-                    ))
-                })?;
-            let event: LearningEvent = parse_json(name, &bytes)?;
-            validate_event(&event, &self.project_id)?;
-            if name != format!("{}.json", event.event_id) {
-                return Err(LeyCoreError::InvalidLearningStore(format!(
-                    "learning event filename does not match its ID: {name}"
-                )));
-            }
-            events.push(event);
-        }
-        events.sort_by(|left, right| {
-            left.learning_id
-                .cmp(&right.learning_id)
-                .then_with(|| left.sequence.cmp(&right.sequence))
-        });
-        Ok(events)
+        read_learning_events(&self.events_dir, &self.project_id)
     }
 
     fn persist_index(&self, records: &[LearningRecord]) -> Result<(), LeyCoreError> {
-        let mut learnings = records.to_vec();
-        learnings.sort_by(|left, right| left.learning_id.cmp(&right.learning_id));
-        let index = LearningIndex {
-            schema_version: LEARNING_SCHEMA_VERSION,
-            project_id: self.project_id.clone(),
-            generated_at_unix_ms: unix_time_ms(),
-            learnings,
-        };
-        let body = json_body(&index, LEARNING_INDEX_LIMIT_BYTES, LEARNING_INDEX_FILE)?;
-        write_atomic_private(&self.learning_dir, LEARNING_INDEX_FILE, &body)?;
-        let markdown = render_review_markdown(&index);
-        if markdown.len() as u64 > LEARNING_INDEX_LIMIT_BYTES {
-            return Err(LeyCoreError::MetadataTooLarge {
-                path: PathBuf::from(LEARNING_REVIEW_FILE),
-                limit_bytes: LEARNING_INDEX_LIMIT_BYTES,
-            });
-        }
-        write_atomic_private(
-            &self.learning_dir,
-            LEARNING_REVIEW_FILE,
-            markdown.as_bytes(),
-        )
+        persist_learning_index(&self.learning_dir, &self.project_id, records)
     }
+}
+
+pub(crate) fn erase_learnings_citing_session_under_lifecycle(
+    project_dir: &Dir,
+    project_id: &str,
+    session_id: &str,
+) -> Result<Vec<String>, LeyCoreError> {
+    let learning_dir = match project_dir.open_dir_nofollow(LEARNINGS_DIRECTORY) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => return Err(learning_io(LEARNINGS_DIRECTORY, source)),
+    };
+    let events_dir = learning_dir
+        .open_dir_nofollow(EVENTS_DIRECTORY)
+        .map_err(|source| learning_io(EVENTS_DIRECTORY, source))?;
+    let events = read_learning_events(&events_dir, project_id)?;
+    replay_all(&events, project_id)?;
+    let mut erased = events
+        .iter()
+        .filter(|event| learning_event_cites_session(event, session_id))
+        .map(|event| event.learning_id.clone())
+        .collect::<BTreeSet<_>>();
+
+    loop {
+        let before = erased.len();
+        for event in &events {
+            if let LearningEventPayload::Reviewed {
+                action: LearningFeedbackAction::Supersede,
+                replacement_learning_id: Some(replacement),
+                ..
+            } = &event.payload
+            {
+                if erased.contains(replacement) {
+                    erased.insert(event.learning_id.clone());
+                }
+            }
+        }
+        if erased.len() == before {
+            break;
+        }
+    }
+    if erased.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let remaining_events = events
+        .iter()
+        .filter(|event| !erased.contains(&event.learning_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut remaining_records = replay_all(&remaining_events, project_id)?;
+    preserve_projected_freshness(&learning_dir, project_id, &mut remaining_records)?;
+    learning_projection_bodies(project_id, &remaining_records)?;
+
+    for event in events
+        .iter()
+        .filter(|event| erased.contains(&event.learning_id))
+    {
+        let name = format!("{}.json", event.event_id);
+        events_dir
+            .remove_file(&name)
+            .map_err(|source| learning_io(&name, source))?;
+    }
+    persist_learning_index(&learning_dir, project_id, &remaining_records)?;
+    Ok(erased.into_iter().collect())
+}
+
+fn learning_event_cites_session(event: &LearningEvent, session_id: &str) -> bool {
+    match &event.payload {
+        LearningEventPayload::Proposed { evidence, .. }
+        | LearningEventPayload::Corrected { evidence, .. } => {
+            evidence.iter().any(|item| item.session_id == session_id)
+        }
+        LearningEventPayload::Reviewed { .. } => false,
+    }
+}
+
+fn read_learning_events(
+    events_dir: &Dir,
+    project_id: &str,
+) -> Result<Vec<LearningEvent>, LeyCoreError> {
+    let entries = events_dir
+        .entries()
+        .map_err(|source| learning_io(EVENTS_DIRECTORY, source))?;
+    let mut events = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| learning_io(EVENTS_DIRECTORY, source))?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return Err(LeyCoreError::InvalidLearningStore(
+                "learning event filename is not UTF-8".to_owned(),
+            ));
+        };
+        if !name.ends_with(".json")
+            || !entry
+                .file_type()
+                .map_err(|source| learning_io(name, source))?
+                .is_file()
+        {
+            return Err(LeyCoreError::InvalidLearningStore(format!(
+                "unexpected learning event entry: {name}"
+            )));
+        }
+        if events.len() >= LEARNING_EVENT_LIMIT {
+            return Err(LeyCoreError::InvalidLearningStore(format!(
+                "project exceeds {LEARNING_EVENT_LIMIT} learning events"
+            )));
+        }
+        let bytes =
+            read_private_file(events_dir, name, LEARNING_EVENT_LIMIT_BYTES)?.ok_or_else(|| {
+                LeyCoreError::InvalidLearningStore(format!(
+                    "learning event disappeared while reading: {name}"
+                ))
+            })?;
+        let event: LearningEvent = parse_json(name, &bytes)?;
+        validate_event(&event, project_id)?;
+        if name != format!("{}.json", event.event_id) {
+            return Err(LeyCoreError::InvalidLearningStore(format!(
+                "learning event filename does not match its ID: {name}"
+            )));
+        }
+        events.push(event);
+    }
+    events.sort_by(|left, right| {
+        left.learning_id
+            .cmp(&right.learning_id)
+            .then_with(|| left.sequence.cmp(&right.sequence))
+    });
+    Ok(events)
+}
+
+fn preserve_projected_freshness(
+    learning_dir: &Dir,
+    project_id: &str,
+    records: &mut [LearningRecord],
+) -> Result<(), LeyCoreError> {
+    let Some(bytes) = read_private_file(
+        learning_dir,
+        LEARNING_INDEX_FILE,
+        LEARNING_INDEX_LIMIT_BYTES,
+    )?
+    else {
+        return Ok(());
+    };
+    let Ok(index) = serde_json::from_slice::<LearningIndex>(&bytes) else {
+        return Ok(());
+    };
+    if index.schema_version != LEARNING_SCHEMA_VERSION || index.project_id != project_id {
+        return Ok(());
+    }
+    let freshness = index
+        .learnings
+        .into_iter()
+        .map(|learning| (learning.learning_id, learning.freshness))
+        .collect::<BTreeMap<_, _>>();
+    for record in records {
+        if let Some(value) = freshness.get(&record.learning_id) {
+            record.freshness = *value;
+        }
+    }
+    Ok(())
+}
+
+fn learning_projection_bodies(
+    project_id: &str,
+    records: &[LearningRecord],
+) -> Result<(Vec<u8>, Vec<u8>), LeyCoreError> {
+    let mut learnings = records.to_vec();
+    learnings.sort_by(|left, right| left.learning_id.cmp(&right.learning_id));
+    let index = LearningIndex {
+        schema_version: LEARNING_SCHEMA_VERSION,
+        project_id: project_id.to_owned(),
+        generated_at_unix_ms: unix_time_ms(),
+        learnings,
+    };
+    let body = json_body(&index, LEARNING_INDEX_LIMIT_BYTES, LEARNING_INDEX_FILE)?;
+    let markdown = render_review_markdown(&index);
+    if markdown.len() as u64 > LEARNING_INDEX_LIMIT_BYTES {
+        return Err(LeyCoreError::MetadataTooLarge {
+            path: PathBuf::from(LEARNING_REVIEW_FILE),
+            limit_bytes: LEARNING_INDEX_LIMIT_BYTES,
+        });
+    }
+    Ok((body, markdown.into_bytes()))
+}
+
+fn persist_learning_index(
+    learning_dir: &Dir,
+    project_id: &str,
+    records: &[LearningRecord],
+) -> Result<(), LeyCoreError> {
+    let (body, markdown) = learning_projection_bodies(project_id, records)?;
+    write_atomic_private(learning_dir, LEARNING_INDEX_FILE, &body)?;
+    write_atomic_private(learning_dir, LEARNING_REVIEW_FILE, &markdown)
 }
 
 fn ensure_lock_file(project_dir: &Dir) -> Result<(), LeyCoreError> {
@@ -2039,11 +2164,14 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, ingest_project, initialize_project, start_session, AttemptInput,
-        AttemptOutcome, CaptureMode, CheckpointInput, ProblemInput, ResolutionInput, SessionSource,
-        SessionSourceKind, StartSessionInput,
+        checkpoint_session, erase_session_memory, ingest_project, initialize_project,
+        project_memory_overview, read_session, start_session, AttemptInput, AttemptOutcome,
+        CaptureMode, CheckpointInput, EraseSessionMemoryInput, ProblemInput, ResolutionInput,
+        SessionSource, SessionSourceKind, StartSessionInput,
     };
+    use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
+    use std::time::Duration;
     use tempfile::tempdir;
 
     fn request_id(digit: char) -> String {
@@ -2134,6 +2262,80 @@ mod tests {
                 note: "The resolution was verified in this session.".to_owned(),
             }],
         }
+    }
+
+    fn add_learning_session(
+        project: &Path,
+        vault: &Path,
+        start_request: String,
+        checkpoint_request: String,
+        name: &str,
+    ) -> (String, String) {
+        let started = start_session(
+            project,
+            vault,
+            StartSessionInput {
+                request_id: start_request,
+                name: name.to_owned(),
+                goal: "Preserve an independent project lesson".to_owned(),
+                source: SessionSource {
+                    kind: SessionSourceKind::HostHook,
+                    host: Some("claude-code".to_owned()),
+                    agent: Some("claude".to_owned()),
+                },
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint_session(
+            project,
+            vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: checkpoint_request,
+                summary: "Verified an independent workflow".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: vec![ProblemInput {
+                    title: "Independent failure".to_owned(),
+                    symptom: "A separate workflow failed".to_owned(),
+                    expected: "The separate workflow should pass".to_owned(),
+                    attempts: vec![AttemptInput {
+                        action: "Run the independent check".to_owned(),
+                        outcome: AttemptOutcome::Helped,
+                        evidence: "The independent check passed".to_owned(),
+                    }],
+                    resolution: Some(ResolutionInput {
+                        root_cause: "The independent command was incomplete".to_owned(),
+                        change: "Run the complete independent command".to_owned(),
+                        verification: "The complete command exited successfully".to_owned(),
+                    }),
+                }],
+                touched_artifacts: vec!["README.md".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let record_id = checkpoint.session.checkpoints[0].problems[0]
+            .resolution
+            .as_ref()
+            .unwrap()
+            .id
+            .clone();
+        (started.session.session_id, record_id)
+    }
+
+    fn session_directory(project: &Path, vault: &Path, session_id: &str) -> PathBuf {
+        let project_id = diagnose_project(project).unwrap().identity.project_id;
+        vault
+            .join(STORE_ROOT)
+            .join(AGENT_MEMORY_DIRECTORY)
+            .join(PROJECTS_DIRECTORY)
+            .join(project_id)
+            .join("sessions")
+            .join(session_id)
     }
 
     fn learning_directory(project: &Path, vault: &Path) -> PathBuf {
@@ -2345,6 +2547,254 @@ mod tests {
                 .count(),
             4
         );
+    }
+
+    #[test]
+    fn session_erasure_physically_removes_cited_and_dependent_learnings_only() {
+        let (_base, project, vault, erased_session_id, erased_record_id) = setup_learning();
+        let erased_session = read_session(&project, &vault, &erased_session_id).unwrap();
+        let cited = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('3'), &erased_session_id, &erased_record_id),
+        )
+        .unwrap();
+        let (retained_session_id, retained_record_id) = add_learning_session(
+            &project,
+            &vault,
+            request_id('4'),
+            request_id('5'),
+            "Independent session",
+        );
+        let mut retained_input =
+            proposal(request_id('6'), &retained_session_id, &retained_record_id);
+        retained_input.title = "Keep the independent workflow".to_owned();
+        retained_input.guidance = "Run the independent workflow before delivery.".to_owned();
+        let retained = propose_learning(&project, &vault, retained_input).unwrap();
+        let mut dependent_input =
+            proposal(request_id('7'), &retained_session_id, &retained_record_id);
+        dependent_input.title = "Use the replaced workflow".to_owned();
+        dependent_input.guidance =
+            "This learning points to a replacement that will be erased.".to_owned();
+        let dependent = propose_learning(&project, &vault, dependent_input).unwrap();
+        let dependent_review = review_learning(
+            &project,
+            &vault,
+            &dependent.learning.learning_id,
+            ReviewLearningInput {
+                request_id: request_id('8'),
+                expected_event_count: Some(dependent.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Supersede,
+                note: "Use the cited replacement.".to_owned(),
+                replacement_learning_id: Some(cited.learning.learning_id.clone()),
+            },
+        )
+        .unwrap();
+        let memory_before = project_memory_overview(&project, &vault).unwrap();
+        let erased_event_paths = [
+            learning_directory(&project, &vault)
+                .join(EVENTS_DIRECTORY)
+                .join(format!("{}.json", cited.event_id)),
+            learning_directory(&project, &vault)
+                .join(EVENTS_DIRECTORY)
+                .join(format!("{}.json", dependent.event_id)),
+            learning_directory(&project, &vault)
+                .join(EVENTS_DIRECTORY)
+                .join(format!("{}.json", dependent_review.event_id)),
+        ];
+
+        let receipt = erase_session_memory(
+            &project,
+            &vault,
+            &erased_session_id,
+            EraseSessionMemoryInput {
+                expected_event_count: erased_session.event_count,
+                expected_name: erased_session.name.clone(),
+            },
+        )
+        .unwrap();
+
+        let mut expected_erased = vec![
+            cited.learning.learning_id.clone(),
+            dependent.learning.learning_id.clone(),
+        ];
+        expected_erased.sort();
+        assert_eq!(receipt.erased_learning_ids, expected_erased);
+        assert!(receipt.ordinary_notes_preserved);
+        assert!(receipt.canvas_documents_preserved);
+        assert!(receipt.project_evidence_preserved);
+        assert!(!session_directory(&project, &vault, &erased_session_id).exists());
+        assert!(matches!(
+            read_session(&project, &vault, &erased_session_id),
+            Err(LeyCoreError::SessionNotFound(_))
+        ));
+        assert_eq!(
+            read_session(&project, &vault, &retained_session_id)
+                .unwrap()
+                .name,
+            "Independent session"
+        );
+        assert!(matches!(
+            read_learning(&project, &vault, &cited.learning.learning_id),
+            Err(LeyCoreError::LearningNotFound(_))
+        ));
+        assert!(matches!(
+            read_learning(&project, &vault, &dependent.learning.learning_id),
+            Err(LeyCoreError::LearningNotFound(_))
+        ));
+        assert_eq!(
+            read_learning(&project, &vault, &retained.learning.learning_id)
+                .unwrap()
+                .title,
+            "Keep the independent workflow"
+        );
+        assert!(erased_event_paths.iter().all(|path| !path.exists()));
+        assert!(learning_directory(&project, &vault)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", retained.event_id))
+            .is_file());
+        let projections = format!(
+            "{}\n{}",
+            std::fs::read_to_string(learning_directory(&project, &vault).join(LEARNING_INDEX_FILE))
+                .unwrap(),
+            std::fs::read_to_string(
+                learning_directory(&project, &vault).join(LEARNING_REVIEW_FILE)
+            )
+            .unwrap()
+        );
+        assert!(!projections.contains(&cited.learning.learning_id));
+        assert!(!projections.contains(&dependent.learning.learning_id));
+        assert!(projections.contains(&retained.learning.learning_id));
+        let memory_after = project_memory_overview(&project, &vault).unwrap();
+        assert_eq!(
+            memory_after.artifact_snapshot_id,
+            memory_before.artifact_snapshot_id
+        );
+        assert!(project.join("README.md").is_file());
+        assert!(project.join(".ley/project.json").is_file());
+    }
+
+    #[test]
+    fn session_erasure_requires_current_event_count_and_exact_name_without_side_effects() {
+        let (_base, project, vault, session_id, record_id) = setup_learning();
+        let learning = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('3'), &session_id, &record_id),
+        )
+        .unwrap();
+        let session = read_session(&project, &vault, &session_id).unwrap();
+
+        assert!(matches!(
+            erase_session_memory(
+                &project,
+                &vault,
+                &session_id,
+                EraseSessionMemoryInput {
+                    expected_event_count: session.event_count.saturating_sub(1),
+                    expected_name: session.name.clone(),
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("reload before erasing")
+        ));
+        assert!(matches!(
+            erase_session_memory(
+                &project,
+                &vault,
+                &session_id,
+                EraseSessionMemoryInput {
+                    expected_event_count: session.event_count,
+                    expected_name: session.name.to_lowercase(),
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("type the current name")
+        ));
+        assert_eq!(
+            read_session(&project, &vault, &session_id)
+                .unwrap()
+                .event_count,
+            session.event_count
+        );
+        assert_eq!(
+            read_learning(&project, &vault, &learning.learning.learning_id)
+                .unwrap()
+                .event_count,
+            1
+        );
+    }
+
+    #[test]
+    fn corrupt_learning_evidence_aborts_session_erasure_before_any_deletion() {
+        let (_base, project, vault, session_id, record_id) = setup_learning();
+        let learning = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('3'), &session_id, &record_id),
+        )
+        .unwrap();
+        let session = read_session(&project, &vault, &session_id).unwrap();
+        let event_path = learning_directory(&project, &vault)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", learning.event_id));
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        value["sequence"] = serde_json::json!(7);
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+        let result = erase_session_memory(
+            &project,
+            &vault,
+            &session_id,
+            EraseSessionMemoryInput {
+                expected_event_count: session.event_count,
+                expected_name: session.name.clone(),
+            },
+        );
+        assert!(
+            matches!(result, Err(LeyCoreError::InvalidLearningStore(_))),
+            "unexpected erasure result: {result:?}"
+        );
+        assert!(session_directory(&project, &vault, &session_id).is_dir());
+        assert!(event_path.is_file());
+    }
+
+    #[test]
+    fn session_erasure_waits_for_active_memory_users() {
+        let (_base, project, vault, session_id, _record_id) = setup_learning();
+        let session = read_session(&project, &vault, &session_id).unwrap();
+        let project_id = diagnose_project(&project).unwrap().identity.project_id;
+        let reader = lock_project_memory_lifecycle(&vault, &project_id, false, false).unwrap();
+        let erase_project = project.clone();
+        let erase_vault = vault.clone();
+        let erase_session_id = session_id.clone();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = erase_session_memory(
+                erase_project,
+                erase_vault,
+                &erase_session_id,
+                EraseSessionMemoryInput {
+                    expected_event_count: session.event_count,
+                    expected_name: session.name,
+                },
+            );
+            finished_tx.send(result).unwrap();
+        });
+
+        assert!(finished_rx.recv_timeout(Duration::from_millis(80)).is_err());
+        drop(reader);
+        assert_eq!(
+            finished_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap()
+                .session_id,
+            session_id
+        );
+        worker.join().unwrap();
     }
 
     #[test]

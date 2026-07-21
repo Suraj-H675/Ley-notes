@@ -6,7 +6,7 @@ Status: accepted
 
 Ley retains immutable artifact captures, graph history, structured sessions, and learning events inside one vault-scoped project namespace. “Forget project” removes only the private observation-catalog entry; changing capture mode affects future/current retention but does not erase historical snapshots. Neither action can honestly be presented as deletion.
 
-Removing individual immutable events would also break citations, replay, corrections, and provenance unless Ley first defines tombstones and dependent-record behavior. The trustworthy first deletion boundary is therefore the complete Agent Memory namespace for one project.
+Removing individual immutable events would also break citations, replay, corrections, and provenance unless Ley first defines tombstones and dependent-record behavior. The trustworthy first deletion boundary was therefore the complete Agent Memory namespace for one project. [ADR 0024](0024-reviewed-session-memory-erasure.md) now defines the narrower reviewed session boundary and its learning cascade.
 
 Deletion can race with a running MCP server, host hook, ingestion, or desktop read. Locks stored inside the directory being deleted are insufficient: a process can hold an open directory or lock-file descriptor after that namespace has been removed.
 
@@ -25,5 +25,5 @@ Deletion can race with a running MCP server, host hook, ingestion, or desktop re
 - Users can remove all Agent Memory retained by Ley for one project without deleting their work or losing the project-to-vault setup.
 - Running current-version agents cannot write into an unlinked directory during deletion; erasure waits for their in-flight memory operation to finish.
 - Old Ley processes that predate the lifecycle-lock protocol must still be stopped before erasure, which the UI states explicitly.
-- Fine-grained session/learning deletion remains a separate future design because dependent citations and append-only provenance need explicit semantics.
+- Reviewed session deletion follows the separate dependency and user-owned-copy semantics in [ADR 0024](0024-reviewed-session-memory-erasure.md). Independent single-learning deletion remains a separate design.
 - External backups and storage-layer remnants remain the user’s responsibility.

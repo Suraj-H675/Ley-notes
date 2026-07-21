@@ -233,6 +233,21 @@ export interface AgentMemoryDashboard {
   allLearnings: LearningList;
 }
 
+export interface SessionMemoryErasure {
+  projectId: string;
+  sessionId: string;
+  sessionName: string;
+  erasedLearningIds: string[];
+  ordinaryNotesPreserved: boolean;
+  canvasDocumentsPreserved: boolean;
+  projectEvidencePreserved: boolean;
+}
+
+export interface AgentSessionErasure {
+  dashboard: AgentMemoryDashboard;
+  erasure: SessionMemoryErasure;
+}
+
 export type AgentProjectCatalogState =
   | "ready"
   | "unbound"

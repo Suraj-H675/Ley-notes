@@ -1,6 +1,7 @@
 use crate::ingestion::{
     load_project_memory, lock_project_memory_lifecycle, redact_secrets, ProjectMemoryLifecycleLock,
 };
+use crate::learning::erase_learnings_citing_session_under_lifecycle;
 use crate::{diagnose_project, project_memory_overview, LeyCoreError, RedactionFinding};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
@@ -235,6 +236,13 @@ pub struct RenameSessionInput {
     pub expected_event_count: Option<u64>,
     pub name: String,
     pub note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EraseSessionMemoryInput {
+    pub expected_event_count: u64,
+    pub expected_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -651,6 +659,89 @@ pub fn read_session(
     };
     let _lock = store.lock(true)?;
     store.rebuild_session(session_id)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMemoryErasure {
+    pub project_id: String,
+    pub session_id: String,
+    pub session_name: String,
+    pub erased_learning_ids: Vec<String>,
+    pub ordinary_notes_preserved: bool,
+    pub canvas_documents_preserved: bool,
+    pub project_evidence_preserved: bool,
+}
+
+pub fn erase_session_memory(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: EraseSessionMemoryInput,
+) -> Result<SessionMemoryErasure, LeyCoreError> {
+    validate_session_id(session_id)?;
+    let diagnostic = diagnose_project(&project_start)?;
+    project_memory_overview(&diagnostic.root, &vault)?;
+    let vault_path = vault
+        .as_ref()
+        .canonicalize()
+        .map_err(|source| LeyCoreError::Io {
+            path: vault.as_ref().to_path_buf(),
+            source,
+        })?;
+    let _lifecycle =
+        lock_project_memory_lifecycle(&vault_path, &diagnostic.identity.project_id, false, true)?;
+    let vault_dir = Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
+        LeyCoreError::Io {
+            path: vault_path.clone(),
+            source,
+        }
+    })?;
+    let ley_dir = open_existing_dir(&vault_dir, STORE_ROOT)?;
+    let memory_dir = open_existing_dir(&ley_dir, AGENT_MEMORY_DIRECTORY)?;
+    let projects_dir = open_existing_dir(&memory_dir, PROJECTS_DIRECTORY)?;
+    let project_dir = open_existing_dir(&projects_dir, &diagnostic.identity.project_id)?;
+    let sessions_dir = open_existing_dir(&project_dir, SESSIONS_DIRECTORY)?;
+    let session_dir = sessions_dir
+        .open_dir_nofollow(session_id)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                LeyCoreError::SessionNotFound(session_id.to_owned())
+            } else {
+                session_io(session_id, error)
+            }
+        })?;
+    let events = read_session_events(&session_dir, &diagnostic.identity.project_id, session_id)?;
+    let session = replay_events(&events, &diagnostic.identity.project_id, session_id)?;
+    if session.event_count != input.expected_event_count {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "session changed from {} events to {}; reload before erasing",
+            input.expected_event_count, session.event_count
+        )));
+    }
+    if session.name != input.expected_name {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "session name changed; reload and type the current name before erasing".to_owned(),
+        ));
+    }
+
+    let erased_learning_ids = erase_learnings_citing_session_under_lifecycle(
+        &project_dir,
+        &diagnostic.identity.project_id,
+        session_id,
+    )?;
+    sessions_dir
+        .remove_dir_all(session_id)
+        .map_err(|source| session_io(session_id, source))?;
+    Ok(SessionMemoryErasure {
+        project_id: diagnostic.identity.project_id,
+        session_id: session_id.to_owned(),
+        session_name: session.name,
+        erased_learning_ids,
+        ordinary_notes_preserved: true,
+        canvas_documents_preserved: true,
+        project_evidence_preserved: true,
+    })
 }
 
 pub fn list_sessions(
@@ -1355,59 +1446,7 @@ impl SessionStore {
         session_id: &str,
         session_dir: &Dir,
     ) -> Result<Vec<SessionEvent>, LeyCoreError> {
-        let events_dir = session_dir
-            .open_dir_nofollow(EVENTS_DIRECTORY)
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::NotFound {
-                    LeyCoreError::SessionNotFound(session_id.to_owned())
-                } else {
-                    session_io(EVENTS_DIRECTORY, error)
-                }
-            })?;
-        let entries = events_dir
-            .entries()
-            .map_err(|source| session_io(EVENTS_DIRECTORY, source))?;
-        let mut events = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|source| session_io(EVENTS_DIRECTORY, source))?;
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                return Err(LeyCoreError::InvalidSessionStore(
-                    "event filename is not UTF-8".to_owned(),
-                ));
-            };
-            if !name.ends_with(".json")
-                || !entry
-                    .file_type()
-                    .map_err(|e| session_io(name, e))?
-                    .is_file()
-            {
-                return Err(LeyCoreError::InvalidSessionStore(format!(
-                    "unexpected session event entry: {name}"
-                )));
-            }
-            if events.len() >= SESSION_EVENT_LIMIT {
-                return Err(LeyCoreError::InvalidSessionStore(format!(
-                    "session exceeds {SESSION_EVENT_LIMIT} events"
-                )));
-            }
-            let bytes = read_private_file(&events_dir, name, SESSION_EVENT_LIMIT_BYTES)?
-                .ok_or_else(|| {
-                    LeyCoreError::InvalidSessionStore(format!(
-                        "event disappeared while reading: {name}"
-                    ))
-                })?;
-            let event: SessionEvent = parse_json(name, &bytes)?;
-            validate_event(&event, &self.project_id, session_id)?;
-            if name != format!("{}.json", event.event_id) {
-                return Err(LeyCoreError::InvalidSessionStore(format!(
-                    "event filename does not match its ID: {name}"
-                )));
-            }
-            events.push(event);
-        }
-        events.sort_by_key(|event| event.sequence);
-        Ok(events)
+        read_session_events(session_dir, &self.project_id, session_id)
     }
 
     fn persist_projection(
@@ -1426,6 +1465,66 @@ impl SessionStore {
         }
         write_atomic_private(session_dir, SESSION_MARKDOWN_FILE, markdown.as_bytes())
     }
+}
+
+fn read_session_events(
+    session_dir: &Dir,
+    project_id: &str,
+    session_id: &str,
+) -> Result<Vec<SessionEvent>, LeyCoreError> {
+    let events_dir = session_dir
+        .open_dir_nofollow(EVENTS_DIRECTORY)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                LeyCoreError::SessionNotFound(session_id.to_owned())
+            } else {
+                session_io(EVENTS_DIRECTORY, error)
+            }
+        })?;
+    let entries = events_dir
+        .entries()
+        .map_err(|source| session_io(EVENTS_DIRECTORY, source))?;
+    let mut events = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|source| session_io(EVENTS_DIRECTORY, source))?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return Err(LeyCoreError::InvalidSessionStore(
+                "event filename is not UTF-8".to_owned(),
+            ));
+        };
+        if !name.ends_with(".json")
+            || !entry
+                .file_type()
+                .map_err(|error| session_io(name, error))?
+                .is_file()
+        {
+            return Err(LeyCoreError::InvalidSessionStore(format!(
+                "unexpected session event entry: {name}"
+            )));
+        }
+        if events.len() >= SESSION_EVENT_LIMIT {
+            return Err(LeyCoreError::InvalidSessionStore(format!(
+                "session exceeds {SESSION_EVENT_LIMIT} events"
+            )));
+        }
+        let bytes =
+            read_private_file(&events_dir, name, SESSION_EVENT_LIMIT_BYTES)?.ok_or_else(|| {
+                LeyCoreError::InvalidSessionStore(format!(
+                    "event disappeared while reading: {name}"
+                ))
+            })?;
+        let event: SessionEvent = parse_json(name, &bytes)?;
+        validate_event(&event, project_id, session_id)?;
+        if name != format!("{}.json", event.event_id) {
+            return Err(LeyCoreError::InvalidSessionStore(format!(
+                "event filename does not match its ID: {name}"
+            )));
+        }
+        events.push(event);
+    }
+    events.sort_by_key(|event| event.sequence);
+    Ok(events)
 }
 
 fn replay_events(

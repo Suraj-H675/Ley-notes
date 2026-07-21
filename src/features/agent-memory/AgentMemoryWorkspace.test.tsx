@@ -6,6 +6,7 @@ import type { AgentMemoryDashboard } from "./types";
 const api = vi.hoisted(() => ({
   correctAgentLearning: vi.fn(),
   eraseAgentProjectMemory: vi.fn(),
+  eraseAgentSession: vi.fn(),
   forgetAgentProject: vi.fn(),
   inspectAgentProject: vi.fn(),
   listAgentProjects: vi.fn(),
@@ -26,6 +27,7 @@ vi.mock("./api", () => ({
   connectAgentProject: vi.fn(),
   correctAgentLearning: api.correctAgentLearning,
   eraseAgentProjectMemory: api.eraseAgentProjectMemory,
+  eraseAgentSession: api.eraseAgentSession,
   forgetAgentProject: api.forgetAgentProject,
   initializeAgentProject: vi.fn(),
   inspectAgentProject: api.inspectAgentProject,
@@ -691,6 +693,20 @@ describe("Agent Memory workspace boundaries", () => {
     expect(
       api.verifyAgentProjectNoteVault.mock.invocationCallOrder[0],
     ).toBeLessThan(linkSessionCanvas.mock.invocationCallOrder[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Erase session memory…" }),
+    );
+    expect(
+      await screen.findByText("Permanently erase this private session record"),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Permanently erase session" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/Ordinary Markdown and Canvas copies/i),
+    ).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));

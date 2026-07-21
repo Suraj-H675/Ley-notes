@@ -22,10 +22,14 @@ Mode changes preserve custom roots, ignore behavior, and byte limits. Minimal re
 
 Erasure waits for current-version memory readers and writers through a project lifecycle lock. Stop connected agent sessions first, especially older Ley processes that do not implement that lock. Ley cannot securely wipe backups, filesystem snapshots, SSD remnants, or copies outside the selected vault.
 
+To forget one session instead, open that session’s desktop inspector and choose **Erase session memory**. Ley requires the exact current session name and the inspected event version, waits for active memory operations, physically removes the session, and removes every learning that cites it. A learning that would otherwise point to an erased replacement is removed as well. Unrelated sessions, learnings, project captures, graph history, files, policy, and binding remain.
+
+Session erasure deliberately preserves ordinary Markdown handoffs and JSON Canvas documents because those are explicit user-owned copies rather than private Agent Memory projections. Delete those through the normal note or Canvas workflow when they should also be removed. Neither project nor session erasure can remove external copies, cloud-provider context, backups, storage snapshots, or device remnants.
+
 The desktop project graph indexes changed immutable graph/artifact pairs so an earlier capture remains inspectable. Selecting a historical capture never reads today's working tree. A node or relationship can reveal only an exact citation already present in that selected graph, from its matching retained artifact snapshot. Excerpts stay redacted and bounded. Minimal captures can still show graph structure and citations, but source inspection is unavailable because that mode intentionally retains no source blob.
 
 ## Cloud-agent boundary
 
 Ley never uploads captured data independently. A cloud agent such as Claude, Codex, or Gemini may receive bounded context only when the user or host asks that agent to retrieve it. Capture mode controls local retention; it does not override the connected provider's handling of deliberately retrieved context.
 
-See [ADR 0020](../adr/0020-reviewed-project-memory-erasure.md) for the erasure boundary and concurrency contract.
+See [ADR 0020](../adr/0020-reviewed-project-memory-erasure.md) and [ADR 0024](../adr/0024-reviewed-session-memory-erasure.md) for the erasure boundaries and concurrency contracts.

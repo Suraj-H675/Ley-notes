@@ -1,15 +1,15 @@
 use ley_core::{
-    checkpoint_session, correct_learning, diagnose_project, finish_session,
+    checkpoint_session, correct_learning, diagnose_project, erase_session_memory, finish_session,
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
     learning_review_inbox, list_learnings, list_sessions, preview_capture, process_host_hook,
     project_resume_context, propose_learning, read_learning, read_project_graph, read_session,
     rename_session, review_learning, start_session, AgentHost, BindingRegistry, CaptureMode,
-    CheckpointInput, CommandInput, CorrectLearningInput, FinishSessionInput, GraphNodeKind,
-    LearningActor, LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance,
-    LearningState, LearningTrustState, LeyCoreError, ProposeLearningInput, RenameSessionInput,
-    ReviewLearningInput, SessionSource, SessionSourceKind, SessionStatus, StartSessionInput,
-    VerificationInput, VerificationStatus, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS,
+    CheckpointInput, CommandInput, CorrectLearningInput, EraseSessionMemoryInput,
+    FinishSessionInput, GraphNodeKind, LearningActor, LearningEvidenceInput,
+    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
+    LeyCoreError, ProposeLearningInput, RenameSessionInput, ReviewLearningInput, SessionSource,
+    SessionSourceKind, SessionStatus, StartSessionInput, VerificationInput, VerificationStatus,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
 };
 use ley_mcp::{run_stdio, run_unavailable_stdio};
 use std::env;
@@ -865,7 +865,7 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
 fn session(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "session requires start, checkpoint, finish, list, or show".to_owned(),
+            "session requires start, checkpoint, finish, rename, erase, list, or show".to_owned(),
         ));
     };
     match command {
@@ -873,12 +873,79 @@ fn session(arguments: &[String]) -> Result<(), CliError> {
         "checkpoint" => session_checkpoint(&arguments[1..]),
         "finish" => session_finish(&arguments[1..]),
         "rename" => session_rename(&arguments[1..]),
+        "erase" => session_erase(&arguments[1..]),
         "list" => session_list(&arguments[1..]),
         "show" => session_show(&arguments[1..]),
         other => Err(CliError::Usage(format!(
             "unknown session command '{other}'"
         ))),
     }
+}
+
+fn session_erase(arguments: &[String]) -> Result<(), CliError> {
+    let mut common = SessionArguments::default();
+    let mut session_id = None;
+    let mut expected_name = None;
+    let mut expected_event_count = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--confirm-name" => {
+                index += 1;
+                expected_name =
+                    Some(required_value(arguments, index, "--confirm-name")?.to_owned());
+            }
+            "--expected-events" => {
+                index += 1;
+                expected_event_count = Some(
+                    required_value(arguments, index, "--expected-events")?
+                        .parse::<u64>()
+                        .map_err(|_| {
+                            CliError::Usage("--expected-events must be an integer".to_owned())
+                        })?,
+                );
+            }
+            value if session_id.is_none() && value.starts_with("ses_") => {
+                session_id = Some(value.to_owned())
+            }
+            value => parse_session_common(arguments, &mut index, value, &mut common)?,
+        }
+        index += 1;
+    }
+    let session_id =
+        session_id.ok_or_else(|| CliError::Usage("session erase requires SESSION".to_owned()))?;
+    let expected_event_count = expected_event_count
+        .ok_or_else(|| CliError::Usage("session erase requires --expected-events".to_owned()))?;
+    let expected_name = expected_name
+        .ok_or_else(|| CliError::Usage("session erase requires --confirm-name".to_owned()))?;
+    let binding = resolve_session_binding(&common)?;
+    let result = erase_session_memory(
+        &common.project_path()?,
+        &binding.vault_path,
+        &session_id,
+        EraseSessionMemoryInput {
+            expected_event_count,
+            expected_name,
+        },
+    )?;
+    if common.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).expect("session erasure is serializable")
+        );
+    } else {
+        println!("Erased session memory: {}", result.session_name);
+        println!("Session ID: {}", result.session_id);
+        println!(
+            "Dependent learnings erased: {}",
+            result.erased_learning_ids.len()
+        );
+        println!("Preserved: unrelated project memory, project evidence, notes, and Canvas files");
+        println!(
+            "Delete user-owned note or Canvas copies separately if they should also be removed."
+        );
+    }
+    Ok(())
 }
 
 fn session_start(arguments: &[String]) -> Result<(), CliError> {
@@ -1737,6 +1804,7 @@ fn print_help() {
     println!("  ley session checkpoint SESSION [path] --data CHECKPOINT.json");
     println!("  ley session finish SESSION [path] --summary TEXT [--status STATUS]");
     println!("  ley session rename SESSION [path] --name NAME --note REASON [--expected-events N]");
+    println!("  ley session erase SESSION [path] --confirm-name NAME --expected-events N [--json]");
     println!("  ley session list [path] [--json]");
     println!("  ley session show SESSION [path] [--json]");
     println!("  ley resume [path] [--max-sessions N] [--max-learnings N] [--json]");
