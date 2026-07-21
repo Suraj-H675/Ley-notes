@@ -119,7 +119,7 @@ Add the independent `--allow-learning-proposals` flag only when that host should
 
 The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), [ADR 0008](docs/adr/0008-explicit-mcp-session-write-consent.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
 
-For automatic session continuity, use the installable Codex, Claude Code, or Gemini CLI package. Each package adds the same local MCP tools, a lifecycle adapter, and the Ley workflow skill. Hooks use documented stable session/final-response fields, ignore transcript paths, no-op outside explicitly initialized and bound projects, and replay retries idempotently. See [Connect Ley to coding agents](docs/agent-memory/host-integrations.md) and [ADR 0018](docs/adr/0018-stable-lifecycle-host-adapters.md).
+For automatic session continuity, use the installable Codex package. It combines local MCP tools, lifecycle hooks, and the **@Ley** workflow skill; the repository retains experimental Claude Code and Gemini CLI adapters for later work. Codex hooks use documented stable session, turn, and final-response fields, never read transcript paths, no-op outside explicitly initialized and bound projects, and replay retries idempotently. The turn-start hook exposes the exact current Ley session without persisting the raw user prompt. See [Connect Ley to coding agents](docs/agent-memory/host-integrations.md) and [ADR 0018](docs/adr/0018-stable-lifecycle-host-adapters.md).
 
 ## Data model
 

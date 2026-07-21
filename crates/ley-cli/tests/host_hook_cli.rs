@@ -108,6 +108,31 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
         .unwrap();
     assert!(context.contains("CLI integration"));
     assert!(context.contains("Live source checked: no"));
+    let session_id = context
+        .lines()
+        .find_map(|line| line.strip_prefix("Current Ley session: "))
+        .and_then(|line| line.strip_suffix('.'))
+        .unwrap();
+
+    let prompt = json_stdout(ley(
+        &config,
+        &["hook", "--host", "codex", project.to_str().unwrap()],
+        Some(&json!({
+            "session_id": "codex-thread",
+            "transcript_path": transcript_path,
+            "cwd": project,
+            "hook_event_name": "UserPromptSubmit",
+            "turn_id": "turn-one",
+            "prompt": "Fix the watcher with api_key=NEVER_PERSIST_THIS_PROMPT",
+            "model": "gpt-current"
+        })),
+    ));
+    let prompt_context = prompt["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(prompt_context.contains(session_id));
+    assert!(prompt_context.contains("ley_session_checkpoint"));
+    assert!(!prompt_context.contains("NEVER_PERSIST_THIS_PROMPT"));
 
     let stop = json!({
         "session_id": "codex-thread",
@@ -154,6 +179,7 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
 
     let vault_text = walk_text(&vault);
     assert!(!vault_text.contains("NEVER_PERSIST_THIS_TRANSCRIPT"));
+    assert!(!vault_text.contains("NEVER_PERSIST_THIS_PROMPT"));
     assert!(!vault_text.contains("private-transcript.jsonl"));
     assert!(!vault_text.contains("/forged/other/project"));
 }

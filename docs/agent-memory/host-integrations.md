@@ -10,7 +10,7 @@ All three run on the user's machine. The host may send deliberately retrieved co
 
 ## Before connecting a host
 
-Install the `ley` executable on `PATH`, initialize the project, bind it to the user's chosen filesystem vault, and capture the first snapshot:
+Install the `ley` executable on `PATH`, initialize the project, bind it to the user's chosen filesystem vault, and capture the first snapshot. From a Ley source checkout:
 
 ```bash
 cargo install --path crates/ley-cli
@@ -18,6 +18,15 @@ ley init /path/to/project --capture structured
 ley bind /path/to/project --vault /path/to/ley-vault
 ley ingest /path/to/project
 ```
+
+Other users can install the same CLI directly from the public repository without machine-specific paths:
+
+```bash
+cargo install --git https://github.com/Suraj-H675/Ley-notes.git \
+  --locked --package ley-cli
+```
+
+The Codex plugin intentionally launches `ley` from `PATH`. It contains no developer home directory, vault path, project path, token, or other machine-specific configuration.
 
 The packaged integrations enable session writes and tentative learning proposals in their local MCP process. Host permission controls still apply. Remove `--allow-learning-proposals` from the package's MCP arguments if proposals are not wanted.
 
@@ -31,6 +40,8 @@ codex plugin add ley-memory@ley
 ```
 
 Restart Codex, open `/hooks`, and review the exact Ley hook commands before trusting them. Codex intentionally does not trust newly installed command hooks automatically.
+
+Start a new Codex chat in an initialized project and invoke **@Ley**, or ask Codex to use Ley. `SessionStart` loads the bounded resume pack automatically. `UserPromptSubmit` supplies the exact stable Ley session ID and capture contract without storing the raw prompt. The local MCP server provides the structured retrieval and checkpoint tools.
 
 ## Claude Code
 
@@ -60,6 +71,8 @@ In Structured mode, the adapter stores:
 - the stable Ley session ID;
 - a bounded, credential-redacted copy of the host's final assistant response for each completed turn.
 
+For Codex, the adapter also injects the stable current Ley session ID at session and turn start so MCP writes continue the same session instead of creating duplicates.
+
 It does not automatically store:
 
 - user prompts;
@@ -70,6 +83,8 @@ It does not automatically store:
 - arbitrary files outside the approved project capture boundary.
 
 The final-response checkpoint is a fallback, not a claim of complete capture. For substantive work the bundled skill asks the agent to write typed decisions, tasks, problems, attempts, outcomes, solutions, verification, touched artifacts, unresolved items, and handoff through MCP.
+
+Ley deliberately does not add a global `PostToolUse` logger. Tool calls can contain credentials, large outputs, or irrelevant details, and a hook cannot reliably infer their durable meaning. The Codex skill instead records bounded commands, touched artifacts, and observed outcomes inside meaningful structured checkpoints.
 
 ## Failure and retry behavior
 
