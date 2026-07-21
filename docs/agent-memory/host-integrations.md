@@ -23,7 +23,7 @@ Other users can install the same CLI directly from the public repository without
 
 ```bash
 cargo install --git https://github.com/Suraj-H675/Ley-notes.git \
-  --locked --package ley-cli
+  --locked ley-cli
 ```
 
 The Codex plugin intentionally launches `ley` from `PATH`. It contains no developer home directory, vault path, project path, token, or other machine-specific configuration.
@@ -32,7 +32,16 @@ The packaged integrations enable session writes and tentative learning proposals
 
 ## Codex
 
-The repository contains a Codex marketplace at `integrations/codex`:
+Install directly from GitHub with a sparse checkout of only the marketplace and plugin bundle:
+
+```bash
+codex plugin marketplace add Suraj-H675/Ley-notes --ref main \
+  --sparse .agents/plugins \
+  --sparse integrations/codex/plugins/ley-memory
+codex plugin add ley-memory@ley
+```
+
+For local plugin development, the repository also contains a standalone marketplace at `integrations/codex`:
 
 ```bash
 codex plugin marketplace add /absolute/path/to/Ley-notes/integrations/codex
