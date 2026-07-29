@@ -19,13 +19,19 @@ ley bind /path/to/project --vault /path/to/ley-vault
 ley ingest /path/to/project
 ```
 
-Other users can install the same CLI directly from the public repository without machine-specific paths:
+Users with access to the repository can install the same CLI directly from
+GitHub without machine-specific paths:
 
 ```bash
 cargo install --git https://github.com/Suraj-H675/Ley-notes.git \
   --locked ley-cli --root "$HOME/.local"
 ley --version
 ```
+
+The repository is currently private, so GitHub-based installation requires an
+authenticated collaborator until Suraj deliberately publishes the repository
+or separate release artifacts. A local source checkout does not have that
+requirement.
 
 Every integration intentionally launches `ley` from `PATH`. On Linux and
 macOS, ensure `$HOME/.local/bin` is on the PATH inherited by the agent host; the
@@ -60,10 +66,10 @@ Start a new Codex chat in an initialized project and invoke **@Ley**, or ask Cod
 
 ## Claude Code
 
-Install the repository marketplace and plugin:
+Install the repository marketplace and plugin from an authenticated checkout:
 
 ```bash
-claude plugin marketplace add Suraj-H675/Ley-notes \
+claude plugin marketplace add https://github.com/Suraj-H675/Ley-notes.git \
   --sparse .claude-plugin integrations/claude-code/ley-memory
 claude plugin install ley-memory@ley
 ```
