@@ -1,0 +1,16 @@
+{
+  "name": "ley",
+  "description": "Local-first project memory and cited continuity for AI coding agents.",
+  "owner": {
+    "name": "Suraj"
+  },
+  "plugins": [
+    {
+      "name": "ley-memory",
+      "source": "./integrations/claude-code/ley-memory",
+      "description": "Private local project memory, structured checkpoints, and cited continuity for Claude Code.",
+      "category": "Productivity",
+      "tags": ["local-first", "memory", "mcp", "second-brain"]
+    }
+  ]
+}

@@ -176,10 +176,52 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
         .as_str()
         .unwrap();
     assert!(next_context.contains("Conflict recovery remains"));
+    let claude_session_id = next_context
+        .lines()
+        .find_map(|line| line.strip_prefix("Current Ley session: "))
+        .and_then(|line| line.strip_suffix('.'))
+        .unwrap();
+
+    let claude_turn = json_stdout(ley(
+        &config,
+        &["hook", "--host", "claude", project.to_str().unwrap()],
+        Some(&json!({
+            "session_id": "claude-thread",
+            "transcript_path": "/not/read/claude.jsonl",
+            "cwd": project,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "api_key=NEVER_PERSIST_CLAUDE_PROMPT"
+        })),
+    ));
+    let claude_context = claude_turn["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(claude_context.contains(claude_session_id));
+    assert!(!claude_context.contains("NEVER_PERSIST_CLAUDE_PROMPT"));
+
+    let gemini_turn = json_stdout(ley(
+        &config,
+        &["hook", "--host", "gemini", project.to_str().unwrap()],
+        Some(&json!({
+            "session_id": "gemini-thread",
+            "transcript_path": "/not/read/gemini.json",
+            "cwd": project,
+            "hook_event_name": "BeforeAgent",
+            "timestamp": "2026-07-29T12:00:00Z",
+            "prompt": "token=NEVER_PERSIST_GEMINI_PROMPT"
+        })),
+    ));
+    let gemini_context = gemini_turn["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(gemini_context.contains("ley_session_checkpoint"));
+    assert!(!gemini_context.contains("NEVER_PERSIST_GEMINI_PROMPT"));
 
     let vault_text = walk_text(&vault);
     assert!(!vault_text.contains("NEVER_PERSIST_THIS_TRANSCRIPT"));
     assert!(!vault_text.contains("NEVER_PERSIST_THIS_PROMPT"));
+    assert!(!vault_text.contains("NEVER_PERSIST_CLAUDE_PROMPT"));
+    assert!(!vault_text.contains("NEVER_PERSIST_GEMINI_PROMPT"));
     assert!(!vault_text.contains("private-transcript.jsonl"));
     assert!(!vault_text.contains("/forged/other/project"));
 }

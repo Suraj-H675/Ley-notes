@@ -13,7 +13,7 @@ All three run on the user's machine. The host may send deliberately retrieved co
 Install the `ley` executable on `PATH`, initialize the project, bind it to the user's chosen filesystem vault, and capture the first snapshot. From a Ley source checkout:
 
 ```bash
-cargo install --path crates/ley-cli
+cargo install --path crates/ley-cli --root "$HOME/.local"
 ley init /path/to/project --capture structured
 ley bind /path/to/project --vault /path/to/ley-vault
 ley ingest /path/to/project
@@ -23,10 +23,16 @@ Other users can install the same CLI directly from the public repository without
 
 ```bash
 cargo install --git https://github.com/Suraj-H675/Ley-notes.git \
-  --locked ley-cli
+  --locked ley-cli --root "$HOME/.local"
+ley --version
 ```
 
-The Codex plugin intentionally launches `ley` from `PATH`. It contains no developer home directory, vault path, project path, token, or other machine-specific configuration.
+Every integration intentionally launches `ley` from `PATH`. On Linux and
+macOS, ensure `$HOME/.local/bin` is on the PATH inherited by the agent host; the
+command above uses that conventional location. On Windows, install to a
+directory already on PATH. Do not continue until `ley --version` succeeds in a
+fresh terminal. The packages contain no developer home directory, vault path,
+project path, token, or other machine-specific configuration.
 
 The packaged integrations enable session writes and tentative learning proposals in their local MCP process. Host permission controls still apply. Remove `--allow-learning-proposals` from the package's MCP arguments if proposals are not wanted.
 
@@ -54,23 +60,43 @@ Start a new Codex chat in an initialized project and invoke **@Ley**, or ask Cod
 
 ## Claude Code
 
-For a local development install:
+Install the repository marketplace and plugin:
+
+```bash
+claude plugin marketplace add Suraj-H675/Ley-notes \
+  --sparse .claude-plugin integrations/claude-code/ley-memory
+claude plugin install ley-memory@ley
+```
+
+For local development, load the same self-contained package directly:
 
 ```bash
 claude --plugin-dir /absolute/path/to/Ley-notes/integrations/claude-code/ley-memory
 ```
 
-The package passes `claude plugin validate --strict`. A published marketplace can install the same directory without changing its plugin layout.
+Restart Claude Code. `SessionStart` loads the bounded brief,
+`UserPromptSubmit` reasserts the current Ley session without retaining the
+prompt, and `Stop` saves the bounded final-response fallback. The package uses
+Claude Code's documented `${CLAUDE_PROJECT_DIR}` placeholder rather than
+assuming its process working directory.
 
 ## Gemini CLI
 
-Link the local extension and restart Gemini CLI:
+Clone Ley, link the self-contained extension, and restart Gemini CLI:
 
 ```bash
+git clone https://github.com/Suraj-H675/Ley-notes.git
 gemini extensions link /absolute/path/to/Ley-notes/integrations/gemini-cli/ley-memory
 ```
 
 Gemini substitutes the active `${workspacePath}` into the MCP and hook commands.
+`SessionStart` loads the bounded brief, `BeforeAgent` reasserts the current Ley
+session without retaining the prompt, and `AfterAgent` saves the bounded
+final-response fallback. Verify discovery with:
+
+```bash
+gemini extensions list
+```
 
 ## What automatic capture does
 
@@ -80,7 +106,10 @@ In Structured mode, the adapter stores:
 - the stable Ley session ID;
 - a bounded, credential-redacted copy of the host's final assistant response for each completed turn.
 
-For Codex, the adapter also injects the stable current Ley session ID at session and turn start so MCP writes continue the same session instead of creating duplicates.
+Each adapter also injects the stable current Ley session ID at session and turn
+start so MCP writes continue the same session instead of creating duplicates.
+The native turn event is Codex/Claude `UserPromptSubmit` or Gemini
+`BeforeAgent`.
 
 It does not automatically store:
 
@@ -93,7 +122,11 @@ It does not automatically store:
 
 The final-response checkpoint is a fallback, not a claim of complete capture. For substantive work the bundled skill asks the agent to write typed decisions, tasks, problems, attempts, outcomes, solutions, verification, touched artifacts, unresolved items, and handoff through MCP.
 
-Ley deliberately does not add a global `PostToolUse` logger. Tool calls can contain credentials, large outputs, or irrelevant details, and a hook cannot reliably infer their durable meaning. The Codex skill instead records bounded commands, touched artifacts, and observed outcomes inside meaningful structured checkpoints.
+Ley deliberately does not add a global tool logger. Tool calls can contain
+credentials, large outputs, or irrelevant details, and a hook cannot reliably
+infer their durable meaning. Each bundled skill instead records bounded
+commands, touched artifacts, and observed outcomes inside meaningful structured
+checkpoints.
 
 ## Failure and retry behavior
 

@@ -2,13 +2,12 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "ley-memory",
   "displayName": "Ley Memory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Private, local project memory and cited continuity for Claude Code.",
   "author": {
     "name": "Suraj"
   },
-  "skills": "./skills/",
-  "hooks": "./hooks/hooks.json",
-  "mcpServers": "./.mcp.json",
+  "homepage": "https://github.com/Suraj-H675/Ley-notes",
+  "repository": "https://github.com/Suraj-H675/Ley-notes",
   "keywords": ["local-first", "memory", "mcp", "second-brain"]
 }

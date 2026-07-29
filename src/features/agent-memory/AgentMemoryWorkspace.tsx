@@ -2482,7 +2482,8 @@ function BrowserBoundary({
             <p className="mt-1 text-micro leading-5 text-muted-foreground">
               Open the same filesystem vault in Ley Desktop to initialize
               projects, capture structured sessions, review lessons, and connect
-              Claude, Codex, Gemini, or another MCP client.
+              Codex, Claude Code, Gemini CLI, or another compatible local MCP
+              client.
             </p>
           </div>
         </div>

@@ -14,6 +14,21 @@
         ]
       }
     ],
+    "BeforeAgent": [
+      {
+        "matcher": "*",
+        "sequential": true,
+        "hooks": [
+          {
+            "name": "ley-prepare-continuity",
+            "type": "command",
+            "command": "ley hook --host gemini \"${workspacePath}\"",
+            "timeout": 20000,
+            "description": "Continue the active Ley session without storing the raw prompt."
+          }
+        ]
+      }
+    ],
     "AfterAgent": [
       {
         "matcher": "*",

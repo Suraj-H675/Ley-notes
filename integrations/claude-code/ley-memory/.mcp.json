@@ -4,7 +4,7 @@
       "command": "ley",
       "args": [
         "mcp",
-        ".",
+        "${CLAUDE_PROJECT_DIR}",
         "--allow-session-writes",
         "--allow-learning-proposals"
       ]

@@ -3,13 +3,36 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
-            "command": "ley hook --host claude",
+            "command": "ley",
+            "args": [
+              "hook",
+              "--host",
+              "claude",
+              "${CLAUDE_PROJECT_DIR}"
+            ],
             "timeout": 20,
             "statusMessage": "Loading Ley project memory"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ley",
+            "args": [
+              "hook",
+              "--host",
+              "claude",
+              "${CLAUDE_PROJECT_DIR}"
+            ],
+            "timeout": 20,
+            "statusMessage": "Preparing Ley continuity"
           }
         ]
       }
@@ -19,7 +42,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ley hook --host claude",
+            "command": "ley",
+            "args": [
+              "hook",
+              "--host",
+              "claude",
+              "${CLAUDE_PROJECT_DIR}"
+            ],
             "timeout": 20,
             "statusMessage": "Saving Ley continuity"
           }

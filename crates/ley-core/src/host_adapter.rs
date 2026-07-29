@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::path::Path;
 
-pub const HOST_ADAPTER_SCHEMA_VERSION: u32 = 1;
+pub const HOST_ADAPTER_SCHEMA_VERSION: u32 = 2;
 const MAX_HOST_IDENTIFIER_CHARACTERS: usize = 512;
 const MAX_AGENT_RESPONSE_CHARACTERS: usize = 12_000;
 const HOST_RESUME_SESSIONS: usize = 3;
@@ -111,9 +111,23 @@ pub fn process_host_hook(
                 output,
             })
         }
-        (AgentHost::Codex, "UserPromptSubmit") => {
-            let turn_id = required_text(object.get("turn_id"), "turn_id")?;
-            validate_host_identifier("turn_id", &turn_id)?;
+        (AgentHost::Codex | AgentHost::ClaudeCode, "UserPromptSubmit")
+        | (AgentHost::GeminiCli, "BeforeAgent") => {
+            let turn_id = match host {
+                AgentHost::Codex => {
+                    let turn_id = required_text(object.get("turn_id"), "turn_id")?;
+                    Some(turn_id)
+                }
+                AgentHost::ClaudeCode | AgentHost::GeminiCli => object
+                    .get("timestamp")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned),
+            };
+            if let Some(turn_id) = turn_id.as_deref() {
+                validate_host_identifier("turn_id", turn_id)?;
+            }
             let session_id = ensure_host_session(
                 project_start.as_ref(),
                 vault.as_ref(),
@@ -126,7 +140,7 @@ pub fn process_host_hook(
                 event,
                 disposition: HostHookDisposition::TurnPrepared,
                 session_id: Some(session_id.clone()),
-                output: turn_start_output(&session_id, &turn_id),
+                output: turn_start_output(host, &session_id, turn_id.as_deref()),
             })
         }
         (AgentHost::Codex | AgentHost::ClaudeCode, "Stop")
@@ -306,12 +320,19 @@ fn session_start_output(host: AgentHost, context: &str) -> Value {
     })
 }
 
-fn turn_start_output(session_id: &str, turn_id: &str) -> Value {
+fn turn_start_output(host: AgentHost, session_id: &str, turn_id: Option<&str>) -> Value {
+    let event = match host {
+        AgentHost::Codex | AgentHost::ClaudeCode => "UserPromptSubmit",
+        AgentHost::GeminiCli => "BeforeAgent",
+    };
+    let turn = turn_id
+        .map(|turn_id| format!(" Host turn: {turn_id}."))
+        .unwrap_or_default();
     json!({
         "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
+            "hookEventName": event,
             "additionalContext": format!(
-                "Ley is active for this project. Continue the existing local Ley session {session_id}; do not start a parallel session. Codex turn: {turn_id}. The hook does not store the user's raw prompt. If this turn produces a meaningful decision, implementation, diagnosis, failed attempt, solution, verification result, or handoff, use ley_session_checkpoint for {session_id} before the final response. Store concise structure and project-relative evidence, never secrets, hidden reasoning, environment dumps, or complete tool output."
+                "Ley is active for this project. Continue the existing local Ley session {session_id}; do not start a parallel session.{turn} The hook does not store the user's raw prompt. If this turn produces a meaningful decision, implementation, diagnosis, failed attempt, solution, verification result, or handoff, use ley_session_checkpoint for {session_id} before the final response. Store concise structure and project-relative evidence, never secrets, hidden reasoning, environment dumps, or complete tool output."
             )
         }
     })
@@ -523,5 +544,64 @@ mod tests {
             .unwrap()
             .session_id
         );
+    }
+
+    #[test]
+    fn claude_and_gemini_prepare_the_existing_session_without_storing_prompts() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(project.join("README.md"), "# Project\n").unwrap();
+        initialize_project(&project, Some("Host parity"), CaptureMode::Structured).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        for (host, event, external_session, prompt_field) in [
+            (
+                AgentHost::ClaudeCode,
+                "UserPromptSubmit",
+                "claude-thread",
+                "prompt",
+            ),
+            (
+                AgentHost::GeminiCli,
+                "BeforeAgent",
+                "gemini-thread",
+                "prompt",
+            ),
+        ] {
+            let prepared = process_host_hook(
+                &project,
+                &vault,
+                host,
+                json!({
+                    "session_id": external_session,
+                    "cwd": project,
+                    "hook_event_name": event,
+                    "timestamp": "2026-07-29T12:00:00Z",
+                    (prompt_field): "api_key=NEVER_STORE_THIS_PROMPT"
+                }),
+            )
+            .unwrap();
+
+            assert_eq!(prepared.disposition, HostHookDisposition::TurnPrepared);
+            assert_eq!(
+                prepared.output["hookSpecificOutput"]["hookEventName"],
+                event
+            );
+            let context = prepared.output["hookSpecificOutput"]["additionalContext"]
+                .as_str()
+                .unwrap();
+            assert!(context.contains(prepared.session_id.as_deref().unwrap()));
+            assert!(context.contains("ley_session_checkpoint"));
+            assert!(!context.contains("NEVER_STORE_THIS_PROMPT"));
+
+            let stored =
+                read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
+            assert!(!serde_json::to_string(&stored)
+                .unwrap()
+                .contains("NEVER_STORE_THIS_PROMPT"));
+        }
     }
 }
