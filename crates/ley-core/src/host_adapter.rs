@@ -1,6 +1,7 @@
 use crate::{
-    checkpoint_session, project_resume_context, start_session, CheckpointInput, LeyCoreError,
-    ProjectResumePack, SessionSource, SessionSourceKind, StartSessionInput,
+    checkpoint_session, project_resume_context, read_session, start_session, CheckpointInput,
+    LeyCoreError, ProjectResumePack, SessionSource, SessionSourceKind, SessionStatus,
+    StartSessionInput,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -163,6 +164,18 @@ pub fn process_host_hook(
                 host,
                 &external_session_id,
             )?;
+            if read_session(project_start.as_ref(), vault.as_ref(), &session_id)?.status
+                != SessionStatus::Active
+            {
+                return Ok(HostHookResult {
+                    schema_version: HOST_ADAPTER_SCHEMA_VERSION,
+                    host,
+                    event,
+                    disposition: HostHookDisposition::Noop,
+                    session_id: Some(session_id),
+                    output: json!({}),
+                });
+            }
             let turn_key = object
                 .get("turn_id")
                 .and_then(Value::as_str)
@@ -402,7 +415,10 @@ fn truncate_characters(value: &str, maximum: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ingest_project, initialize_project, read_session, CaptureMode};
+    use crate::{
+        finish_session, ingest_project, initialize_project, read_session, CaptureMode,
+        FinishSessionInput,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -544,6 +560,70 @@ mod tests {
             .unwrap()
             .session_id
         );
+    }
+
+    #[test]
+    fn post_response_hook_does_not_checkpoint_a_finished_session() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(project.join("README.md"), "# Project\n").unwrap();
+        initialize_project(&project, Some("Terminal hook"), CaptureMode::Structured).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let started = process_host_hook(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            json!({
+                "session_id": "codex-terminal-thread",
+                "cwd": project,
+                "hook_event_name": "SessionStart",
+                "source": "startup"
+            }),
+        )
+        .unwrap();
+        let session_id = started.session_id.unwrap();
+        finish_session(
+            &project,
+            &vault,
+            &session_id,
+            FinishSessionInput {
+                request_id: "req_11111111111111111111111111111111".to_owned(),
+                status: SessionStatus::Paused,
+                summary: "Paused for a clean handoff.".to_owned(),
+                final_response: String::new(),
+                handoff: "Resume by checking the persisted rename conflict.".to_owned(),
+                unresolved: vec!["Verify the rename conflict.".to_owned()],
+            },
+        )
+        .unwrap();
+        let event_count = read_session(&project, &vault, &session_id)
+            .unwrap()
+            .event_count;
+
+        let stopped = process_host_hook(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            json!({
+                "session_id": "codex-terminal-thread",
+                "cwd": project,
+                "hook_event_name": "Stop",
+                "turn_id": "terminal-turn",
+                "last_assistant_message": "This response follows the explicit Ley finish."
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(stopped.disposition, HostHookDisposition::Noop);
+        assert_eq!(stopped.session_id.as_deref(), Some(session_id.as_str()));
+        let session = read_session(&project, &vault, &session_id).unwrap();
+        assert_eq!(session.status, SessionStatus::Paused);
+        assert_eq!(session.event_count, event_count);
+        assert!(session.checkpoints.is_empty());
     }
 
     #[test]
