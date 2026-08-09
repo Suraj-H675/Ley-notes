@@ -7,9 +7,11 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import {
   PanelLeft,
   PanelRight,
@@ -66,6 +68,7 @@ import {
   type SessionCanvasLinkRequest,
 } from "@/features/agent-memory/link-session-canvas";
 import { primaryModifierLabel, shortcutLabel } from "@/shared/lib/shortcut";
+import { useMediaQuery } from "@/shared/hooks/useMediaQuery";
 
 const GraphView = lazy(() =>
   import("@/features/graph/GraphView").then((module) => ({
@@ -126,6 +129,7 @@ export function Layout({
   const theme = useUIStore((s) => s.theme);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const rightDockOpen = useUIStore((s) => s.rightDockOpen);
   const toggleRightDock = useUIStore((s) => s.toggleRightDock);
   const rightDockTab = useUIStore((s) => s.rightDockTab);
@@ -154,6 +158,10 @@ export function Layout({
     useState<CollectionRequest | null>(null);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [agentMemoryOpen, setAgentMemoryOpen] = useState(false);
+  const isNarrowViewport = useMediaQuery("(max-width: 767px)");
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const desktopSidebarPreference = useRef(isNarrowViewport ? true : sidebarOpen);
+  const wasNarrowViewport = useRef(isNarrowViewport);
   const [splitPercent, setSplitPercent] = useState(() => {
     const saved = Number(localStorage.getItem("ley:split-percent"));
     return Number.isFinite(saved) && saved >= 28 && saved <= 72 ? saved : 50;
@@ -162,6 +170,21 @@ export function Layout({
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (wasNarrowViewport.current === isNarrowViewport) {
+      if (!isNarrowViewport) desktopSidebarPreference.current = sidebarOpen;
+      return;
+    }
+
+    if (isNarrowViewport) {
+      desktopSidebarPreference.current = sidebarOpen;
+      setSidebarOpen(false);
+    } else {
+      setSidebarOpen(desktopSidebarPreference.current);
+    }
+    wasNarrowViewport.current = isNarrowViewport;
+  }, [isNarrowViewport, setSidebarOpen, sidebarOpen]);
 
   // Keep the disposable navigation and search indexes synchronized with the vault.
   useEffect(() => {
@@ -263,6 +286,21 @@ export function Layout({
 
   const isEmpty = (pages?.length ?? 0) === 0;
   const modifier = primaryModifierLabel();
+  const sidebarContents = (
+    <>
+      <FileTree onNewPage={(folder) => {
+        if (isNarrowViewport) setSidebarOpen(false);
+        setNewNoteFolder(folder ?? "");
+        setNewNoteOpen(true);
+      }} />
+      <div className="mx-2 border-t border-border" />
+      <BookmarksPane onOpenSearch={openSearch} onOpenCollection={(search) => setCollectionRequest({ query: search.query, title: search.name, savedSearchId: search.id, table: search.table })} />
+      <div className="mx-2 border-t border-border" />
+      <RecentPane />
+      <div className="mx-2 border-t border-border" />
+      <TagPane />
+    </>
+  );
 
   return (
     <div className="flex h-full w-full flex-col bg-background text-foreground">
@@ -270,10 +308,13 @@ export function Layout({
       <header className="app-chrome flex h-11 shrink-0 items-center justify-between gap-3 px-3">
         <div className="flex min-w-0 items-center gap-2">
           <Button
+            ref={sidebarToggleRef}
             size="sm"
             variant="ghost"
             onClick={toggleSidebar}
             aria-label="Toggle sidebar"
+            aria-expanded={sidebarOpen}
+            aria-controls={isNarrowViewport ? "mobile-vault-navigation" : undefined}
             title="Toggle sidebar"
           >
             <PanelLeft size={14} aria-hidden="true" />
@@ -411,32 +452,22 @@ export function Layout({
 
       {/* Main: sidebar / editor / right dock */}
       <div className="flex flex-1 overflow-hidden">
-        {sidebarOpen && (
-          <aside className="app-sidebar fixed inset-y-11 left-0 z-30 flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border py-3 shadow-menu md:static md:w-64 md:shadow-none">
-            <FileTree
-              onNewPage={(folder) => {
-                setNewNoteFolder(folder ?? "");
-                setNewNoteOpen(true);
-              }}
-            />
-            <div className="mx-2 border-t border-border" />
-            <BookmarksPane
-              onOpenSearch={openSearch}
-              onOpenCollection={(search) =>
-                setCollectionRequest({
-                  query: search.query,
-                  title: search.name,
-                  savedSearchId: search.id,
-                  table: search.table,
-                })
-              }
-            />
-            <div className="mx-2 border-t border-border" />
-            <RecentPane />
-            <div className="mx-2 border-t border-border" />
-            <TagPane />
-          </aside>
-        )}
+        {isNarrowViewport ? (
+          <Dialog.Root open={sidebarOpen} onOpenChange={setSidebarOpen}>
+            <Dialog.Portal>
+              <Dialog.Overlay className="app-modal-overlay fixed inset-x-0 bottom-0 top-11 z-20" />
+              <Dialog.Content id="mobile-vault-navigation" aria-describedby={undefined} onCloseAutoFocus={(event) => { event.preventDefault(); sidebarToggleRef.current?.focus(); }} className="app-sidebar app-mobile-sidebar fixed inset-y-11 left-0 z-30 flex w-[min(18rem,calc(100vw-3rem))] flex-col overflow-hidden border-r border-border shadow-menu outline-none">
+                <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/70 px-3">
+                  <Dialog.Title className="text-body font-semibold tracking-tight">Vault navigation</Dialog.Title>
+                  <Dialog.Close asChild><Button size="sm" variant="ghost" aria-label="Close sidebar" title="Close sidebar"><X size={14} aria-hidden="true" /></Button></Dialog.Close>
+                </div>
+                <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">{sidebarContents}</div>
+              </Dialog.Content>
+            </Dialog.Portal>
+          </Dialog.Root>
+        ) : sidebarOpen ? (
+          <aside className="app-sidebar flex w-64 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border py-3">{sidebarContents}</aside>
+        ) : null}
 
         <main className="flex min-w-0 flex-1 flex-col">
           <EditorTabs />
@@ -683,7 +714,6 @@ export function Layout({
     </div>
   );
 }
-
 function PanelLoading({ label }: { label: string }) {
   return (
     <div className="flex h-full items-center justify-center text-micro text-muted-foreground">

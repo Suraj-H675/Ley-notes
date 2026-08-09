@@ -7,6 +7,7 @@ import { ChevronDown, ChevronRight, FileClock } from 'lucide-react';
 import { useNavStore } from '@/shared/state/nav';
 import { useRecentPages } from '@/features/notes/usePages';
 import { cn } from '@/shared/lib/classnames';
+import { useUIStore } from '@/shared/state/ui';
 
 export function RecentPane() {
   const [expanded, setExpanded] = useState(true);
@@ -30,6 +31,7 @@ export function RecentPane() {
           onClick={() => {
             openPage(p.id);
             pushRecent(p.id);
+            if (window.matchMedia('(max-width: 767px)').matches) useUIStore.getState().setSidebarOpen(false);
           }}
           className={cn(
             'flex items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-meta',

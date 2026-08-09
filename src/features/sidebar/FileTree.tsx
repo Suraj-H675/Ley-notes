@@ -256,6 +256,7 @@ function PageNode({
       const nav = useNavStore.getState();
       nav.openPage(copy.id);
       nav.pushRecent(copy.id);
+      if (window.matchMedia('(max-width: 767px)').matches) useUIStore.getState().setSidebarOpen(false);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -313,7 +314,7 @@ function PageNode({
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content className="z-[80] min-w-44 rounded-lg border border-border bg-surface-1 p-1 shadow-menu">
-            {page.id !== primaryTab && <ContextMenu.Item onSelect={() => openInSplit(page.id)} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
+            {page.id !== primaryTab && <ContextMenu.Item onSelect={() => { openInSplit(page.id); if (window.matchMedia('(max-width: 767px)').matches) useUIStore.getState().setSidebarOpen(false); }} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
               <Columns2 size={13} /> Open in split
             </ContextMenu.Item>}
             {page.id !== primaryTab && <ContextMenu.Separator className="my-1 h-px bg-border" />}
