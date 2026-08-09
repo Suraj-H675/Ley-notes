@@ -96,26 +96,33 @@ pub use retrieval::{
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
 };
 pub use session::{
-    checkpoint_session, erase_session_memory, finish_session, generate_request_id, list_sessions,
-    project_session_stats, read_session, rename_session, start_session, AgentSession, AttemptInput,
+    checkpoint_session, derive_turn_reference, erase_session_memory, finish_session,
+    generate_request_id, list_sessions, project_session_stats, read_session, record_session_prompt,
+    record_session_response, rename_session, start_session, AgentSession, AttemptInput,
     AttemptOutcome, AttemptRecord, CheckpointInput, CommandInput, CommandRecord, DecisionInput,
     DecisionRecord, EraseSessionMemoryInput, FinishSessionInput, MemoryRedaction, PlanItem,
     PlanItemInput, PlanStatus, ProblemInput, ProblemRecord, ProjectSessionStats,
     RenameSessionInput, ResolutionInput, ResolutionRecord, SessionArtifactCitation,
     SessionCheckpoint, SessionFinish, SessionMemoryErasure, SessionMutation,
     SessionProjectRevision, SessionRename, SessionSource, SessionSourceKind, SessionStatus,
-    SessionSummary, StartSessionInput, TaskInput, TaskRecord, TaskStatus, VerificationInput,
+    SessionSummary, SessionTurnEvidence, StartSessionInput, TaskInput, TaskRecord, TaskStatus,
+    TurnEvidenceInput, TurnEvidenceOrigin, TurnEvidenceRetention, VerificationInput,
     VerificationRecord, VerificationStatus, SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES,
-    SESSION_PROJECTION_LIMIT_BYTES, SESSION_SCHEMA_VERSION,
+    SESSION_PROJECTION_LIMIT_BYTES, SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS,
+    SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS, SESSION_SCHEMA_VERSION,
+    SESSION_TURN_EVIDENCE_LIMIT_BYTES,
 };
 pub use session_context::{
-    list_session_contexts, read_session_context, SessionContextAttempt, SessionContextCheckpoint,
-    SessionContextCitation, SessionContextCommand, SessionContextDecision, SessionContextFinish,
-    SessionContextPack, SessionContextProblem, SessionContextRename, SessionContextResolution,
-    SessionContextTask, SessionContextVerification, SessionList, SessionListItem,
+    list_session_contexts, read_session_context, read_session_turns_context, SessionContextAttempt,
+    SessionContextCheckpoint, SessionContextCitation, SessionContextCommand,
+    SessionContextDecision, SessionContextFinish, SessionContextPack, SessionContextProblem,
+    SessionContextRename, SessionContextResolution, SessionContextTask, SessionContextVerification,
+    SessionList, SessionListItem, SessionTurnContext, SessionTurnKind, SessionTurnsContextPack,
     DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
-    DEFAULT_SESSION_LIST_RESULTS, MAX_SESSION_CONTEXT_CHARACTERS, MAX_SESSION_CONTEXT_CHECKPOINTS,
-    MAX_SESSION_CONTEXT_RENAMES, MAX_SESSION_LIST_RESULTS, MIN_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_LIST_RESULTS, DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS,
+    MAX_SESSION_CONTEXT_CHARACTERS, MAX_SESSION_CONTEXT_CHECKPOINTS, MAX_SESSION_CONTEXT_RENAMES,
+    MAX_SESSION_LIST_RESULTS, MAX_SESSION_TURN_CHARACTERS, MAX_SESSION_TURN_RESULTS,
+    MIN_SESSION_CONTEXT_CHARACTERS, MIN_SESSION_TURN_CHARACTERS,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";

@@ -18,6 +18,7 @@ import type {
   GraphCitation,
   ProjectProblemScope,
   SessionContext,
+  SessionTurnsContext,
 } from "./types";
 
 export async function chooseAgentProject(): Promise<string | null> {
@@ -121,6 +122,13 @@ export function readAgentSession(
   sessionId: string,
 ): Promise<SessionContext> {
   return invoke("read_agent_session", { projectPath, sessionId });
+}
+
+export function readAgentSessionTurns(
+  projectPath: string,
+  sessionId: string,
+): Promise<SessionTurnsContext> {
+  return invoke("read_agent_session_turns", { projectPath, sessionId });
 }
 
 export function renameAgentSession(

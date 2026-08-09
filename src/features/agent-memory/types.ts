@@ -74,6 +74,8 @@ export interface SessionSummary {
   updatedAtUnixMs: number;
   eventCount: number;
   checkpoints: number;
+  prompts?: number;
+  responses?: number;
 }
 
 export interface SessionContext {
@@ -93,6 +95,10 @@ export interface SessionContext {
   updatedAtUnixMs: number;
   eventCount: number;
   checkpointCount: number;
+  promptCount?: number;
+  responseCount?: number;
+  retainedTurnCount?: number;
+  omittedTurnCount?: number;
   renameCount: number;
   renames: Array<{
     recordedAtUnixMs: number;
@@ -166,6 +172,38 @@ export interface SessionContext {
   textCharacters: number;
   estimatedTextTokens: number;
   truncated: boolean;
+  instructionWarning: string;
+}
+
+export interface SessionTurnsContext {
+  schemaVersion: number;
+  projectId: string;
+  sessionId: string;
+  promptCount: number;
+  responseCount: number;
+  retainedTurnCount: number;
+  omittedMinimalCount: number;
+  omittedCapacityCount: number;
+  turns: Array<{
+    recordId: string;
+    eventId: string;
+    recordedAtUnixMs: number;
+    kind: "user-prompt" | "assistant-response";
+    origin: "host-hook" | "manual-cli";
+    host?: string;
+    turnReference?: string;
+    captureMode: CaptureMode;
+    retention: "captured" | "omitted-minimal" | "omitted-capacity";
+    text?: string;
+    truncatedAtCapture: boolean;
+    truncatedForContext: boolean;
+    sourceBoundary: "untrusted-user-prompt" | "untrusted-agent-output";
+  }>;
+  omittedTurns: number;
+  textCharacters: number;
+  estimatedTextTokens: number;
+  truncated: boolean;
+  liveSourceChecked: boolean;
   instructionWarning: string;
 }
 

@@ -39,7 +39,8 @@ const modes: Array<{
     eyebrow: "Maximum privacy",
     description:
       "Keeps deterministic structure, hashes, graph relationships, and structured session memory.",
-    retention: "Project source text is not retained in the vault.",
+    retention:
+      "Project source and automatic prompt/response bodies are not retained.",
     tone: "bg-emerald-500/10 text-emerald-500",
   },
   {
@@ -48,7 +49,8 @@ const modes: Array<{
     eyebrow: "Recommended",
     description:
       "Keeps redacted source evidence with citations alongside bounded structured sessions.",
-    retention: "No complete raw transcript is captured automatically.",
+    retention:
+      "Stores bounded, pattern-redacted prompts and responses—never a complete raw transcript automatically.",
     tone: "bg-primary/12 text-primary",
   },
   {
@@ -56,7 +58,7 @@ const modes: Array<{
     name: "Full Evidence",
     eyebrow: "Explicit permission",
     description:
-      "Keeps structured evidence and permits a transcript-capable host adapter to submit versioned raw evidence.",
+      "Keeps bounded turn evidence and permits a future explicit adapter to submit versioned raw evidence.",
     retention:
       "Highest sensitivity and storage; Ley itself still does not scrape chats.",
     tone: "bg-warning/10 text-warning",

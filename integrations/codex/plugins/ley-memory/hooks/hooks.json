@@ -21,7 +21,7 @@
             "type": "command",
             "command": "ley hook --host codex",
             "timeout": 20,
-            "statusMessage": "Preparing Ley capture"
+            "statusMessage": "Capturing bounded Ley prompt"
           }
         ]
       }
@@ -33,7 +33,7 @@
             "type": "command",
             "command": "ley hook --host codex",
             "timeout": 20,
-            "statusMessage": "Saving Ley continuity"
+            "statusMessage": "Saving bounded Ley response"
           }
         ]
       }

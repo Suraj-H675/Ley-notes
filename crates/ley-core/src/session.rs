@@ -14,10 +14,19 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const SESSION_SCHEMA_VERSION: u32 = 1;
+/// The schema version used by turn-evidence events and their derived projection.
+///
+/// The original four lifecycle events remain schema version 1 so existing
+/// ledgers are never upgraded merely by being read or by a normal lifecycle
+/// mutation.
+pub const SESSION_SCHEMA_VERSION: u32 = 2;
+const SESSION_V1_SCHEMA_VERSION: u32 = 1;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
+pub const SESSION_TURN_EVIDENCE_LIMIT_BYTES: usize = 1_048_576;
+pub const SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS: usize = 4_000;
+pub const SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS: usize = 8_000;
 
 const STORE_ROOT: &str = ".ley";
 const AGENT_MEMORY_DIRECTORY: &str = "agent-memory";
@@ -26,6 +35,7 @@ const SESSIONS_DIRECTORY: &str = "sessions";
 const EVENTS_DIRECTORY: &str = "events";
 const SESSION_LOCK_FILE: &str = "sessions-v1.lock";
 const SESSION_FILE: &str = "session-v1.json";
+const SESSION_V2_FILE: &str = "session-v2.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,6 +248,64 @@ pub struct RenameSessionInput {
     pub note: String,
 }
 
+/// The producer that observed a turn. Turn evidence deliberately has a
+/// narrower origin vocabulary than session creation: these records are either
+/// trusted host-hook observations or an explicit local CLI action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TurnEvidenceOrigin {
+    HostHook,
+    ManualCli,
+}
+
+/// Whether a turn body was retained. Minimal capture and an exhausted
+/// per-session capacity both still append a disclosure event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TurnEvidenceRetention {
+    Captured,
+    OmittedMinimal,
+    OmittedCapacity,
+}
+
+/// Input shared by prompt and response evidence recording.
+///
+/// `correlation_material` is accepted only to derive an opaque `trn_` value.
+/// It is never persisted, hashed into the request fingerprint, or exposed by
+/// a derived projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnEvidenceInput {
+    pub request_id: String,
+    pub origin: TurnEvidenceOrigin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_material: Option<String>,
+    pub text: String,
+}
+
+/// An observed, append-only prompt or response record reconstructed from an
+/// immutable event. `text` is absent for disclosure-only captures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionTurnEvidence {
+    pub record_id: String,
+    pub event_id: String,
+    pub sequence: u64,
+    pub recorded_at_unix_ms: u64,
+    pub origin: TurnEvidenceOrigin,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_reference: Option<String>,
+    pub capture_mode: crate::CaptureMode,
+    pub retention: TurnEvidenceRetention,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EraseSessionMemoryInput {
@@ -412,6 +480,10 @@ pub struct AgentSession {
     pub finished_at_unix_ms: Option<u64>,
     pub event_count: u64,
     pub checkpoints: Vec<SessionCheckpoint>,
+    #[serde(default)]
+    pub prompts: Vec<SessionTurnEvidence>,
+    #[serde(default)]
+    pub responses: Vec<SessionTurnEvidence>,
     pub renames: Vec<SessionRename>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish: Option<SessionFinish>,
@@ -429,6 +501,8 @@ pub struct SessionSummary {
     pub updated_at_unix_ms: u64,
     pub event_count: u64,
     pub checkpoints: usize,
+    pub prompts: usize,
+    pub responses: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -474,10 +548,96 @@ enum SessionEventPayload {
     CheckpointRecorded(Box<SessionCheckpoint>),
     SessionFinished(SessionFinish),
     SessionRenamed(SessionRename),
+    UserPromptObserved(SessionTurnEvidence),
+    AssistantResponseObserved(SessionTurnEvidence),
 }
 
 pub fn generate_request_id() -> String {
     format!("req_{}", uuid::Uuid::new_v4().simple())
+}
+
+/// Derives a stable opaque turn reference from correlation material supplied by
+/// a trusted adapter. The material itself must stay in the adapter process and
+/// must never be put into a session input other than this transient field.
+pub fn derive_turn_reference(correlation_material: &str) -> String {
+    deterministic_id(
+        "trn",
+        &format!("ley-turn-reference-v1:{correlation_material}"),
+        64,
+    )
+}
+
+/// Records an observed user prompt as a first-class immutable event.
+pub fn record_session_prompt(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: TurnEvidenceInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    record_session_turn(project_start, vault, session_id, input, true)
+}
+
+/// Records an observed assistant response as a first-class immutable event.
+pub fn record_session_response(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: TurnEvidenceInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    record_session_turn(project_start, vault, session_id, input, false)
+}
+
+fn record_session_turn(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: TurnEvidenceInput,
+    is_prompt: bool,
+) -> Result<SessionMutation, LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    let diagnostic = diagnose_project(&project_start)?;
+    project_memory_overview(&diagnostic.root, &vault)?;
+    let kind = if is_prompt {
+        "user-prompt-observed"
+    } else {
+        "assistant-response-observed"
+    };
+    let event_id = deterministic_id(
+        "evt",
+        &format!("{session_id}:{}:{kind}", input.request_id),
+        64,
+    );
+    let request_id = input.request_id.clone();
+    let (evidence, redactions) = normalize_turn_evidence(
+        input,
+        &event_id,
+        diagnostic.capture.mode,
+        if is_prompt {
+            SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS
+        } else {
+            SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS
+        },
+    )?;
+    let payload = if is_prompt {
+        SessionEventPayload::UserPromptObserved(evidence)
+    } else {
+        SessionEventPayload::AssistantResponseObserved(evidence)
+    };
+    mutate_session(
+        &diagnostic.identity.project_id,
+        session_id,
+        PendingEvent {
+            event_id,
+            request_id,
+            redactions,
+            payload,
+            schema_version: SESSION_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: None,
+        },
+        vault,
+    )
 }
 
 pub fn start_session(
@@ -516,6 +676,7 @@ pub fn start_session(
             request_id: input.request_id,
             redactions,
             payload,
+            schema_version: SESSION_V1_SCHEMA_VERSION,
             allow_create: true,
             expected_event_count: None,
         },
@@ -549,6 +710,7 @@ pub fn checkpoint_session(
             request_id,
             redactions,
             payload: SessionEventPayload::CheckpointRecorded(Box::new(checkpoint)),
+            schema_version: SESSION_V1_SCHEMA_VERSION,
             allow_create: false,
             expected_event_count: None,
         },
@@ -601,6 +763,7 @@ pub fn finish_session(
             request_id: input.request_id,
             redactions,
             payload: SessionEventPayload::SessionFinished(finish),
+            schema_version: SESSION_V1_SCHEMA_VERSION,
             allow_create: false,
             expected_event_count: None,
         },
@@ -639,6 +802,7 @@ pub fn rename_session(
             request_id: input.request_id,
             redactions,
             payload: SessionEventPayload::SessionRenamed(rename),
+            schema_version: SESSION_V1_SCHEMA_VERSION,
             allow_create: false,
             expected_event_count: input.expected_event_count,
         },
@@ -819,6 +983,8 @@ impl From<&AgentSession> for SessionSummary {
             updated_at_unix_ms: session.updated_at_unix_ms,
             event_count: session.event_count,
             checkpoints: session.checkpoints.len(),
+            prompts: session.prompts.len(),
+            responses: session.responses.len(),
         }
     }
 }
@@ -1117,11 +1283,168 @@ fn citations_for_paths(
     Ok(citations)
 }
 
+fn normalize_turn_evidence(
+    input: TurnEvidenceInput,
+    event_id: &str,
+    capture_mode: crate::CaptureMode,
+    maximum_characters: usize,
+) -> Result<(SessionTurnEvidence, Vec<MemoryRedaction>), LeyCoreError> {
+    let host = input.host.map(sanitize_turn_host).transpose()?;
+    let turn_reference = input
+        .correlation_material
+        .as_deref()
+        .map(derive_validated_turn_reference)
+        .transpose()?;
+    let recorded_at_unix_ms = unix_time_ms();
+    let record_id = child_id("tev", event_id, 0);
+    if capture_mode == crate::CaptureMode::Minimal {
+        return Ok((
+            SessionTurnEvidence {
+                record_id,
+                event_id: event_id.to_owned(),
+                sequence: 0,
+                recorded_at_unix_ms,
+                origin: input.origin,
+                host,
+                turn_reference,
+                capture_mode,
+                retention: TurnEvidenceRetention::OmittedMinimal,
+                text: None,
+                truncated: false,
+            },
+            Vec::new(),
+        ));
+    }
+
+    let mut redactions = Vec::new();
+    let (text, truncated) = sanitize_bounded_turn_text(
+        "turnEvidence.text",
+        &input.text,
+        maximum_characters,
+        &mut redactions,
+    )?;
+    Ok((
+        SessionTurnEvidence {
+            record_id,
+            event_id: event_id.to_owned(),
+            sequence: 0,
+            recorded_at_unix_ms,
+            origin: input.origin,
+            host,
+            turn_reference,
+            capture_mode,
+            retention: TurnEvidenceRetention::Captured,
+            text,
+            truncated,
+        },
+        redactions,
+    ))
+}
+
+fn sanitize_turn_host(value: String) -> Result<String, LeyCoreError> {
+    let value = value.trim();
+    if is_valid_turn_host(value) {
+        Ok(value.to_owned())
+    } else {
+        Err(LeyCoreError::InvalidSessionRequest(
+            "turn evidence host must be codex, claude-code, or gemini-cli".to_owned(),
+        ))
+    }
+}
+
+fn is_valid_turn_host(value: &str) -> bool {
+    matches!(value, "codex" | "claude-code" | "gemini-cli")
+}
+
+fn derive_validated_turn_reference(correlation_material: &str) -> Result<String, LeyCoreError> {
+    if correlation_material.is_empty()
+        || correlation_material.chars().count() > 4_096
+        || correlation_material.chars().any(|character| {
+            character == '\0'
+                || (character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+        })
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "turn correlation material must contain at most 4096 safe characters".to_owned(),
+        ));
+    }
+    Ok(derive_turn_reference(correlation_material))
+}
+
+fn sanitize_bounded_turn_text(
+    field: &str,
+    value: &str,
+    maximum_characters: usize,
+    redactions: &mut Vec<MemoryRedaction>,
+) -> Result<(Option<String>, bool), LeyCoreError> {
+    let value = value.trim();
+    if value.chars().any(|character| {
+        character == '\0' || (character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    }) {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "{field} must contain safe characters"
+        )));
+    }
+    // Redact the supplied text before selecting the persisted visible window.
+    // This keeps the post-redaction body within the stated character cap even
+    // when a replacement marker is longer than the matched secret.
+    let (sanitized, mut findings) = redact_secrets(value);
+    let mut characters = sanitized.chars();
+    let bounded: String = characters.by_ref().take(maximum_characters).collect();
+    let truncated = characters.next().is_some();
+    if bounded.is_empty() {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "{field} cannot be empty"
+        )));
+    }
+    let retained_line_count = bounded.bytes().filter(|byte| *byte == b'\n').count() as u64 + 1;
+    for finding in &mut findings {
+        finding.lines.retain(|line| *line <= retained_line_count);
+    }
+    redactions.extend(
+        findings
+            .into_iter()
+            .filter(|finding| !finding.lines.is_empty())
+            .map(|RedactionFinding { kind, lines }| MemoryRedaction {
+                field: field.to_owned(),
+                kind,
+                lines,
+            }),
+    );
+    Ok((Some(bounded), truncated))
+}
+
+fn retained_turn_evidence_bytes(events: &[SessionEvent]) -> usize {
+    events
+        .iter()
+        .filter_map(|event| turn_evidence(&event.payload))
+        .filter_map(|evidence| evidence.text.as_deref())
+        .map(str::len)
+        .sum()
+}
+
+fn turn_evidence(payload: &SessionEventPayload) -> Option<&SessionTurnEvidence> {
+    match payload {
+        SessionEventPayload::UserPromptObserved(evidence)
+        | SessionEventPayload::AssistantResponseObserved(evidence) => Some(evidence),
+        _ => None,
+    }
+}
+
+fn turn_evidence_mut(payload: &mut SessionEventPayload) -> Option<&mut SessionTurnEvidence> {
+    match payload {
+        SessionEventPayload::UserPromptObserved(evidence)
+        | SessionEventPayload::AssistantResponseObserved(evidence) => Some(evidence),
+        _ => None,
+    }
+}
+
 struct PendingEvent {
     event_id: String,
     request_id: String,
     redactions: Vec<MemoryRedaction>,
     payload: SessionEventPayload,
+    schema_version: u32,
     allow_create: bool,
     expected_event_count: Option<u64>,
 }
@@ -1145,25 +1468,36 @@ fn mutate_session(
     } else {
         open_existing_dir(&session_dir, EVENTS_DIRECTORY)?
     };
-    let request_fingerprint = request_fingerprint(
-        project_id,
-        session_id,
-        &pending.request_id,
-        &pending.payload,
-    )?;
     let event_name = format!("{}.json", pending.event_id);
-    if let Some(existing) = read_private_file(&events_dir, &event_name, SESSION_EVENT_LIMIT_BYTES)?
+    let existing = store.read_events(session_id, &session_dir)?;
+    if let Some(event) = existing
+        .iter()
+        .find(|event| event.event_id == pending.event_id)
     {
-        let event: SessionEvent = parse_json(&event_name, &existing)?;
-        validate_event(&event, project_id, session_id)?;
+        align_turn_evidence_retry(&mut pending, &event.payload);
+        let request_fingerprint = request_fingerprint(
+            project_id,
+            session_id,
+            &pending.request_id,
+            &pending.payload,
+        )?;
         if event.request_fingerprint != request_fingerprint {
+            return Err(LeyCoreError::SessionIdempotencyConflict(pending.request_id));
+        }
+        if !retry_payload_matches(&event.payload, &pending.payload) {
             return Err(LeyCoreError::SessionIdempotencyConflict(pending.request_id));
         }
         let session = store.rebuild_session_from_dir(session_id, &session_dir)?;
         store.persist_projection(&session_dir, &session)?;
         return Ok(mutation(session, &pending.event_id, true));
     }
-    let existing = store.read_events(session_id, &session_dir)?;
+    apply_turn_evidence_capacity(&mut pending, retained_turn_evidence_bytes(&existing));
+    let request_fingerprint = request_fingerprint(
+        project_id,
+        session_id,
+        &pending.request_id,
+        &pending.payload,
+    )?;
     if existing
         .iter()
         .any(|event| event.request_id == pending.request_id)
@@ -1209,6 +1543,9 @@ fn mutate_session(
             }
         }
     }
+    if let Some(evidence) = turn_evidence_mut(&mut pending.payload) {
+        evidence.sequence = sequence;
+    }
     let minimum_recorded_at = existing
         .last()
         .map(|event| event.recorded_at_unix_ms)
@@ -1216,7 +1553,7 @@ fn mutate_session(
     let recorded_at_unix_ms =
         normalize_payload_recorded_at(&mut pending.payload, minimum_recorded_at);
     let event = SessionEvent {
-        schema_version: SESSION_SCHEMA_VERSION,
+        schema_version: pending.schema_version,
         event_id: pending.event_id.clone(),
         project_id: project_id.to_owned(),
         session_id: session_id.to_owned(),
@@ -1234,16 +1571,78 @@ fn mutate_session(
     Ok(mutation(session, &pending.event_id, false))
 }
 
+fn align_turn_evidence_retry(pending: &mut PendingEvent, stored: &SessionEventPayload) {
+    let (Some(pending), Some(stored)) = (
+        turn_evidence_mut(&mut pending.payload),
+        turn_evidence(stored),
+    ) else {
+        return;
+    };
+    pending.sequence = stored.sequence;
+    if stored.retention != TurnEvidenceRetention::Captured {
+        // Capacity/minimal disclosures deliberately retain no body-derived
+        // metadata. Preserve their original disclosure outcome on an exact
+        // retry instead of reconsidering the now-current capacity.
+        pending.capture_mode = stored.capture_mode;
+        pending.retention = stored.retention;
+        pending.text = None;
+        pending.truncated = false;
+    }
+}
+
+fn apply_turn_evidence_capacity(pending: &mut PendingEvent, retained_bytes: usize) {
+    let Some(evidence) = turn_evidence_mut(&mut pending.payload) else {
+        return;
+    };
+    let Some(text) = evidence.text.as_deref() else {
+        return;
+    };
+    if retained_bytes.saturating_add(text.len()) > SESSION_TURN_EVIDENCE_LIMIT_BYTES {
+        evidence.retention = TurnEvidenceRetention::OmittedCapacity;
+        evidence.text = None;
+        evidence.truncated = false;
+        // Redaction metadata for an omitted body would disclose facts about
+        // text that this event intentionally did not retain.
+        pending.redactions.clear();
+    }
+}
+
+fn retry_payload_matches(stored: &SessionEventPayload, pending: &SessionEventPayload) -> bool {
+    match (stored, pending) {
+        (
+            SessionEventPayload::UserPromptObserved(stored),
+            SessionEventPayload::UserPromptObserved(pending),
+        )
+        | (
+            SessionEventPayload::AssistantResponseObserved(stored),
+            SessionEventPayload::AssistantResponseObserved(pending),
+        ) => {
+            stored.record_id == pending.record_id
+                && stored.event_id == pending.event_id
+                && stored.sequence == pending.sequence
+                && stored.origin == pending.origin
+                && stored.host == pending.host
+                && stored.turn_reference == pending.turn_reference
+                && stored.capture_mode == pending.capture_mode
+                && stored.retention == pending.retention
+                && stored.text == pending.text
+                && stored.truncated == pending.truncated
+        }
+        _ => true,
+    }
+}
+
 fn mutation(session: AgentSession, event_id: &str, replayed: bool) -> SessionMutation {
     let base = format!(
         "{STORE_ROOT}/{AGENT_MEMORY_DIRECTORY}/{PROJECTS_DIRECTORY}/{}/{SESSIONS_DIRECTORY}/{}",
         session.project_id, session.session_id
     );
+    let session_path = format!("{base}/{}", projection_file_name(&session));
     SessionMutation {
         session,
         event_id: event_id.to_owned(),
         replayed,
-        session_path: format!("{base}/{SESSION_FILE}"),
+        session_path,
         markdown_path: format!("{base}/{SESSION_MARKDOWN_FILE}"),
     }
 }
@@ -1263,6 +1662,19 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
             rename.recorded_at_unix_ms = rename.recorded_at_unix_ms.max(minimum);
             rename.recorded_at_unix_ms
         }
+        SessionEventPayload::UserPromptObserved(evidence)
+        | SessionEventPayload::AssistantResponseObserved(evidence) => {
+            evidence.recorded_at_unix_ms = evidence.recorded_at_unix_ms.max(minimum);
+            evidence.recorded_at_unix_ms
+        }
+    }
+}
+
+fn projection_file_name(session: &AgentSession) -> &'static str {
+    if session.schema_version >= SESSION_SCHEMA_VERSION {
+        SESSION_V2_FILE
+    } else {
+        SESSION_FILE
     }
 }
 
@@ -1454,8 +1866,9 @@ impl SessionStore {
         session_dir: &Dir,
         session: &AgentSession,
     ) -> Result<(), LeyCoreError> {
-        let body = json_body(session, SESSION_PROJECTION_LIMIT_BYTES, SESSION_FILE)?;
-        write_atomic_private(session_dir, SESSION_FILE, &body)?;
+        let projection_file = projection_file_name(session);
+        let body = json_body(session, SESSION_PROJECTION_LIMIT_BYTES, projection_file)?;
+        write_atomic_private(session_dir, projection_file, &body)?;
         let markdown = render_session_markdown(session);
         if markdown.len() as u64 > SESSION_PROJECTION_LIMIT_BYTES {
             return Err(LeyCoreError::MetadataTooLarge {
@@ -1560,7 +1973,14 @@ fn replay_events(
         ));
     };
     let mut session = AgentSession {
-        schema_version: SESSION_SCHEMA_VERSION,
+        schema_version: if events
+            .iter()
+            .any(|event| event.schema_version == SESSION_SCHEMA_VERSION)
+        {
+            SESSION_SCHEMA_VERSION
+        } else {
+            SESSION_V1_SCHEMA_VERSION
+        },
         project_id: project_id.to_owned(),
         session_id: session_id.to_owned(),
         name: name.clone(),
@@ -1574,6 +1994,8 @@ fn replay_events(
         finished_at_unix_ms: None,
         event_count: events.len() as u64,
         checkpoints: Vec::new(),
+        prompts: Vec::new(),
+        responses: Vec::new(),
         renames: Vec::new(),
         finish: None,
     };
@@ -1603,8 +2025,17 @@ fn replay_events(
                 session.name = rename.name.clone();
                 session.renames.push(rename.clone());
             }
+            SessionEventPayload::UserPromptObserved(evidence) => {
+                session.prompts.push(evidence.clone());
+            }
+            SessionEventPayload::AssistantResponseObserved(evidence) => {
+                session.responses.push(evidence.clone());
+            }
         }
         session.updated_at_unix_ms = event.recorded_at_unix_ms;
+    }
+    if retained_turn_evidence_bytes(events) > SESSION_TURN_EVIDENCE_LIMIT_BYTES {
+        return invalid_session_store("session turn-evidence capacity was exceeded");
     }
     Ok(session)
 }
@@ -1614,8 +2045,10 @@ fn validate_event(
     project_id: &str,
     session_id: &str,
 ) -> Result<(), LeyCoreError> {
-    if event.schema_version != SESSION_SCHEMA_VERSION
-        || event.project_id != project_id
+    if !matches!(
+        event.schema_version,
+        SESSION_V1_SCHEMA_VERSION | SESSION_SCHEMA_VERSION
+    ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
     {
@@ -1641,6 +2074,8 @@ fn validate_event(
         SessionEventPayload::CheckpointRecorded(_) => "checkpoint-recorded",
         SessionEventPayload::SessionFinished(_) => "session-finished",
         SessionEventPayload::SessionRenamed(_) => "session-renamed",
+        SessionEventPayload::UserPromptObserved(_) => "user-prompt-observed",
+        SessionEventPayload::AssistantResponseObserved(_) => "assistant-response-observed",
     };
     let expected_event = deterministic_id(
         "evt",
@@ -1712,6 +2147,80 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
             }
             validate_stored_text("rename.name", &rename.name, 1, 128)?;
             validate_stored_text("rename.note", &rename.note, 1, 4_000)?;
+        }
+        SessionEventPayload::UserPromptObserved(evidence) => {
+            validate_turn_evidence(event, evidence, SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS)?;
+        }
+        SessionEventPayload::AssistantResponseObserved(evidence) => {
+            validate_turn_evidence(event, evidence, SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS)?;
+        }
+    }
+    let is_turn_event = matches!(
+        event.payload,
+        SessionEventPayload::UserPromptObserved(_)
+            | SessionEventPayload::AssistantResponseObserved(_)
+    );
+    if event.schema_version == SESSION_V1_SCHEMA_VERSION && is_turn_event {
+        return invalid_session_store(
+            "turn evidence events require session event schema version 2",
+        );
+    }
+    if event.schema_version == SESSION_SCHEMA_VERSION && !is_turn_event {
+        return invalid_session_store("lifecycle events require session event schema version 1");
+    }
+    Ok(())
+}
+
+fn validate_turn_evidence(
+    event: &SessionEvent,
+    evidence: &SessionTurnEvidence,
+    maximum_characters: usize,
+) -> Result<(), LeyCoreError> {
+    if evidence.record_id != child_id("tev", &event.event_id, 0)
+        || evidence.event_id != event.event_id
+        || evidence.sequence != event.sequence
+        || evidence.recorded_at_unix_ms != event.recorded_at_unix_ms
+        || evidence.recorded_at_unix_ms == 0
+    {
+        return invalid_session_store("turn evidence identity is invalid");
+    }
+    if let Some(host) = &evidence.host {
+        if !is_valid_turn_host(host) {
+            return invalid_session_store("turn evidence host is invalid");
+        }
+    }
+    if let Some(turn_reference) = &evidence.turn_reference {
+        if !valid_prefixed_hex(turn_reference, "trn_", 64) {
+            return invalid_session_store("turn evidence reference is invalid");
+        }
+    }
+    match evidence.retention {
+        TurnEvidenceRetention::Captured => {
+            if evidence.capture_mode == crate::CaptureMode::Minimal {
+                return invalid_session_store("minimal capture cannot retain turn evidence text");
+            }
+            let text = evidence.text.as_ref().ok_or_else(|| {
+                LeyCoreError::InvalidSessionStore(
+                    "captured turn evidence must retain text".to_owned(),
+                )
+            })?;
+            validate_stored_text("turnEvidence.text", text, 1, maximum_characters)?;
+        }
+        TurnEvidenceRetention::OmittedMinimal => {
+            if evidence.capture_mode != crate::CaptureMode::Minimal
+                || evidence.text.is_some()
+                || evidence.truncated
+            {
+                return invalid_session_store("minimal turn evidence disclosure is invalid");
+            }
+        }
+        TurnEvidenceRetention::OmittedCapacity => {
+            if evidence.capture_mode == crate::CaptureMode::Minimal
+                || evidence.text.is_some()
+                || evidence.truncated
+            {
+                return invalid_session_store("capacity turn evidence disclosure is invalid");
+            }
         }
     }
     Ok(())
@@ -2074,6 +2583,23 @@ fn request_fingerprint(
             rename.recorded_at_unix_ms = 0;
             SessionEventPayload::SessionRenamed(rename)
         }
+        SessionEventPayload::UserPromptObserved(evidence) => {
+            let mut evidence = evidence.clone();
+            evidence.recorded_at_unix_ms = 0;
+            evidence.sequence = 0;
+            // A request fingerprint must never become a persisted raw-body
+            // hash. Retained bodies are compared directly only for an exact
+            // retry while the process has reconstructed the immutable event.
+            evidence.text = None;
+            SessionEventPayload::UserPromptObserved(evidence)
+        }
+        SessionEventPayload::AssistantResponseObserved(evidence) => {
+            let mut evidence = evidence.clone();
+            evidence.recorded_at_unix_ms = 0;
+            evidence.sequence = 0;
+            evidence.text = None;
+            SessionEventPayload::AssistantResponseObserved(evidence)
+        }
     };
     let bytes = serde_json::to_vec(&(project_id, session_id, request_id, stable_payload))
         .map_err(|error| LeyCoreError::InvalidSessionStore(error.to_string()))?;
@@ -2135,6 +2661,15 @@ fn render_session_markdown(session: &AgentSession) -> String {
     }
     if let Some(agent) = &session.source.agent {
         output.push_str(&format!("- Agent: {}\n", markdown_inline(agent)));
+    }
+    if !session.prompts.is_empty() || !session.responses.is_empty() {
+        output.push_str("\n## Observed turn evidence\n");
+        for evidence in &session.prompts {
+            render_turn_evidence_markdown(&mut output, "User prompt", evidence);
+        }
+        for evidence in &session.responses {
+            render_turn_evidence_markdown(&mut output, "Assistant response", evidence);
+        }
     }
     for (index, checkpoint) in session.checkpoints.iter().enumerate() {
         output.push_str(&format!(
@@ -2288,6 +2823,51 @@ fn render_session_markdown(session: &AgentSession) -> String {
     output
 }
 
+fn render_turn_evidence_markdown(output: &mut String, label: &str, evidence: &SessionTurnEvidence) {
+    output.push_str(&format!(
+        "\n### {label} · {}\n\n",
+        evidence.recorded_at_unix_ms
+    ));
+    output.push_str(&format!(
+        "- Origin: `{}`\n- Capture mode: `{}`\n- Retention: `{}`\n",
+        enum_label(evidence.origin),
+        evidence.capture_mode,
+        enum_label(evidence.retention),
+    ));
+    if let Some(host) = &evidence.host {
+        output.push_str(&format!("- Host: `{}`\n", markdown_inline(host)));
+    }
+    if let Some(turn_reference) = &evidence.turn_reference {
+        output.push_str(&format!("- Turn reference: `{turn_reference}`\n"));
+    }
+    match evidence.retention {
+        TurnEvidenceRetention::OmittedMinimal => {
+            output.push_str("- Body: omitted by Minimal capture mode\n");
+        }
+        TurnEvidenceRetention::OmittedCapacity => {
+            output.push_str(
+                "- Body: omitted because the session turn-evidence capacity was reached\n",
+            );
+        }
+        TurnEvidenceRetention::Captured => {
+            if let Some(text) = &evidence.text {
+                if text.contains("[REDACTED:") {
+                    output.push_str("- Body: captured with redactions\n");
+                } else {
+                    output.push_str("- Body: captured\n");
+                }
+                if evidence.truncated {
+                    output.push_str("- Body: truncated to the capture limit\n");
+                }
+                output.push('\n');
+                push_quote(output, text);
+            } else {
+                output.push_str("- Body: no visible text was supplied\n");
+            }
+        }
+    }
+}
+
 fn push_quote(output: &mut String, value: &str) {
     for line in value.lines() {
         output.push_str("> ");
@@ -2340,6 +2920,15 @@ enum_labels!(SessionSourceKind, {
     HostHook => "host-hook",
     Mcp => "mcp",
     Import => "import",
+});
+enum_labels!(TurnEvidenceOrigin, {
+    HostHook => "host-hook",
+    ManualCli => "manual-cli",
+});
+enum_labels!(TurnEvidenceRetention, {
+    Captured => "captured",
+    OmittedMinimal => "omitted-minimal",
+    OmittedCapacity => "omitted-capacity",
 });
 enum_labels!(PlanStatus, {
     Pending => "pending",
@@ -2528,12 +3117,16 @@ mod tests {
     use tempfile::tempdir;
 
     fn setup_memory() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        setup_memory_with_mode(CaptureMode::Structured)
+    }
+
+    fn setup_memory_with_mode(mode: CaptureMode) -> (tempfile::TempDir, PathBuf, PathBuf) {
         let base = tempdir().unwrap();
         let project = base.path().join("project");
         let vault = base.path().join("vault");
         std::fs::create_dir(&project).unwrap();
         std::fs::create_dir(&vault).unwrap();
-        initialize_project(&project, Some("Session test"), CaptureMode::Structured).unwrap();
+        initialize_project(&project, Some("Session test"), mode).unwrap();
         std::fs::write(
             project.join("README.md"),
             "# Session memory\n\nA durable checkpoint target.\n",
@@ -2546,6 +3139,20 @@ mod tests {
 
     fn request_id(digit: char) -> String {
         format!("req_{}", digit.to_string().repeat(32))
+    }
+
+    fn numbered_request_id(number: usize) -> String {
+        format!("req_{number:032x}")
+    }
+
+    fn turn_input(request_id: String, text: impl Into<String>) -> TurnEvidenceInput {
+        TurnEvidenceInput {
+            request_id,
+            origin: TurnEvidenceOrigin::HostHook,
+            host: Some("codex".to_owned()),
+            correlation_material: Some("trusted-adapter-correlation".to_owned()),
+            text: text.into(),
+        }
     }
 
     fn git(project: &Path, arguments: &[&str]) -> String {
@@ -2646,6 +3253,205 @@ mod tests {
             .join(project_id)
             .join(SESSIONS_DIRECTORY)
             .join(session_id)
+    }
+
+    #[test]
+    fn v1_ledger_remains_readable_without_a_read_rewrite() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('0'))).unwrap();
+        let directory = session_directory(&project, &vault, &started.session.session_id);
+        let v1 = directory.join(SESSION_FILE);
+        let before = std::fs::read(&v1).unwrap();
+
+        let replayed = read_session(&project, &vault, &started.session.session_id).unwrap();
+
+        assert_eq!(replayed.schema_version, SESSION_V1_SCHEMA_VERSION);
+        assert_eq!(std::fs::read(v1).unwrap(), before);
+        assert!(!directory.join(SESSION_V2_FILE).exists());
+    }
+
+    #[test]
+    fn structured_turn_evidence_is_redacted_truncated_and_upgrades_projection() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
+        let directory = session_directory(&project, &vault, &started.session.session_id);
+        let v1_before = std::fs::read(directory.join(SESSION_FILE)).unwrap();
+        let secret = "sk-abcdefghijklmnopqrstuvwxyz123456";
+        let prompt = format!("Use {secret} {}", "x".repeat(4_100));
+
+        let mutation = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('2'), prompt.clone()),
+        )
+        .unwrap();
+        let evidence = &mutation.session.prompts[0];
+        let stored_text = evidence.text.as_deref().unwrap();
+        assert_eq!(mutation.session.schema_version, SESSION_SCHEMA_VERSION);
+        assert_eq!(evidence.retention, TurnEvidenceRetention::Captured);
+        assert!(evidence.truncated);
+        assert!(stored_text.chars().count() <= SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS);
+        assert!(stored_text.contains("[REDACTED:provider-token]"));
+        assert!(!stored_text.contains(secret));
+        assert!(evidence
+            .turn_reference
+            .as_deref()
+            .unwrap()
+            .starts_with("trn_"));
+        assert_eq!(
+            evidence.turn_reference,
+            Some(derive_turn_reference("trusted-adapter-correlation"))
+        );
+        assert!(directory.join(SESSION_V2_FILE).exists());
+        assert_eq!(
+            std::fs::read(directory.join(SESSION_FILE)).unwrap(),
+            v1_before
+        );
+        assert!(mutation.session_path.ends_with(SESSION_V2_FILE));
+        let markdown = std::fs::read_to_string(directory.join(SESSION_MARKDOWN_FILE)).unwrap();
+        assert!(markdown.contains("captured with redactions"));
+        assert!(markdown.contains("truncated to the capture limit"));
+    }
+
+    #[test]
+    fn minimal_turn_evidence_appends_a_body_free_disclosure() {
+        let (_base, project, vault) = setup_memory_with_mode(CaptureMode::Minimal);
+        let started = start_session(&project, &vault, start_input(request_id('3'))).unwrap();
+        let text = "This must never appear in Minimal evidence.";
+        let mutation = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('4'), text),
+        )
+        .unwrap();
+        let evidence = &mutation.session.responses[0];
+        assert_eq!(evidence.retention, TurnEvidenceRetention::OmittedMinimal);
+        assert!(evidence.text.is_none());
+        assert!(!evidence.truncated);
+        let mut stored = String::new();
+        collect_file_text(
+            &session_directory(&project, &vault, &started.session.session_id),
+            &mut stored,
+        );
+        assert!(!stored.contains(text));
+    }
+
+    #[test]
+    fn turn_evidence_capacity_omission_is_idempotent_without_body_metadata() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(numbered_request_id(1))).unwrap();
+        let response = "r".repeat(SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS);
+        for index in 2..=132 {
+            let mutation = record_session_response(
+                &project,
+                &vault,
+                &started.session.session_id,
+                turn_input(numbered_request_id(index), response.clone()),
+            )
+            .unwrap();
+            assert_eq!(mutation.session.responses.len(), index - 1);
+        }
+        let capacity_request = numbered_request_id(133);
+        let omitted = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(capacity_request.clone(), response.clone()),
+        )
+        .unwrap();
+        let evidence = omitted.session.responses.last().unwrap();
+        assert_eq!(evidence.retention, TurnEvidenceRetention::OmittedCapacity);
+        assert!(evidence.text.is_none());
+        assert!(!evidence.truncated);
+        let replayed = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(capacity_request, response),
+        )
+        .unwrap();
+        assert!(replayed.replayed);
+        assert_eq!(replayed.session.event_count, omitted.session.event_count);
+        let replayed_early = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(
+                numbered_request_id(2),
+                "r".repeat(SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS),
+            ),
+        )
+        .unwrap();
+        assert!(replayed_early.replayed);
+        assert_eq!(
+            replayed_early.session.event_count,
+            omitted.session.event_count
+        );
+        let event_path = session_directory(&project, &vault, &started.session.session_id)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", omitted.event_id));
+        let event: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(event_path).unwrap()).unwrap();
+        assert!(event["data"].get("text").is_none());
+        assert!(event["data"].get("originalLength").is_none());
+        assert!(event["data"].get("bodyHash").is_none());
+    }
+
+    #[test]
+    fn turn_evidence_request_conflicts_and_terminal_sessions_reject_appends() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('5'))).unwrap();
+        let request = request_id('6');
+        let captured = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request.clone(), "original prompt"),
+        )
+        .unwrap();
+        assert!(
+            record_session_prompt(
+                &project,
+                &vault,
+                &started.session.session_id,
+                turn_input(request.clone(), "original prompt"),
+            )
+            .unwrap()
+            .replayed
+        );
+        assert!(matches!(
+            record_session_prompt(
+                &project,
+                &vault,
+                &started.session.session_id,
+                turn_input(request, "changed prompt"),
+            ),
+            Err(LeyCoreError::SessionIdempotencyConflict(_))
+        ));
+        finish_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            finish_input(request_id('7')),
+        )
+        .unwrap();
+        assert!(matches!(
+            record_session_response(
+                &project,
+                &vault,
+                &started.session.session_id,
+                turn_input(request_id('8'), "too late"),
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(_))
+        ));
+        assert_eq!(
+            read_session(&project, &vault, &started.session.session_id)
+                .unwrap()
+                .event_count,
+            captured.session.event_count + 1
+        );
     }
 
     #[test]

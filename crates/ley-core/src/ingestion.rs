@@ -1706,6 +1706,14 @@ fn redaction_rules() -> &'static Vec<RedactionRule> {
                 replacement: "${1}\"[REDACTED:credential-assignment]\"",
             },
             RedactionRule {
+                kind: "credential-inline-assignment",
+                pattern: Regex::new(
+                    r#"(?i)(\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key|token)\b\s*(?::|=)\s*)(?:\"(?:\\.|[^\"\\])*\"|'[^'\r\n]*'|[^\s#,")\]}]+)"#,
+                )
+                .expect("inline credential assignment pattern is valid"),
+                replacement: "${1}\"[REDACTED:credential-inline-assignment]\"",
+            },
+            RedactionRule {
                 kind: "credential-url",
                 pattern: Regex::new(r"(?i)([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@")
                     .expect("credential URL pattern is valid"),
@@ -2230,6 +2238,7 @@ mod tests {
             "const password = \"weak-password\"\n",
             "\"apiKey\": \"sk-abcdefghijklmnopqrstuvwxyz123456\"\n",
             "token ghp_abcdefghijklmnopqrstuvwxyz123456\n",
+            "Please use token=secret-value for this turn\n",
             "db=postgres://user:pass@localhost/db\n",
             "-----BEGIN RSA PRIVATE KEY-----\n",
             "private material\n",
@@ -2240,6 +2249,7 @@ mod tests {
         assert!(!redacted.contains("abcdefghijklmnopqrstuvwxyz123456"));
         assert!(!redacted.contains(":pass@"));
         assert!(!redacted.contains("private material"));
+        assert!(!redacted.contains("secret-value"));
         assert_eq!(
             findings
                 .iter()
@@ -2247,6 +2257,7 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             BTreeSet::from([
                 "credential-assignment",
+                "credential-inline-assignment",
                 "credential-url",
                 "private-key",
                 "provider-token",

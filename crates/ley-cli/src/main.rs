@@ -3,13 +3,16 @@ use ley_core::{
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
     learning_review_inbox, list_learnings, list_sessions, preview_capture, process_host_hook,
     project_resume_context, propose_learning, read_learning, read_project_graph, read_session,
-    rename_session, review_learning, start_session, AgentHost, BindingRegistry, CaptureMode,
-    CheckpointInput, CommandInput, CorrectLearningInput, EraseSessionMemoryInput,
-    FinishSessionInput, GraphNodeKind, LearningActor, LearningEvidenceInput,
-    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
-    LeyCoreError, ProposeLearningInput, RenameSessionInput, ReviewLearningInput, SessionSource,
-    SessionSourceKind, SessionStatus, StartSessionInput, VerificationInput, VerificationStatus,
+    read_session_context, read_session_turns_context, record_session_prompt,
+    record_session_response, rename_session, review_learning, start_session, AgentHost,
+    BindingRegistry, CaptureMode, CheckpointInput, CommandInput, CorrectLearningInput,
+    EraseSessionMemoryInput, FinishSessionInput, GraphNodeKind, LearningActor,
+    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
+    LearningTrustState, LeyCoreError, ProposeLearningInput, RenameSessionInput,
+    ReviewLearningInput, SessionSource, SessionSourceKind, SessionStatus, StartSessionInput,
+    TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput, VerificationStatus,
     DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_mcp::{run_stdio, run_unavailable_stdio};
 use std::env;
@@ -865,21 +868,103 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
 fn session(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "session requires start, checkpoint, finish, rename, erase, list, or show".to_owned(),
+            "session requires start, prompt, response, checkpoint, finish, rename, erase, list, show, or turns".to_owned(),
         ));
     };
     match command {
         "start" => session_start(&arguments[1..]),
+        "prompt" => session_turn_record(&arguments[1..], true),
+        "response" => session_turn_record(&arguments[1..], false),
         "checkpoint" => session_checkpoint(&arguments[1..]),
         "finish" => session_finish(&arguments[1..]),
         "rename" => session_rename(&arguments[1..]),
         "erase" => session_erase(&arguments[1..]),
         "list" => session_list(&arguments[1..]),
         "show" => session_show(&arguments[1..]),
+        "turns" => session_turns(&arguments[1..]),
         other => Err(CliError::Usage(format!(
             "unknown session command '{other}'"
         ))),
     }
+}
+
+fn session_turn_record(arguments: &[String], is_prompt: bool) -> Result<(), CliError> {
+    let mut common = SessionArguments::default();
+    let mut session_id = None;
+    let mut request_id = None;
+    let mut stdin = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--request-id" => {
+                index += 1;
+                request_id = Some(required_value(arguments, index, "--request-id")?.to_owned());
+            }
+            "--stdin" => stdin = true,
+            value if session_id.is_none() && value.starts_with("ses_") => {
+                session_id = Some(value.to_owned())
+            }
+            value => parse_session_common(arguments, &mut index, value, &mut common)?,
+        }
+        index += 1;
+    }
+    let label = if is_prompt { "prompt" } else { "response" };
+    let session_id =
+        session_id.ok_or_else(|| CliError::Usage(format!("session {label} requires SESSION")))?;
+    if !stdin {
+        return Err(CliError::Usage(format!(
+            "session {label} requires --stdin so private text is not placed in shell history"
+        )));
+    }
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(1_048_577)
+        .read_to_end(&mut bytes)
+        .map_err(CliError::StdinInput)?;
+    if bytes.len() > 1_048_576 {
+        return Err(CliError::Usage(format!(
+            "session {label} input cannot exceed 1 MiB"
+        )));
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|_| CliError::Usage(format!("session {label} input must be UTF-8")))?;
+    if text.trim().is_empty() {
+        return Err(CliError::Usage(format!(
+            "session {label} input cannot be empty"
+        )));
+    }
+    let binding = resolve_session_binding(&common)?;
+    let input = TurnEvidenceInput {
+        request_id: request_id.unwrap_or_else(generate_request_id),
+        origin: TurnEvidenceOrigin::ManualCli,
+        host: None,
+        correlation_material: None,
+        text,
+    };
+    let result = if is_prompt {
+        record_session_prompt(
+            &common.project_path()?,
+            &binding.vault_path,
+            &session_id,
+            input,
+        )?
+    } else {
+        record_session_response(
+            &common.project_path()?,
+            &binding.vault_path,
+            &session_id,
+            input,
+        )?
+    };
+    print_session_mutation(
+        &result,
+        common.json,
+        if is_prompt {
+            "Recorded prompt for"
+        } else {
+            "Recorded response for"
+        },
+    )
 }
 
 fn session_erase(arguments: &[String]) -> Result<(), CliError> {
@@ -1271,22 +1356,95 @@ fn session_show(arguments: &[String]) -> Result<(), CliError> {
         .as_deref()
         .expect("show validation requires a session ID");
     let binding = resolve_session_binding(&common)?;
-    let session = read_session(&common.project_path()?, &binding.vault_path, session_id)?;
     if common.json {
+        let session = read_session_context(
+            &common.project_path()?,
+            &binding.vault_path,
+            session_id,
+            DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+            DEFAULT_SESSION_CONTEXT_CHARACTERS,
+        )?;
         println!(
             "{}",
             serde_json::to_string_pretty(&session).expect("session is serializable")
         );
     } else {
+        let session = read_session(&common.project_path()?, &binding.vault_path, session_id)?;
         println!("Session: {} ({})", session.name, session.session_id);
         println!("Status: {}", session_status_label(session.status));
         println!("Goal: {}", session.goal);
         println!("Events: {}", session.event_count);
         println!("Checkpoints: {}", session.checkpoints.len());
+        println!("Prompts observed: {}", session.prompts.len());
+        println!("Responses observed: {}", session.responses.len());
         if let Some(finish) = session.finish {
             println!("Result: {}", finish.summary);
             if !finish.handoff.is_empty() {
                 println!("Handoff: {}", finish.handoff);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn session_turns(arguments: &[String]) -> Result<(), CliError> {
+    let mut common = SessionArguments::default();
+    let mut session_id = None;
+    let mut max_results = ley_core::DEFAULT_SESSION_TURN_RESULTS;
+    let mut max_characters = ley_core::DEFAULT_SESSION_TURN_CHARACTERS;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--max-results" => {
+                index += 1;
+                max_results = parse_usize(
+                    required_value(arguments, index, "--max-results")?,
+                    "--max-results",
+                )?;
+            }
+            "--max-characters" => {
+                index += 1;
+                max_characters = parse_usize(
+                    required_value(arguments, index, "--max-characters")?,
+                    "--max-characters",
+                )?;
+            }
+            value if session_id.is_none() && value.starts_with("ses_") => {
+                session_id = Some(value.to_owned())
+            }
+            value => parse_session_common(arguments, &mut index, value, &mut common)?,
+        }
+        index += 1;
+    }
+    let session_id =
+        session_id.ok_or_else(|| CliError::Usage("session turns requires SESSION".to_owned()))?;
+    let binding = resolve_session_binding(&common)?;
+    let turns = read_session_turns_context(
+        &common.project_path()?,
+        &binding.vault_path,
+        &session_id,
+        max_results,
+        max_characters,
+    )?;
+    if common.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&turns).expect("session turns are serializable")
+        );
+    } else {
+        println!("Session: {}", turns.session_id);
+        println!(
+            "Observed: {} prompts / {} responses ({} retained)",
+            turns.prompt_count, turns.response_count, turns.retained_turn_count
+        );
+        println!("Warning: {}", turns.instruction_warning);
+        for turn in turns.turns {
+            println!(
+                "\n{:?} · {:?} · {}",
+                turn.kind, turn.retention, turn.record_id
+            );
+            if let Some(text) = turn.text {
+                println!("{text}");
             }
         }
     }
@@ -1403,9 +1561,27 @@ fn print_session_mutation(
     verb: &str,
 ) -> Result<(), CliError> {
     if json {
+        let session = &result.session;
+        let receipt = serde_json::json!({
+            "eventId": result.event_id,
+            "replayed": result.replayed,
+            "sessionPath": result.session_path,
+            "markdownPath": result.markdown_path,
+            "session": {
+                "schemaVersion": session.schema_version,
+                "projectId": session.project_id,
+                "sessionId": session.session_id,
+                "name": session.name,
+                "status": session.status,
+                "eventCount": session.event_count,
+                "checkpointCount": session.checkpoints.len(),
+                "promptCount": session.prompts.len(),
+                "responseCount": session.responses.len(),
+            }
+        });
         println!(
             "{}",
-            serde_json::to_string_pretty(result).expect("session mutation is serializable")
+            serde_json::to_string_pretty(&receipt).expect("session receipt is serializable")
         );
     } else {
         println!("{verb} session: {}", result.session.session_id);
@@ -1800,6 +1976,8 @@ fn print_help() {
     println!("  ley mcp [path] [--vault TEMPORARY_VAULT] [--allow-session-writes]");
     println!("      [--allow-learning-proposals]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
+    println!("  ley session prompt SESSION [path] --stdin [--request-id REQUEST] [--json]");
+    println!("  ley session response SESSION [path] --stdin [--request-id REQUEST] [--json]");
     println!("  ley session checkpoint SESSION [path] --summary TEXT [--touched PATH]...");
     println!("  ley session checkpoint SESSION [path] --data CHECKPOINT.json");
     println!("  ley session finish SESSION [path] --summary TEXT [--status STATUS]");
@@ -1807,6 +1985,7 @@ fn print_help() {
     println!("  ley session erase SESSION [path] --confirm-name NAME --expected-events N [--json]");
     println!("  ley session list [path] [--json]");
     println!("  ley session show SESSION [path] [--json]");
+    println!("  ley session turns SESSION [path] [--max-results N] [--max-characters N] [--json]");
     println!("  ley resume [path] [--max-sessions N] [--max-learnings N] [--json]");
     println!(
         "  ley learning propose [path] --actor ACTOR --provenance SOURCE --kind KIND --title TITLE"
@@ -1821,7 +2000,7 @@ fn print_help() {
     println!("  ley preview [path] [--json]");
     println!();
     println!(
-        "Structured capture is the default. Full evidence explicitly enables raw transcripts."
+        "Structured capture is the default. Ley never reads or stores complete host transcripts automatically."
     );
 }
 
@@ -1833,6 +2012,7 @@ enum CliError {
     CurrentDirectory(std::io::Error),
     HookInput(std::io::Error),
     HookJson(serde_json::Error),
+    StdinInput(std::io::Error),
     InputFile {
         path: PathBuf,
         source: std::io::Error,
@@ -1850,6 +2030,9 @@ impl std::fmt::Display for CliError {
             }
             Self::HookInput(error) => write!(formatter, "could not read hook input: {error}"),
             Self::HookJson(error) => write!(formatter, "hook input is not valid JSON: {error}"),
+            Self::StdinInput(error) => {
+                write!(formatter, "could not read session text from stdin: {error}")
+            }
             Self::InputFile { path, source } => {
                 write!(formatter, "could not read {}: {source}", path.display())
             }

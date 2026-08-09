@@ -22,11 +22,14 @@ Ley stores each session as immutable, versioned JSON events under the bound file
 
 The `events` directory is authoritative. `session-v1.json` and `session.md` are atomic projections rebuilt from those events. Reading a session verifies and replays the event stream instead of trusting either projection.
 
-Version 1 supports three event types:
+Version 1 supports four event types:
 
 - `session-started` records the name, goal, host metadata, and artifact snapshot at session start
 - `checkpoint-recorded` records plans, decisions, tasks, problems, attempts, outcomes, resolutions, touched artifacts, commands, verification, and unresolved work
 - `session-finished` records a completed, paused, or abandoned outcome, final response, handoff, and unresolved work
+- `session-renamed` records an append-only user-authored name revision and reason
+
+[ADR 0025](0025-bounded-session-turn-evidence.md) extends the same ledger with v2 prompt/response observation events while leaving every v1 event and schema readable and unchanged.
 
 Every mutation requires a `req_` request ID. Ley derives the event ID from the session, event type, and request ID. Repeating the same request returns the existing event. Reusing a request ID with different content fails. A project-level advisory lock serializes writers, and event sequence numbers must remain contiguous.
 

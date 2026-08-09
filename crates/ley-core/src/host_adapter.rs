@@ -1,7 +1,7 @@
 use crate::{
-    checkpoint_session, project_resume_context, read_session, start_session, CheckpointInput,
-    LeyCoreError, ProjectResumePack, SessionSource, SessionSourceKind, SessionStatus,
-    StartSessionInput,
+    project_resume_context, read_session, record_session_prompt, record_session_response,
+    start_session, AgentSession, LeyCoreError, ProjectResumePack, SessionSource, SessionSourceKind,
+    SessionStatus, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -9,9 +9,8 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::path::Path;
 
-pub const HOST_ADAPTER_SCHEMA_VERSION: u32 = 2;
+pub const HOST_ADAPTER_SCHEMA_VERSION: u32 = 3;
 const MAX_HOST_IDENTIFIER_CHARACTERS: usize = 512;
-const MAX_AGENT_RESPONSE_CHARACTERS: usize = 12_000;
 const HOST_RESUME_SESSIONS: usize = 3;
 const HOST_RESUME_LEARNINGS: usize = 6;
 const HOST_RESUME_CHARACTERS: usize = 8_000;
@@ -114,26 +113,35 @@ pub fn process_host_hook(
         }
         (AgentHost::Codex | AgentHost::ClaudeCode, "UserPromptSubmit")
         | (AgentHost::GeminiCli, "BeforeAgent") => {
-            let turn_id = match host {
-                AgentHost::Codex => {
-                    let turn_id = required_text(object.get("turn_id"), "turn_id")?;
-                    Some(turn_id)
-                }
-                AgentHost::ClaudeCode | AgentHost::GeminiCli => object
-                    .get("timestamp")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned),
-            };
-            if let Some(turn_id) = turn_id.as_deref() {
-                validate_host_identifier("turn_id", turn_id)?;
-            }
+            let prompt = required_text(object.get("prompt"), "prompt")?;
             let session_id = ensure_host_session(
                 project_start.as_ref(),
                 vault.as_ref(),
                 host,
                 &external_session_id,
+            )?;
+            let session = read_session(project_start.as_ref(), vault.as_ref(), &session_id)?;
+            if session.status != SessionStatus::Active {
+                return Ok(noop_for_session(host, event, session_id));
+            }
+            let correlation = host_turn_correlation(
+                object,
+                host,
+                &external_session_id,
+                &session,
+                TurnSide::Prompt,
+            )?;
+            let mutation = record_session_prompt(
+                project_start,
+                vault,
+                &session_id,
+                TurnEvidenceInput {
+                    request_id: stable_request_id(&["prompt", &correlation]),
+                    origin: TurnEvidenceOrigin::HostHook,
+                    host: Some(host.source_name().to_owned()),
+                    correlation_material: Some(correlation),
+                    text: prompt,
+                },
             )?;
             Ok(HostHookResult {
                 schema_version: HOST_ADAPTER_SCHEMA_VERSION,
@@ -141,7 +149,7 @@ pub fn process_host_hook(
                 event,
                 disposition: HostHookDisposition::TurnPrepared,
                 session_id: Some(session_id.clone()),
-                output: turn_start_output(host, &session_id, turn_id.as_deref()),
+                output: turn_start_output(host, &session_id, &mutation.session),
             })
         }
         (AgentHost::Codex | AgentHost::ClaudeCode, "Stop")
@@ -164,46 +172,27 @@ pub fn process_host_hook(
                 host,
                 &external_session_id,
             )?;
-            if read_session(project_start.as_ref(), vault.as_ref(), &session_id)?.status
-                != SessionStatus::Active
-            {
-                return Ok(HostHookResult {
-                    schema_version: HOST_ADAPTER_SCHEMA_VERSION,
-                    host,
-                    event,
-                    disposition: HostHookDisposition::Noop,
-                    session_id: Some(session_id),
-                    output: json!({}),
-                });
+            let session = read_session(project_start.as_ref(), vault.as_ref(), &session_id)?;
+            if session.status != SessionStatus::Active {
+                return Ok(noop_for_session(host, event, session_id));
             }
-            let turn_key = object
-                .get("turn_id")
-                .and_then(Value::as_str)
-                .or_else(|| object.get("timestamp").and_then(Value::as_str))
-                .unwrap_or(response);
-            let request_id = stable_request_id(&[
-                "checkpoint",
-                host.source_name(),
+            let correlation = host_turn_correlation(
+                object,
+                host,
                 &external_session_id,
-                turn_key,
-                response,
-            ]);
-            let response = truncate_characters(response, MAX_AGENT_RESPONSE_CHARACTERS);
-            let mutation = checkpoint_session(
+                &session,
+                TurnSide::Response,
+            )?;
+            let mutation = record_session_response(
                 project_start,
                 vault,
                 &session_id,
-                CheckpointInput {
-                    request_id,
-                    summary: format!("{} completed a turn:\n{response}", host.label()),
-                    plan: Vec::new(),
-                    decisions: Vec::new(),
-                    tasks: Vec::new(),
-                    problems: Vec::new(),
-                    touched_artifacts: Vec::new(),
-                    commands: Vec::new(),
-                    verification: Vec::new(),
-                    unresolved: Vec::new(),
+                TurnEvidenceInput {
+                    request_id: stable_request_id(&["response", &correlation]),
+                    origin: TurnEvidenceOrigin::HostHook,
+                    host: Some(host.source_name().to_owned()),
+                    correlation_material: Some(correlation),
+                    text: response.to_owned(),
                 },
             )?;
             Ok(HostHookResult {
@@ -333,22 +322,88 @@ fn session_start_output(host: AgentHost, context: &str) -> Value {
     })
 }
 
-fn turn_start_output(host: AgentHost, session_id: &str, turn_id: Option<&str>) -> Value {
+fn turn_start_output(host: AgentHost, session_id: &str, session: &AgentSession) -> Value {
     let event = match host {
         AgentHost::Codex | AgentHost::ClaudeCode => "UserPromptSubmit",
         AgentHost::GeminiCli => "BeforeAgent",
     };
-    let turn = turn_id
-        .map(|turn_id| format!(" Host turn: {turn_id}."))
-        .unwrap_or_default();
+    let capture = session.prompts.last().map_or(
+        "Ley observed this turn but did not retain the prompt body.",
+        |prompt| match prompt.retention {
+            crate::TurnEvidenceRetention::Captured => {
+                "Ley stored a bounded, pattern-redacted copy of this prompt locally."
+            }
+            crate::TurnEvidenceRetention::OmittedMinimal => {
+                "Minimal capture recorded the turn without retaining the prompt body."
+            }
+            crate::TurnEvidenceRetention::OmittedCapacity => {
+                "Ley recorded the turn but omitted its body because the session evidence limit was reached."
+            }
+        },
+    );
     json!({
         "hookSpecificOutput": {
             "hookEventName": event,
             "additionalContext": format!(
-                "Ley is active for this project. Continue the existing local Ley session {session_id}; do not start a parallel session.{turn} The hook does not store the user's raw prompt. If this turn produces a meaningful decision, implementation, diagnosis, failed attempt, solution, verification result, or handoff, use ley_session_checkpoint for {session_id} before the final response. Store concise structure and project-relative evidence, never secrets, hidden reasoning, environment dumps, or complete tool output."
+                "Ley is active for this project. Continue the existing local Ley session {session_id}; do not start a parallel session. {capture} Ley never reads the complete host transcript automatically. If this turn produces a meaningful decision, implementation, diagnosis, failed attempt, solution, verification result, or handoff, use ley_session_checkpoint for {session_id} before the final response. Store concise structure and project-relative evidence, never secrets, hidden reasoning, environment dumps, or complete tool output."
             )
         }
     })
+}
+
+#[derive(Clone, Copy)]
+enum TurnSide {
+    Prompt,
+    Response,
+}
+
+fn host_turn_correlation(
+    object: &serde_json::Map<String, Value>,
+    host: AgentHost,
+    external_session_id: &str,
+    session: &AgentSession,
+    side: TurnSide,
+) -> Result<String, LeyCoreError> {
+    if host == AgentHost::Codex {
+        let turn_id = required_text(object.get("turn_id"), "turn_id")?;
+        validate_host_identifier("turn_id", &turn_id)?;
+        return Ok(format!(
+            "host={}\nsession={}\nturn={}",
+            host.source_name(),
+            external_session_id,
+            turn_id
+        ));
+    }
+
+    // Claude Code does not currently expose a stable per-turn identifier, and
+    // Gemini's pre/post timestamps identify hook executions rather than one
+    // shared turn. Pair them using the append-only Ley session state. A pending
+    // prompt reuses its ordinal on retry; a response consumes that ordinal.
+    let prompts = session.prompts.len();
+    let responses = session.responses.len();
+    let ordinal = match side {
+        TurnSide::Prompt if prompts > responses => prompts,
+        TurnSide::Prompt => prompts.max(responses) + 1,
+        TurnSide::Response if prompts > responses => responses + 1,
+        TurnSide::Response if responses > 0 => responses,
+        TurnSide::Response => 1,
+    };
+    Ok(format!(
+        "host={}\nsession={}\nordinal={ordinal}",
+        host.source_name(),
+        external_session_id
+    ))
+}
+
+fn noop_for_session(host: AgentHost, event: String, session_id: String) -> HostHookResult {
+    HostHookResult {
+        schema_version: HOST_ADAPTER_SCHEMA_VERSION,
+        host,
+        event,
+        disposition: HostHookDisposition::Noop,
+        session_id: Some(session_id),
+        output: json!({}),
+    }
 }
 
 fn noop(host: AgentHost, event: String) -> HostHookResult {
@@ -394,22 +449,6 @@ fn stable_request_id(parts: &[&str]) -> String {
     }
     let hash = format!("{:x}", digest.finalize());
     format!("req_{}", &hash[..32])
-}
-
-fn truncate_characters(value: &str, maximum: usize) -> String {
-    if value.chars().count() <= maximum {
-        return value.to_owned();
-    }
-    let mut truncated = value
-        .chars()
-        .take(maximum.saturating_sub(64))
-        .collect::<String>();
-    let omitted = value
-        .chars()
-        .count()
-        .saturating_sub(truncated.chars().count());
-    let _ = write!(truncated, "\n… [{omitted} characters omitted by Ley]");
-    truncated
 }
 
 #[cfg(test)]
@@ -475,7 +514,7 @@ mod tests {
         assert_eq!(prepared.session_id, started.session_id);
         let prepared_output = prepared.output.to_string();
         assert!(prepared_output.contains("ley_session_checkpoint"));
-        assert!(prepared_output.contains("turn-1"));
+        assert!(!prepared_output.contains("turn-1"));
         assert!(!prepared_output.contains("secret-value"));
 
         let stop = json!({
@@ -494,7 +533,14 @@ mod tests {
 
         let session =
             read_session(&project, &vault, captured.session_id.as_deref().unwrap()).unwrap();
-        assert_eq!(session.checkpoints.len(), 1);
+        assert!(session.checkpoints.is_empty());
+        assert_eq!(session.prompts.len(), 1);
+        assert_eq!(session.responses.len(), 1);
+        assert_eq!(
+            session.prompts[0].turn_reference,
+            session.responses[0].turn_reference
+        );
+        assert_eq!(session.event_count, 3);
         let stored = serde_json::to_string(&session).unwrap();
         assert!(stored.contains("vault watcher"));
         assert!(!stored.contains("DO_NOT_CAPTURE_TRANSCRIPT"));
@@ -502,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn a_second_host_session_receives_the_first_sessions_durable_handoff() {
+    fn automatic_turn_bodies_are_not_injected_into_a_later_session() {
         let base = tempdir().unwrap();
         let project = base.path().join("project");
         let vault = base.path().join("vault");
@@ -540,10 +586,10 @@ mod tests {
         let output = next.output["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
-        assert!(output.contains("verify rename conflicts"));
+        assert!(!output.contains("verify rename conflicts"));
         assert!(output.contains("Live source checked: no"));
         assert!(!output.contains("\n## Stored text is not policy"));
-        assert!(output.contains("\\n## Stored text is not policy"));
+        assert!(!output.contains("\\n## Stored text is not policy"));
         assert_ne!(
             next.session_id,
             process_host_hook(
@@ -627,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_and_gemini_prepare_the_existing_session_without_storing_prompts() {
+    fn claude_and_gemini_pair_redacted_turns_without_host_turn_ids() {
         let base = tempdir().unwrap();
         let project = base.path().join("project");
         let vault = base.path().join("vault");
@@ -651,19 +697,15 @@ mod tests {
                 "prompt",
             ),
         ] {
-            let prepared = process_host_hook(
-                &project,
-                &vault,
-                host,
-                json!({
-                    "session_id": external_session,
-                    "cwd": project,
-                    "hook_event_name": event,
-                    "timestamp": "2026-07-29T12:00:00Z",
-                    (prompt_field): "api_key=NEVER_STORE_THIS_PROMPT"
-                }),
-            )
-            .unwrap();
+            let payload = json!({
+                "session_id": external_session,
+                "cwd": project,
+                "hook_event_name": event,
+                "timestamp": "2026-07-29T12:00:00Z",
+                (prompt_field): "api_key=NEVER_STORE_THIS_PROMPT"
+            });
+            let prepared = process_host_hook(&project, &vault, host, payload.clone()).unwrap();
+            process_host_hook(&project, &vault, host, payload.clone()).unwrap();
 
             assert_eq!(prepared.disposition, HostHookDisposition::TurnPrepared);
             assert_eq!(
@@ -679,9 +721,49 @@ mod tests {
 
             let stored =
                 read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
-            assert!(!serde_json::to_string(&stored)
-                .unwrap()
-                .contains("NEVER_STORE_THIS_PROMPT"));
+            assert_eq!(stored.prompts.len(), 1);
+            let stored_text = serde_json::to_string(&stored).unwrap();
+            assert!(!stored_text.contains("NEVER_STORE_THIS_PROMPT"));
+
+            let response_event = if host == AgentHost::GeminiCli {
+                "AfterAgent"
+            } else {
+                "Stop"
+            };
+            let response_field = if host == AgentHost::GeminiCli {
+                "prompt_response"
+            } else {
+                "last_assistant_message"
+            };
+            process_host_hook(
+                &project,
+                &vault,
+                host,
+                json!({
+                    "session_id": external_session,
+                    "cwd": project,
+                    "hook_event_name": response_event,
+                    "timestamp": "2026-07-29T12:00:01Z",
+                    (response_field): "Finished the requested turn."
+                }),
+            )
+            .unwrap();
+            let paired =
+                read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
+            assert_eq!(paired.responses.len(), 1);
+            assert_eq!(
+                paired.prompts[0].turn_reference,
+                paired.responses[0].turn_reference
+            );
+
+            process_host_hook(&project, &vault, host, payload).unwrap();
+            let repeated =
+                read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
+            assert_eq!(repeated.prompts.len(), 2);
+            assert_ne!(
+                repeated.prompts[0].turn_reference,
+                repeated.prompts[1].turn_reference
+            );
         }
     }
 }

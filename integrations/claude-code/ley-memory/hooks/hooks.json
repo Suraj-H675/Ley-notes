@@ -32,7 +32,7 @@
               "${CLAUDE_PROJECT_DIR}"
             ],
             "timeout": 20,
-            "statusMessage": "Preparing Ley continuity"
+            "statusMessage": "Capturing bounded Ley prompt"
           }
         ]
       }
@@ -50,7 +50,7 @@
               "${CLAUDE_PROJECT_DIR}"
             ],
             "timeout": 20,
-            "statusMessage": "Saving Ley continuity"
+            "statusMessage": "Saving bounded Ley response"
           }
         ]
       }

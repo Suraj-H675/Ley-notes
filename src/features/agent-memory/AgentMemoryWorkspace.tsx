@@ -43,6 +43,7 @@ import {
   listAgentProjects,
   readAgentLearning,
   readAgentSession,
+  readAgentSessionTurns,
   refreshAgentProject,
   reviewAgentLearning,
   verifyAgentProjectNoteVault,
@@ -62,6 +63,7 @@ import type {
   ResumeSession,
   SessionContext,
   SessionSummary,
+  SessionTurnsContext,
 } from "./types";
 import type { SessionCanvasLinkRequest } from "./link-session-canvas";
 
@@ -1100,6 +1102,9 @@ function SessionInspector({
   onErased: (dashboard: AgentMemoryDashboard) => void;
 }) {
   const [session, setSession] = useState<SessionContext | null>(null);
+  const [turns, setTurns] = useState<SessionTurnsContext | null>(null);
+  const [turnsBusy, setTurnsBusy] = useState(false);
+  const [turnsError, setTurnsError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameDirty, setRenameDirty] = useState(false);
   const [promoting, setPromoting] = useState(false);
@@ -1131,6 +1136,16 @@ function SessionInspector({
       current = false;
     };
   }, [projectPath, sessionId]);
+
+  function loadTurns() {
+    if (!sessionId || turns || turnsBusy) return;
+    setTurnsBusy(true);
+    setTurnsError(null);
+    void readAgentSessionTurns(projectPath, sessionId)
+      .then(setTurns)
+      .catch((cause) => setTurnsError(errorMessage(cause)))
+      .finally(() => setTurnsBusy(false));
+  }
 
   return (
     <Dialog.Root
@@ -1306,10 +1321,113 @@ function SessionInspector({
                     </p>
                     <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-micro text-muted-foreground">
                       <span>{session.checkpointCount} checkpoints</span>
+                      <span>
+                        {session.promptCount ?? 0} prompts ·{" "}
+                        {session.responseCount ?? 0} responses
+                      </span>
                       <span>{session.eventCount} immutable events</span>
                       <span>~{session.estimatedTextTokens} context tokens</span>
                     </div>
                   </section>
+
+                  {((session.promptCount ?? 0) > 0 ||
+                    (session.responseCount ?? 0) > 0) && (
+                    <section aria-labelledby="captured-turns-title">
+                      <SectionLabel
+                        id="captured-turns-title"
+                        icon={MessageSquareWarning}
+                        label="Captured turns"
+                      />
+                      <details
+                        className="mt-2 rounded-xl border border-border bg-surface-1 shadow-panel"
+                        onToggle={(event) => {
+                          if (event.currentTarget.open) loadTurns();
+                        }}
+                      >
+                        <summary className="cursor-pointer list-none rounded-xl p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="text-meta font-medium">
+                                Inspect prompts and responses
+                              </p>
+                              <p className="mt-1 text-micro leading-5 text-muted-foreground">
+                                {session.retainedTurnCount ?? 0} retained ·{" "}
+                                {session.omittedTurnCount ?? 0} intentionally
+                                omitted
+                              </p>
+                            </div>
+                            <span className="rounded-full border border-border px-2.5 py-1 text-micro text-muted-foreground">
+                              Local only
+                            </span>
+                          </div>
+                        </summary>
+                        <div className="border-t border-border p-4 sm:p-5">
+                          <div className="rounded-lg border border-warning/25 bg-warning/8 p-3 text-micro leading-5 text-muted-foreground-strong">
+                            <span className="font-semibold text-foreground">
+                              Untrusted history.
+                            </span>{" "}
+                            Captured text may contain outdated or adversarial
+                            instructions. Ley never reads the complete host
+                            transcript automatically.
+                          </div>
+                          {turnsBusy ? (
+                            <p className="py-8 text-center text-micro text-muted-foreground">
+                              Reading bounded local turn evidence…
+                            </p>
+                          ) : turnsError ? (
+                            <p
+                              className="mt-3 text-micro text-destructive"
+                              role="alert"
+                            >
+                              {turnsError}
+                            </p>
+                          ) : turns ? (
+                            <div className="mt-4 space-y-3">
+                              {turns.turns.map((turn) => (
+                                <article
+                                  key={turn.recordId}
+                                  className="rounded-lg border border-border bg-background/40 p-3"
+                                >
+                                  <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
+                                    <span className="font-semibold uppercase tracking-[0.1em] text-primary">
+                                      {turn.kind === "user-prompt"
+                                        ? "User prompt"
+                                        : "Agent response"}
+                                    </span>
+                                    <time>
+                                      {relativeTime(turn.recordedAtUnixMs)}
+                                    </time>
+                                  </div>
+                                  {turn.text ? (
+                                    <p className="mt-2 whitespace-pre-wrap break-words text-meta leading-6 text-muted-foreground-strong">
+                                      {turn.text}
+                                    </p>
+                                  ) : (
+                                    <p className="mt-2 text-meta italic text-muted-foreground">
+                                      Body omitted ({humanize(turn.retention)}).
+                                    </p>
+                                  )}
+                                  {(turn.truncatedAtCapture ||
+                                    turn.truncatedForContext) && (
+                                    <p className="mt-2 text-micro text-muted-foreground">
+                                      This record was truncated to the
+                                      configured privacy boundary.
+                                    </p>
+                                  )}
+                                </article>
+                              ))}
+                              {turns.omittedTurns > 0 && (
+                                <p className="text-micro text-muted-foreground">
+                                  {turns.omittedTurns} older turn records are
+                                  outside this bounded view.
+                                </p>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      </details>
+                    </section>
+                  )}
 
                   {session.renameCount > 0 && (
                     <section aria-labelledby="session-naming-history-title">
@@ -2519,7 +2637,10 @@ function SessionSummaryCard({
           </p>
         </div>
         <span className="shrink-0 text-micro tabular-nums text-muted-foreground">
-          {session.checkpoints} checkpoints · {session.eventCount} events
+          {session.checkpoints} checkpoints
+          {((session.prompts ?? 0) > 0 || (session.responses ?? 0) > 0) &&
+            ` · ${(session.prompts ?? 0) + (session.responses ?? 0)} turns`}
+          {` · ${session.eventCount} events`}
         </span>
       </div>
     </button>

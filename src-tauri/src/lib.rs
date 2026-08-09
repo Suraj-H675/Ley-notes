@@ -4,22 +4,24 @@ use ley_core::{
     list_learning_contexts, list_sessions, project_activity_view, project_artifact_inventory,
     project_graph_history, project_graph_view_filtered, project_memory_overview,
     project_resume_context, project_session_stats, read_learning, read_learning_context,
-    read_project_cited_evidence, read_project_graph_evidence, read_session_context, rename_session,
-    review_learning, search_observed_projects, update_capture_mode, BindingRegistry, BindingSource,
-    CaptureMode, CorrectLearningInput, CrossProjectSearch, EraseSessionMemoryInput,
-    EvidenceExcerpt, GraphCitation, IngestionResult, LearningActor, LearningContextPack,
-    LearningEvidenceInput, LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError,
-    MemoryOverview, ProjectActivityView, ProjectArtifactInventory, ProjectCatalog,
-    ProjectDiagnostic, ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView,
-    ProjectProblemScope, ProjectResumePack, ProjectVaultBinding, RenameSessionInput,
-    ReviewLearningInput, SessionContextPack, SessionMemoryErasure, SessionSummary,
-    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS,
-    DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    read_project_cited_evidence, read_project_graph_evidence, read_session_context,
+    read_session_turns_context, rename_session, review_learning, search_observed_projects,
+    update_capture_mode, BindingRegistry, BindingSource, CaptureMode, CorrectLearningInput,
+    CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt, GraphCitation, IngestionResult,
+    LearningActor, LearningContextPack, LearningEvidenceInput, LearningFeedbackAction,
+    LearningList, LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView,
+    ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic, ProjectGraphFilters,
+    ProjectGraphHistory, ProjectGraphView, ProjectProblemScope, ProjectResumePack,
+    ProjectVaultBinding, RenameSessionInput, ReviewLearningInput, SessionContextPack,
+    SessionMemoryErasure, SessionSummary, SessionTurnsContextPack, DEFAULT_ARTIFACT_RESULTS,
+    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
+    DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
     DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
     DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, MAX_LEARNING_LIST_RESULTS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
+    DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS,
 };
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
@@ -669,6 +671,24 @@ fn read_agent_session(
                 &session_id,
                 DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
                 DEFAULT_SESSION_CONTEXT_CHARACTERS,
+            )
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn read_agent_session_turns(
+    project_path: String,
+    session_id: String,
+) -> Result<SessionTurnsContextPack, String> {
+    resolved_agent_binding(Path::new(&project_path))
+        .and_then(|binding| {
+            read_session_turns_context(
+                &project_path,
+                &binding.vault_path,
+                &session_id,
+                DEFAULT_SESSION_TURN_RESULTS,
+                DEFAULT_SESSION_TURN_CHARACTERS,
             )
         })
         .map_err(|error| error.to_string())
@@ -1453,6 +1473,7 @@ pub fn run() {
             refresh_agent_project,
             read_agent_learning,
             read_agent_session,
+            read_agent_session_turns,
             rename_agent_session,
             erase_agent_session,
             review_agent_learning,

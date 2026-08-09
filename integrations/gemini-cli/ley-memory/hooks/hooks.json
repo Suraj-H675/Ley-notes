@@ -24,7 +24,7 @@
             "type": "command",
             "command": "ley hook --host gemini \"${workspacePath}\"",
             "timeout": 20000,
-            "description": "Continue the active Ley session without storing the raw prompt."
+            "description": "Continue the active Ley session and capture the bounded prompt according to policy."
           }
         ]
       }
@@ -39,7 +39,7 @@
             "type": "command",
             "command": "ley hook --host gemini \"${workspacePath}\"",
             "timeout": 20000,
-            "description": "Save a bounded local continuity checkpoint."
+            "description": "Save the bounded local response as turn evidence."
           }
         ]
       }

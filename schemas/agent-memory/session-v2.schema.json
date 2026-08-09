@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ley:schema:agent-memory:session:2",
+  "title": "Ley derived agent session with turn evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "projectId",
+    "sessionId",
+    "originalName",
+    "name",
+    "goal",
+    "status",
+    "source",
+    "artifactSnapshotIdAtStart",
+    "startedAtUnixMs",
+    "updatedAtUnixMs",
+    "eventCount",
+    "checkpoints",
+    "prompts",
+    "responses",
+    "renames"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "projectId": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/projectId" },
+    "sessionId": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/sessionId" },
+    "originalName": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "goal": { "type": "string", "minLength": 1, "maxLength": 16000 },
+    "status": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/sessionStatus" },
+    "source": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/source" },
+    "artifactSnapshotIdAtStart": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/snapshotId" },
+    "startedAtUnixMs": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/timestamp" },
+    "updatedAtUnixMs": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/timestamp" },
+    "finishedAtUnixMs": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/timestamp" },
+    "eventCount": { "type": "integer", "minimum": 1, "maximum": 10000 },
+    "checkpoints": {
+      "type": "array",
+      "maxItems": 9999,
+      "items": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/checkpoint" }
+    },
+    "prompts": {
+      "type": "array",
+      "maxItems": 9999,
+      "items": { "$ref": "#/$defs/promptEvidence" }
+    },
+    "responses": {
+      "type": "array",
+      "maxItems": 9999,
+      "items": { "$ref": "#/$defs/turnEvidence" }
+    },
+    "renames": {
+      "type": "array",
+      "maxItems": 9999,
+      "items": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/rename" }
+    },
+    "finish": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/finish" }
+  },
+  "$defs": {
+    "promptEvidence": {
+      "allOf": [
+        { "$ref": "#/$defs/turnEvidence" },
+        { "properties": { "text": { "maxLength": 4000 } } }
+      ]
+    },
+    "turnEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "retention": { "const": "captured" } },
+            "required": ["retention"]
+          },
+          "then": {
+            "required": ["text"],
+            "properties": {
+              "captureMode": { "enum": ["structured", "full-evidence"] }
+            }
+          },
+          "else": { "properties": { "text": false } }
+        },
+        {
+          "if": {
+            "properties": { "retention": { "const": "omitted-minimal" } },
+            "required": ["retention"]
+          },
+          "then": {
+            "properties": {
+              "captureMode": { "const": "minimal" },
+              "truncated": { "const": false }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "retention": { "const": "omitted-capacity" } },
+            "required": ["retention"]
+          },
+          "then": {
+            "properties": {
+              "captureMode": { "enum": ["structured", "full-evidence"] },
+              "truncated": { "const": false }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "captureMode": { "const": "minimal" } },
+            "required": ["captureMode"]
+          },
+          "then": {
+            "properties": {
+              "retention": { "const": "omitted-minimal" },
+              "truncated": { "const": false }
+            }
+          }
+        }
+      ],
+      "required": [
+        "recordId",
+        "eventId",
+        "sequence",
+        "recordedAtUnixMs",
+        "origin",
+        "captureMode",
+        "retention",
+        "truncated"
+      ],
+      "properties": {
+        "recordId": { "type": "string", "pattern": "^tev_[0-9a-f]{32}$" },
+        "eventId": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/eventId" },
+        "sequence": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "recordedAtUnixMs": { "$ref": "urn:ley:schema:agent-memory:session:1#/$defs/timestamp" },
+        "origin": { "enum": ["host-hook", "manual-cli"] },
+        "host": { "enum": ["codex", "claude-code", "gemini-cli"] },
+        "turnReference": { "type": "string", "pattern": "^trn_[0-9a-f]{64}$" },
+        "captureMode": { "enum": ["minimal", "structured", "full-evidence"] },
+        "retention": { "enum": ["captured", "omitted-minimal", "omitted-capacity"] },
+        "text": { "type": "string", "minLength": 1, "maxLength": 8000 },
+        "truncated": { "type": "boolean" }
+      }
+    }
+  }
+}

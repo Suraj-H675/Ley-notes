@@ -4,13 +4,13 @@ Every initialized project owns a small, portable `.ley/capture.json` policy. Dur
 
 ## Choose a mode
 
-| Mode | Project evidence retained in the vault | Structured sessions | Raw host transcript permission |
-| --- | --- | --- | --- |
-| Minimal | Paths, classifications, post-redaction hashes, deterministic graph; no source blobs | Yes | No |
-| Structured | Minimal plus post-redaction UTF-8 source evidence and citations | Yes | No |
-| Full Evidence | Structured evidence | Yes | Explicitly permitted for a compatible adapter |
+| Mode | Project evidence retained in the vault | Automatic turn bodies | Structured checkpoints | Raw host transcript permission |
+| --- | --- | --- | --- | --- |
+| Minimal | Paths, classifications, post-redaction hashes, deterministic graph; no source blobs | Omitted with a body-free disclosure event | Yes | No |
+| Structured | Minimal plus post-redaction UTF-8 source evidence and citations | Bounded and pattern-redacted | Yes | No |
+| Full Evidence | Structured evidence | Bounded and pattern-redacted | Yes | Explicitly permitted for a future, separately invoked compatible adapter |
 
-Structured is the recommended default. Full Evidence does not make Ley scrape chats. It allows a future or compatible transcript-capable adapter to submit raw evidence, so the desktop app requires a separate acknowledgement before enabling it.
+Structured is the recommended default. Full Evidence does not make Ley scrape chats. It allows a future, explicit transcript-capable adapter to submit raw evidence, so the desktop app requires a separate acknowledgement before enabling it. Current lifecycle adapters never read transcript paths in any mode.
 
 ## Inspect the boundary
 

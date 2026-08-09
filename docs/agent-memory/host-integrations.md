@@ -2,7 +2,7 @@
 
 Ley uses three layers together:
 
-1. lifecycle hooks load a bounded continuity brief and save a final-response fallback;
+1. lifecycle hooks load a bounded continuity brief and capture bounded turn evidence;
 2. local stdio MCP provides cited retrieval and typed session writes;
 3. a portable agent skill tells the host when and how to preserve meaningful structure.
 
@@ -62,7 +62,7 @@ codex plugin add ley-memory@ley
 
 Restart Codex, open `/hooks`, and review the exact Ley hook commands before trusting them. Codex intentionally does not trust newly installed command hooks automatically.
 
-Start a new Codex chat in an initialized project and invoke **@Ley**, or ask Codex to use Ley. `SessionStart` loads the bounded resume pack automatically. `UserPromptSubmit` supplies the exact stable Ley session ID and capture contract without storing the raw prompt. The local MCP server provides the structured retrieval and checkpoint tools.
+Start a new Codex chat in an initialized project and invoke **@Ley**, or ask Codex to use Ley. `SessionStart` loads the bounded resume pack automatically. In Structured mode, `UserPromptSubmit` stores a bounded, pattern-redacted prompt record and supplies the exact stable Ley session ID; `Stop` stores the paired bounded final response. The local MCP server provides the structured retrieval and checkpoint tools.
 
 ## Claude Code
 
@@ -81,8 +81,8 @@ claude --plugin-dir /absolute/path/to/Ley-notes/integrations/claude-code/ley-mem
 ```
 
 Restart Claude Code. `SessionStart` loads the bounded brief,
-`UserPromptSubmit` reasserts the current Ley session without retaining the
-prompt, and `Stop` saves the bounded final-response fallback. The package uses
+`UserPromptSubmit` reasserts the current Ley session and captures the bounded
+prompt according to project policy; `Stop` captures the paired bounded response. The package uses
 Claude Code's documented `${CLAUDE_PROJECT_DIR}` placeholder rather than
 assuming its process working directory.
 
@@ -97,8 +97,8 @@ gemini extensions link /absolute/path/to/Ley-notes/integrations/gemini-cli/ley-m
 
 Gemini substitutes the active `${workspacePath}` into the MCP and hook commands.
 `SessionStart` loads the bounded brief, `BeforeAgent` reasserts the current Ley
-session without retaining the prompt, and `AfterAgent` saves the bounded
-final-response fallback. Verify discovery with:
+session and captures the bounded prompt according to project policy, and
+`AfterAgent` captures the paired bounded response. Verify discovery with:
 
 ```bash
 gemini extensions list
@@ -106,11 +106,15 @@ gemini extensions list
 
 ## What automatic capture does
 
-In Structured mode, the adapter stores:
+In Structured and Full Evidence modes, the adapter stores:
 
 - a generated host-session name and continuity goal;
 - the stable Ley session ID;
-- a bounded, credential-redacted copy of the host's final assistant response for each completed turn.
+- a bounded, pattern-redacted copy of each observed user prompt;
+- a bounded, pattern-redacted copy of the host's final assistant response for each completed turn;
+- an opaque Ley-derived turn reference that pairs the two without retaining the host's raw turn identifier.
+
+Minimal mode stores body-free prompt/response observation events so users can see what was omitted without retaining either body.
 
 Each adapter also injects the stable current Ley session ID at session and turn
 start so MCP writes continue the same session instead of creating duplicates.
@@ -119,14 +123,13 @@ The native turn event is Codex/Claude `UserPromptSubmit` or Gemini
 
 It does not automatically store:
 
-- user prompts;
 - transcript files or transcript paths;
 - hidden reasoning;
 - tool inputs or complete outputs;
 - environment variables;
 - arbitrary files outside the approved project capture boundary.
 
-The final-response checkpoint is a fallback, not a claim of complete capture. For substantive work the bundled skill asks the agent to write typed decisions, tasks, problems, attempts, outcomes, solutions, verification, touched artifacts, unresolved items, and handoff through MCP.
+Turn evidence is not a checkpoint and is never promoted into startup context. For substantive work the bundled skill asks the agent to write typed decisions, tasks, problems, attempts, outcomes, solutions, verification, touched artifacts, unresolved items, and handoff through MCP.
 
 Ley deliberately does not add a global tool logger. Tool calls can contain
 credentials, large outputs, or irrelevant details, and a hook cannot reliably
@@ -136,7 +139,7 @@ checkpoints.
 
 ## Failure and retry behavior
 
-An uninitialized or unbound project returns `{}` and remains untouched. A stable host session maps to the same Ley session after process restart. Exact hook retries replay the same append-only request instead of creating duplicates. A new host session receives the normal bounded resume pack, including earlier checkpoint evidence and only user-trusted, artifact-current learnings.
+An uninitialized or unbound project returns `{}` and remains untouched. A stable host session maps to the same Ley session after process restart. Codex pairs retries with its documented stable `turn_id`; Claude Code and Gemini CLI use the append-only Ley session state because their pre/post events do not share a stable turn identifier. Exact hook retries replay instead of duplicating, while the same prompt submitted after a completed response becomes a new turn. A new host session receives the normal bounded resume pack, including earlier checkpoint evidence and only user-trusted, artifact-current learnings—not captured prompt/response bodies.
 
 The bundled MCP process also starts cleanly in an ordinary workspace, but advertises zero capabilities and no tools or resources. It never initializes or scans that directory. This keeps a globally installed integration quiet and harmless until the user explicitly sets up Ley for that project.
 

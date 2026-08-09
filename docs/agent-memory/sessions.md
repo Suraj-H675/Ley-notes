@@ -141,16 +141,17 @@ List sessions for a project:
 ley session list /path/to/project
 ```
 
-Read one reconstructed session:
+Read one bounded reconstructed session context. This reports prompt/response
+counts but does not return their bodies:
 
 ```bash
 ley session show ses_01234567890123456789012345678901 \
   /path/to/project --json
 ```
 
-The vault also contains `session.md` for review and `session-v1.json` for local tools. Both files are derived. Preserve the immutable event files when repairing or migrating memory.
+The vault also contains `session.md` for review and a derived JSON projection for local tools. V1-only ledgers use `session-v1.json`; appending a v2 turn-evidence event creates `session-v2.json` while retaining the older projection. Preserve the immutable event files when repairing or migrating memory.
 
-Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, snapshot-pinned artifact citations, captured project revisions, and naming history. Selecting a captured revision opens the exact retained Project Graph view used by that checkpoint; it does not substitute today's graph. Older checkpoints, older naming revisions, and truncated text are disclosed instead of being presented as complete history.
+Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows turn counts without loading bodies; **Captured turns** performs a separate bounded local read only when expanded and labels prompts and responses as untrusted history. The inspector also shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, snapshot-pinned artifact citations, captured project revisions, and naming history. Selecting a captured revision opens the exact retained Project Graph view used by that checkpoint; it does not substitute today's graph. Older records and truncated text are disclosed instead of being presented as complete history.
 
 The desktop **Projects** search also indexes those checkpoint revisions. Paste a full or partial captured Git SHA, a branch name, a graph snapshot ID, or an artifact snapshot ID to recover the owning session across explicitly observed and currently bound projects. Opening a revision result enters that session first so its checkpoint context remains visible.
 
@@ -162,7 +163,7 @@ Ley first canonically verifies that the open notes vault is the project’s boun
 
 ## Retry a write safely
 
-Supply `--request-id req_01234567890123456789012345678901` when another process may repeat a start, compact checkpoint, or finish call. The same ID and content replay the original event. The same ID with different content fails instead of creating ambiguous history.
+Supply `--request-id req_01234567890123456789012345678901` when another process may repeat a start, compact checkpoint, turn capture, or finish call. The same ID and retained content replay the original event. The same ID with different retained content fails instead of creating ambiguous history. Body-free Minimal/capacity disclosures deliberately retain no content fingerprint, so they can validate identity and metadata but cannot compare an omitted retry body.
 
 Generated request IDs are safe for interactive commands. Host adapters should persist their request ID until they receive a successful response.
 
@@ -170,4 +171,4 @@ Generated request IDs are safe for interactive commands. Host adapters should pe
 
 Ley applies local credential-pattern redaction before it writes session text. It also bounds event size and collection counts, rejects symlinks and malformed history, and serializes concurrent writers.
 
-Redaction cannot guarantee that arbitrary private text is safe. Record summaries and bounded evidence instead of full prompts, tool output, environment dumps, or transcripts. Ley does not send session data anywhere, but a cloud agent can receive context that you intentionally retrieve through that agent.
+Redaction cannot guarantee that arbitrary private text is safe. Use Minimal mode when automatic prompt/response bodies should not be retained. Structured and Full Evidence keep only bounded, pattern-redacted turn bodies; neither reads a complete transcript automatically. Ley does not send session data anywhere, but a cloud agent can receive context that you intentionally retrieve through that agent.

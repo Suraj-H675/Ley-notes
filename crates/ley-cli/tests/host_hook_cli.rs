@@ -153,6 +153,19 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
         );
     }
 
+    ley(
+        &config,
+        &[
+            "session",
+            "checkpoint",
+            session_id,
+            project.to_str().unwrap(),
+            "--summary",
+            "The filesystem watcher works. Conflict recovery remains.",
+        ],
+        None,
+    );
+
     let sessions = json_stdout(ley(
         &config,
         &["session", "list", project.to_str().unwrap(), "--json"],
@@ -160,6 +173,27 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
     ));
     assert_eq!(sessions.as_array().unwrap().len(), 1);
     assert_eq!(sessions[0]["checkpoints"], 1);
+    assert_eq!(sessions[0]["prompts"], 1);
+    assert_eq!(sessions[0]["responses"], 1);
+
+    let turns = json_stdout(ley(
+        &config,
+        &[
+            "session",
+            "turns",
+            session_id,
+            project.to_str().unwrap(),
+            "--json",
+        ],
+        None,
+    ));
+    assert_eq!(turns["promptCount"], 1);
+    assert_eq!(turns["responseCount"], 1);
+    assert!(turns["turns"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("Fix the watcher"));
+    assert!(!turns.to_string().contains("NEVER_PERSIST_THIS_PROMPT"));
 
     let next = json_stdout(ley(
         &config,
