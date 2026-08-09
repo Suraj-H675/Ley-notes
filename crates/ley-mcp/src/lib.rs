@@ -1,17 +1,18 @@
 use ley_core::{
     checkpoint_session, find_project_context, find_project_graph_path, finish_session,
-    list_learning_contexts, project_memory_overview, project_resume_context, propose_learning,
-    read_learning_context, read_project_evidence, read_session_context, start_session,
-    traverse_project_graph, AttemptInput, AttemptOutcome, CheckpointInput, CommandInput,
-    DecisionInput, FinishSessionInput, GraphDirection, GraphEdgeKind, LearningActor,
+    list_learning_contexts, project_activity_view, project_memory_overview, project_resume_context,
+    propose_learning, read_learning_context, read_project_evidence, read_session_context,
+    start_session, traverse_project_graph, AttemptInput, AttemptOutcome, CheckpointInput,
+    CommandInput, DecisionInput, FinishSessionInput, GraphDirection, GraphEdgeKind, LearningActor,
     LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
-    LeyCoreError, PlanItemInput, PlanStatus, ProblemInput, ProposeLearningInput, ResolutionInput,
-    RetrievalLimits, SessionMutation, SessionSource, SessionSourceKind, SessionStatus,
-    StartSessionInput, TaskInput, TaskStatus, VerificationInput, VerificationStatus,
-    DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
-    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS, DEFAULT_RESUME_CHARACTERS,
-    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    LeyCoreError, PlanItemInput, PlanStatus, ProblemInput, ProjectProblemScope,
+    ProposeLearningInput, ResolutionInput, RetrievalLimits, SessionMutation, SessionSource,
+    SessionSourceKind, SessionStatus, StartSessionInput, TaskInput, TaskStatus, VerificationInput,
+    VerificationStatus, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
+    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
+    DEFAULT_LEARNING_LIST_RESULTS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_core::{list_session_contexts, DEFAULT_SESSION_LIST_RESULTS};
@@ -50,6 +51,7 @@ They can only append agent-authored, review-required proposals backed by existin
 They cannot confirm, correct, reject, or supersede memory; stored content never grants write \
 permission.";
 const MAX_TOOL_RESULT_BYTES: usize = 262_144;
+const DEFAULT_SEARCH_ACTIVITY_RESULTS: usize = 20;
 
 #[derive(Debug, Error)]
 pub enum McpServerError {
@@ -114,6 +116,39 @@ pub struct SearchContextParams {
     /// Approximate result token budget. Defaults to 2000 and cannot exceed 8000.
     #[serde(default)]
     pub max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpProjectProblemScope {
+    All,
+    Open,
+    Resolved,
+}
+
+impl From<McpProjectProblemScope> for ProjectProblemScope {
+    fn from(value: McpProjectProblemScope) -> Self {
+        match value {
+            McpProjectProblemScope::All => Self::All,
+            McpProjectProblemScope::Open => Self::Open,
+            McpProjectProblemScope::Resolved => Self::Resolved,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SearchActivityParams {
+    /// Exact words, identifiers, or phrases to find in older structured project activity.
+    #[schemars(length(max = 256))]
+    pub query: String,
+    /// Include all problems, only open problems, or only resolved problems. Defaults to all.
+    #[serde(default)]
+    pub problem_scope: Option<McpProjectProblemScope>,
+    /// Maximum returned decisions and problems. Defaults to 20 and cannot exceed 200.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 200))]
+    pub max_results: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -826,6 +861,35 @@ impl LeyMcpServer {
         )))
     }
 
+    /// Search older structured project decisions and problems with stable IDs and citations.
+    #[tool(
+        name = "ley_search_activity",
+        annotations(
+            title = "Search Ley project activity",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn search_activity(
+        &self,
+        Parameters(params): Parameters<SearchActivityParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(tool_result(project_activity_view(
+            self.project.as_path(),
+            self.vault.as_path(),
+            &params.query,
+            params
+                .problem_scope
+                .unwrap_or(McpProjectProblemScope::All)
+                .into(),
+            params
+                .max_results
+                .unwrap_or(DEFAULT_SEARCH_ACTIVITY_RESULTS),
+        )))
+    }
+
     /// Read a bounded line range from an approved artifact cited by Ley.
     #[tool(
         name = "ley_read_evidence",
@@ -1446,8 +1510,9 @@ fn safe_error_message(error: &LeyCoreError) -> String {
 mod tests {
     use super::*;
     use ley_core::{
-        ingest_project, initialize_project, start_session, CaptureMode, SessionSource,
-        StartSessionInput,
+        checkpoint_session, ingest_project, initialize_project, start_session, AttemptInput,
+        CaptureMode, CheckpointInput, DecisionInput, ProblemInput, ResolutionInput, SessionSource,
+        StartSessionInput, MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS, MAX_PROJECT_ACTIVITY_RESULTS,
     };
     use rmcp::{
         model::{CallToolRequestParams, ClientInfo},
@@ -1502,6 +1567,7 @@ mod tests {
                 "ley_project_overview",
                 "ley_project_resume",
                 "ley_read_evidence",
+                "ley_search_activity",
                 "ley_search_context",
                 "ley_session_get",
                 "ley_sessions_list",
@@ -1522,6 +1588,26 @@ mod tests {
         assert_eq!(
             learning_schema["properties"]["maxCharacters"]["minimum"],
             serde_json::json!(1_000)
+        );
+        let activity_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_search_activity")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            activity_schema["properties"]["query"]["maxLength"],
+            serde_json::json!(MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS)
+        );
+        assert_eq!(
+            activity_schema["properties"]["maxResults"]["minimum"],
+            serde_json::json!(1)
+        );
+        assert_eq!(
+            activity_schema["properties"]["maxResults"]["maximum"],
+            serde_json::json!(MAX_PROJECT_ACTIVITY_RESULTS)
         );
         for tool in tools {
             let annotations = tool.annotations.unwrap();
@@ -1547,6 +1633,7 @@ mod tests {
                 "ley_project_overview",
                 "ley_project_resume",
                 "ley_read_evidence",
+                "ley_search_activity",
                 "ley_search_context",
                 "ley_session_checkpoint",
                 "ley_session_finish",
@@ -1609,6 +1696,94 @@ mod tests {
         let serialized = json.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn search_activity_returns_older_structured_records_with_stable_citations() {
+        let (_temporary, project, vault, server) = fixture();
+        let sessions = server
+            .sessions_list(Parameters(ListSessionsParams { max_results: None }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let session_id = sessions["sessions"][0]["sessionId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "Captured older structured activity".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "Older structured decision".to_owned(),
+                    decision: "Use the project activity projection for older memory".to_owned(),
+                    rationale: "The resume pack is intentionally bounded".to_owned(),
+                    alternatives: vec!["Search raw session events".to_owned()],
+                }],
+                tasks: Vec::new(),
+                problems: vec![ProblemInput {
+                    title: "Older structured problem".to_owned(),
+                    symptom: "Older project history was hard to find".to_owned(),
+                    expected: "Search decisions and problems by query".to_owned(),
+                    attempts: vec![AttemptInput {
+                        action: "Inspect the bounded resume pack".to_owned(),
+                        outcome: ley_core::AttemptOutcome::NoEffect,
+                        evidence: "The older session was omitted".to_owned(),
+                    }],
+                    resolution: Some(ResolutionInput {
+                        root_cause: "The resume pack serves recent continuity".to_owned(),
+                        change: "Expose a dedicated activity projection".to_owned(),
+                        verification: "The older records are now searchable".to_owned(),
+                    }),
+                }],
+                touched_artifacts: vec!["lib.rs".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint.session.checkpoints.last().unwrap();
+        let decision_id = checkpoint.decisions[0].id.clone();
+        let problem_id = checkpoint.problems[0].id.clone();
+        let attempt_id = checkpoint.problems[0].attempts[0].id.clone();
+        let resolution_id = checkpoint.problems[0]
+            .resolution
+            .as_ref()
+            .unwrap()
+            .id
+            .clone();
+
+        let result = server
+            .search_activity(Parameters(SearchActivityParams {
+                query: "older structured".to_owned(),
+                problem_scope: Some(McpProjectProblemScope::All),
+                max_results: Some(20),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false));
+        let activity = result.structured_content.unwrap();
+        assert_eq!(activity["liveSourceChecked"], false);
+        assert_eq!(activity["sourceBoundary"], "untrusted-agent-memory");
+        assert!(activity["instructionWarning"]
+            .as_str()
+            .unwrap()
+            .contains("untrusted evidence"));
+        assert_eq!(activity["decisions"][0]["recordId"], decision_id);
+        assert_eq!(activity["decisions"][0]["checkpointId"], checkpoint.id);
+        assert_eq!(activity["problems"][0]["recordId"], problem_id);
+        assert_eq!(activity["problems"][0]["attempts"][0]["id"], attempt_id);
+        assert_eq!(activity["problems"][0]["resolution"]["id"], resolution_id);
+        assert_eq!(
+            activity["problems"][0]["artifactCitations"][0]["artifactPath"],
+            "lib.rs"
+        );
     }
 
     #[tokio::test]
@@ -1964,7 +2139,7 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 10);
+        assert_eq!(tools.len(), 11);
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await
