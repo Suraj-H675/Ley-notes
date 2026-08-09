@@ -4,7 +4,7 @@
  * big interactive canvas, and a community legend.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SlidersHorizontal, X, Maximize2 } from 'lucide-react';
 import { Kbd } from '@/shared/components/Kbd';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -21,6 +21,7 @@ import { GraphLegend } from './GraphLegend';
 import { layoutGraph } from '@/core/graph/layout';
 import { useNavStore } from '@/shared/state/nav';
 import { useTagFilter } from '@/shared/state/tag-filter';
+import { useMediaQuery } from '@/shared/hooks/useMediaQuery';
 
 const SIDEBAR_WIDTH = 280;
 
@@ -42,20 +43,26 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
   const [localEnabled, setLocalEnabled] = useState(false);
   const [localDepth, setLocalDepth] = useState(2);
   const [hiddenCommunities, setHiddenCommunities] = useState<Set<number>>(new Set());
-  const [controlsOpen, setControlsOpen] = useState(() => window.matchMedia('(min-width: 768px)').matches);
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const isNarrowViewport = useMediaQuery('(max-width: 767px)');
+  const controlsToggleRef = useRef<HTMLButtonElement>(null);
+  const controlsPanelRef = useRef<HTMLElement>(null);
+  const controlsVisible = !isNarrowViewport || controlsOpen;
 
-  // Esc to close.
+  const closeControls = useCallback(() => {
+    setControlsOpen(false);
+    queueMicrotask(() => controlsToggleRef.current?.focus());
+  }, []);
+
   useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    if (!isNarrowViewport || !controlsOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      controlsPanelRef.current
+        ?.querySelector<HTMLElement>('input, select, button, [tabindex]:not([tabindex="-1"])')
+        ?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [controlsOpen, isNarrowViewport]);
 
   // Derive the graph we'll render: filter → local.
   const filteredGraph = useMemo(() => {
@@ -113,38 +120,51 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
   return (
     <Dialog.Root open onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Content aria-describedby={undefined} className="fixed inset-0 z-50 flex flex-col bg-background outline-none">
+        <Dialog.Content
+          aria-describedby={undefined}
+          onEscapeKeyDown={(event) => {
+            if (!isNarrowViewport || !controlsOpen) return;
+            event.preventDefault();
+            closeControls();
+          }}
+          className="fixed inset-0 z-50 flex flex-col bg-background outline-none"
+        >
       <Dialog.Title className="sr-only">Graph view</Dialog.Title>
       {/* Header */}
       <header className="app-chrome flex h-11 shrink-0 items-center justify-between px-3">
-        <div className="flex items-center gap-2">
-          <Maximize2 size={14} className="text-muted-foreground" />
-          <span className="text-body font-semibold">Graph view</span>
+        <div className="flex min-w-0 items-center gap-2">
+          <Maximize2 size={14} className="shrink-0 text-muted-foreground" />
+          <span className="truncate text-body font-semibold">Graph view</span>
           {stats.pageCount > 0 && (
             <span className="hidden text-meta text-muted-foreground sm:inline">
               — {stats.pageCount} pages · {stats.edgeCount} edges · {stats.communityCount} clusters
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-        <button type="button" onClick={() => setControlsOpen((value) => !value)} className="flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-meta text-muted-foreground md:hidden"><SlidersHorizontal size={12} />Controls</button>
+        <div className="flex shrink-0 items-center gap-2">
+        <button ref={controlsToggleRef} type="button" onClick={() => setControlsOpen((value) => !value)} aria-expanded={controlsOpen} aria-controls="graph-controls-panel" className="flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-meta text-muted-foreground md:hidden"><SlidersHorizontal size={12} />Controls</button>
         <button
           type="button"
           onClick={onClose}
+          aria-label="Close graph view"
           className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-meta text-muted-foreground hover:bg-surface-3"
         >
           <X size={12} />
-          Close
-          <Kbd>esc</Kbd>
+          <span className="hidden sm:inline">Close</span>
+          <span className="hidden sm:inline-flex"><Kbd>esc</Kbd></span>
         </button>
         </div>
       </header>
 
       {/* Body: sidebar + canvas */}
       <div className="relative flex flex-1 overflow-hidden">
-        {controlsOpen && <button type="button" onClick={() => setControlsOpen(false)} className="absolute inset-0 z-10 bg-background/55 backdrop-blur-sm md:hidden" aria-label="Close graph controls" />}
+        {controlsOpen && <button type="button" onClick={closeControls} className="absolute inset-0 z-10 bg-background/55 backdrop-blur-sm md:hidden" aria-label="Close graph controls" />}
         <aside
-          className={`absolute inset-y-0 left-0 z-20 shrink-0 overflow-hidden border-r border-border bg-surface-1 transition-transform md:static md:translate-x-0 ${controlsOpen ? 'translate-x-0' : '-translate-x-full'}`}
+          ref={controlsPanelRef}
+          id="graph-controls-panel"
+          aria-hidden={isNarrowViewport && !controlsOpen}
+          inert={isNarrowViewport && !controlsOpen}
+          className={`absolute inset-y-0 left-0 z-20 shrink-0 overflow-hidden border-r border-border bg-surface-1 transition-transform md:static md:translate-x-0 ${controlsVisible ? 'translate-x-0' : '-translate-x-full'}`}
           style={{ width: SIDEBAR_WIDTH }}
         >
           <GraphControls state={controlsState} stats={stats} />
