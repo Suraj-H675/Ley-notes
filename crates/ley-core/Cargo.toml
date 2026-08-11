@@ -12,6 +12,7 @@ cap-std.workspace = true
 cap-tempfile.workspace = true
 directories.workspace = true
 ignore.workspace = true
+model2vec-rs.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

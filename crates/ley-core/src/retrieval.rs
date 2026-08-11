@@ -5,6 +5,10 @@ use crate::ingestion::{
     load_project_graph_history, load_project_memory, load_project_memory_at_graph_snapshot,
     ArtifactRecord, LoadedProjectMemory,
 };
+use crate::semantic_retrieval::{
+    reciprocal_rank_fusion, semantic_ranked_project_context, SemanticIndexState,
+    SemanticSearchOutcome,
+};
 use crate::{CaptureMode, LeyCoreError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -65,7 +69,7 @@ pub struct MemoryOverview {
     pub privacy_notice: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContextItemKind {
     Artifact,
@@ -111,6 +115,38 @@ pub struct ContextPack {
     pub live_source_checked: bool,
     pub source_boundary: &'static str,
     pub warning: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RetrievalMode {
+    Lexical,
+    Semantic,
+    Hybrid,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HybridConflictProjection {
+    NotParticipating,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HybridRetrievalMetadata {
+    pub mode: RetrievalMode,
+    pub semantic_index: SemanticIndexState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
+    pub conflict_projection: HybridConflictProjection,
+    pub conflict_projection_note: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HybridContextPack {
+    pub context: ContextPack,
+    pub retrieval: HybridRetrievalMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -192,6 +228,56 @@ pub fn find_project_context(
     validate_limits(limits)?;
     let memory = load_project_memory(project_start, vault)?;
     search_loaded_context(&memory, query, limits)
+}
+
+/// Searches the already-captured, bound project with deterministic lexical and local semantic
+/// rankings. A missing or invalid local model intentionally falls back to lexical retrieval.
+pub fn find_project_hybrid_context(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    query: &str,
+    limits: RetrievalLimits,
+) -> Result<HybridContextPack, LeyCoreError> {
+    validate_query(query)?;
+    validate_limits(limits)?;
+    let vault = vault.as_ref();
+    let memory = load_project_memory(project_start, vault)?;
+    let lexical = collect_lexical_candidates(&memory, query)?;
+    match semantic_ranked_project_context(&memory, vault, query) {
+        SemanticSearchOutcome::Available {
+            items: semantic,
+            index_state,
+        } => {
+            let mode = if lexical.is_empty() {
+                RetrievalMode::Semantic
+            } else {
+                RetrievalMode::Hybrid
+            };
+            let candidates = reciprocal_rank_fusion(lexical, semantic);
+            Ok(HybridContextPack {
+                context: context_pack_from_candidates(&memory, query, limits, candidates),
+                retrieval: HybridRetrievalMetadata {
+                    mode,
+                    semantic_index: index_state,
+                    fallback_reason: None,
+                    conflict_projection: HybridConflictProjection::NotParticipating,
+                    conflict_projection_note:
+                        "No structured conflict projection participated in artifact, symbol, or dependency retrieval.",
+                },
+            })
+        }
+        SemanticSearchOutcome::Unavailable { reason } => Ok(HybridContextPack {
+            context: context_pack_from_candidates(&memory, query, limits, lexical),
+            retrieval: HybridRetrievalMetadata {
+                mode: RetrievalMode::Lexical,
+                semantic_index: SemanticIndexState::Unavailable,
+                fallback_reason: Some(reason),
+                conflict_projection: HybridConflictProjection::NotParticipating,
+                conflict_projection_note:
+                    "No structured conflict projection participated in artifact, symbol, or dependency retrieval.",
+            },
+        }),
+    }
 }
 
 pub fn read_project_evidence(
@@ -464,6 +550,16 @@ fn search_loaded_context(
     query: &str,
     limits: RetrievalLimits,
 ) -> Result<ContextPack, LeyCoreError> {
+    let candidates = collect_lexical_candidates(memory, query)?;
+    Ok(context_pack_from_candidates(
+        memory, query, limits, candidates,
+    ))
+}
+
+fn collect_lexical_candidates(
+    memory: &LoadedProjectMemory,
+    query: &str,
+) -> Result<Vec<ContextItem>, LeyCoreError> {
     let normalized_query = query.trim().to_lowercase();
     let terms = query_terms(&normalized_query);
     let mut candidates = Vec::new();
@@ -552,7 +648,15 @@ fn search_loaded_context(
             .then_with(|| left.id.cmp(&right.id))
     });
     candidates.dedup_by(|left, right| left.id == right.id);
+    Ok(candidates)
+}
 
+fn context_pack_from_candidates(
+    memory: &LoadedProjectMemory,
+    query: &str,
+    limits: RetrievalLimits,
+    candidates: Vec<ContextItem>,
+) -> ContextPack {
     let mut items = Vec::new();
     let mut estimated_tokens = 80;
     let mut truncated = candidates.len() > limits.max_results;
@@ -589,7 +693,7 @@ fn search_loaded_context(
     }
     estimated_tokens = estimated_tokens.min(limits.max_tokens);
 
-    Ok(ContextPack {
+    ContextPack {
         project_id: memory.manifest.project_id.clone(),
         project_name: memory.manifest.project_name.clone(),
         artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
@@ -605,7 +709,7 @@ fn search_loaded_context(
         live_source_checked: false,
         source_boundary: SOURCE_BOUNDARY,
         warning: EVIDENCE_WARNING,
-    })
+    }
 }
 
 #[derive(Debug)]

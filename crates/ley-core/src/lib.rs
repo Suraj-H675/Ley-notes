@@ -20,6 +20,7 @@ mod project_activity;
 mod project_catalog;
 mod resume_context;
 mod retrieval;
+mod semantic_retrieval;
 mod session;
 mod session_context;
 
@@ -89,11 +90,20 @@ pub use resume_context::{
     MAX_RESUME_SESSIONS, MIN_RESUME_CHARACTERS,
 };
 pub use retrieval::{
-    find_project_context, find_project_graph_path, project_memory_overview,
-    read_project_cited_evidence, read_project_evidence, read_project_graph_evidence,
-    traverse_project_graph, ContextItem, ContextItemKind, ContextPack, EvidenceExcerpt,
-    GraphDirection, GraphPath, GraphTraversal, MemoryOverview, RetrievalLimits,
+    find_project_context, find_project_graph_path, find_project_hybrid_context,
+    project_memory_overview, read_project_cited_evidence, read_project_evidence,
+    read_project_graph_evidence, traverse_project_graph, ContextItem, ContextItemKind, ContextPack,
+    EvidenceExcerpt, GraphDirection, GraphPath, GraphTraversal, HybridConflictProjection,
+    HybridContextPack, HybridRetrievalMetadata, MemoryOverview, RetrievalLimits, RetrievalMode,
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
+};
+pub use semantic_retrieval::{
+    default_semantic_model_cache_path, install_semantic_model_from_staging,
+    install_semantic_model_from_staging_at, semantic_model_status, semantic_model_status_at,
+    supported_semantic_model, SemanticIndexBinding, SemanticIndexState, SemanticModelDescriptor,
+    SemanticModelFile, SemanticModelInstallation, SemanticModelStatus,
+    MAX_SEMANTIC_ENTRY_CHARACTERS, MAX_SEMANTIC_INDEX_ENTRIES, SEMANTIC_INDEX_SCHEMA_VERSION,
+    SEMANTIC_MODEL_DIMENSION, SEMANTIC_MODEL_ID, SEMANTIC_MODEL_REVISION,
 };
 pub use session::{
     checkpoint_session, derive_turn_reference, erase_session_memory, finish_session,
@@ -309,6 +319,10 @@ pub enum LeyCoreError {
     ProjectMemoryUnavailable(String),
     #[error("invalid Ley retrieval request: {0}")]
     InvalidRetrievalRequest(String),
+    #[error("local semantic model installation failed: {0}")]
+    SemanticModelInstallation(String),
+    #[error("invalid local semantic index: {0}")]
+    InvalidSemanticIndex(String),
     #[error("invalid Ley session store: {0}")]
     InvalidSessionStore(String),
     #[error("invalid Ley session request: {0}")]
