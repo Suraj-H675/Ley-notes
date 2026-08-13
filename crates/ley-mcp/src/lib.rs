@@ -1,20 +1,21 @@
 use ley_core::{
-    checkpoint_session, find_project_context, find_project_graph_path, find_project_hybrid_context,
-    finish_session, list_learning_contexts, project_activity_view, project_memory_overview,
-    project_resume_context, propose_learning, read_learning_context, read_project_evidence,
-    read_session_context, read_session_turns_context, start_session, traverse_project_graph,
+    checkpoint_session, find_project_context, find_project_graph_path, finish_session,
+    list_learning_contexts, project_activity_view, project_memory_overview, project_resume_context,
+    propose_learning, read_learning_context, read_project_evidence, read_session_context,
+    read_session_turns_context, search_project_memory, start_session, traverse_project_graph,
     AttemptInput, AttemptOutcome, CheckpointInput, CommandInput, DecisionInput, FinishSessionInput,
     GraphDirection, GraphEdgeKind, LearningActor, LearningEvidenceInput, LearningKind,
     LearningListScope, LearningMutation, LearningProvenance, LeyCoreError, PlanItemInput,
-    PlanStatus, ProblemInput, ProjectProblemScope, ProposeLearningInput, ResolutionInput,
-    RetrievalLimits, SessionMutation, SessionSource, SessionSourceKind, SessionStatus,
-    StartSessionInput, TaskInput, TaskStatus, VerificationInput, VerificationStatus,
+    PlanStatus, ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
+    ResolutionInput, RetrievalLimits, SessionMutation, SessionSource, SessionSourceKind,
+    SessionStatus, StartSessionInput, TaskInput, TaskStatus, VerificationInput, VerificationStatus,
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS, DEFAULT_RESUME_CHARACTERS,
-    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
-    DEFAULT_SESSION_TURN_RESULTS,
+    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS,
 };
 use ley_core::{list_session_contexts, DEFAULT_SESSION_LIST_RESULTS};
 use rmcp::{
@@ -895,11 +896,15 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<SearchContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        let limits = RetrievalLimits {
-            max_results: params.max_results.unwrap_or(DEFAULT_CONTEXT_RESULTS),
-            max_tokens: params.max_tokens.unwrap_or(DEFAULT_CONTEXT_TOKENS),
+        let limits = ProjectMemorySearchLimits {
+            max_results: params
+                .max_results
+                .unwrap_or(DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS),
+            max_tokens: params
+                .max_tokens
+                .unwrap_or(DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS),
         };
-        Ok(tool_result(find_project_hybrid_context(
+        Ok(tool_result(search_project_memory(
             self.project.as_path(),
             self.vault.as_path(),
             &params.query,

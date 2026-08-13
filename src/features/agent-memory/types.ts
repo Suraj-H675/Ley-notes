@@ -380,6 +380,81 @@ export interface AgentProjectSearch {
   privacyNotice: string;
 }
 
+export type ProjectMemoryTrustSignal =
+  | "direct-evidence"
+  | "trusted-current"
+  | "unverified"
+  | "contested"
+  | "superseded"
+  | "rejected"
+  | "stale";
+
+export interface ProjectMemorySearchResult {
+  kind: AgentProjectSearchResultKind;
+  entityId: string;
+  title: string;
+  excerpt: string;
+  updatedAtUnixMs: number;
+  sessionId?: string;
+  learningId?: string;
+  citation?: GraphCitation;
+  learningState?: string;
+  learningTrustState?: string;
+  learningFreshness?: string;
+  trustSignal?: ProjectMemoryTrustSignal;
+  trustedForReuse: boolean;
+  truncated: boolean;
+  ranking: {
+    lexicalRank?: number;
+    semanticRank?: number;
+    artifactHybridRank?: number;
+    reciprocalRankScore: number;
+    temporalContribution: number;
+    trustContribution: number;
+    finalScore: number;
+  };
+}
+
+export interface ProjectMemorySearch {
+  projectId: string;
+  projectName: string;
+  artifactSnapshotId: string;
+  graphSnapshotId: string;
+  capturedAtUnixMs: number;
+  query: string;
+  maxTokens: number;
+  estimatedTokens: number;
+  results: ProjectMemorySearchResult[];
+  conflicts: Array<{
+    kind: "learning-state" | "content-disagreement";
+    entityIds: string[];
+    learningIds: string[];
+    reason: string;
+  }>;
+  coverage: {
+    candidateLimit: number;
+    collectedCandidates: number;
+    omittedCandidates: number;
+    omittedResults: number;
+    omittedConflicts: number;
+    truncatedResultContent: number;
+    sourceTruncated: boolean;
+  };
+  truncated: boolean;
+  retrieval: {
+    mode: "lexical" | "semantic" | "hybrid";
+    boundedRerankMode: "lexical" | "semantic" | "hybrid";
+    artifactContextMode: "lexical" | "semantic" | "hybrid";
+    boundedRerankFallbackReason?: string;
+    artifactContextFallbackReason?: string;
+  };
+  freshness: string;
+  liveSourceChecked: boolean;
+  sourceBoundary: string;
+  instructionWarning: string;
+  privacyNotice: string;
+}
+
 export type ArtifactKind =
   "source" | "documentation" | "manifest" | "configuration" | "text";
 

@@ -26,6 +26,7 @@ import {
   RefreshCw,
   RotateCcw,
   Scale,
+  Search,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -60,6 +61,7 @@ import type {
   LearningSummary,
   PromotedLearningNoteDraft,
   PromotedSessionNoteDraft,
+  ProjectMemorySearchResult,
   ResumeSession,
   SessionContext,
   SessionSummary,
@@ -70,6 +72,7 @@ import type { SessionCanvasLinkRequest } from "./link-session-canvas";
 const LAST_AGENT_PROJECT_KEY = "ley:last-agent-project";
 type Section =
   | "overview"
+  | "search"
   | "sessions"
   | "decisions"
   | "problems"
@@ -82,6 +85,11 @@ type Section =
 const ArtifactExplorer = lazy(() =>
   import("./ArtifactExplorer").then((module) => ({
     default: module.ArtifactExplorer,
+  })),
+);
+const MemorySearch = lazy(() =>
+  import("./MemorySearch").then((module) => ({
+    default: module.MemorySearch,
   })),
 );
 const ProjectKnowledgeGraph = lazy(() =>
@@ -305,6 +313,22 @@ export function AgentMemoryWorkspace({
     setSection("graph");
   }
 
+  function openMemoryResult(result: ProjectMemorySearchResult) {
+    if (result.learningId) {
+      setLearningId(result.learningId);
+      return;
+    }
+    if (result.sessionId) {
+      setSessionId(result.sessionId);
+      return;
+    }
+    if (result.kind === "artifact" && result.citation) {
+      openArtifact(result.citation.artifactPath);
+      return;
+    }
+    if (result.citation) openEvidence(result.citation);
+  }
+
   async function makeReady(kind: "initialize" | "connect" | "capture") {
     if (!projectPath) return;
     setBusy(true);
@@ -511,6 +535,15 @@ export function AgentMemoryWorkspace({
                       onSession={setSessionId}
                     />
                   )}
+                  {section === "search" && projectPath && (
+                    <Suspense fallback={<KnowledgeSurfaceFallback />}>
+                      <MemorySearch
+                        projectPath={projectPath}
+                        projectName={inspection.dashboard.overview.projectName}
+                        onOpen={openMemoryResult}
+                      />
+                    </Suspense>
+                  )}
                   {section === "sessions" && (
                     <Sessions
                       sessions={inspection.dashboard.sessions}
@@ -646,6 +679,7 @@ function AgentMemoryNav({
     count?: number;
   }> = [
     { id: "overview", label: "Overview", icon: Sparkles },
+    { id: "search", label: "Search memory", icon: Search },
     {
       id: "sessions",
       label: "Sessions",

@@ -103,6 +103,31 @@ pub enum SemanticIndexState {
     Unavailable,
 }
 
+/// A bounded text candidate for local, in-process semantic reranking.
+///
+/// Callers retain ownership of the source text. This helper never creates a semantic index or
+/// contacts a remote service.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SemanticTextCandidate<'a> {
+    pub id: &'a str,
+    pub text: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SemanticTextRank {
+    pub id: String,
+    pub rank: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SemanticTextRankOutcome {
+    Available { ranks: Vec<SemanticTextRank> },
+    Unavailable { reason: String },
+}
+
+/// The maximum number of already-bounded texts accepted by [`rank_bounded_local_texts`].
+pub(crate) const MAX_SEMANTIC_RANK_TEXTS: usize = 256;
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum SemanticSearchOutcome {
@@ -300,6 +325,96 @@ pub fn install_semantic_model_from_staging_at(
     result
 }
 
+/// Ranks a caller-owned, already-selected set of texts with Ley's verified local model.
+///
+/// The candidate count and each candidate document are bounded before embedding. A missing,
+/// corrupt, unavailable, or unexpectedly-behaving local model becomes an explicit unavailable
+/// outcome so callers can retain lexical-only results without exposing local paths.
+pub(crate) fn rank_bounded_local_texts(
+    query: &str,
+    candidates: &[SemanticTextCandidate<'_>],
+) -> SemanticTextRankOutcome {
+    if candidates.len() > MAX_SEMANTIC_RANK_TEXTS {
+        return SemanticTextRankOutcome::Unavailable {
+            reason: format!(
+                "the local semantic rank request exceeded its {}-candidate limit",
+                MAX_SEMANTIC_RANK_TEXTS
+            ),
+        };
+    }
+    let mut identifiers = BTreeSet::new();
+    if candidates.iter().any(|candidate| {
+        candidate.id.is_empty() || candidate.text.is_empty() || !identifiers.insert(candidate.id)
+    }) {
+        return SemanticTextRankOutcome::Unavailable {
+            reason: "the local semantic rank request has invalid candidate identifiers or text"
+                .to_owned(),
+        };
+    }
+    if candidates.is_empty() {
+        return SemanticTextRankOutcome::Available { ranks: Vec::new() };
+    }
+
+    let model_directory =
+        match default_semantic_model_cache_path() {
+            Ok(path) => path,
+            Err(_) => return SemanticTextRankOutcome::Unavailable {
+                reason:
+                    "no operating-system cache directory is available for the local semantic model"
+                        .to_owned(),
+            },
+        };
+    let model = match loaded_semantic_model(&model_directory) {
+        Ok(model) => model,
+        Err(reason) => return SemanticTextRankOutcome::Unavailable { reason },
+    };
+    let query_embedding = model.encode_single(query);
+    if !valid_embedding(&query_embedding) {
+        return SemanticTextRankOutcome::Unavailable {
+            reason: "the local semantic model returned an unexpected query embedding".to_owned(),
+        };
+    }
+    let texts = candidates
+        .iter()
+        .map(|candidate| bounded_document(candidate.text))
+        .collect::<Vec<_>>();
+    let embeddings = model.encode_with_args(&texts, Some(512), 32);
+    if embeddings.len() != candidates.len()
+        || embeddings
+            .iter()
+            .any(|embedding| !valid_embedding(embedding))
+    {
+        return SemanticTextRankOutcome::Unavailable {
+            reason: "the local semantic model returned invalid candidate embeddings".to_owned(),
+        };
+    }
+    let mut ranks = candidates
+        .iter()
+        .zip(embeddings)
+        .map(|(candidate, embedding)| {
+            (
+                cosine_similarity(&query_embedding, &embedding),
+                candidate.id,
+            )
+        })
+        .collect::<Vec<_>>();
+    ranks.sort_by(|(left_score, left_id), (right_score, right_id)| {
+        right_score
+            .total_cmp(left_score)
+            .then_with(|| left_id.cmp(right_id))
+    });
+    SemanticTextRankOutcome::Available {
+        ranks: ranks
+            .into_iter()
+            .enumerate()
+            .map(|(index, (_, id))| SemanticTextRank {
+                id: id.to_owned(),
+                rank: index as u32 + 1,
+            })
+            .collect(),
+    }
+}
+
 pub(crate) fn semantic_ranked_project_context(
     memory: &LoadedProjectMemory,
     vault: &Path,
@@ -442,6 +557,23 @@ fn load_or_build_semantic_index(
         }
     }
 
+    let index = build_semantic_index(memory, binding, model)?;
+    let body = serde_json::to_vec(&index)
+        .map_err(|error| LeyCoreError::InvalidSemanticIndex(error.to_string()))?;
+    if body.len() as u64 > SEMANTIC_INDEX_LIMIT_BYTES {
+        return Err(LeyCoreError::InvalidSemanticIndex(
+            "the bounded semantic index exceeded its storage limit".to_owned(),
+        ));
+    }
+    write_atomic_private(&directory, &filename, &body)?;
+    Ok((index, SemanticIndexState::Rebuilt))
+}
+
+fn build_semantic_index(
+    memory: &LoadedProjectMemory,
+    binding: &SemanticIndexBinding,
+    model: &StaticModel,
+) -> Result<SemanticIndexManifest, LeyCoreError> {
     let candidates = semantic_index_candidates(memory)?;
     let texts = candidates
         .iter()
@@ -477,15 +609,7 @@ fn load_or_build_semantic_index(
         entries,
     };
     validate_semantic_index(&index, binding)?;
-    let body = serde_json::to_vec(&index)
-        .map_err(|error| LeyCoreError::InvalidSemanticIndex(error.to_string()))?;
-    if body.len() as u64 > SEMANTIC_INDEX_LIMIT_BYTES {
-        return Err(LeyCoreError::InvalidSemanticIndex(
-            "the bounded semantic index exceeded its storage limit".to_owned(),
-        ));
-    }
-    write_atomic_private(&directory, &filename, &body)?;
-    Ok((index, SemanticIndexState::Rebuilt))
+    Ok(index)
 }
 
 #[derive(Debug)]

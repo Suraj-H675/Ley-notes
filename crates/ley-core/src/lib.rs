@@ -18,6 +18,7 @@ mod learning;
 mod learning_context;
 mod project_activity;
 mod project_catalog;
+mod project_memory_search;
 mod resume_context;
 mod retrieval;
 mod semantic_retrieval;
@@ -82,6 +83,17 @@ pub use project_activity::{
 pub use project_catalog::{
     ObservedProject, ObservedProjectList, ProjectCatalog, DEFAULT_PROJECT_CATALOG_RESULTS,
     MAX_PROJECT_CATALOG_RESULTS, PROJECT_CATALOG_FILE, PROJECT_CATALOG_SCHEMA_VERSION,
+};
+pub use project_memory_search::{
+    search_project_memory, ProjectMemoryConflict, ProjectMemoryConflictKind,
+    ProjectMemoryRankingSignals, ProjectMemoryResultKind, ProjectMemorySearch,
+    ProjectMemorySearchCoverage, ProjectMemorySearchLimits, ProjectMemorySearchResult,
+    ProjectMemorySearchRetrieval, ProjectMemoryTrustSignal, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, MAX_PROJECT_MEMORY_SEARCH_CANDIDATES,
+    MAX_PROJECT_MEMORY_SEARCH_CONFLICTS, MAX_PROJECT_MEMORY_SEARCH_EXCERPT_CHARACTERS,
+    MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS, MAX_PROJECT_MEMORY_SEARCH_RESULTS,
+    MAX_PROJECT_MEMORY_SEARCH_TITLE_CHARACTERS, MAX_PROJECT_MEMORY_SEARCH_TOKENS,
+    MIN_PROJECT_MEMORY_SEARCH_TOKENS,
 };
 pub use resume_context::{
     project_resume_context, ProjectResumePack, ResumeCheckpoint, ResumeDecision, ResumeLearning,

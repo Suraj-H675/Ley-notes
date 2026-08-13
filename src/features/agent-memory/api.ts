@@ -17,6 +17,7 @@ import type {
   ProjectGraphView,
   GraphCitation,
   ProjectProblemScope,
+  ProjectMemorySearch,
   SessionContext,
   SessionTurnsContext,
 } from "./types";
@@ -46,6 +47,13 @@ export function searchAgentProjects(
   query: string,
 ): Promise<AgentProjectSearch> {
   return invoke("search_agent_projects", { query });
+}
+
+export function searchAgentProjectMemory(
+  projectPath: string,
+  query: string,
+): Promise<ProjectMemorySearch> {
+  return invoke("search_agent_project_memory", { projectPath, query });
 }
 
 export function readAgentCaptureSettings(

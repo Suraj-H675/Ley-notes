@@ -6,19 +6,21 @@ use ley_core::{
     project_resume_context, project_session_stats, read_learning, read_learning_context,
     read_project_cited_evidence, read_project_graph_evidence, read_session_context,
     read_session_turns_context, rename_session, review_learning, search_observed_projects,
-    update_capture_mode, BindingRegistry, BindingSource, CaptureMode, CorrectLearningInput,
-    CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt, GraphCitation, IngestionResult,
-    LearningActor, LearningContextPack, LearningEvidenceInput, LearningFeedbackAction,
-    LearningList, LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView,
-    ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic, ProjectGraphFilters,
-    ProjectGraphHistory, ProjectGraphView, ProjectProblemScope, ProjectResumePack,
-    ProjectVaultBinding, RenameSessionInput, ReviewLearningInput, SessionContextPack,
-    SessionMemoryErasure, SessionSummary, SessionTurnsContextPack, DEFAULT_ARTIFACT_RESULTS,
+    search_project_memory, update_capture_mode, BindingRegistry, BindingSource, CaptureMode,
+    CorrectLearningInput, CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt,
+    GraphCitation, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
+    LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
+    ProjectActivityView, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
+    ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView, ProjectMemorySearch,
+    ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
+    RenameSessionInput, ReviewLearningInput, SessionContextPack, SessionMemoryErasure,
+    SessionSummary, SessionTurnsContextPack, DEFAULT_ARTIFACT_RESULTS,
     DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
     DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
-    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
     DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
     DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS,
@@ -532,6 +534,28 @@ async fn search_agent_projects(query: String) -> Result<CrossProjectSearch, Stri
     })
     .await
     .map_err(|_| "Cross-project search was interrupted.".to_owned())?
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn search_agent_project_memory(
+    project_path: String,
+    query: String,
+) -> Result<ProjectMemorySearch, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let binding = resolved_agent_binding(Path::new(&project_path))?;
+        search_project_memory(
+            &project_path,
+            &binding.vault_path,
+            &query,
+            ProjectMemorySearchLimits {
+                max_results: DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+                max_tokens: DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+            },
+        )
+    })
+    .await
+    .map_err(|_| "Project memory search was interrupted.".to_owned())?
     .map_err(|error| error.to_string())
 }
 
@@ -1466,6 +1490,7 @@ pub fn run() {
             update_agent_capture_mode,
             erase_agent_project_memory,
             search_agent_projects,
+            search_agent_project_memory,
             inspect_agent_project,
             verify_agent_project_note_vault,
             initialize_agent_project,
