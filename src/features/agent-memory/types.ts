@@ -455,6 +455,35 @@ export interface ProjectMemorySearch {
   privacyNotice: string;
 }
 
+export interface SemanticModelFile {
+  name: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface SemanticModelDescriptor {
+  modelId: string;
+  revision: string;
+  dimension: number;
+  files: SemanticModelFile[];
+}
+
+export type SemanticModelStatus =
+  | { state: "uninstalled"; reason: string }
+  | { state: "ready"; model: SemanticModelDescriptor }
+  | { state: "corrupt"; reason: string };
+
+export interface SemanticModelSetup {
+  status: SemanticModelStatus;
+  model: SemanticModelDescriptor;
+  totalBytes: number;
+}
+
+export interface SemanticModelInstallation {
+  model: SemanticModelDescriptor;
+  installed: boolean;
+}
+
 export type ArtifactKind =
   "source" | "documentation" | "manifest" | "configuration" | "text";
 

@@ -1,0 +1,12 @@
+[package]
+name = "ley-semantic-installer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Explicit, verified local installation of Ley's pinned semantic-retrieval model"
+
+[dependencies]
+ley-core = { path = "../ley-core" }
+tempfile.workspace = true
+thiserror.workspace = true
+ureq.workspace = true

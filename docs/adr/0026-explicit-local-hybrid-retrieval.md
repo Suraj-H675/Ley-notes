@@ -20,6 +20,8 @@ The model lifecycle is explicit:
 4. every file is checked against its pinned size and SHA-256 before the staged directory is atomically promoted into Ley's OS-specific cache directory; and
 5. normal ingestion, search, MCP startup, and desktop startup never download a model.
 
+The desktop **Agent Memory → Search memory** surface exposes the same status and installer as the CLI. Before consent it shows the pinned model identity, download size, origin, verification boundary, local-inference guarantee, and lexical fallback. Installation runs outside the UI thread; interrupted or failed downloads leave lexical search usable, and a corrupt cache can be repaired only through the same explicit action.
+
 A missing or invalid model is an available lexical-only mode, not a startup failure. Responses report which retrieval mode actually ran. Ley does not upload source text, queries, vectors, or model telemetry.
 
 Semantic indexes are derived, disposable data. Their manifest binds the index to the Ley project ID, artifact snapshot ID, graph snapshot ID, retrieval model ID and revision, schema version, and embedding dimension. Entries retain the original bounded citation and record identity; vectors do not become evidence. A mismatch invalidates the derived index and causes an explicit rebuild or a lexical-only response. Index writes use private permissions and atomic replacement within the bound vault's project memory namespace.

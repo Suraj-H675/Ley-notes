@@ -2154,9 +2154,9 @@ version = "0.1.0"
 dependencies = [
  "ley-core",
  "ley-mcp",
+ "ley-semantic-installer",
  "serde_json",
  "tempfile",
- "ureq",
 ]
 
 [[package]]
@@ -2204,6 +2204,7 @@ name = "ley-notes"
 version = "0.1.0"
 dependencies = [
  "ley-core",
+ "ley-semantic-installer",
  "notify",
  "serde",
  "serde_json",
@@ -2211,6 +2212,16 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "walkdir",
+]
+
+[[package]]
+name = "ley-semantic-installer"
+version = "0.1.0"
+dependencies = [
+ "ley-core",
+ "tempfile",
+ "thiserror 2.0.18",
+ "ureq",
 ]
 
 [[package]]

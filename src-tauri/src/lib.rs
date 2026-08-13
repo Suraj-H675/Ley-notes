@@ -25,6 +25,11 @@ use ley_core::{
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
     DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS,
 };
+use ley_core::{
+    semantic_model_status as local_semantic_model_status, supported_semantic_model,
+    SemanticModelDescriptor, SemanticModelInstallation, SemanticModelStatus,
+};
+use ley_semantic_installer::install_supported_semantic_model;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::{
@@ -518,6 +523,35 @@ fn erase_agent_project_memory(project_path: String) -> Result<AgentProjectInspec
         resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
     erase_project_memory(&project_path, &binding.vault_path).map_err(|error| error.to_string())?;
     inspect_agent_project(project_path)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SemanticModelSetup {
+    status: SemanticModelStatus,
+    model: SemanticModelDescriptor,
+    total_bytes: u64,
+}
+
+/// Reports whether the pinned local semantic-retrieval model is ready without using the network.
+#[tauri::command]
+fn semantic_model_status() -> SemanticModelSetup {
+    let model = supported_semantic_model();
+    let total_bytes = model.files.iter().map(|file| file.bytes).sum();
+    SemanticModelSetup {
+        status: local_semantic_model_status(),
+        model,
+        total_bytes,
+    }
+}
+
+/// Explicitly downloads and installs Ley's pinned semantic-retrieval model off the UI thread.
+#[tauri::command]
+async fn install_semantic_model() -> Result<SemanticModelInstallation, String> {
+    tauri::async_runtime::spawn_blocking(install_supported_semantic_model)
+        .await
+        .map_err(|_| "Semantic model installation was interrupted.".to_owned())?
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1489,6 +1523,8 @@ pub fn run() {
             read_agent_capture_settings,
             update_agent_capture_mode,
             erase_agent_project_memory,
+            semantic_model_status,
+            install_semantic_model,
             search_agent_projects,
             search_agent_project_memory,
             inspect_agent_project,

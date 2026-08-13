@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/ley-cli", "crates/ley-core", "crates/ley-mcp", "src-tauri"]
+members = [
+    "crates/ley-cli",
+    "crates/ley-core",
+    "crates/ley-mcp",
+    "crates/ley-semantic-installer",
+    "src-tauri",
+]
 resolver = "2"
 
 [workspace.package]

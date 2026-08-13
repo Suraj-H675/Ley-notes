@@ -18,6 +18,8 @@ import type {
   GraphCitation,
   ProjectProblemScope,
   ProjectMemorySearch,
+  SemanticModelInstallation,
+  SemanticModelSetup,
   SessionContext,
   SessionTurnsContext,
 } from "./types";
@@ -54,6 +56,14 @@ export function searchAgentProjectMemory(
   query: string,
 ): Promise<ProjectMemorySearch> {
   return invoke("search_agent_project_memory", { projectPath, query });
+}
+
+export function readSemanticModelSetup(): Promise<SemanticModelSetup> {
+  return invoke("semantic_model_status");
+}
+
+export function installSemanticModel(): Promise<SemanticModelInstallation> {
+  return invoke("install_semantic_model");
 }
 
 export function readAgentCaptureSettings(

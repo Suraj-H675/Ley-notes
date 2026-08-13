@@ -1,31 +1,29 @@
 use ley_core::{
     checkpoint_session, correct_learning, diagnose_project, erase_session_memory, finish_session,
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
-    install_semantic_model_from_staging, learning_review_inbox, list_learnings, list_sessions,
-    preview_capture, process_host_hook, project_resume_context, propose_learning, read_learning,
-    read_project_graph, read_session, read_session_context, read_session_turns_context,
-    record_session_prompt, record_session_response, rename_session, review_learning,
-    search_project_memory, semantic_model_status, start_session, supported_semantic_model,
-    AgentHost, BindingRegistry, CaptureMode, CheckpointInput, CommandInput, CorrectLearningInput,
-    EraseSessionMemoryInput, FinishSessionInput, GraphNodeKind, LearningActor,
-    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
-    LearningTrustState, LeyCoreError, ProjectMemorySearchLimits, ProposeLearningInput,
-    RenameSessionInput, ReviewLearningInput, SemanticModelStatus, SessionSource, SessionSourceKind,
-    SessionStatus, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
+    learning_review_inbox, list_learnings, list_sessions, preview_capture, process_host_hook,
+    project_resume_context, propose_learning, read_learning, read_project_graph, read_session,
+    read_session_context, read_session_turns_context, record_session_prompt,
+    record_session_response, rename_session, review_learning, search_project_memory,
+    semantic_model_status, start_session, supported_semantic_model, AgentHost, BindingRegistry,
+    CaptureMode, CheckpointInput, CommandInput, CorrectLearningInput, EraseSessionMemoryInput,
+    FinishSessionInput, GraphNodeKind, LearningActor, LearningEvidenceInput,
+    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
+    LeyCoreError, ProjectMemorySearchLimits, ProposeLearningInput, RenameSessionInput,
+    ReviewLearningInput, SemanticModelStatus, SessionSource, SessionSourceKind, SessionStatus,
+    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
     VerificationStatus, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
     DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
     DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_mcp::{run_stdio, run_unavailable_stdio};
+use ley_semantic_installer::{
+    install_supported_semantic_model_with_progress, SemanticModelInstallerError,
+};
 use std::env;
-use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-const SEMANTIC_MODEL_DOWNLOAD_BASE: &str =
-    "https://huggingface.co/minishlab/potion-retrieval-32M/resolve/6fc8051fab2a1e0ee76689cf08c853792ac285e7";
 
 fn main() {
     if let Err(error) = run(env::args().skip(1).collect()) {
@@ -143,57 +141,15 @@ fn semantic_install(json: bool) -> Result<(), CliError> {
         );
         println!("Downloads are explicit; inference and search remain fully local.");
     }
-    let staging = tempfile::Builder::new()
-        .prefix("ley-semantic-model-")
-        .tempdir()
-        .map_err(|_| {
-            CliError::ModelDownload(
-                "could not create a private temporary download directory".to_owned(),
-            )
-        })?;
-    set_private_directory(staging.path())?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(30))
-        .timeout_read(Duration::from_secs(60 * 60))
-        .timeout_write(Duration::from_secs(60))
-        .build();
-    for file in &model.files {
+    let result = install_supported_semantic_model_with_progress(|file| {
         if !json {
             println!("Downloading {} ({} bytes)…", file.name, file.bytes);
         }
-        let url = format!("{SEMANTIC_MODEL_DOWNLOAD_BASE}/{}", file.name);
-        let response = agent.get(&url).call().map_err(|error| {
-            CliError::ModelDownload(format!("could not download {}: {error}", file.name))
-        })?;
-        let destination = staging.path().join(file.name);
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut output = options.open(&destination).map_err(|_| {
-            CliError::ModelDownload(format!("could not create staged {}", file.name))
-        })?;
-        let mut input = response.into_reader().take(file.bytes.saturating_add(1));
-        let copied = std::io::copy(&mut input, &mut output).map_err(|_| {
-            CliError::ModelDownload(format!("download of {} was interrupted", file.name))
-        })?;
-        output.flush().map_err(|_| {
-            CliError::ModelDownload(format!("could not finish staging {}", file.name))
-        })?;
-        output
-            .sync_all()
-            .map_err(|_| CliError::ModelDownload(format!("could not sync staged {}", file.name)))?;
-        if copied != file.bytes {
-            return Err(CliError::ModelDownload(format!(
-                "downloaded {} had an unexpected size",
-                file.name
-            )));
-        }
-    }
-    let result = install_semantic_model_from_staging(staging.path())?;
+    })
+    .map_err(|error| match error {
+        SemanticModelInstallerError::Core(error) => CliError::Core(error),
+        error => CliError::ModelDownload(error.to_string()),
+    })?;
     if json {
         println!(
             "{}",
@@ -203,21 +159,6 @@ fn semantic_install(json: bool) -> Result<(), CliError> {
         println!("Semantic retrieval installed and checksum-verified.");
         println!("No project content or query was uploaded.");
     }
-    Ok(())
-}
-
-fn set_private_directory(path: &Path) -> Result<(), CliError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| {
-            CliError::ModelDownload(
-                "could not make the temporary download directory private".to_owned(),
-            )
-        })?;
-    }
-    #[cfg(not(unix))]
-    let _ = path;
     Ok(())
 }
 

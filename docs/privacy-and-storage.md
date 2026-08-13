@@ -4,18 +4,20 @@ Ley is local-first. The website may serve static HTML, CSS, JavaScript, fonts, i
 
 ## Storage contract
 
-| Surface | Authoritative user data | Limitation |
-| --- | --- | --- |
-| Desktop app | User-selected folder containing Markdown, attachments, Canvas, and agent memory | Files depend on the user's normal device backup policy |
-| Browser app with folder access | User-selected folder through a permissioned directory handle | Browser support and renewed permission vary |
-| Browser-local compatibility mode | IndexedDB in the current browser profile | Clearing site data removes the vault; external local agents cannot open it |
-| Public website | No knowledge data | Serves product information and static application assets only |
+| Surface                          | Authoritative user data                                                         | Limitation                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Desktop app                      | User-selected folder containing Markdown, attachments, Canvas, and agent memory | Files depend on the user's normal device backup policy                     |
+| Browser app with folder access   | User-selected folder through a permissioned directory handle                    | Browser support and renewed permission vary                                |
+| Browser-local compatibility mode | IndexedDB in the current browser profile                                        | Clearing site data removes the vault; external local agents cannot open it |
+| Public website                   | No knowledge data                                                               | Serves product information and static application assets only              |
 
 Browser-local mode requests persistent browser storage when available, but ZIP backup remains necessary. Filesystem vaults are the recommended durable mode.
 
 ## Agent boundary
 
-Ley does not independently upload notes, project scans, sessions, or indexes. When a user intentionally asks a cloud agent such as Claude, Codex, or Gemini to retrieve Ley context, that selected context becomes visible to the agent provider as part of the agent request. A future local-model integration can keep both storage and inference on-device.
+Ley does not independently upload notes, project scans, sessions, queries, or indexes. When a user intentionally asks a cloud agent such as Claude, Codex, or Gemini to retrieve Ley context, that selected context becomes visible to the agent provider as part of the agent request.
+
+Optional meaning-based retrieval uses a pinned local Model2Vec model. Status checks, startup, ingestion, and search never download it. Only the explicit **Enable semantic search** desktop action or `ley semantic install` command contacts Hugging Face, and only for the three files at Ley's pinned model revision. Ley streams those public files into owner-private staging, checks their expected sizes and SHA-256 hashes, and atomically installs the verified model in the operating-system user cache. Project content and search queries are not included in those requests; inference remains on-device. Without a valid installation, Ley continues with lexical retrieval and discloses that fallback.
 
 ## Vault metadata
 
