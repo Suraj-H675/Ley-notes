@@ -1700,7 +1700,7 @@ fn redaction_rules() -> &'static Vec<RedactionRule> {
             RedactionRule {
                 kind: "credential-assignment",
                 pattern: Regex::new(
-                    r#"(?im)^(\s*(?:(?:export\s+)?(?:const|let|var|static|final)\s+(?:mut\s+)?|export\s+)?["']?[A-Z0-9_.-]*(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)[A-Z0-9_.-]*["']?\s*(?::|=)\s*)(?:"(?:\\.|[^"\\])*"|'[^'\r\n]*'|[^\s#,\r\n]+)"#,
+                    r#"(?im)^(\s*(?:(?:export\s+)?(?:const|let|var|static|final)\s+(?:mut\s+)?|export\s+)?["']?[A-Za-z0-9_.-]*(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|private[_-]?key)[A-Za-z0-9_.-]*["']?\s*(?::|=)\s*)(?:"(?:\\.|[^"\\])*"|'[^'\r\n]*'|[^\s#,\r\n]+)"#,
                 )
                 .expect("credential assignment pattern is valid"),
                 replacement: "${1}\"[REDACTED:credential-assignment]\"",
@@ -1732,48 +1732,60 @@ fn redaction_rules() -> &'static Vec<RedactionRule> {
 }
 
 pub(crate) fn redact_secrets(text: &str) -> (String, Vec<RedactionFinding>) {
-    let mut redacted = text.to_owned();
     let mut findings = Vec::new();
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+
     for rule in redaction_rules() {
-        let mut lines = rule
-            .pattern
-            .find_iter(&redacted)
-            .map(|matched| {
-                redacted.as_bytes()[..matched.start()]
+        let mut lines = Vec::new();
+        for matched in rule.pattern.find_iter(text) {
+            if replacements
+                .iter()
+                .any(|(start, end, _)| matched.start() < *end && *start < matched.end())
+            {
+                continue;
+            }
+            let captures = rule
+                .pattern
+                .captures_at(text, matched.start())
+                .expect("a complete match returned by find_iter must have captures");
+            let whole = captures
+                .get(0)
+                .expect("a regex replacement always has a whole match");
+            let mut replacement = String::new();
+            captures.expand(rule.replacement, &mut replacement);
+            let original_newlines = whole.as_str().bytes().filter(|byte| *byte == b'\n').count();
+            let replacement_newlines = replacement.bytes().filter(|byte| *byte == b'\n').count();
+            if original_newlines > replacement_newlines {
+                replacement.push_str(&"\n".repeat(original_newlines - replacement_newlines));
+            }
+            replacements.push((matched.start(), matched.end(), replacement));
+            lines.push(
+                text.as_bytes()[..matched.start()]
                     .iter()
                     .filter(|byte| **byte == b'\n')
                     .count() as u64
-                    + 1
-            })
-            .collect::<Vec<_>>();
+                    + 1,
+            );
+        }
         lines.sort_unstable();
         lines.dedup();
         if !lines.is_empty() {
-            redacted = rule
-                .pattern
-                .replace_all(&redacted, |captures: &regex::Captures<'_>| {
-                    let original = captures
-                        .get(0)
-                        .expect("a regex replacement always has a whole match")
-                        .as_str();
-                    let mut replacement = String::new();
-                    captures.expand(rule.replacement, &mut replacement);
-                    let original_newlines = original.bytes().filter(|byte| *byte == b'\n').count();
-                    let replacement_newlines =
-                        replacement.bytes().filter(|byte| *byte == b'\n').count();
-                    if original_newlines > replacement_newlines {
-                        replacement
-                            .push_str(&"\n".repeat(original_newlines - replacement_newlines));
-                    }
-                    replacement
-                })
-                .into_owned();
             findings.push(RedactionFinding {
                 kind: rule.kind.to_owned(),
                 lines,
             });
         }
     }
+
+    replacements.sort_unstable_by_key(|(start, _, _)| *start);
+    let mut redacted = String::with_capacity(text.len());
+    let mut previous_end = 0;
+    for (start, end, replacement) in replacements {
+        redacted.push_str(&text[previous_end..start]);
+        redacted.push_str(&replacement);
+        previous_end = end;
+    }
+    redacted.push_str(&text[previous_end..]);
     (redacted, findings)
 }
 
