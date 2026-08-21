@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import { BookOpen, Bookmark, Code2, Eye, FileText, Paperclip } from 'lucide-react';
+import { BookOpen, Bookmark, Code2, Eye, FileText, Paperclip, TriangleAlert } from 'lucide-react';
 import type { Page } from '@/infrastructure/database/schema';
 import { renamePage } from '@/core/vault/pages';
 import { PropertiesPanel } from './PropertiesPanel';
@@ -30,6 +30,10 @@ export function NoteWorkspace({ page, pane }: { page: Page; pane: EditorPane }) 
   const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
   const attachmentInput = useRef<HTMLInputElement>(null);
   const bookmarked = useIsPageBookmarked(page.id);
+  const invalidFrontmatter = Boolean(page.frontmatterError);
+  const missingFromDisk = Boolean(page.missingFromDisk);
+  const visibleMode = invalidFrontmatter || missingFromDisk ? 'edit' : mode;
+  const visibleEditingStyle = invalidFrontmatter ? 'source' : editingStyle;
 
   async function commitTitle() {
     const next = title.trim();
@@ -44,15 +48,25 @@ export function NoteWorkspace({ page, pane }: { page: Page; pane: EditorPane }) 
   }
 
   function changeMode(next: EditorMode) {
+    if (invalidFrontmatter && next !== 'edit') return;
     setMode(next);
     localStorage.setItem('ley:editor-mode', next);
   }
 
   function changeEditingStyle(next: EditingStyle) {
+    if (invalidFrontmatter && next !== 'source') return;
     setEditingStyle(next);
     localStorage.setItem('ley:editor-style', next);
     changeMode('edit');
   }
+
+  // A filesystem rename can update the visible filename title without changing
+  // this workspace's page ID. Mirror that projection after paint so a stale
+  // input value cannot accidentally rename the file back on blur.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setTitle(page.title), 0);
+    return () => window.clearTimeout(timer);
+  }, [page.id, page.title]);
 
   async function attachFiles(files: File[]) {
     if (files.length === 0) return;
@@ -90,31 +104,34 @@ export function NoteWorkspace({ page, pane }: { page: Page; pane: EditorPane }) 
         <div className="min-w-0 flex-1">
           <input
             value={title}
+            disabled={missingFromDisk}
             onChange={(event) => setTitle(event.target.value)}
             onBlur={() => void commitTitle()}
             onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setTitle(page.title); event.currentTarget.blur(); } }}
-            className="w-full bg-transparent text-body font-semibold text-foreground outline-none"
+            className="w-full bg-transparent text-body font-semibold text-foreground outline-none disabled:cursor-not-allowed disabled:text-muted-foreground"
             aria-label="Note title"
           />
           <div className={`truncate font-mono text-micro ${titleError ? 'text-destructive' : 'text-subtle-foreground'}`}>{titleError ?? page.path}</div>
         </div>
         <input ref={attachmentInput} type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,audio/mpeg,audio/wav,video/mp4,video/webm" className="hidden" onChange={(event) => { void attachFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
-        <button type="button" onClick={() => void togglePageBookmark(page.id)} className={`rounded-md p-1.5 ${bookmarked ? 'text-secondary' : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'}`} aria-label={bookmarked ? 'Remove note bookmark' : 'Bookmark note'} title={bookmarked ? 'Remove note bookmark' : 'Bookmark note'} aria-pressed={bookmarked}>
+        <button type="button" onClick={() => void togglePageBookmark(page.id)} disabled={missingFromDisk} className={`rounded-md p-1.5 disabled:cursor-not-allowed disabled:opacity-50 ${bookmarked ? 'text-secondary' : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'}`} aria-label={missingFromDisk ? 'Restore this note before bookmarking it' : (bookmarked ? 'Remove note bookmark' : 'Bookmark note')} title={missingFromDisk ? 'Restore this note before bookmarking it' : (bookmarked ? 'Remove note bookmark' : 'Bookmark note')} aria-pressed={bookmarked}>
           <Bookmark size={13} className={bookmarked ? 'fill-current' : undefined} />
         </button>
-        <button type="button" onClick={() => attachmentInput.current?.click()} className="flex shrink-0 items-center gap-1 rounded-md p-1.5 text-micro text-muted-foreground hover:bg-surface-2 hover:text-foreground sm:px-2 sm:py-1" title={attachmentStatus ?? 'Attach files'} aria-label={attachmentStatus ?? 'Attach files'}>
+        <button type="button" onClick={() => attachmentInput.current?.click()} disabled={missingFromDisk} className="flex shrink-0 items-center gap-1 rounded-md p-1.5 text-micro text-muted-foreground hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 sm:px-2 sm:py-1" title={missingFromDisk ? 'Restore this note before adding attachments' : (attachmentStatus ?? 'Attach files')} aria-label={missingFromDisk ? 'Restore this note before adding attachments' : (attachmentStatus ?? 'Attach files')}>
           <Paperclip size={12} /> <span className="hidden sm:inline">{attachmentStatus ?? 'Attach'}</span>
         </button>
         <div className="flex rounded-md border border-border bg-surface-1 p-0.5">
-          <ModeButton active={mode === 'edit' && editingStyle === 'live'} onClick={() => changeEditingStyle('live')} icon={<Eye size={12} />} label="Live preview" />
-          <ModeButton active={mode === 'edit' && editingStyle === 'source'} onClick={() => changeEditingStyle('source')} icon={<Code2 size={12} />} label="Source" />
-          <ModeButton active={mode === 'read'} onClick={() => changeMode('read')} icon={<BookOpen size={12} />} label="Read" />
+          <ModeButton active={visibleMode === 'edit' && visibleEditingStyle === 'live'} onClick={() => changeEditingStyle('live')} icon={<Eye size={12} />} label="Live preview" />
+          <ModeButton active={visibleMode === 'edit' && visibleEditingStyle === 'source'} onClick={() => changeEditingStyle('source')} icon={<Code2 size={12} />} label="Source" />
+          <ModeButton active={visibleMode === 'read'} onClick={() => changeMode('read')} icon={<BookOpen size={12} />} label="Read" />
         </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <PropertiesPanel key={JSON.stringify(page.frontmatter)} pageId={page.id} frontmatter={page.frontmatter} />
-        {mode === 'edit'
-          ? <div className="mx-auto min-h-[240px] w-full max-w-[900px] flex-1"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} pagePath={page.path} initialContent={page.content} pane={pane} livePreview={editingStyle === 'live'} /></Suspense></div>
+        {invalidFrontmatter || missingFromDisk
+          ? <div className="mx-auto w-full max-w-[820px] px-4 pt-4 sm:px-10 sm:pt-5"><div className="flex gap-2 rounded-lg border border-amber-400/35 bg-amber-400/10 px-3 py-2 text-meta text-muted-foreground-strong" role="alert"><TriangleAlert size={15} className="mt-0.5 shrink-0 text-amber-500" aria-hidden="true" /><div>{invalidFrontmatter ? <><p className="font-medium text-foreground">Properties are unavailable until this frontmatter is fixed.</p><p>Its original YAML is shown verbatim in Source mode and will not be rewritten by Ley.</p><p className="sr-only">Parser detail: {page.frontmatterError}</p></> : <><p className="font-medium text-foreground">Properties are unavailable while this file is missing.</p><p>Restore the note to disk or close and discard its recovery copy.</p></>}</div></div></div>
+          : <PropertiesPanel key={JSON.stringify(page.frontmatter)} pageId={page.id} frontmatter={page.frontmatter} />}
+        {visibleMode === 'edit'
+          ? <div className="mx-auto min-h-[240px] w-full max-w-[900px] flex-1"><Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Opening editor…</div>}><CodeMirrorEditor pageId={page.id} pagePath={page.path} initialContent={page.content} pane={pane} livePreview={visibleEditingStyle === 'live'} missingFromDisk={missingFromDisk} frontmatterError={page.frontmatterError} /></Suspense></div>
           : <Suspense fallback={<div className="p-10 text-meta text-muted-foreground">Rendering note…</div>}><MarkdownReadingView pageId={page.id} pagePath={page.path} content={page.content} pane={pane} /></Suspense>}
       </div>
     </div>

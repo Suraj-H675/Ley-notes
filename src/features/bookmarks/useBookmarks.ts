@@ -16,7 +16,7 @@ export function useDestinationBookmarks(): ResolvedDestinationBookmark[] {
     const key = bookmarksDataKey(await activeDataKind());
     const bookmarks = parseBookmarksSetting((await db.settings.get(key))?.value);
     if (bookmarks.length === 0) return [];
-    const pages = await db.pages.filter((page) => page.deletedAt === null).toArray();
+    const pages = await db.pages.filter((page) => page.deletedAt === null && !page.missingFromDisk).toArray();
     const byId = new Map(pages.map((page) => [page.id, page]));
     const byPath = new Map(pages.map((page) => [page.path.toLowerCase(), page]));
     return bookmarks.map((bookmark) => {

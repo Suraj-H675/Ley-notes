@@ -22,6 +22,7 @@ import {
   restoreDesktopVault,
   startDesktopVaultWatcher,
   type DesktopVault,
+  type VaultPathChange,
 } from '@/infrastructure/vault/filesystem-vault';
 import {
   activeDataKind,
@@ -55,6 +56,20 @@ async function reconcileNavigation(): Promise<void> {
     reconciled.openPage(pages[0].id);
     reconciled.pushRecent(pages[0].id);
   }
+}
+
+function openPageIds(): string[] {
+  const nav = useNavStore.getState();
+  return [...new Set([
+    ...nav.openTabs,
+    ...[nav.activeTab, nav.primaryTab, nav.secondaryTab].filter((id): id is string => Boolean(id)),
+  ])];
+}
+
+function pauseEditorAutosaveForAuthoritativeScan(): void {
+  window.dispatchEvent(new CustomEvent('ley:vault-files-changed', {
+    detail: { paths: [], changes: [], fullRescan: true },
+  }));
 }
 
 export function App() {
@@ -115,9 +130,13 @@ export function App() {
   }, [setTheme]);
 
   useEffect(() => {
-    if (vaultBusy || !desktopVault || (vaultMode !== 'desktop' && vaultMode !== 'browser-folder')) return;
+    // Desktop changes are driven by the native watcher. Browser folder handles
+    // have no watcher, so focus is their authoritative external-change check.
+    if (vaultBusy || !desktopVault || vaultMode !== 'browser-folder') return;
     const refresh = async () => {
-      const next = vaultMode === 'desktop' ? await refreshDesktopVault() : await refreshBrowserFolderVault();
+      pauseEditorAutosaveForAuthoritativeScan();
+      const continuity = { openPageIds: openPageIds() };
+      const next = await refreshBrowserFolderVault(continuity);
       if (next) {
         setDesktopVault(next);
         await reconcileNavigation();
@@ -132,20 +151,37 @@ export function App() {
     let active = true;
     let dispose: () => void = () => undefined;
     let refreshTimer: number | null = null;
+    let refreshInFlight = false;
+    let refreshPending = false;
+    let pendingChanges: VaultPathChange[] = [];
     queueMicrotask(() => { if (active) setWatcherStatus('starting'); });
-    void startDesktopVaultWatcher((paths) => {
-      window.dispatchEvent(new CustomEvent('ley:vault-files-changed', { detail: { paths } }));
+    const scheduleRefresh = () => {
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
       refreshTimer = window.setTimeout(() => {
-        void refreshDesktopVault().then(async (next) => {
+        refreshTimer = null;
+        if (refreshInFlight) return;
+        refreshInFlight = true;
+        refreshPending = false;
+        const changes = pendingChanges;
+        pendingChanges = [];
+        void refreshDesktopVault({ openPageIds: openPageIds(), changes }).then(async (next) => {
           if (!active || !next) return;
           setDesktopVault(next);
           await reconcileNavigation();
         }).catch((error) => {
           console.error('[vault] Live refresh failed', error);
           if (active) setWatcherStatus('error');
+        }).finally(() => {
+          refreshInFlight = false;
+          if (active && refreshPending) scheduleRefresh();
         });
       }, 250);
+    };
+    void startDesktopVaultWatcher((change) => {
+      window.dispatchEvent(new CustomEvent('ley:vault-files-changed', { detail: change }));
+      refreshPending = true;
+      pendingChanges.push(...change.changes);
+      scheduleRefresh();
     }).then((stop) => {
       if (!active) { stop(); return; }
       dispose = stop;
@@ -225,10 +261,12 @@ export function App() {
   }
 
   async function refreshActiveVault(): Promise<DesktopVault | null> {
+    if (vaultMode === 'desktop' || vaultMode === 'browser-folder') pauseEditorAutosaveForAuthoritativeScan();
+    const continuity = { openPageIds: openPageIds() };
     const next = vaultMode === 'desktop'
-      ? await refreshDesktopVault()
+      ? await refreshDesktopVault(continuity)
       : vaultMode === 'browser-folder'
-        ? await refreshBrowserFolderVault()
+        ? await refreshBrowserFolderVault(continuity)
         : null;
     if (next) setDesktopVault(next);
     if (next) await reconcileNavigation();
@@ -258,7 +296,7 @@ export function App() {
       localStorage.setItem(WEB_VAULT_MODE_KEY, returnVault.mode === 'browser-folder' ? 'browser-folder' : 'browser-local');
       useNavStore.getState().reset();
       if (returnVault.mode === 'browser-folder') {
-        const vault = await refreshBrowserFolderVault();
+        const vault = await refreshBrowserFolderVault({ openPageIds: openPageIds() });
         if (!vault) throw new Error('The browser folder is no longer available. Choose it again to continue.');
         setDesktopVault(vault);
       } else {

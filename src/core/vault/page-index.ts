@@ -39,7 +39,7 @@ export function startPageIndex(): () => void {
     sub = liveQuery(() => db.pages.toArray()).subscribe({
       next: (pages) => {
         entries = pages
-          .filter((p) => p.deletedAt === null)
+          .filter((p) => p.deletedAt === null && !p.missingFromDisk)
           .map((p) => ({
             id: p.id,
             title: p.title,
@@ -98,10 +98,10 @@ export function resolveTitleSync(title: string): string | null {
 export async function resolveTitle(title: string): Promise<string | null> {
   const lc = title.toLowerCase();
   const byTitle = await db.pages.where('lcTitle').equals(lc).first();
-  if (byTitle && byTitle.deletedAt === null) return byTitle.id;
+  if (byTitle && byTitle.deletedAt === null && !byTitle.missingFromDisk) return byTitle.id;
   const all = await db.pages.toArray();
   for (const p of all) {
-    if (p.deletedAt !== null) continue;
+    if (p.deletedAt !== null || p.missingFromDisk) continue;
     if (p.aliases.some((a) => a.toLowerCase() === lc)) return p.id;
   }
   return null;

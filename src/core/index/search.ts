@@ -110,7 +110,7 @@ async function rebuildIndex(pages: Page[], tags: Tag[]): Promise<void> {
   const nextDocs = new Map<string, SearchDoc>();
   const nextProperties = new Map<string, Map<string, string[]>>();
   for (const page of pages) {
-    if (page.deletedAt !== null) continue;
+    if (page.deletedAt !== null || page.missingFromDisk) continue;
     const properties = normalizeProperties(page.frontmatter);
     const doc: SearchDoc = {
       id: page.id,

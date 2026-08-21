@@ -4,19 +4,21 @@
  * listen for it once here and resolve-or-create the target.
  */
 
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { EditorView } from '@codemirror/view';
 import { Bold, BookmarkPlus, Braces, Hash, Italic, Link2, ListChecks, Search } from 'lucide-react';
 import { startCompletion } from '@codemirror/autocomplete';
 import { mountEditor, type EditorController } from '@/features/editor/lib/mount';
 import { useDebouncedCallback } from '@/shared/hooks/useDebounce';
-import { updatePageContent } from '@/core/vault/pages';
+import { discardMissingPage, restoreMissingPage, updatePageContent } from '@/core/vault/pages';
 import { attachmentInsertion, saveAttachment } from '@/core/vault/attachments';
 import type { EditorFormat } from './lib/formatting';
 import { openWikiDestination, type WikiDestination } from './lib/open-wiki-destination';
 import { openMarkdownDestination } from './lib/open-wiki-destination';
 import type { InternalMarkdownLink } from '@/core/parser/markdown-links';
 import type { EditorPane } from '@/shared/state/nav';
+import { useNavStore } from '@/shared/state/nav';
+import { db } from '@/infrastructure/database/db';
 import { ensureMarkdownBlockReference } from '@/core/parser/destinations';
 import { addDestinationBookmark } from '@/core/vault/bookmarks';
 import { nanoid } from '@/shared/lib/nanoid';
@@ -28,21 +30,33 @@ interface CodeMirrorEditorProps {
   initialContent: string;
   pane: EditorPane;
   livePreview: boolean;
+  missingFromDisk: boolean;
+  frontmatterError?: string;
 }
 
-export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, livePreview }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, livePreview, missingFromDisk, frontmatterError }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<EditorController | null>(null);
   const dirtyRef = useRef(false);
   const syncingRef = useRef(false);
   const externalContentRef = useRef<string | null>(null);
+  const acceptedDiskContentRef = useRef(initialContent);
+  const pagePathRef = useRef(pagePath);
+  const missingFromDiskRef = useRef(missingFromDisk);
+  const externalRemovalPendingRef = useRef(false);
+  const frontmatterErrorRef = useRef(frontmatterError);
   const [attachmentStatus, setAttachmentStatus] = useState<string | null>(null);
   const [externalContent, setExternalContent] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
+
+  useLayoutEffect(() => {
+    pagePathRef.current = pagePath;
+  }, [pagePath]);
 
   // Save handler — debounced to coalesce keystrokes.
   const debouncedSave = useDebouncedCallback((value: string) => {
-    if (externalContentRef.current !== null) return;
+    if (externalContentRef.current !== null || missingFromDiskRef.current || externalRemovalPendingRef.current) return;
     updatePageContent(pageId, value).then(() => {
       if (controllerRef.current?.getValue() === value) dirtyRef.current = false;
     }).catch((err) => {
@@ -75,12 +89,16 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
     const onFollowMarkdown = async (event: Event) => {
       const link = (event as CustomEvent<InternalMarkdownLink>).detail;
       if (!link) return;
-      await openMarkdownDestination(pagePath, link.path, link.heading, link.blockId, pane);
+      await openMarkdownDestination(pagePathRef.current, link.path, link.heading, link.blockId, pane);
     };
     controller.view.contentDOM.addEventListener('ley:follow-markdown-link', onFollowMarkdown);
 
     const insertFiles = async (files: File[]) => {
       if (files.length === 0) return;
+      if (missingFromDiskRef.current || externalRemovalPendingRef.current) {
+        setAttachmentStatus('Restore this note before adding attachments.');
+        return;
+      }
       setAttachmentStatus(files.length === 1 ? 'Adding attachment…' : `Adding ${files.length} attachments…`);
       try {
         const saved = await Promise.all(files.map((file) => saveAttachment(pageId, file)));
@@ -131,7 +149,7 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
     // navigation and debouncing are stable, so
     // re-binding on every change is unnecessary churn.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageId, pagePath]);
+  }, [pageId]);
 
   useEffect(() => {
     controllerRef.current?.setLivePreview(livePreview);
@@ -140,19 +158,38 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
   useEffect(() => {
     const controller = controllerRef.current;
     if (!controller) return;
+    const wasInvalidFrontmatter = Boolean(frontmatterErrorRef.current);
+    frontmatterErrorRef.current = frontmatterError;
+    // Saving a repaired raw frontmatter source transforms the projection from
+    // complete source to body-only. That is a local format transition, not an
+    // external conflict; replace the view deliberately and resume normal
+    // parsed-frontmatter behavior.
+    if (wasInvalidFrontmatter && !frontmatterError) {
+      acceptedDiskContentRef.current = initialContent;
+      syncingRef.current = true;
+      controller.setValue(initialContent);
+      syncingRef.current = false;
+      dirtyRef.current = false;
+      externalContentRef.current = null;
+      queueMicrotask(() => setExternalContent(null));
+      return;
+    }
     const current = controller.getValue();
     if (current === initialContent) {
+      acceptedDiskContentRef.current = initialContent;
       dirtyRef.current = false;
       externalContentRef.current = null;
       queueMicrotask(() => setExternalContent(null));
       return;
     }
     if (dirtyRef.current) {
+      acceptedDiskContentRef.current = initialContent;
       debouncedSave.cancel();
       externalContentRef.current = initialContent;
       queueMicrotask(() => setExternalContent(initialContent));
       return;
     }
+    acceptedDiskContentRef.current = initialContent;
     syncingRef.current = true;
     controller.setValue(initialContent);
     syncingRef.current = false;
@@ -160,7 +197,55 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
       setSyncStatus('Updated from disk');
       window.setTimeout(() => setSyncStatus(null), 1600);
     });
-  }, [debouncedSave, initialContent]);
+  }, [debouncedSave, frontmatterError, initialContent]);
+
+  // A filesystem event can arrive before the debounced save is due. Stop
+  // autosave immediately so an external edit is never overwritten and an old
+  // path is never recreated, then let the authoritative scan resolve it.
+  useEffect(() => {
+    const onVaultChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ fullRescan?: boolean; changes?: Array<{ kind?: string; path?: string; from?: string }> }>).detail;
+      const path = pagePathRef.current.toLowerCase();
+      const affectsCurrentPath = detail?.fullRescan || detail?.changes?.some((change) => (
+        ((change.kind === 'remove' || change.kind === 'modify') && change.path?.toLowerCase() === path)
+        || (change.kind === 'rename' && change.from?.toLowerCase() === path)
+      ));
+      if (!affectsCurrentPath) return;
+      externalRemovalPendingRef.current = true;
+      debouncedSave.cancel();
+    };
+    const onProjected = () => {
+      void db.pages.get(pageId).then((page) => {
+        if (!page || page.missingFromDisk) return;
+        externalRemovalPendingRef.current = false;
+        // A safe rename or metadata-only filesystem event canceled the pending
+        // timer. Resume it for the still-dirty buffer at the now-current path.
+        const value = controllerRef.current?.getValue();
+        if (
+          dirtyRef.current
+          && value !== undefined
+          && externalContentRef.current === null
+          && page.content === acceptedDiskContentRef.current
+        ) {
+          debouncedSave(value);
+        }
+      });
+    };
+    window.addEventListener('ley:vault-files-changed', onVaultChange);
+    window.addEventListener('ley:vault-projected', onProjected);
+    return () => {
+      window.removeEventListener('ley:vault-files-changed', onVaultChange);
+      window.removeEventListener('ley:vault-projected', onProjected);
+    };
+  }, [debouncedSave, pageId]);
+
+  useEffect(() => {
+    missingFromDiskRef.current = missingFromDisk;
+    if (!missingFromDisk) return;
+    externalRemovalPendingRef.current = true;
+    debouncedSave.cancel();
+    externalContentRef.current = null;
+  }, [debouncedSave, missingFromDisk]);
 
   useEffect(() => {
     const jump = (event: Event) => {
@@ -203,7 +288,39 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
     }
   }
 
+  async function restoreMissingFile() {
+    const value = controllerRef.current?.getValue();
+    if (value === undefined) return;
+    setRecoveryBusy(true);
+    try {
+      await restoreMissingPage(pageId, value);
+      missingFromDiskRef.current = false;
+      externalRemovalPendingRef.current = false;
+      dirtyRef.current = false;
+      setSyncStatus('Restored to disk');
+    } catch (error) {
+      setSyncStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRecoveryBusy(false);
+    }
+  }
+
+  async function discardMissingFile() {
+    setRecoveryBusy(true);
+    try {
+      await discardMissingPage(pageId);
+      useNavStore.getState().closeTab(pageId);
+    } catch (error) {
+      setSyncStatus(error instanceof Error ? error.message : String(error));
+      setRecoveryBusy(false);
+    }
+  }
+
   async function bookmarkBlockAtCursor() {
+    if (missingFromDiskRef.current) {
+      setSyncStatus('Restore this note before bookmarking a block.');
+      return;
+    }
     const view = controllerRef.current?.view;
     if (!view) return;
     try {
@@ -213,7 +330,7 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
         const nextLine = result.content.split('\n')[line.number - 1];
         view.dispatch({ changes: { from: line.to, insert: nextLine.slice(line.text.length) } });
       }
-      await addDestinationBookmark({ kind: 'block', pageId, path: pagePath, anchor: result.id });
+      await addDestinationBookmark({ kind: 'block', pageId, path: pagePathRef.current, anchor: result.id });
       setSyncStatus(result.changed ? `Block bookmarked · added ^${result.id} to Markdown` : `Block ^${result.id} bookmarked`);
       window.setTimeout(() => setSyncStatus(null), 2400);
     } catch (cause) {
@@ -224,7 +341,8 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
   return (
     <div className="relative flex h-full w-full flex-col">
       <div ref={containerRef} className="min-h-0 w-full flex-1 overflow-hidden bg-background" data-testid="cm-editor" />
-      {externalContent !== null && <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-amber-400/30 bg-amber-400/8 px-3 py-2 text-micro text-muted-foreground-strong" role="alert"><span className="min-w-48 flex-1">This note changed outside Ley while you had unsaved edits.</span><button type="button" onClick={reloadExternalContent} className="rounded-md border border-border bg-background px-2 py-1 hover:bg-surface-2">Reload disk</button><button type="button" onClick={() => void keepLocalContent()} className="rounded-md bg-primary px-2 py-1 font-medium text-primary-foreground">Keep mine</button></div>}
+      {missingFromDisk && <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-amber-400/30 bg-amber-400/8 px-3 py-2 text-micro text-muted-foreground-strong" role="alert"><span className="min-w-48 flex-1"><strong className="font-medium text-foreground">This file was deleted outside Ley.</strong> The text in this open editor has not been written back. Restore it at its previous path, or close and discard this missing projection.</span><button type="button" onClick={() => void restoreMissingFile()} disabled={recoveryBusy} className="rounded-md bg-primary px-2 py-1 font-medium text-primary-foreground disabled:opacity-60">Restore to disk</button><button type="button" onClick={() => void discardMissingFile()} disabled={recoveryBusy} className="rounded-md border border-border bg-background px-2 py-1 hover:bg-surface-2 disabled:opacity-60">Close and discard</button></div>}
+      {externalContent !== null && !missingFromDisk && <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-amber-400/30 bg-amber-400/8 px-3 py-2 text-micro text-muted-foreground-strong" role="alert"><span className="min-w-48 flex-1">This note changed outside Ley while you had unsaved edits.</span><button type="button" onClick={reloadExternalContent} className="rounded-md border border-border bg-background px-2 py-1 hover:bg-surface-2">Reload disk</button><button type="button" onClick={() => void keepLocalContent()} className="rounded-md bg-primary px-2 py-1 font-medium text-primary-foreground">Keep mine</button></div>}
       <div className="app-chrome flex shrink-0 items-center justify-center gap-0.5 p-1" role="toolbar" aria-label="Markdown formatting">
         <FormatButton label="Bold" shortcut={shortcutLabel('B')} format="bold" controller={controllerRef}><Bold size={13} /></FormatButton>
         <FormatButton label="Italic" shortcut={shortcutLabel('I')} format="italic" controller={controllerRef}><Italic size={13} /></FormatButton>
@@ -233,7 +351,7 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
         <FormatButton label="Inline code" shortcut={shortcutLabel('Shift `')} format="code" controller={controllerRef}><Braces size={13} /></FormatButton>
         <span className="mx-0.5 h-4 w-px bg-border" />
         <FormatButton label="Cycle task" format="task" controller={controllerRef}><ListChecks size={13} /></FormatButton>
-        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => void bookmarkBlockAtCursor()} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Bookmark block at cursor" title="Bookmark block at cursor"><BookmarkPlus size={13} /><span className="hidden lg:inline">Bookmark</span></button>
+        <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => void bookmarkBlockAtCursor()} disabled={missingFromDisk} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-label="Bookmark block at cursor" title={missingFromDisk ? 'Restore this note before bookmarking a block' : 'Bookmark block at cursor'}><BookmarkPlus size={13} /><span className="hidden lg:inline">Bookmark</span></button>
         <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => controllerRef.current?.openSearch()} className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-micro text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label="Find and replace" title={`Find and replace (${shortcutLabel('F')})`}><Search size={13} /><span className="hidden sm:inline">Find</span></button>
       </div>
       {attachmentStatus && <div className="absolute bottom-12 right-4 max-w-80 rounded-lg border border-border bg-surface-1 px-3 py-2 text-meta text-foreground shadow-menu" role="status">{attachmentStatus}</div>}

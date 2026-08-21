@@ -26,7 +26,7 @@ describe("promote learning note", () => {
     const first = await promoteLearningNote(draft);
     expect(first.created).toBe(true);
     expect(first.page.path).toBe(
-      "Agent Memory/Lessons/verified-release-procedure.md",
+      "Agent Memory/Lessons/Verified release procedure.md",
     );
 
     const renamed = await renamePage(first.page.id, "My release checklist");

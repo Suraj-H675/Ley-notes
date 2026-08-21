@@ -51,12 +51,12 @@ export function useGraphData(): GraphData | null {
       communityCount: built.communityCount,
       communitySizes: countByCommunity(built.communities),
       aggregated: built.aggregated,
-      pageCount: raw.pages.filter((p) => p.deletedAt === null).length,
+      pageCount: raw.pages.filter((p) => p.deletedAt === null && !p.missingFromDisk).length,
       edgeCount: raw.links.filter(
         (l) =>
           l.targetPageId !== null &&
           l.sourcePageId !== l.targetPageId &&
-          raw.pages.some((p) => p.id === l.targetPageId && p.deletedAt === null),
+          raw.pages.some((p) => p.id === l.targetPageId && p.deletedAt === null && !p.missingFromDisk),
       ).length,
     };
   }, [raw]);

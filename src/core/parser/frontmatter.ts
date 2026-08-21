@@ -5,10 +5,9 @@
  *
  * Edge cases we handle explicitly:
  *  - No frontmatter at all → body is the whole input, frontmatter is {}
- *  - Frontmatter with no closing fence → treated as if it doesn't exist
- *    (avoids swallowing the entire document on a typo)
- *  - Invalid YAML → returns empty frontmatter, body unchanged, plus the error
- *    in the result so callers can warn the user
+ *  - Malformed, unclosed, and non-map frontmatter → leaves the entire source
+ *    in `body` verbatim, plus an error. Callers must write that source back
+ *    unchanged until it becomes valid.
  *
  * Notes on parsing: we use the `yaml` package (already in deps) — it's the
  * modern YAML 1.2 parser, has good TypeScript types, and supports the
@@ -20,16 +19,17 @@ import YAML from 'yaml';
 export interface FrontmatterResult {
   frontmatter: Record<string, unknown>;
   body: string;
-  /** Set when YAML parsing failed. The body still contains the raw block. */
+  /** Set when the leading frontmatter is malformed or not a YAML map. */
   error?: string;
 }
 
-const FENCE = /^---\r?\n/;
-// Closing fence is `\n---` followed by an optional newline. We slice on the
-// match position so anything after the fence is body. Markdown `---` thematic
-// breaks inside the body are uncommon in practice and produce a YAML parse
-// error which we catch and surface.
-const CLOSING_FENCE = /\n---\r?\n?/;
+// Recognize a bare leading delimiter as an unclosed frontmatter attempt too;
+// otherwise Properties could treat `---` as ordinary body text and rewrite it.
+const FENCE = /^---(?:\r?\n|$)/;
+// The closing fence may be the first thing after the opening fence (an empty
+// properties map) or begin on a later line. Including the preceding newline in
+// the match preserves the existing body slicing behavior for non-empty YAML.
+const CLOSING_FENCE = /(?:^|\r?\n)---(?:\r?\n|$)/;
 
 export function parseFrontmatter(raw: string): FrontmatterResult {
   if (!FENCE.test(raw)) {
@@ -41,23 +41,28 @@ export function parseFrontmatter(raw: string): FrontmatterResult {
   const afterOpen = raw.replace(FENCE, '');
   const closingMatch = afterOpen.match(CLOSING_FENCE);
   if (!closingMatch || closingMatch.index === undefined) {
-    // Unclosed frontmatter — bail out, treat as no frontmatter.
-    return { frontmatter: {}, body: raw };
+    return {
+      frontmatter: {},
+      body: raw,
+      error: 'Frontmatter is missing its closing --- fence',
+    };
   }
 
   const yamlText = afterOpen.slice(0, closingMatch.index);
   const body = afterOpen.slice(closingMatch.index + closingMatch[0].length);
 
   try {
-    const parsed = YAML.parse(yamlText) ?? {};
-    if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return { frontmatter: {}, body, error: 'Frontmatter must be a YAML map' };
+    // An empty fenced block is the conventional empty YAML map. A literal
+    // `null`, list, or scalar is not a properties map and must remain raw.
+    const parsed = yamlText.trim() === '' ? {} : YAML.parse(yamlText);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { frontmatter: {}, body: raw, error: 'Frontmatter must be a YAML map' };
     }
     return { frontmatter: parsed as Record<string, unknown>, body };
   } catch (e) {
     return {
       frontmatter: {},
-      body,
+      body: raw,
       error: e instanceof Error ? e.message : String(e),
     };
   }

@@ -48,7 +48,7 @@ export function buildGraph(
   tags: Tag[],
   nodeLimit = 5000,
 ): GraphBuildResult {
-  const live = pages.filter((p) => p.deletedAt === null);
+  const live = pages.filter((p) => p.deletedAt === null && !p.missingFromDisk);
   const tagsByPage = new Map<string, string[]>();
   for (const t of tags) {
     if (t.pageId) {

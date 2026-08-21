@@ -29,7 +29,11 @@ export async function rebuildPageLinks(
   const links = extractWikiLinks(sourceContent);
   const markdownLinks = extractInternalMarkdownLinks(sourceContent);
   const sourcePage = await db.pages.get(sourcePageId);
-  const livePages = markdownLinks.length > 0 ? await db.pages.filter((page) => page.deletedAt === null).toArray() : [];
+  if (sourcePage?.missingFromDisk) {
+    await db.links.where('sourcePageId').equals(sourcePageId).delete();
+    return;
+  }
+  const livePages = markdownLinks.length > 0 ? await db.pages.filter((page) => page.deletedAt === null && !page.missingFromDisk).toArray() : [];
   const byPath = new Map(livePages.map((page) => [page.path.toLowerCase(), page]));
   // Resolve targets one by one against Dexie. This is async but fast (indexed
   // lookups). Sequential keeps order deterministic for debuggability.
@@ -70,6 +74,7 @@ export async function rebuildPageLinks(
 
 /** Resolve dangling links when their target page is eventually created. */
 export async function resolveGhostLinksForPage(page: Page): Promise<void> {
+  if (page.missingFromDisk) return;
   const names = new Set([page.title, ...page.aliases].map((value) => value.toLowerCase()));
   const unresolved = await db.links.filter((link) => link.targetPageId === null).toArray();
   const matching: Link[] = [];

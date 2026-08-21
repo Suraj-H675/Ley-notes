@@ -19,6 +19,11 @@ describe('parseFrontmatter', () => {
     expect(r.body).toBe('\n# Body');
   });
 
+  it('accepts an empty fenced frontmatter map', () => {
+    const r = parseFrontmatter('---\n---\nbody');
+    expect(r).toEqual({ frontmatter: {}, body: 'body' });
+  });
+
   it('parses inline-list aliases', () => {
     const r = parseFrontmatter('---\naliases: [Foo, Bar]\n---\nbody');
     expect(getAliases(r.frontmatter)).toEqual(['Foo', 'Bar']);

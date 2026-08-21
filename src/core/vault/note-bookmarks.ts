@@ -32,6 +32,10 @@ export async function togglePageBookmark(pageId: string): Promise<boolean> {
   return next;
 }
 
+export function removePageBookmarkReference(pageId: string): Promise<void> {
+  return setPageBookmarked(pageId, false);
+}
+
 async function listBookmarkedPageIdsAtKey(key: string): Promise<string[]> {
   const value = (await db.settings.get(key))?.value;
   if (!Array.isArray(value)) return [];

@@ -12,7 +12,9 @@ export function usePages(): Page[] | undefined {
   return useLiveQuery(async () => {
     const all = await db.pages.toArray();
     return all
-      .filter((p) => p.deletedAt === null)
+      // A cache-only recovery projection stays addressable by its open tab,
+      // but must not masquerade as a file that still exists in the vault.
+      .filter((p) => p.deletedAt === null && !p.missingFromDisk)
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, []);
 }
@@ -38,7 +40,7 @@ export function useRecentPages(/** pageIds from the nav store, in MRU order */ i
       const out: Page[] = [];
       for (const id of ids) {
         const p = byId.get(id);
-        if (p && p.deletedAt === null) out.push(p);
+        if (p && p.deletedAt === null && !p.missingFromDisk) out.push(p);
       }
       return out;
     }, [ids]) ?? []

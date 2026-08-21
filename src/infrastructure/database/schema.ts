@@ -17,6 +17,12 @@ export interface Page {
   content: string;
   /** Parsed YAML frontmatter (the keys `aliases` and `tags` are also mirrored below). */
   frontmatter: Record<string, unknown>;
+  /**
+   * Present when the source begins with malformed, unclosed, or non-map YAML.
+   * In that state `content` is the complete, verbatim source rather than just
+   * the body, so a save cannot silently rewrite the invalid YAML.
+   */
+  frontmatterError?: string;
   /** Mirrored from frontmatter.aliases for fast autocomplete. */
   aliases: string[];
   /** Unix ms. */
@@ -25,6 +31,13 @@ export interface Page {
   updatedAt: number;
   /** Soft delete marker — null = live. */
   deletedAt: number | null;
+  /** SHA-256 of the complete on-disk source, used only for safe rename matching. */
+  sourceHash?: string;
+  /**
+   * A transient filesystem-vault projection retained only while its tab is
+   * open after an external deletion. It is intentionally not indexed.
+   */
+  missingFromDisk?: boolean;
 }
 
 export type BlockType =

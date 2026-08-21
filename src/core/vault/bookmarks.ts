@@ -96,6 +96,13 @@ export async function deleteDestinationBookmark(id: string): Promise<void> {
   await db.settings.put({ key, value: current.filter((bookmark) => bookmark.id !== id) });
 }
 
+export async function removeDestinationBookmarksForPage(pageId: string): Promise<void> {
+  const key = await bookmarksKey();
+  const current = await listAtKey(key);
+  const next = current.filter((bookmark) => bookmark.target.pageId !== pageId);
+  if (next.length !== current.length) await db.settings.put({ key, value: next });
+}
+
 async function listAtKey(key: string): Promise<DestinationBookmark[]> {
   return parseBookmarksSetting((await db.settings.get(key))?.value);
 }

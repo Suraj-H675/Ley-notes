@@ -21,7 +21,7 @@ export function useBookmarkedPages(): Page[] {
   return useLiveQuery(async () => {
     if (ids.length === 0) return [];
     const pages = await db.pages.where('id').anyOf(ids).toArray();
-    const byId = new Map(pages.filter((page) => page.deletedAt === null).map((page) => [page.id, page]));
+    const byId = new Map(pages.filter((page) => page.deletedAt === null && !page.missingFromDisk).map((page) => [page.id, page]));
     return ids.flatMap((id) => {
       const page = byId.get(id);
       return page ? [page] : [];

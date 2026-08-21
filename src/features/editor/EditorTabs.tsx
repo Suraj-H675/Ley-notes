@@ -50,8 +50,8 @@ export function EditorTabs() {
               : 'bg-surface-1 text-muted-foreground hover:bg-surface-2',
           )}
         >
-          <button type="button" onClick={() => setActiveTab(t.id)} onAuxClick={(event) => { if (event.button === 1) closeTab(t.id); }} className="h-full max-w-44 truncate pl-3 pr-1 text-left">
-            {t.title}
+          <button type="button" onClick={() => setActiveTab(t.id)} onAuxClick={(event) => { if (event.button === 1 && !t.missingFromDisk) closeTab(t.id); }} className="h-full max-w-44 truncate pl-3 pr-1 text-left">
+            {t.title}{t.missingFromDisk ? ' · missing' : ''}
           </button>
           {t.id !== primaryTab && (
             <button
@@ -64,7 +64,7 @@ export function EditorTabs() {
               <Columns2 size={12} />
             </button>
           )}
-          <button
+          {!t.missingFromDisk && <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
@@ -74,7 +74,7 @@ export function EditorTabs() {
             aria-label="Close tab"
           >
             <X size={12} />
-          </button>
+          </button>}
         </div>
       ))}
     </div>

@@ -30,7 +30,10 @@ use ley_core::{
     SemanticModelDescriptor, SemanticModelInstallation, SemanticModelStatus,
 };
 use ley_semantic_installer::install_supported_semantic_model;
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    event::{EventKind, ModifyKind, RenameMode},
+    Config, Event, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -43,7 +46,7 @@ use std::{
 use tauri::{AppHandle, Emitter, State};
 use walkdir::{DirEntry, WalkDir};
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VaultFile {
     path: String,
@@ -52,7 +55,7 @@ struct VaultFile {
     updated_at: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CanvasFile {
     path: String,
@@ -62,8 +65,22 @@ struct CanvasFile {
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct VaultPathChange {
+    kind: &'static str,
+    /// Vault-relative destination/current path.
+    path: String,
+    /// Vault-relative previous path, only for a paired notify rename event.
+    from: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct VaultChange {
+    /// Kept for existing consumers which only need to know affected paths.
     paths: Vec<String>,
+    changes: Vec<VaultPathChange>,
+    /// An oversized native event was intentionally bounded; callers rescan.
+    full_rescan: bool,
 }
 
 struct ActiveVaultWatcher {
@@ -74,7 +91,21 @@ struct ActiveVaultWatcher {
 #[derive(Default)]
 struct VaultWatcherState(Mutex<Option<ActiveVaultWatcher>>);
 
-static SUPPRESSED_CHANGES: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
+#[derive(Clone, PartialEq)]
+enum FileState {
+    Missing,
+    Present {
+        len: u64,
+        modified: Option<SystemTime>,
+    },
+}
+
+struct SuppressedChange {
+    created: Instant,
+    state: FileState,
+}
+
+static SUPPRESSED_CHANGES: OnceLock<Mutex<HashMap<PathBuf, SuppressedChange>>> = OnceLock::new();
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1078,10 +1109,26 @@ fn read_agent_project_activity(
     .map_err(|error| error.to_string())
 }
 
-fn suppress_change(path: &Path) {
+fn current_file_state(path: &Path) -> FileState {
+    match fs::metadata(path) {
+        Ok(metadata) => FileState::Present {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        },
+        Err(_) => FileState::Missing,
+    }
+}
+
+fn suppress_current_change(path: &Path) {
     let changes = SUPPRESSED_CHANGES.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(mut changes) = changes.lock() {
-        changes.insert(path.to_path_buf(), Instant::now());
+        changes.insert(
+            path.to_path_buf(),
+            SuppressedChange {
+                created: Instant::now(),
+                state: current_file_state(path),
+            },
+        );
     }
 }
 
@@ -1090,8 +1137,16 @@ fn is_suppressed(path: &Path) -> bool {
     let Ok(mut changes) = changes.lock() else {
         return false;
     };
-    changes.retain(|_, created| created.elapsed() < Duration::from_millis(750));
-    changes.contains_key(path)
+    changes.retain(|_, change| change.created.elapsed() < Duration::from_millis(750));
+    let Some(expected) = changes.get(path) else {
+        return false;
+    };
+    if expected.state == current_file_state(path) {
+        true
+    } else {
+        changes.remove(path);
+        false
+    }
 }
 
 fn unix_millis(value: Result<SystemTime, std::io::Error>) -> u64 {
@@ -1199,23 +1254,112 @@ fn relevant_change_path(root: &Path, path: &Path) -> Option<String> {
     Some(relative.to_string_lossy().replace('\\', "/"))
 }
 
-fn build_vault_watcher<F>(root: PathBuf, mut on_change: F) -> Result<RecommendedWatcher, String>
+fn visible_vault_path(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    !relative.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|part| part.starts_with('.') || part == "node_modules")
+    })
+}
+
+const MAX_WATCH_CHANGES: usize = 64;
+
+fn vault_change_from_event(root: &Path, event: Event) -> Option<VaultChange> {
+    let relevant_paths: Vec<String> = event
+        .paths
+        .iter()
+        .filter_map(|path| relevant_change_path(root, path))
+        .collect();
+    let mut paths = relevant_paths.clone();
+    paths.sort();
+    paths.dedup();
+    if paths.is_empty() {
+        // Recursive watchers commonly report only the directory path when a
+        // folder containing notes is renamed or removed. Its extension cannot
+        // identify the affected Markdown children, so request one bounded full
+        // scan rather than silently leaving stale paths in the projection.
+        let structural_directory_change = matches!(
+            event.kind,
+            EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
+        ) && event
+            .paths
+            .iter()
+            .any(|path| path.extension().is_none() && visible_vault_path(root, path));
+        if structural_directory_change {
+            return Some(VaultChange {
+                paths: Vec::new(),
+                changes: Vec::new(),
+                full_rescan: true,
+            });
+        }
+        return None;
+    }
+    if paths.len() > MAX_WATCH_CHANGES {
+        return Some(VaultChange {
+            paths: Vec::new(),
+            changes: Vec::new(),
+            full_rescan: true,
+        });
+    }
+
+    // Notify guarantees an old/new pair only for a single Name event that
+    // carries exactly both in-root Markdown/Canvas paths. Some backends emit
+    // separate From/To notifications instead; those deliberately degrade to
+    // ordinary changes so the frontend's unique-hash scan can decide safely.
+    if matches!(
+        event.kind,
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both))
+    ) && event.paths.len() == 2
+        && relevant_paths.len() == 2
+        && paths.len() == 2
+    {
+        return Some(VaultChange {
+            paths: paths.clone(),
+            changes: vec![VaultPathChange {
+                kind: "rename",
+                from: Some(relevant_paths[0].clone()),
+                path: relevant_paths[1].clone(),
+            }],
+            full_rescan: false,
+        });
+    }
+
+    let kind = match event.kind {
+        EventKind::Create(_) => "create",
+        EventKind::Remove(_) => "remove",
+        _ => "modify",
+    };
+    Some(VaultChange {
+        changes: paths
+            .iter()
+            .map(|path| VaultPathChange {
+                kind,
+                path: path.clone(),
+                from: None,
+            })
+            .collect(),
+        paths,
+        full_rescan: false,
+    })
+}
+
+fn build_vault_event_watcher<F>(
+    root: PathBuf,
+    mut on_change: F,
+) -> Result<RecommendedWatcher, String>
 where
-    F: FnMut(Vec<String>) + Send + 'static,
+    F: FnMut(VaultChange) + Send + 'static,
 {
     let event_root = root.clone();
     let mut watcher = RecommendedWatcher::new(
         move |result: notify::Result<Event>| {
             let Ok(event) = result else { return };
-            let mut paths: Vec<String> = event
-                .paths
-                .iter()
-                .filter_map(|path| relevant_change_path(&event_root, path))
-                .collect();
-            paths.sort();
-            paths.dedup();
-            if !paths.is_empty() {
-                on_change(paths);
+            if let Some(change) = vault_change_from_event(&event_root, event) {
+                on_change(change);
             }
         },
         Config::default(),
@@ -1234,8 +1378,8 @@ fn watch_vault(
     vault_path: String,
 ) -> Result<(), String> {
     let root = canonical_vault(&vault_path)?;
-    let watcher = build_vault_watcher(root.clone(), move |paths| {
-        let _ = app.emit("ley-vault-changed", VaultChange { paths });
+    let watcher = build_vault_event_watcher(root.clone(), move |change| {
+        let _ = app.emit("ley-vault-changed", change);
     })?;
     let mut active = state
         .0
@@ -1352,7 +1496,6 @@ fn write_canvas_file(
         .map_err(|error| format!("Canvas JSON is invalid: {error}"))?;
     let root = canonical_vault(&vault_path)?;
     let target = canvas_path(&root, &relative_path)?;
-    suppress_change(&target);
     let parent = target.parent().ok_or("The canvas has no parent folder")?;
     fs::create_dir_all(parent).map_err(|error| format!("Cannot create canvas folder: {error}"))?;
     let temp = parent.join(format!(
@@ -1365,7 +1508,9 @@ fn write_canvas_file(
         .map_err(|error| format!("Cannot write canvas: {error}"))?;
     file.sync_all()
         .map_err(|error| format!("Cannot flush canvas: {error}"))?;
-    fs::rename(temp, target).map_err(|error| format!("Cannot replace canvas: {error}"))
+    fs::rename(temp, &target).map_err(|error| format!("Cannot replace canvas: {error}"))?;
+    suppress_current_change(&target);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1391,9 +1536,11 @@ fn trash_canvas_file(vault_path: String, relative_path: String) -> Result<(), St
         candidate = trash.join(format!("{stem} {suffix}.canvas"));
         suffix += 1;
     }
-    suppress_change(&source);
-    suppress_change(&candidate);
-    fs::rename(source, candidate).map_err(|error| format!("Cannot move canvas to .trash: {error}"))
+    fs::rename(&source, &candidate)
+        .map_err(|error| format!("Cannot move canvas to .trash: {error}"))?;
+    suppress_current_change(&source);
+    suppress_current_change(&candidate);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1404,7 +1551,6 @@ fn write_vault_file(
 ) -> Result<(), String> {
     let root = canonical_vault(&vault_path)?;
     let target = markdown_path(&root, &relative_path)?;
-    suppress_change(&target);
     let parent = target.parent().ok_or("The note has no parent folder")?;
     fs::create_dir_all(parent).map_err(|error| format!("Cannot create note folder: {error}"))?;
 
@@ -1420,6 +1566,7 @@ fn write_vault_file(
     file.sync_all()
         .map_err(|error| format!("Cannot flush note: {error}"))?;
     fs::rename(&temp, &target).map_err(|error| format!("Cannot replace note: {error}"))?;
+    suppress_current_change(&target);
     Ok(())
 }
 
@@ -1473,9 +1620,10 @@ fn rename_vault_file(vault_path: String, from: String, to: String) -> Result<(),
         fs::create_dir_all(parent)
             .map_err(|error| format!("Cannot create destination folder: {error}"))?;
     }
-    suppress_change(&source);
-    suppress_change(&target);
-    fs::rename(source, target).map_err(|error| format!("Cannot rename note: {error}"))
+    fs::rename(&source, &target).map_err(|error| format!("Cannot rename note: {error}"))?;
+    suppress_current_change(&source);
+    suppress_current_change(&target);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1501,10 +1649,10 @@ fn trash_vault_file(vault_path: String, relative_path: String) -> Result<String,
         candidate = trash.join(format!("{stem} {suffix}.md"));
         suffix += 1;
     }
-    suppress_change(&source);
-    suppress_change(&candidate);
-    fs::rename(source, &candidate)
+    fs::rename(&source, &candidate)
         .map_err(|error| format!("Cannot move note to .trash: {error}"))?;
+    suppress_current_change(&source);
+    suppress_current_change(&candidate);
     Ok(candidate
         .strip_prefix(&root)
         .unwrap_or(&candidate)
@@ -1687,8 +1835,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join(".trash")).unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
-        let watcher = build_vault_watcher(root.clone(), move |paths| {
-            let _ = sender.send(paths);
+        let watcher = build_vault_event_watcher(root.clone(), move |change| {
+            let _ = sender.send(change.paths);
         })
         .unwrap();
 

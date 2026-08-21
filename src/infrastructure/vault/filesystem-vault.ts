@@ -26,6 +26,31 @@ export interface VaultFileSnapshot {
   content: string;
   createdAt: number;
   updatedAt: number;
+  /** Optional SHA-256 of the complete source, never a network-derived value. */
+  sourceHash?: string;
+}
+
+export interface VaultPathChange {
+  kind: 'create' | 'modify' | 'remove' | 'rename';
+  /** Vault-relative destination/current path. */
+  path: string;
+  /** Vault-relative previous path, available only for a native rename event. */
+  from?: string;
+}
+
+export interface VaultChange {
+  /** Legacy path list retained for canvas and existing consumers. */
+  paths: string[];
+  changes: VaultPathChange[];
+  /** The native watcher intentionally bounded an oversized event; rescan safely. */
+  fullRescan?: boolean;
+}
+
+export interface VaultContinuityOptions {
+  /** Only these currently-open IDs may survive an external removal. */
+  openPageIds?: readonly string[];
+  /** Explicit native rename data for this scan, if the platform supplied it. */
+  changes?: readonly VaultPathChange[];
 }
 
 export interface CanvasFileSnapshot {
@@ -43,6 +68,9 @@ export interface DesktopVault {
 let activeVaultPath: string | null = null;
 let activeBrowserHandle: LeyDirectoryHandle | null = null;
 let activeBrowserVaultId: string | null = null;
+let desktopRefreshQueue: Promise<DesktopVault | null> = Promise.resolve(null);
+let browserRefreshQueue: Promise<DesktopVault | null> = Promise.resolve(null);
+let recentDesktopChanges: Array<{ at: number; change: VaultPathChange }> = [];
 
 interface LeyFileHandle {
   kind: 'file';
@@ -90,12 +118,20 @@ export function deactivateFilesystemVault(): void {
   activeVaultPath = null;
   activeBrowserHandle = null;
   activeBrowserVaultId = null;
+  recentDesktopChanges = [];
 }
 
-export async function startDesktopVaultWatcher(onChange: (paths: string[]) => void): Promise<() => void> {
+export async function startDesktopVaultWatcher(onChange: (change: VaultChange) => void): Promise<() => void> {
   if (!activeVaultPath) return () => undefined;
   const watchedPath = activeVaultPath;
-  const unlisten = await listen<{ paths: string[] }>('ley-vault-changed', (event) => onChange(event.payload.paths));
+  const unlisten = await listen<VaultChange>('ley-vault-changed', (event) => {
+    const now = Date.now();
+    recentDesktopChanges = [
+      ...recentDesktopChanges.filter((entry) => now - entry.at < 5_000),
+      ...event.payload.changes.map((change) => ({ at: now, change })),
+    ].slice(-256);
+    onChange(event.payload);
+  });
   try {
     await invoke('watch_vault', { vaultPath: watchedPath });
   } catch (error) {
@@ -158,20 +194,41 @@ export async function restoreBrowserFolderVault(): Promise<DesktopVault | null> 
   return loadBrowserFolderVault(handle, vaultId);
 }
 
-export async function refreshBrowserFolderVault(): Promise<DesktopVault | null> {
-  return activeBrowserHandle && activeBrowserVaultId ? loadBrowserFolderVault(activeBrowserHandle, activeBrowserVaultId) : null;
+export function refreshBrowserFolderVault(options?: VaultContinuityOptions): Promise<DesktopVault | null> {
+  const handle = activeBrowserHandle;
+  const vaultId = activeBrowserVaultId;
+  const refresh = browserRefreshQueue.catch(() => null).then(() => (
+    handle && vaultId && activeBrowserHandle === handle && activeBrowserVaultId === vaultId
+      ? loadBrowserFolderVault(handle, vaultId, options)
+      : null
+  ));
+  browserRefreshQueue = refresh;
+  return refresh;
 }
 
-export async function refreshDesktopVault(): Promise<DesktopVault | null> {
-  if (!activeVaultPath) return null;
-  return loadDesktopVault(activeVaultPath);
+export function refreshDesktopVault(options?: VaultContinuityOptions): Promise<DesktopVault | null> {
+  const path = activeVaultPath;
+  const now = Date.now();
+  recentDesktopChanges = recentDesktopChanges.filter((entry) => now - entry.at < 5_000);
+  const continuity = {
+    ...options,
+    changes: [
+      ...recentDesktopChanges.map((entry) => entry.change),
+      ...(options?.changes ?? []),
+    ],
+  };
+  const refresh = desktopRefreshQueue.catch(() => null).then(() => (
+    path && activeVaultPath === path ? loadDesktopVault(path, continuity) : null
+  ));
+  desktopRefreshQueue = refresh;
+  return refresh;
 }
 
-async function loadDesktopVault(path: string): Promise<DesktopVault> {
+async function loadDesktopVault(path: string, options?: VaultContinuityOptions): Promise<DesktopVault> {
   const snapshots = await invoke<VaultFileSnapshot[]>('scan_vault', { vaultPath: path });
   activeVaultPath = path;
   localStorage.setItem(LAST_VAULT_KEY, path);
-  await projectFilesIntoCache(path, snapshots);
+  await projectFilesIntoCache(path, snapshots, options);
   return {
     path,
     name: path.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Vault',
@@ -179,12 +236,12 @@ async function loadDesktopVault(path: string): Promise<DesktopVault> {
   };
 }
 
-async function loadBrowserFolderVault(handle: LeyDirectoryHandle, vaultId: string): Promise<DesktopVault> {
+async function loadBrowserFolderVault(handle: LeyDirectoryHandle, vaultId: string, options?: VaultContinuityOptions): Promise<DesktopVault> {
   const snapshots = await scanBrowserFolder(handle);
   activeBrowserHandle = handle;
   activeBrowserVaultId = vaultId;
   activeVaultPath = null;
-  await projectFilesIntoCache(`browser-folder:${vaultId}`, snapshots);
+  await projectFilesIntoCache(`browser-folder:${vaultId}`, snapshots, options);
   return { path: vaultId, name: handle.name, noteCount: snapshots.length };
 }
 
@@ -215,7 +272,14 @@ async function scanBrowserFolder(root: LeyDirectoryHandle): Promise<VaultFileSna
       if (handle.kind === 'directory') await walk(handle, path);
       else if (name.toLowerCase().endsWith('.md')) {
         const file = await handle.getFile();
-        snapshots.push({ path, content: await file.text(), createdAt: file.lastModified, updatedAt: file.lastModified });
+        const content = await file.text();
+        snapshots.push({
+          path,
+          content,
+          createdAt: file.lastModified,
+          updatedAt: file.lastModified,
+          sourceHash: await hashVaultSource(content),
+        });
       }
     }
   }
@@ -223,19 +287,112 @@ async function scanBrowserFolder(root: LeyDirectoryHandle): Promise<VaultFileSna
   return snapshots.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export async function projectFilesIntoCache(vaultPath: string, snapshots: VaultFileSnapshot[]): Promise<void> {
+export async function projectFilesIntoCache(
+  vaultPath: string,
+  snapshots: VaultFileSnapshot[],
+  options: VaultContinuityOptions = {},
+): Promise<void> {
   const kind = filesystemDataKind(vaultPath);
   const previousKind = await activeDataKind();
   const sameVault = previousKind === kind;
-  const existingByPath = sameVault
-    ? new Map((await db.pages.toArray()).map((page) => [page.path.toLowerCase(), page]))
-    : new Map<string, Page>();
-  const pages = snapshots.map((snapshot) => pageFromSnapshot(vaultPath, snapshot, existingByPath.get(snapshot.path.toLowerCase())));
+  const existing = sameVault
+    ? (await db.pages.toArray()).filter((page) => page.deletedAt === null)
+    : [];
+  const existingByPath = new Map(existing.map((page) => [page.path, page]));
+  const hashedSnapshots = await Promise.all(snapshots.map(async (snapshot) => ({
+    ...snapshot,
+    sourceHash: snapshot.sourceHash ?? await hashVaultSource(snapshot.content),
+  })));
+  const snapshotPaths = new Set(hashedSnapshots.map((snapshot) => snapshot.path));
+  const matched = new Map<number, Page>();
+  const claimedIds = new Set<string>();
+
+  // A stable path is always the strongest identity signal, even if external
+  // editing also changed the file contents.
+  hashedSnapshots.forEach((snapshot, index) => {
+    const page = existingByPath.get(snapshot.path);
+    if (page) {
+      matched.set(index, page);
+      claimedIds.add(page.id);
+    }
+  });
+
+  // Native notify can report a paired old/new rename. Use it only when both
+  // paths are unambiguous and the old path disappeared from this scan.
+  const renameSources = new Map<string, string[]>();
+  for (const change of options.changes ?? []) {
+    if (change.kind !== 'rename' || !change.from) continue;
+    const destination = change.path;
+    const sources = renameSources.get(destination) ?? [];
+    if (!sources.includes(change.from)) sources.push(change.from);
+    renameSources.set(destination, sources);
+  }
+  const originalRenameSource = (destination: string): string | null => {
+    let current = destination;
+    const visited = new Set<string>();
+    while (!visited.has(current)) {
+      visited.add(current);
+      const sources = renameSources.get(current);
+      if (!sources || sources.length !== 1) return current === destination ? null : current;
+      current = sources[0];
+      if (existingByPath.has(current)) return current;
+    }
+    return null;
+  };
+  hashedSnapshots.forEach((snapshot, index) => {
+    if (matched.has(index)) return;
+    const source = originalRenameSource(snapshot.path);
+    if (!source) return;
+    const page = existingByPath.get(source);
+    if (!page || claimedIds.has(page.id) || snapshotPaths.has(source)) return;
+    matched.set(index, page);
+    claimedIds.add(page.id);
+  });
+
+  // Focus/manual refreshes have no native event. Fall back only when the
+  // full-source SHA-256 occurs exactly once on each side; duplicate notes are
+  // deliberately left as distinct files rather than guessed into a remap.
+  const previousByHash = new Map<string, Page[]>();
+  for (const page of existing) {
+    if (claimedIds.has(page.id) || snapshotPaths.has(page.path) || !page.sourceHash) continue;
+    const candidates = previousByHash.get(page.sourceHash) ?? [];
+    candidates.push(page);
+    previousByHash.set(page.sourceHash, candidates);
+  }
+  const snapshotsByHash = new Map<string, number[]>();
+  hashedSnapshots.forEach((snapshot, index) => {
+    if (matched.has(index) || !snapshot.sourceHash) return;
+    const candidates = snapshotsByHash.get(snapshot.sourceHash) ?? [];
+    candidates.push(index);
+    snapshotsByHash.set(snapshot.sourceHash, candidates);
+  });
+  for (const [sourceHash, indexes] of snapshotsByHash) {
+    const candidates = previousByHash.get(sourceHash);
+    if (indexes.length !== 1 || candidates?.length !== 1) continue;
+    matched.set(indexes[0], candidates[0]);
+    claimedIds.add(candidates[0].id);
+  }
+
+  const pages = hashedSnapshots.map((snapshot, index) => pageFromSnapshot(vaultPath, snapshot, matched.get(index)));
+  const openPageIds = new Set(options.openPageIds ?? []);
+  const removed = existing.filter((page) => !claimedIds.has(page.id) && !snapshotPaths.has(page.path));
+  const missing = removed
+    .filter((page) => openPageIds.has(page.id))
+    .map((page) => ({ ...page, missingFromDisk: true }));
+  const discardIds = removed.filter((page) => !openPageIds.has(page.id)).map((page) => page.id);
 
   await db.transaction('rw', [db.pages, db.blocks, db.links, db.tags, db.assets, db.revisions], async () => {
-    await Promise.all([db.pages.clear(), db.blocks.clear(), db.links.clear(), db.tags.clear()]);
-    if (!sameVault) await Promise.all([db.assets.clear(), db.revisions.clear()]);
-    if (pages.length > 0) await db.pages.bulkPut(pages);
+    await Promise.all([db.blocks.clear(), db.links.clear(), db.tags.clear()]);
+    if (!sameVault) {
+      await Promise.all([db.pages.clear(), db.assets.clear(), db.revisions.clear()]);
+    } else if (discardIds.length > 0) {
+      await Promise.all([
+        db.pages.bulkDelete(discardIds),
+        ...discardIds.map((id) => db.assets.where('pageId').equals(id).delete()),
+        ...discardIds.map((id) => db.revisions.where('pageId').equals(id).delete()),
+      ]);
+    }
+    if (pages.length + missing.length > 0) await db.pages.bulkPut([...pages, ...missing]);
   });
   await markActiveDataKind(kind);
 
@@ -244,6 +401,7 @@ export async function projectFilesIntoCache(vaultPath: string, snapshots: VaultF
     await rebuildPageLinks(page.id, page.content);
     await rebuildPageTags(page.id, page.content, page.frontmatter);
   }
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('ley:vault-projected'));
 }
 
 function pageFromSnapshot(vaultPath: string, snapshot: VaultFileSnapshot, existing?: Page): Page {
@@ -259,15 +417,31 @@ function pageFromSnapshot(vaultPath: string, snapshot: VaultFileSnapshot, existi
     path: snapshot.path,
     content: parsed.body,
     frontmatter: parsed.frontmatter,
+    frontmatterError: parsed.error,
     aliases: getAliases(parsed.frontmatter),
     createdAt: existing?.createdAt ?? (snapshot.createdAt || snapshot.updatedAt || Date.now()),
     updatedAt: snapshot.updatedAt || Date.now(),
     deletedAt: null,
+    sourceHash: snapshot.sourceHash,
+    missingFromDisk: undefined,
   };
 }
 
+/** Local SHA-256 for rename matching. An unavailable WebCrypto implementation
+ * simply disables hash fallback rather than risking a weaker heuristic. */
+export async function hashVaultSource(content: string): Promise<string | undefined> {
+  if (!globalThis.crypto?.subtle) return undefined;
+  try {
+    const bytes = new TextEncoder().encode(content);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+    return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+  } catch {
+    return undefined;
+  }
+}
+
 function stableFileId(vaultPath: string, path: string): string {
-  const input = `${vaultPath}\0${path.toLowerCase()}`;
+  const input = `${vaultPath}\0${path}`;
   let hash = 0x811c9dc5;
   for (let i = 0; i < input.length; i += 1) {
     hash ^= input.charCodeAt(i);
