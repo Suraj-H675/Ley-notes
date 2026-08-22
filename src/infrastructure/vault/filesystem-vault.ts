@@ -567,14 +567,31 @@ export async function trashActiveVaultFile(relativePath: string): Promise<void> 
   if (activeVaultPath) {
     await invoke('trash_vault_file', { vaultPath: activeVaultPath, relativePath });
   } else if (activeBrowserHandle) {
+    const segments = relativePath.split('/').filter(Boolean);
     const source = await browserFileHandle(activeBrowserHandle, relativePath, false, true);
     const content = await (await source.getFile()).text();
-    const filename = relativePath.split('/').at(-1) ?? 'Untitled.md';
-    const target = await browserFileHandle(activeBrowserHandle, `.trash/${filename}`, true, true);
+    const filename = segments.at(-1) ?? 'Untitled.md';
+    const targetDirectory = await browserDirectoryHandle(activeBrowserHandle, ['.trash', ...segments.slice(0, -1)], true);
+    let targetName = filename;
+    let suffix = 2;
+    while (await trashHasFile(targetDirectory, targetName)) {
+      targetName = `${filename.replace(/\.md$/i, '')} ${suffix}.md`;
+      suffix += 1;
+    }
+    const target = await targetDirectory.getFileHandle(targetName, { create: true });
     const writer = await target.createWritable();
     await writer.write(content);
     await writer.close();
     await removeBrowserPath(activeBrowserHandle, relativePath);
+  }
+
+  async function trashHasFile(directory: LeyDirectoryHandle, name: string): Promise<boolean> {
+    try {
+      await directory.getFileHandle(name);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -598,16 +615,22 @@ export async function listActiveVaultTrash(): Promise<VaultFileSnapshot[] | null
   try {
     const trash = await browserDirectoryHandle(activeBrowserHandle, ['.trash'], false);
     const snapshots: VaultFileSnapshot[] = [];
-    for await (const [name, handle] of trash.entries()) {
-      if (handle.kind !== 'file' || !name.toLowerCase().endsWith('.md')) continue;
-      const file = await handle.getFile();
-      snapshots.push({
-        path: `.trash/${name}`,
-        content: await file.text(),
-        createdAt: file.lastModified,
-        updatedAt: file.lastModified,
-      });
+    async function walkTrash(directory: LeyDirectoryHandle, prefix: string) {
+      for await (const [name, handle] of directory.entries()) {
+        const path = prefix ? `${prefix}/${name}` : name;
+        if (handle.kind === 'directory') await walkTrash(handle, path);
+        else if (handle.kind === 'file' && name.toLowerCase().endsWith('.md')) {
+          const file = await handle.getFile();
+          snapshots.push({
+            path: `.trash/${path}`,
+            content: await file.text(),
+            createdAt: file.lastModified,
+            updatedAt: file.lastModified,
+          });
+        }
+      }
     }
+    await walkTrash(trash, '');
     return snapshots.sort((left, right) => left.path.localeCompare(right.path));
   } catch {
     return [];
