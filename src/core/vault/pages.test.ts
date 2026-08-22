@@ -386,6 +386,7 @@ describe("pages CRUD", () => {
       title: "Trashed note",
       path: "projects/Trashed note.md",
       deletedAt: null,
+      sourceHash: expect.stringMatching(/^sha256:/),
     });
     expect((await db.pages.get(page.id))?.deletedAt).toBeNull();
     const links = await db.links.where("sourcePageId").equals(page.id).toArray();

@@ -724,6 +724,7 @@ export async function restoreTrashedFilesystemPage(
   const source = await readActiveVaultFile(restoredPath);
   if (source === null)
     throw new Error("This vault cannot read the restored note.");
+  const sourceHash = await hashVaultSource(source);
   const parsed = parseFrontmatter(source);
   const filenameTitle =
     restoredPath.split("/").at(-1)?.replace(/\.md$/i, "") ?? "Untitled";
@@ -765,6 +766,7 @@ export async function restoreTrashedFilesystemPage(
       Date.now(),
     updatedAt,
     deletedAt: null,
+    sourceHash,
     missingFromDisk: undefined,
   };
   await db.pages.put(restored);
