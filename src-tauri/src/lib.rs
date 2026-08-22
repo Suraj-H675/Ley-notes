@@ -1681,18 +1681,19 @@ fn trash_vault_file(vault_path: String, relative_path: String) -> Result<String,
     }
     let trash = root.join(".trash");
     fs::create_dir_all(&trash).map_err(|error| format!("Cannot create .trash: {error}"))?;
-    let original = source
-        .file_name()
-        .ok_or("The note has no filename")?
-        .to_string_lossy();
-    let mut candidate = trash.join(original.as_ref());
+    let relative = safe_relative(&relative_path)?;
+    let mut candidate = trash.join(&relative);
+    if let Some(parent) = candidate.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Cannot create trash folder: {error}"))?;
+    }
     let mut suffix = 2;
     while candidate.exists() {
-        let stem = Path::new(original.as_ref())
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy();
-        candidate = trash.join(format!("{stem} {suffix}.md"));
+        let stem = source.file_stem().unwrap_or_default().to_string_lossy();
+        candidate = candidate
+            .parent()
+            .unwrap_or(&trash)
+            .join(format!("{stem} {suffix}.md"));
         suffix += 1;
     }
     fs::rename(&source, &candidate)
@@ -1746,7 +1747,10 @@ fn restore_trashed_vault_file(vault_path: String, trashed_path: String) -> Resul
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        destination = root.join(format!("{stem} {suffix}.md"));
+        destination = destination
+            .parent()
+            .unwrap_or(&root)
+            .join(format!("{stem} {suffix}.md"));
         suffix += 1;
     }
 
@@ -1877,24 +1881,31 @@ mod tests {
         assert!(root.join("projects/Renamed.md").is_file());
 
         let trashed = trash_vault_file(vault.clone(), "projects/Renamed.md".into()).unwrap();
-        assert_eq!(trashed, ".trash/Renamed.md");
-        assert!(root.join(".trash/Renamed.md").is_file());
+        assert_eq!(trashed, ".trash/projects/Renamed.md");
+        assert!(root.join(".trash/projects/Renamed.md").is_file());
         assert!(scan_vault(vault.clone()).unwrap().is_empty());
 
         let trashed_files = scan_trashed_vault_files(vault.clone()).unwrap();
         assert_eq!(trashed_files.len(), 1);
-        assert_eq!(trashed_files[0].path, ".trash/Renamed.md");
+        assert_eq!(trashed_files[0].path, ".trash/projects/Renamed.md");
 
         let restored =
             restore_trashed_vault_file(vault.clone(), trashed_files[0].path.clone()).unwrap();
-        assert_eq!(restored, "Renamed.md");
-        assert!(!root.join(".trash/Renamed.md").exists());
+        assert_eq!(restored, "projects/Renamed.md");
+        assert!(!root.join(".trash/projects/Renamed.md").exists());
         assert_eq!(scan_trashed_vault_files(vault.clone()).unwrap().len(), 0);
 
         write_vault_file(vault.clone(), "Renamed.md".into(), "current".into()).unwrap();
         write_vault_file(vault.clone(), "Renamed 2.md".into(), "older".into()).unwrap();
         let second_trash = trash_vault_file(vault.clone(), "Renamed 2.md".into()).unwrap();
         assert_eq!(second_trash, ".trash/Renamed 2.md");
+        write_vault_file(vault.clone(), "projects/Nested.md".into(), "nested".into()).unwrap();
+        let nested_trash = trash_vault_file(vault.clone(), "projects/Nested.md".into()).unwrap();
+        assert_eq!(nested_trash, ".trash/projects/Nested.md");
+        assert_eq!(
+            restore_trashed_vault_file(vault.clone(), nested_trash).unwrap(),
+            "projects/Nested.md"
+        );
         let collision_restore = restore_trashed_vault_file(vault.clone(), second_trash).unwrap();
         assert_eq!(collision_restore, "Renamed 2.md");
 

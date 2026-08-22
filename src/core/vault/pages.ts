@@ -705,15 +705,10 @@ export async function restoreTrashedFilesystemPage(
     throw new Error("This vault cannot restore trashed notes.");
 
   const all = await db.pages.toArray();
-  const existingByPath = new Map(
-    all
-      .filter((page) => page.deletedAt === null && !page.missingFromDisk)
-      .map((page) => [portablePathKey(page.path), page]),
-  );
   const previousProjection = all.find(
     (page) =>
-      portablePathKey(page.path) === portablePathKey(trashedPath) &&
-      page.deletedAt === null,
+      page.path.toLowerCase() === trashedPath.toLowerCase() &&
+      page.deletedAt !== null,
   );
   const source = await readActiveVaultFile(restoredPath);
   if (source === null)
@@ -727,18 +722,12 @@ export async function restoreTrashedFilesystemPage(
       ? parsed.frontmatter.title.trim()
       : filenameTitle;
 
-  let id = previousProjection?.id;
-  if (id && existingByPath.has(portablePathKey(restoredPath))) id = undefined;
-  if (!id) {
-    let suffix = 2;
-    let candidateId = stableTrashPageId(trashedPath);
-    while (await db.pages.get(candidateId)) {
-      candidateId = `${candidateId}_${suffix}`;
-      suffix += 1;
-    }
-    id = candidateId;
+  const id = previousProjection?.id ?? stableTrashPageId(trashedPath);
+  if (!previousProjection && (await db.pages.get(id))) {
+    throw new Error(
+      "This trashed note cannot be restored because Ley already has its recovery record.",
+    );
   }
-
   const titleCollision = await getPageByTitle(title);
   if (titleCollision && titleCollision.id !== id)
     throw new Error(`A current note named "${title}" already exists`);
@@ -770,6 +759,7 @@ export async function restoreTrashedFilesystemPage(
     previousProjection?.title,
     previousProjection && title !== previousProjection.title ? title : undefined,
   );
+  await rebuildPageLinks(id, restored.content);
   await rebuildPageTags(id, restored.content, restored.frontmatter);
   await resolveGhostLinksForPage(restored);
   return restored;

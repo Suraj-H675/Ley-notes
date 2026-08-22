@@ -623,29 +623,31 @@ export async function restoreActiveVaultTrashFile(trashedPath: string): Promise<
   }
 
   if (!activeBrowserHandle) return null;
-  const parts = trashedPath.split('/').filter(Boolean);
+  let parts = trashedPath.split('/').filter(Boolean);
   const filename = parts.pop();
-  if (!filename || parts.join('/') !== '.trash' || !filename.toLowerCase().endsWith('.md')) {
+  if (!filename || parts[0] !== '.trash' || filename.toLowerCase().endsWith('.trash') || !filename.toLowerCase().endsWith('.md')) {
     throw new Error('Only notes inside .trash can be restored');
   }
   const source = await browserFileHandle(activeBrowserHandle, trashedPath, false, true);
   const content = await (await source.getFile()).text();
+  const originalSegments = [...parts.slice(1)];
+  const targetDirectory = await browserDirectoryHandle(activeBrowserHandle, originalSegments.length > 0 ? originalSegments : [], true);
   let targetName = filename;
   let suffix = 2;
-  while (await browserFileExists(targetName)) {
+  while (await directoryHasFile(targetDirectory, targetName)) {
     targetName = `${filename.replace(/\.md$/i, '')} ${suffix}.md`;
     suffix += 1;
   }
-  const target = await browserFileHandle(activeBrowserHandle, targetName, true, true);
+  const target = await targetDirectory.getFileHandle(targetName, { create: true });
   const writer = await target.createWritable();
   await writer.write(content);
   await writer.close();
   await removeBrowserPath(activeBrowserHandle, trashedPath);
-  return targetName;
+  return [...originalSegments, targetName].join('/');
 
-  async function browserFileExists(name: string): Promise<boolean> {
+  async function directoryHasFile(directory: LeyDirectoryHandle, name: string): Promise<boolean> {
     try {
-      await activeBrowserHandle?.getFileHandle(name);
+      await directory.getFileHandle(name);
       return true;
     } catch {
       return false;

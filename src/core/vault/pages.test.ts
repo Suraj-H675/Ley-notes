@@ -1,4 +1,5 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
+import { restoreTrashedFilesystemPage } from "./pages";
 import { db } from "@/infrastructure/database/db";
 import {
   createPage,
@@ -16,6 +17,17 @@ import {
   updatePageProperty,
 } from "./pages";
 import { resetDb } from "@/test/helpers";
+
+vi.mock("@/infrastructure/vault/filesystem-vault", async (importOriginal) => ({
+  ...(await importOriginal()),
+  trashActiveVaultFile: vi.fn(async () => undefined),
+  renameActiveVaultFile: vi.fn(async () => undefined),
+  writeActiveVaultFile: vi.fn(async () => undefined),
+  restoreActiveVaultTrashFile: vi.fn(async (trashedPath: string) =>
+    trashedPath.replace(/^\.trash\//, ""),
+  ),
+  readActiveVaultFile: vi.fn(async (_path: string) => "See [[Target]].\n\n#restored"),
+}));
 
 describe("pages CRUD", () => {
   beforeEach(async () => {
@@ -335,6 +347,39 @@ describe("pages CRUD", () => {
     const replacement = await createPage({ title: "Reusable title" });
     expect(replacement.id).not.toBe(deleted.id);
     await expect(restorePage(deleted.id)).rejects.toThrow(/current note/);
+  });
+
+  it("restores filesystem trash with its original identity and links", async () => {
+    const target = await createPage({ title: "Target" });
+    const page = await createPage({
+      title: "Trashed note",
+      folder: "projects",
+      content: "See [[Target]].",
+    });
+    await updatePageContent(page.id, "See [[Target]].\n\n#restored");
+    await deletePage(page.id);
+    expect((await db.pages.get(page.id))?.deletedAt).not.toBeNull();
+
+    const restored = await restoreTrashedFilesystemPage(
+      "projects/Trashed note.md",
+    );
+    expect(restored.content).toBe("See [[Target]].\n\n#restored");
+    expect(restored.frontmatter).toEqual({});
+
+    expect(restored).toMatchObject({
+      id: page.id,
+      title: "Trashed note",
+      path: "projects/Trashed note.md",
+      deletedAt: null,
+    });
+    expect((await db.pages.get(page.id))?.deletedAt).toBeNull();
+    const links = await db.links.where("sourcePageId").equals(page.id).toArray();
+    expect(links).toHaveLength(1);
+    expect(
+      (await db.links.where("sourcePageId").equals(page.id).first())
+        ?.targetPageId,
+    ).toBe(target.id);
+    expect(await db.tags.get([page.id, "restored"])).toBeTruthy();
   });
 
   it("permanently deletes only recycled notes and their private data", async () => {
