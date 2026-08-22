@@ -662,7 +662,11 @@ export function deletePage(pageId: string): Promise<void> {
     const page = await db.pages.get(pageId);
     if (!page) return;
     await trashActiveVaultFile(page.path);
-    await db.pages.update(pageId, { deletedAt: now() });
+    await db.pages.update(pageId, {
+      deletedAt: now(),
+      sourceHash: undefined,
+      missingFromDisk: undefined,
+    });
     await db.links.where("sourcePageId").equals(pageId).delete();
     await db.tags.where("pageId").equals(pageId).delete();
   });

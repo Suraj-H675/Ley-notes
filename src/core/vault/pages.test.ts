@@ -314,6 +314,21 @@ describe("pages CRUD", () => {
     expect(tags).toHaveLength(0);
   });
 
+  it("clears stale filesystem continuity metadata when trashing a note", async () => {
+    const page = await createPage({ title: "Continuity" });
+    await updatePageContent(page.id, "Current disk content.");
+    await db.pages.update(page.id, { missingFromDisk: true });
+
+    await deletePage(page.id);
+
+    const deleted = await db.pages.get(page.id);
+    expect(deleted).toMatchObject({
+      deletedAt: expect.any(Number),
+    });
+    expect(deleted?.missingFromDisk).toBeUndefined();
+    expect(deleted?.sourceHash).toBeUndefined();
+  });
+
   it("listPages excludes soft-deleted", async () => {
     const a = await createPage({ title: "Keep" });
     const b = await createPage({ title: "Drop" });
