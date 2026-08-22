@@ -12,6 +12,7 @@ import {
   permanentlyDeletePage,
   renamePage,
   restorePage,
+  restoreMissingPage,
   updatePageContent,
   updatePageFrontmatter,
   updatePageProperty,
@@ -425,6 +426,35 @@ describe("pages CRUD", () => {
       deletedAt: null,
       missingFromDisk: undefined,
     });
+    expect(await db.tags.get([page.id, "recovered"])).toBeTruthy();
+  });
+
+  it("restores an externally deleted open note with its editor buffer and continuity hash", async () => {
+    await createPage({ title: "Target" });
+    const page = await createPage({
+      title: "Missing note",
+      content: "Old disk body.",
+    });
+    await updatePageContent(page.id, "Recovery buffer.\n\n #recovered");
+    const before = (await db.pages.get(page.id))?.sourceHash;
+    await db.pages.update(page.id, { missingFromDisk: true });
+
+    const restored = await restoreMissingPage(
+      page.id,
+      "---\ntitle: Missing note\n---\nRecovered buffer.\n\n #recovered",
+    );
+
+    expect(restored).toMatchObject({
+      id: page.id,
+      title: "Missing note",
+      path: page.path,
+      content: "Recovered buffer.\n\n #recovered",
+      frontmatter: { title: "Missing note" },
+      missingFromDisk: undefined,
+    });
+    expect(restored.sourceHash).toMatch(/^sha256:/);
+    expect(restored.sourceHash).not.toBe(before);
+    expect((await db.pages.get(page.id))?.missingFromDisk).toBeUndefined();
     expect(await db.tags.get([page.id, "recovered"])).toBeTruthy();
   });
 
