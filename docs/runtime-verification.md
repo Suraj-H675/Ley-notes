@@ -21,6 +21,7 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Rescanning the same folder preserves page IDs; changing folders does not preserve IDs or cache-only revision state.
 - A native external `.md` create/edit/delete emits a vault-change event; hidden files, unrelated extensions, and Ley's own atomic writes do not produce a user-visible refresh.
 - An externally deleted open note remains in its saved tab as a recovery projection after reload; restoring or discarding it is explicit, and a pending debounced save flushes on window unload before the projection changes.
+- In desktop and browser-folder vaults, Settings lists Markdown notes under `.trash`; restoring one moves it back into the vault root (adding ` 2`, ` 3`, … only on filename collision), refreshes the projection, and never exposes files outside the selected folder.
 - Selecting browser-local compatibility mode requests persistent browser storage without blocking startup when the browser declines or lacks the API. Settings describes persistent versus best-effort storage honestly and keeps ZIP backup controls visible.
 
 ## Workspace

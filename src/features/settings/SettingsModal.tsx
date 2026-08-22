@@ -13,7 +13,12 @@ import { exportVault } from '@/core/vault/export';
 import { importVaultFromFile } from '@/core/vault/import';
 import { Kbd } from '@/shared/components/Kbd';
 import { cn } from '@/shared/lib/classnames';
-import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
+import {
+  getActiveVaultKind,
+  listActiveVaultTrash,
+  restoreActiveVaultTrashFile,
+  type VaultFileSnapshot,
+} from '@/infrastructure/vault/filesystem-vault';
 import { listVaultTemplates } from '@/core/vault/templates';
 import { format as formatDate } from 'date-fns';
 import { listDeletedPages, permanentlyDeletePage, restorePage } from '@/core/vault/pages';
@@ -49,6 +54,8 @@ export function SettingsModal({
   const [eraseArmed, setEraseArmed] = useState<string | null>(null);
   const [vaultActionStatus, setVaultActionStatus] = useState<string | null>(null);
   const [vaultActionBusy, setVaultActionBusy] = useState(false);
+  const [filesystemTrash, setFilesystemTrash] = useState<VaultFileSnapshot[] | null>(null);
+  const [trashRequestId, setTrashRequestId] = useState(0);
   const [storagePersistence, setStoragePersistence] = useState<BrowserStoragePersistence>('unavailable');
   const eraseTimer = useRef<number | null>(null);
   const filesystemVault = vaultMode !== 'browser-local';
@@ -77,6 +84,19 @@ export function SettingsModal({
       void browserStoragePersistenceStatus().then(setStoragePersistence);
     }
   }, [open, vaultMode]);
+
+  useEffect(() => {
+    if (!open || !filesystemVault) return;
+    let current = true;
+    void listActiveVaultTrash()
+      .then((files) => { if (current) setFilesystemTrash(files); })
+      .catch((error) => { if (current) setTrashStatus(error instanceof Error ? error.message : String(error)); });
+    return () => { current = false; };
+  }, [filesystemVault, open, trashRequestId, vaultMode]);
+
+  function reloadFilesystemTrash() {
+    setTrashRequestId((current) => current + 1);
+  }
 
   if (!open) return null;
 
@@ -141,6 +161,20 @@ export function SettingsModal({
       await permanentlyDeletePage(pageId);
       setEraseArmed(null);
       setTrashStatus('The note was permanently deleted.');
+    } catch (cause) {
+      setTrashStatus(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
+  async function handleRestoreTrashed(path: string) {
+    try {
+      const restoredPath = await restoreActiveVaultTrashFile(path);
+      if (!restoredPath) throw new Error('This vault cannot restore trashed notes.');
+      const files = await listActiveVaultTrash();
+      setFilesystemTrash(files);
+      reloadFilesystemTrash();
+      if (filesystemVault) await onRefreshVault();
+      setTrashStatus(`Restored to ${restoredPath}.`);
     } catch (cause) {
       setTrashStatus(cause instanceof Error ? cause.message : String(cause));
     }
@@ -312,6 +346,28 @@ export function SettingsModal({
               </div>
             )}
             {trashStatus && <button type="button" onClick={() => setTrashStatus(null)} className="mt-2 text-left text-micro text-secondary" role="status">{trashStatus}</button>}
+          </section>}
+
+          {filesystemVault && <section>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="text-meta font-medium text-foreground">Folder trash</div>
+              <span className="text-micro text-muted-foreground">{filesystemTrash?.length ?? 0} {filesystemTrash?.length === 1 ? 'note' : 'notes'}</span>
+            </div>
+            {filesystemTrash === null ? (
+              <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-meta text-muted-foreground">Checking .trash…</div>
+            ) : filesystemTrash.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-meta text-muted-foreground">Trashed folder notes can be restored here.</div>
+            ) : (
+              <div className="max-h-44 divide-y divide-border overflow-y-auto rounded-lg border border-border bg-surface-2">
+                {filesystemTrash.map((file) => <div key={file.path} className="flex items-center gap-2 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-meta font-medium text-foreground">{file.path.split('/').at(-1)?.replace(/\.md$/i, '')}</div>
+                    <div className="truncate font-mono text-micro text-muted-foreground">{file.path}</div>
+                  </div>
+                  <button type="button" onClick={() => void handleRestoreTrashed(file.path)} className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label={`Restore ${file.path}`} title="Restore"><RotateCcw size={13} /></button>
+                </div>)}
+              </div>
+            )}
           </section>}
         </div>
 

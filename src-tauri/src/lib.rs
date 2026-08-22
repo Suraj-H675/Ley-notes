@@ -1451,6 +1451,45 @@ fn scan_vault(vault_path: String) -> Result<Vec<VaultFile>, String> {
 }
 
 #[tauri::command]
+fn scan_trashed_vault_files(vault_path: String) -> Result<Vec<VaultFile>, String> {
+    let root = canonical_vault(&vault_path)?;
+    let trash = root.join(".trash");
+    if !trash.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut files = Vec::new();
+    for entry in WalkDir::new(&trash).follow_links(false) {
+        let entry = entry.map_err(|error| format!("Failed to scan trash: {error}"))?;
+        if !entry.file_type().is_file()
+            || entry.path().extension().and_then(|part| part.to_str()) != Some("md")
+        {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(&root)
+            .map_err(|_| "A trashed file escaped the vault root")?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let metadata = entry
+            .metadata()
+            .map_err(|error| format!("Cannot inspect {relative}: {error}"))?;
+        let content = fs::read_to_string(entry.path())
+            .map_err(|error| format!("Cannot read {relative}: {error}"))?;
+        files.push(VaultFile {
+            path: relative,
+            content,
+            created_at: unix_millis(metadata.created()),
+            updated_at: unix_millis(metadata.modified()),
+        });
+    }
+
+    files.sort_by_cached_key(|file| file.path.to_lowercase());
+    Ok(files)
+}
+
+#[tauri::command]
 fn scan_canvases(vault_path: String) -> Result<Vec<CanvasFile>, String> {
     let root = canonical_vault(&vault_path)?;
     let canvas_root = root.join("canvases");
@@ -1660,6 +1699,51 @@ fn trash_vault_file(vault_path: String, relative_path: String) -> Result<String,
         .replace('\\', "/"))
 }
 
+#[tauri::command]
+fn restore_trashed_vault_file(vault_path: String, trashed_path: String) -> Result<String, String> {
+    let root = canonical_vault(&vault_path)?;
+    let relative = safe_relative(&trashed_path)?;
+    if relative
+        .components()
+        .next()
+        .and_then(|part| part.as_os_str().to_str())
+        != Some(".trash")
+    {
+        return Err("Only files inside .trash can be restored".into());
+    }
+    let source = markdown_path(&root, &trashed_path)?;
+    if !source.is_file() {
+        return Err("That trashed note no longer exists".into());
+    }
+
+    let original_name = source
+        .file_name()
+        .ok_or("The trashed note has no filename")?
+        .to_string_lossy()
+        .to_string();
+    let mut destination = root.join(&original_name);
+    let mut suffix = 2;
+    while destination.exists() {
+        let stem = Path::new(&original_name)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        destination = root.join(format!("{stem} {suffix}.md"));
+        suffix += 1;
+    }
+
+    let restored_relative = destination
+        .strip_prefix(&root)
+        .map_err(|_| "A restored file escaped the vault root")?
+        .to_string_lossy()
+        .replace('\\', "/");
+    fs::rename(&source, &destination).map_err(|error| format!("Cannot restore note: {error}"))?;
+    suppress_current_change(&source);
+    suppress_current_change(&destination);
+    Ok(restored_relative)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1698,6 +1782,8 @@ pub fn run() {
             read_agent_cited_evidence,
             read_agent_project_activity,
             scan_vault,
+            scan_trashed_vault_files,
+            restore_trashed_vault_file,
             scan_canvases,
             write_canvas_file,
             trash_canvas_file,
@@ -1776,6 +1862,23 @@ mod tests {
         assert_eq!(trashed, ".trash/Renamed.md");
         assert!(root.join(".trash/Renamed.md").is_file());
         assert!(scan_vault(vault.clone()).unwrap().is_empty());
+
+        let trashed_files = scan_trashed_vault_files(vault.clone()).unwrap();
+        assert_eq!(trashed_files.len(), 1);
+        assert_eq!(trashed_files[0].path, ".trash/Renamed.md");
+
+        let restored =
+            restore_trashed_vault_file(vault.clone(), trashed_files[0].path.clone()).unwrap();
+        assert_eq!(restored, "Renamed.md");
+        assert!(!root.join(".trash/Renamed.md").exists());
+        assert_eq!(scan_trashed_vault_files(vault.clone()).unwrap().len(), 0);
+
+        write_vault_file(vault.clone(), "Renamed.md".into(), "current".into()).unwrap();
+        write_vault_file(vault.clone(), "Renamed 2.md".into(), "older".into()).unwrap();
+        let second_trash = trash_vault_file(vault.clone(), "Renamed 2.md".into()).unwrap();
+        assert_eq!(second_trash, ".trash/Renamed 2.md");
+        let collision_restore = restore_trashed_vault_file(vault.clone(), second_trash).unwrap();
+        assert_eq!(collision_restore, "Renamed 2.md");
 
         assert!(write_vault_file(vault, "../escape.md".into(), "nope".into()).is_err());
         assert!(!root.parent().unwrap().join("escape.md").exists());

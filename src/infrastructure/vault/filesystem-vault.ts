@@ -578,6 +578,81 @@ export async function trashActiveVaultFile(relativePath: string): Promise<void> 
   }
 }
 
+export async function listActiveVaultTrash(): Promise<VaultFileSnapshot[] | null> {
+  if (activeVaultPath) {
+    const files = await invoke<Array<{
+      path: string;
+      content: string;
+      createdAt: number;
+      updatedAt: number;
+    }>>('scan_trashed_vault_files', { vaultPath: activeVaultPath });
+    return files.map((file) => ({
+      path: file.path,
+      content: file.content,
+      createdAt: file.createdAt,
+      updatedAt: file.updatedAt,
+    }));
+  }
+
+  if (!activeBrowserHandle) return null;
+  try {
+    const trash = await browserDirectoryHandle(activeBrowserHandle, ['.trash'], false);
+    const snapshots: VaultFileSnapshot[] = [];
+    for await (const [name, handle] of trash.entries()) {
+      if (handle.kind !== 'file' || !name.toLowerCase().endsWith('.md')) continue;
+      const file = await handle.getFile();
+      snapshots.push({
+        path: `.trash/${name}`,
+        content: await file.text(),
+        createdAt: file.lastModified,
+        updatedAt: file.lastModified,
+      });
+    }
+    return snapshots.sort((left, right) => left.path.localeCompare(right.path));
+  } catch {
+    return [];
+  }
+}
+
+export async function restoreActiveVaultTrashFile(trashedPath: string): Promise<string | null> {
+  if (activeVaultPath) {
+    return invoke<string>('restore_trashed_vault_file', {
+      vaultPath: activeVaultPath,
+      trashedPath,
+    });
+  }
+
+  if (!activeBrowserHandle) return null;
+  const parts = trashedPath.split('/').filter(Boolean);
+  const filename = parts.pop();
+  if (!filename || parts.join('/') !== '.trash' || !filename.toLowerCase().endsWith('.md')) {
+    throw new Error('Only notes inside .trash can be restored');
+  }
+  const source = await browserFileHandle(activeBrowserHandle, trashedPath, false, true);
+  const content = await (await source.getFile()).text();
+  let targetName = filename;
+  let suffix = 2;
+  while (await browserFileExists(targetName)) {
+    targetName = `${targetName.replace(/\.md$/i, '')} ${suffix}.md`;
+    suffix += 1;
+  }
+  const target = await browserFileHandle(activeBrowserHandle, targetName, true, true);
+  const writer = await target.createWritable();
+  await writer.write(content);
+  await writer.close();
+  await removeBrowserPath(activeBrowserHandle, trashedPath);
+  return targetName;
+
+  async function browserFileExists(name: string): Promise<boolean> {
+    try {
+      await activeBrowserHandle?.getFileHandle(name);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 async function browserDirectoryHandle(root: LeyDirectoryHandle, parts: string[], create: boolean): Promise<LeyDirectoryHandle> {
   let directory = root;
   for (const part of parts) {
