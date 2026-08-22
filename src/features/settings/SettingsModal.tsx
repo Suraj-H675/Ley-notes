@@ -16,12 +16,16 @@ import { cn } from '@/shared/lib/classnames';
 import {
   getActiveVaultKind,
   listActiveVaultTrash,
-  restoreActiveVaultTrashFile,
   type VaultFileSnapshot,
 } from '@/infrastructure/vault/filesystem-vault';
 import { listVaultTemplates } from '@/core/vault/templates';
 import { format as formatDate } from 'date-fns';
-import { listDeletedPages, permanentlyDeletePage, restorePage } from '@/core/vault/pages';
+import {
+  listDeletedPages,
+  permanentlyDeletePage,
+  restorePage,
+  restoreTrashedFilesystemPage,
+} from '@/core/vault/pages';
 import {
   browserStoragePersistenceStatus,
   requestBrowserStoragePersistence,
@@ -168,13 +172,12 @@ export function SettingsModal({
 
   async function handleRestoreTrashed(path: string) {
     try {
-      const restoredPath = await restoreActiveVaultTrashFile(path);
-      if (!restoredPath) throw new Error('This vault cannot restore trashed notes.');
+      const restored = await restoreTrashedFilesystemPage(path);
       const files = await listActiveVaultTrash();
       setFilesystemTrash(files);
       reloadFilesystemTrash();
       if (filesystemVault) await onRefreshVault();
-      setTrashStatus(`Restored to ${restoredPath}.`);
+      setTrashStatus(`Restored “${restored.title}” to ${restored.path}.`);
     } catch (cause) {
       setTrashStatus(cause instanceof Error ? cause.message : String(cause));
     }

@@ -29,11 +29,12 @@ import { removeDestinationBookmarksForPage } from "@/core/vault/bookmarks";
 import { removePageBookmarkReference } from "@/core/vault/note-bookmarks";
 import {
   hashVaultSource,
+  readActiveVaultFile,
+  restoreActiveVaultTrashFile,
   renameActiveVaultFile,
   trashActiveVaultFile,
   writeActiveVaultFile,
 } from "@/infrastructure/vault/filesystem-vault";
-
 export interface CreatePageInput {
   title: string;
   content?: string;
@@ -689,6 +690,98 @@ export async function restorePage(pageId: string): Promise<Page> {
   await rebuildPageTags(pageId, page.content, page.frontmatter);
   await resolveGhostLinksForPage(restored);
   return restored;
+}
+
+/**
+ * Restore a filesystem `.trash` note to its original folder. If the original
+ * path is occupied, create an independent sibling copy rather than overwrite
+ * authoritative Markdown; retarget links only for the actual restored path.
+ */
+export async function restoreTrashedFilesystemPage(
+  trashedPath: string,
+): Promise<Page> {
+  const restoredPath = await restoreActiveVaultTrashFile(trashedPath);
+  if (!restoredPath)
+    throw new Error("This vault cannot restore trashed notes.");
+
+  const all = await db.pages.toArray();
+  const existingByPath = new Map(
+    all
+      .filter((page) => page.deletedAt === null && !page.missingFromDisk)
+      .map((page) => [portablePathKey(page.path), page]),
+  );
+  const previousProjection = all.find(
+    (page) =>
+      portablePathKey(page.path) === portablePathKey(trashedPath) &&
+      page.deletedAt === null,
+  );
+  const source = await readActiveVaultFile(restoredPath);
+  if (source === null)
+    throw new Error("This vault cannot read the restored note.");
+  const parsed = parseFrontmatter(source);
+  const filenameTitle =
+    restoredPath.split("/").at(-1)?.replace(/\.md$/i, "") ?? "Untitled";
+  const title =
+    typeof parsed.frontmatter.title === "string" &&
+    parsed.frontmatter.title.trim()
+      ? parsed.frontmatter.title.trim()
+      : filenameTitle;
+
+  let id = previousProjection?.id;
+  if (id && existingByPath.has(portablePathKey(restoredPath))) id = undefined;
+  if (!id) {
+    let suffix = 2;
+    let candidateId = stableTrashPageId(trashedPath);
+    while (await db.pages.get(candidateId)) {
+      candidateId = `${candidateId}_${suffix}`;
+      suffix += 1;
+    }
+    id = candidateId;
+  }
+
+  const titleCollision = await getPageByTitle(title);
+  if (titleCollision && titleCollision.id !== id)
+    throw new Error(`A current note named "${title}" already exists`);
+
+  const updatedAt = now();
+  const restored: Page = {
+    ...(previousProjection ?? ({} as Page)),
+    id,
+    title,
+    lcTitle: title.toLowerCase(),
+    path: restoredPath,
+    content: parsed.body,
+    frontmatter: parsed.frontmatter,
+    frontmatterError: parsed.error,
+    aliases: getAliases(parsed.frontmatter),
+    createdAt:
+      previousProjection?.createdAt ??
+      Date.now(),
+    updatedAt,
+    deletedAt: null,
+    missingFromDisk: undefined,
+  };
+  await db.pages.put(restored);
+  await maintainLinksAfterPathChange(
+    id,
+    trashedPath,
+    restoredPath,
+    [id],
+    previousProjection?.title,
+    previousProjection && title !== previousProjection.title ? title : undefined,
+  );
+  await rebuildPageTags(id, restored.content, restored.frontmatter);
+  await resolveGhostLinksForPage(restored);
+  return restored;
+}
+
+function stableTrashPageId(trashedPath: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < trashedPath.length; index += 1) {
+    hash ^= trashedPath.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `file_${(hash >>> 0).toString(36)}_restored`;
 }
 
 /** Irreversibly remove a browser-local deleted note and its private history/assets. */

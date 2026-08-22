@@ -633,7 +633,7 @@ export async function restoreActiveVaultTrashFile(trashedPath: string): Promise<
   let targetName = filename;
   let suffix = 2;
   while (await browserFileExists(targetName)) {
-    targetName = `${targetName.replace(/\.md$/i, '')} ${suffix}.md`;
+    targetName = `${filename.replace(/\.md$/i, '')} ${suffix}.md`;
     suffix += 1;
   }
   const target = await browserFileHandle(activeBrowserHandle, targetName, true, true);
@@ -651,6 +651,17 @@ export async function restoreActiveVaultTrashFile(trashedPath: string): Promise<
       return false;
     }
   }
+}
+
+export async function readActiveVaultFile(relativePath: string): Promise<string | null> {
+  if (activeVaultPath)
+    return invoke<string>('read_vault_file', {
+      vaultPath: activeVaultPath,
+      relativePath,
+    });
+  if (!activeBrowserHandle) return null;
+  const file = await browserFileHandle(activeBrowserHandle, relativePath, false, true);
+  return (await file.getFile()).text();
 }
 
 async function browserDirectoryHandle(root: LeyDirectoryHandle, parts: string[], create: boolean): Promise<LeyDirectoryHandle> {

@@ -1610,6 +1610,13 @@ fn write_vault_file(
 }
 
 #[tauri::command]
+fn read_vault_file(vault_path: String, relative_path: String) -> Result<String, String> {
+    let root = canonical_vault(&vault_path)?;
+    let target = markdown_path(&root, &relative_path)?;
+    fs::read_to_string(target).map_err(|error| format!("Cannot read note: {error}"))
+}
+
+#[tauri::command]
 fn write_vault_attachment(
     vault_path: String,
     relative_path: String,
@@ -1721,7 +1728,17 @@ fn restore_trashed_vault_file(vault_path: String, trashed_path: String) -> Resul
         .ok_or("The trashed note has no filename")?
         .to_string_lossy()
         .to_string();
-    let mut destination = root.join(&original_name);
+    let relative_segments: Vec<_> = relative.components().skip(1).collect();
+    let mut destination = if relative_segments.len() > 1 {
+        let folder = relative_segments[..relative_segments.len() - 1]
+            .iter()
+            .fold(root.clone(), |current, segment| current.join(segment));
+        fs::create_dir_all(&folder)
+            .map_err(|error| format!("Cannot restore note folder: {error}"))?;
+        folder.join(&original_name)
+    } else {
+        root.join(&original_name)
+    };
     let mut suffix = 2;
     while destination.exists() {
         let stem = Path::new(&original_name)
@@ -1783,6 +1800,7 @@ pub fn run() {
             read_agent_project_activity,
             scan_vault,
             scan_trashed_vault_files,
+            read_vault_file,
             restore_trashed_vault_file,
             scan_canvases,
             write_canvas_file,
