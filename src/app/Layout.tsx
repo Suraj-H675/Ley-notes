@@ -611,6 +611,11 @@ export function Layout({
               watcherStatus={watcherStatus}
               onRefreshVault={onRefreshVault}
               onSwitchVault={onSwitchVault}
+              onOpenNote={(id) => {
+                const nav = useNavStore.getState();
+                nav.openPage(id);
+                nav.pushRecent(id);
+              }}
               onClose={() => setSettingsOpen(false)}
             />
           </Suspense>

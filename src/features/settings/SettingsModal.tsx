@@ -26,6 +26,7 @@ import {
   restorePage,
   restoreTrashedFilesystemPage,
 } from '@/core/vault/pages';
+import { useNavStore } from '@/shared/state/nav';
 import {
   browserStoragePersistenceStatus,
   requestBrowserStoragePersistence,
@@ -40,6 +41,7 @@ export function SettingsModal({
   onRefreshVault,
   onSwitchVault,
   onClose,
+  onOpenNote,
 }: {
   open: boolean;
   vaultMode: 'desktop' | 'browser-folder' | 'browser-local';
@@ -47,8 +49,10 @@ export function SettingsModal({
   watcherStatus: 'inactive' | 'starting' | 'watching' | 'error';
   onRefreshVault: () => Promise<{ noteCount: number } | null>;
   onSwitchVault: () => Promise<void>;
+  onOpenNote: (id: string) => void;
   onClose: () => void;
 }) {
+  const openPage = useNavStore((s) => s.openPage);
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
   const [importing, setImporting] = useState(false);
@@ -185,6 +189,8 @@ export function SettingsModal({
       setFilesystemTrash(files);
       reloadFilesystemTrash();
       if (filesystemVault) await onRefreshVault();
+      openPage(restored.id);
+      onOpenNote(restored.id);
       setTrashStatus(`Restored “${restored.title}” to ${restored.path}.`);
     } catch (cause) {
       setTrashStatus(cause instanceof Error ? cause.message : String(cause));
