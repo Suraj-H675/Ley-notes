@@ -709,6 +709,7 @@ export async function restorePage(pageId: string): Promise<Page> {
 export async function restoreTrashedFilesystemPage(
   trashedPath: string,
 ): Promise<Page> {
+  return queuePageMutation(stableTrashPageId(trashedPath), async () => {
   const allBefore = await db.pages.toArray();
   const missingProjection = allBefore.find(
     (page) =>
@@ -733,7 +734,7 @@ export async function restoreTrashedFilesystemPage(
   const parsed = parseFrontmatter(source);
   const filenameTitle =
     restoredPath.split("/").at(-1)?.replace(/\.md$/i, "") ?? "Untitled";
-  const title =
+  let title =
     typeof parsed.frontmatter.title === "string" &&
     parsed.frontmatter.title.trim()
       ? parsed.frontmatter.title.trim()
@@ -751,8 +752,17 @@ export async function restoreTrashedFilesystemPage(
     );
   }
   const titleCollision = await getPageByTitle(title);
-  if (titleCollision && titleCollision.id !== id)
-    throw new Error(`A current note named "${title}" already exists`);
+  if (titleCollision && titleCollision.id !== id) {
+    const takenTitles = all
+      .filter((page) => page.deletedAt === null && !page.missingFromDisk)
+      .map((page) => page.title);
+    let suffix = 2;
+    while (takenTitles.some((candidate) => portableFilenameKey(candidate) === portableFilenameKey(`${title} ${suffix}`)))
+      suffix += 1;
+    title = `${title} ${suffix}`;
+    if (!parsed.error)
+      parsed.frontmatter = { ...parsed.frontmatter, title };
+  }
 
   const updatedAt = now();
   const restored: Page = {
@@ -775,6 +785,20 @@ export async function restoreTrashedFilesystemPage(
     missingFromDisk: undefined,
   };
   await db.pages.put(restored);
+  if (
+    !parsed.error &&
+    Object.prototype.hasOwnProperty.call(parsed.frontmatter, "title") &&
+    parsed.frontmatter.title !== restored.frontmatter.title
+  ) {
+    await writeActiveVaultFile(
+      restoredPath,
+      serializeFrontmatter(restored.frontmatter, restored.content),
+    );
+    restored.sourceHash = await hashVaultSource(
+      serializeFrontmatter(restored.frontmatter, restored.content),
+    );
+    await db.pages.put(restored);
+  }
   await maintainLinksAfterPathChange(
     id,
     trashedPath,
@@ -787,6 +811,7 @@ export async function restoreTrashedFilesystemPage(
   await rebuildPageTags(id, restored.content, restored.frontmatter);
   await resolveGhostLinksForPage(restored);
   return restored;
+  });
 }
 
 function stableTrashPageId(trashedPath: string): string {

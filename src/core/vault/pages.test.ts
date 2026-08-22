@@ -399,6 +399,41 @@ describe("pages CRUD", () => {
     expect(await db.tags.get([page.id, "restored"])).toBeTruthy();
   });
 
+  it("creates an independent title-safe note when a trashed title was recreated", async () => {
+    const readActiveVaultFile = vi.mocked(
+      (await import("@/infrastructure/vault/filesystem-vault"))
+        .readActiveVaultFile,
+    );
+    readActiveVaultFile.mockResolvedValueOnce(
+      "---\ntitle: Reused title\n---\nRecovered body.",
+    );
+    const page = await createPage({
+      title: "Reused title",
+      folder: "projects",
+      content: "Recovered body.",
+    });
+    await deletePage(page.id);
+    await createPage({ title: "Reused title" });
+
+    const restored = await restoreTrashedFilesystemPage(
+      "projects/Reused title.md",
+    );
+
+    expect(restored).toMatchObject({
+      id: page.id,
+      title: "Reused title 2",
+      path: "projects/Reused title.md",
+      deletedAt: null,
+    });
+    expect(restored.frontmatter).toEqual({ title: "Reused title 2" });
+    const persisted = await db.pages.get(page.id);
+    expect(persisted).toMatchObject({
+      title: "Reused title 2",
+      lcTitle: "reused title 2",
+    });
+    expect((await getPageByTitle("Reused title 2"))?.id).toBe(page.id);
+  });
+
   it("restores a missing recovery projection from filesystem trash", async () => {
     const readActiveVaultFile = vi.mocked(
       (await import("@/infrastructure/vault/filesystem-vault"))
