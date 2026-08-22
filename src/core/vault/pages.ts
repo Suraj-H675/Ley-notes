@@ -404,6 +404,11 @@ export function restoreMissingPage(
     const page = await db.pages.get(pageId);
     if (!page?.missingFromDisk)
       throw new Error("This open note is no longer waiting for recovery.");
+    const externalSource = await readActiveVaultFile(page.path);
+    if (externalSource !== null)
+      throw new Error(
+        "This note has reappeared on disk. Reload it instead of overwriting the file.",
+      );
     const next = projectEditorContent(page, editorContent);
     const updatedAt = now();
     const sourceHash = await hashVaultSource(next.source);

@@ -430,6 +430,11 @@ describe("pages CRUD", () => {
   });
 
   it("restores an externally deleted open note with its editor buffer and continuity hash", async () => {
+    const readActiveVaultFile = vi.mocked(
+      (await import("@/infrastructure/vault/filesystem-vault"))
+        .readActiveVaultFile,
+    );
+    readActiveVaultFile.mockResolvedValueOnce(null);
     await createPage({ title: "Target" });
     const page = await createPage({
       title: "Missing note",
@@ -456,6 +461,29 @@ describe("pages CRUD", () => {
     expect(restored.sourceHash).not.toBe(before);
     expect((await db.pages.get(page.id))?.missingFromDisk).toBeUndefined();
     expect(await db.tags.get([page.id, "recovered"])).toBeTruthy();
+  });
+
+  it("refuses to overwrite a missing note that reappeared externally before recovery", async () => {
+    const readActiveVaultFile = vi.mocked(
+      (await import("@/infrastructure/vault/filesystem-vault"))
+        .readActiveVaultFile,
+    );
+    const page = await createPage({
+      title: "Reappeared",
+      content: "Old disk body.",
+    });
+    await db.pages.update(page.id, { missingFromDisk: true });
+    readActiveVaultFile.mockResolvedValueOnce("External replacement.");
+
+    await expect(
+      restoreMissingPage(page.id, "Editor buffer."),
+    ).rejects.toThrow(/reappeared on disk/);
+
+    const unchanged = await db.pages.get(page.id);
+    expect(unchanged).toMatchObject({
+      content: "Old disk body.",
+      missingFromDisk: true,
+    });
   });
 
   it("permanently deletes only recycled notes and their private data", async () => {
