@@ -434,6 +434,37 @@ describe("pages CRUD", () => {
     expect((await getPageByTitle("Reused title 2"))?.id).toBe(page.id);
   });
 
+  it("restores a trashed note with an ambiguous alias as an independent record", async () => {
+    const readActiveVaultFile = vi.mocked(
+      (await import("@/infrastructure/vault/filesystem-vault"))
+        .readActiveVaultFile,
+    );
+    readActiveVaultFile.mockResolvedValueOnce(
+      "---\naliases: [Shared alias]\n---\nRecovered body.",
+    );
+    const page = await createPage({
+      title: "Aliased",
+      content: "Recovered body.",
+      frontmatter: { aliases: ["Shared alias"] },
+    });
+    await deletePage(page.id);
+    const replacement = await createPage({ title: "Current" });
+    await updatePageFrontmatter(replacement.id, {
+      ...replacement.frontmatter,
+      aliases: ["Shared alias"],
+    });
+
+    const restored = await restoreTrashedFilesystemPage("Aliased.md");
+
+    expect(restored).toMatchObject({
+      id: page.id,
+      title: "Aliased",
+      aliases: ["Shared alias"],
+      deletedAt: null,
+    });
+    expect((await getPageByTitle("Aliased"))?.id).toBe(page.id);
+  });
+
   it("restores a missing recovery projection from filesystem trash", async () => {
     const readActiveVaultFile = vi.mocked(
       (await import("@/infrastructure/vault/filesystem-vault"))
