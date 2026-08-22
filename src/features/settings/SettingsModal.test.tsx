@@ -25,7 +25,8 @@ vi.mock('@/core/vault/pages', () => ({
   })),
 }));
 
-import { restoreTrashedFilesystemPage as restoreTrashedFilesystemPageMock } from '@/core/vault/pages';
+import { restorePage as restorePageMockImport, restoreTrashedFilesystemPage as restoreTrashedFilesystemPageMock } from '@/core/vault/pages';
+import { listDeletedPages } from '@/core/vault/pages';
 
 vi.mock('@/core/vault/templates', () => ({
   listVaultTemplates: vi.fn(async () => []),
@@ -33,7 +34,14 @@ vi.mock('@/core/vault/templates', () => ({
 
 vi.mock('dexie-react-hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('dexie-react-hooks')>()),
-  useLiveQuery: (_query: unknown, fallback?: unknown) => fallback ?? [],
+  useLiveQuery: (query?: unknown, fallback?: unknown) => {
+    if (query === listDeletedPages) {
+      return [
+        { id: 'recycled-id', title: 'Recycled note', path: 'Recycled note.md', deletedAt: 1 },
+      ];
+    }
+    return fallback ?? [];
+  },
 }));
 
 vi.mock('@/infrastructure/database/db', () => ({
@@ -47,6 +55,7 @@ vi.mock('@/infrastructure/database/db', () => ({
 describe('Settings filesystem trash restore', () => {
   beforeEach(() => {
     vi.mocked(restoreTrashedFilesystemPageMock).mockClear();
+    vi.mocked(restorePageMockImport).mockClear();
   });
 
   it('closes settings and opens the restored note without leaving a status behind the modal', async () => {
@@ -74,5 +83,42 @@ describe('Settings filesystem trash restore', () => {
     await waitFor(() => expect(onOpenNote).toHaveBeenCalledWith('restored-id'));
     expect(onClose).toHaveBeenCalled();
     expect(onRefreshVault).toHaveBeenCalled();
+  });
+
+  it('returns to the editor after restoring a browser-local recycled note', async () => {
+    const onRefreshVault = vi.fn(async () => ({ noteCount: 1 }));
+    const onOpenNote = vi.fn();
+    const onClose = vi.fn();
+    vi.mocked(restorePageMockImport).mockResolvedValueOnce({
+      id: 'recycled-id',
+      lcTitle: 'recycled note',
+      title: 'Recycled note',
+      path: 'Recycled note.md',
+      content: '',
+      frontmatter: {},
+      aliases: [],
+      createdAt: 1,
+      updatedAt: 1,
+      deletedAt: null,
+    });
+
+    render(
+      <SettingsModal
+        open
+        vaultMode="browser-local"
+        vaultName="Local"
+        watcherStatus="inactive"
+        onRefreshVault={onRefreshVault}
+        onSwitchVault={vi.fn()}
+        onClose={onClose}
+        onOpenNote={onOpenNote}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Recycled note' }));
+
+    await waitFor(() => expect(restorePageMockImport).toHaveBeenCalledWith('recycled-id'));
+    expect(onOpenNote).toHaveBeenCalledWith('recycled-id');
+    expect(onClose).toHaveBeenCalled();
   });
 });

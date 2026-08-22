@@ -158,6 +158,8 @@ export function SettingsModal({
   async function handleRestore(pageId: string) {
     try {
       const page = await restorePage(pageId);
+      onClose();
+      onOpenNote(page.id);
       setTrashStatus(`Restored “${page.title}”.`);
     } catch (cause) {
       setTrashStatus(cause instanceof Error ? cause.message : String(cause));
