@@ -104,14 +104,15 @@ export async function createPage(input: CreatePageInput): Promise<Page> {
   const folder = canonicalFolderCase(normalizeFolder(input.folder ?? ""), all);
   const path = pagePathForTitle(title, folder, all);
 
+  const frontmatter = input.frontmatter ?? {};
   const page: Page = {
     id: nanoid(),
     title,
     lcTitle: title.toLowerCase(),
     path,
     content: input.content ?? "",
-    frontmatter: input.frontmatter ?? {},
-    aliases: input.aliases ?? [],
+    frontmatter,
+    aliases: getAliases(frontmatter),
     createdAt: ts,
     updatedAt: ts,
     deletedAt: null,
@@ -764,6 +765,25 @@ export async function restoreTrashedFilesystemPage(
       parsed.frontmatter = { ...parsed.frontmatter, title };
   }
 
+  const activeAliases = new Set(
+    all
+      .filter(
+        (page) =>
+          page.deletedAt === null &&
+          !page.missingFromDisk &&
+          page.id !== id,
+      )
+      .flatMap((page) => page.aliases.map((alias) => alias.toLowerCase())),
+  );
+  let originalAliases = getAliases(parsed.frontmatter);
+  const aliases = originalAliases.filter(
+    (alias) => !activeAliases.has(alias.toLowerCase()),
+  );
+  const aliasesChanged = aliases.length !== originalAliases.length;
+  if (aliasesChanged && !parsed.error) {
+    parsed.frontmatter = { ...parsed.frontmatter, aliases };
+  }
+
   const updatedAt = now();
   const restored: Page = {
     ...(previousProjection ?? missingProjection ?? ({} as Page)),
@@ -774,7 +794,7 @@ export async function restoreTrashedFilesystemPage(
     content: parsed.body,
     frontmatter: parsed.frontmatter,
     frontmatterError: parsed.error,
-    aliases: getAliases(parsed.frontmatter),
+    aliases: parsed.error ? originalAliases : aliases,
     createdAt:
       previousProjection?.createdAt ??
       missingProjection?.createdAt ??
@@ -787,8 +807,9 @@ export async function restoreTrashedFilesystemPage(
   await db.pages.put(restored);
   if (
     !parsed.error &&
-    Object.prototype.hasOwnProperty.call(parsed.frontmatter, "title") &&
-    parsed.frontmatter.title !== restored.frontmatter.title
+    (aliasesChanged ||
+      (Object.prototype.hasOwnProperty.call(parsed.frontmatter, "title") &&
+        parsed.frontmatter.title !== restored.frontmatter.title))
   ) {
     await writeActiveVaultFile(
       restoredPath,

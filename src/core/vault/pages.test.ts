@@ -41,6 +41,16 @@ describe("pages CRUD", () => {
     expect(p.lcTitle).toBe("hello world");
   });
 
+  it("derives aliases from frontmatter when creating pages", async () => {
+    const page = await createPage({
+      title: "Brief",
+      frontmatter: { status: "draft", aliases: ["project brief"] },
+    });
+
+    const persisted = await db.pages.get(page.id);
+    expect(persisted?.aliases).toEqual(["project brief"]);
+  });
+
   it("keeps meaningful Unicode, case, and spaces in new filenames", async () => {
     const p = await createPage({ title: "Project Plan – 東京" });
     expect(p.path).toBe("Project Plan – 東京.md");
@@ -435,11 +445,10 @@ describe("pages CRUD", () => {
   });
 
   it("restores a trashed note with an ambiguous alias as an independent record", async () => {
-    const readActiveVaultFile = vi.mocked(
-      (await import("@/infrastructure/vault/filesystem-vault"))
-        .readActiveVaultFile,
+    const { readActiveVaultFile, restoreActiveVaultTrashFile } = await import(
+      "@/infrastructure/vault/filesystem-vault"
     );
-    readActiveVaultFile.mockResolvedValueOnce(
+    vi.mocked(readActiveVaultFile).mockResolvedValueOnce(
       "---\naliases: [Shared alias]\n---\nRecovered body.",
     );
     const page = await createPage({
@@ -454,14 +463,16 @@ describe("pages CRUD", () => {
       aliases: ["Shared alias"],
     });
 
+    vi.mocked(restoreActiveVaultTrashFile).mockResolvedValueOnce("Aliased.md");
     const restored = await restoreTrashedFilesystemPage("Aliased.md");
 
     expect(restored).toMatchObject({
       id: page.id,
       title: "Aliased",
-      aliases: ["Shared alias"],
       deletedAt: null,
     });
+    expect(restored.aliases).toEqual([]);
+    expect(restored.frontmatter).toEqual({ aliases: [] });
     expect((await getPageByTitle("Aliased"))?.id).toBe(page.id);
   });
 
