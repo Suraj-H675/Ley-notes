@@ -60,6 +60,7 @@ export function SettingsModal({
   const [vaultActionBusy, setVaultActionBusy] = useState(false);
   const [filesystemTrash, setFilesystemTrash] = useState<VaultFileSnapshot[] | null>(null);
   const [trashRequestId, setTrashRequestId] = useState(0);
+  const [projectedAt, setProjectedAt] = useState(() => Date.now());
   const [storagePersistence, setStoragePersistence] = useState<BrowserStoragePersistence>('unavailable');
   const eraseTimer = useRef<number | null>(null);
   const filesystemVault = vaultMode !== 'browser-local';
@@ -91,12 +92,19 @@ export function SettingsModal({
 
   useEffect(() => {
     if (!open || !filesystemVault) return;
+    const refresh = () => setProjectedAt(Date.now());
+    window.addEventListener('ley:vault-projected', refresh);
+    return () => window.removeEventListener('ley:vault-projected', refresh);
+  }, [filesystemVault, open]);
+
+  useEffect(() => {
+    if (!open || !filesystemVault) return;
     let current = true;
     void listActiveVaultTrash()
       .then((files) => { if (current) setFilesystemTrash(files); })
       .catch((error) => { if (current) setTrashStatus(error instanceof Error ? error.message : String(error)); });
     return () => { current = false; };
-  }, [filesystemVault, open, trashRequestId, vaultMode]);
+  }, [filesystemVault, open, projectedAt, trashRequestId, vaultMode]);
 
   function reloadFilesystemTrash() {
     setTrashRequestId((current) => current + 1);
