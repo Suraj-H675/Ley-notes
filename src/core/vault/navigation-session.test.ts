@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { db } from '@/infrastructure/database/db';
 import { resetDb } from '@/test/helpers';
 import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
 import { createPage, deletePage, renamePage } from './pages';
@@ -127,5 +128,21 @@ describe('navigation sessions', () => {
     expect(useNavStore.getState().openTabs).toEqual([keep.id]);
     await deletePage(keep.id);
     expect(await applyNavigationLayout(layout)).toBe(false);
+  });
+
+  it('preserves an externally deleted open tab for recovery after reload', async () => {
+    await markActiveDataKind('browser-local');
+    const keep = await createPage({ title: 'Keep' });
+    const recovery = await db.pages.get(keep.id);
+    await db.pages.update(keep.id, { missingFromDisk: true });
+    useNavStore.getState().hydrate({ openTabs: [keep.id], activeTab: keep.id, primaryTab: keep.id, secondaryTab: null, activePane: 'primary', recentPages: [keep.id] });
+    await saveNavigationSession();
+    useNavStore.getState().reset();
+
+    await restoreNavigationSession();
+
+    expect(useNavStore.getState()).toMatchObject({ openTabs: [keep.id], activeTab: keep.id, primaryTab: keep.id });
+    expect((await db.pages.get(keep.id))?.missingFromDisk).toBe(true);
+    expect(recovery?.id).toBe(keep.id);
   });
 });

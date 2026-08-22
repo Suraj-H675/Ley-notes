@@ -20,6 +20,7 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Browser-local → folder → browser-local transitions preserve local pages, attachments, revisions, and deleted notes while folder data is active only as a disposable projection.
 - Rescanning the same folder preserves page IDs; changing folders does not preserve IDs or cache-only revision state.
 - A native external `.md` create/edit/delete emits a vault-change event; hidden files, unrelated extensions, and Ley's own atomic writes do not produce a user-visible refresh.
+- An externally deleted open note remains in its saved tab as a recovery projection after reload; restoring or discarding it is explicit, and a pending debounced save flushes on window unload before the projection changes.
 - Selecting browser-local compatibility mode requests persistent browser storage without blocking startup when the browser declines or lacks the API. Settings describes persistent versus best-effort storage honestly and keeps ZIP backup controls visible.
 
 ## Workspace

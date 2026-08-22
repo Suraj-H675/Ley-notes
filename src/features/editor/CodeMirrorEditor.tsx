@@ -233,9 +233,12 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
     };
     window.addEventListener('ley:vault-files-changed', onVaultChange);
     window.addEventListener('ley:vault-projected', onProjected);
+    const flushOnUnload = () => debouncedSave.flush();
+    window.addEventListener('beforeunload', flushOnUnload);
     return () => {
       window.removeEventListener('ley:vault-files-changed', onVaultChange);
       window.removeEventListener('ley:vault-projected', onProjected);
+      window.removeEventListener('beforeunload', flushOnUnload);
     };
   }, [debouncedSave, pageId]);
 
