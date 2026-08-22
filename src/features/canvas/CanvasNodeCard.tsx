@@ -1,4 +1,4 @@
-import { memo, useEffect } from "react";
+import { memo, useEffect, useState } from "react";
 import { ExternalLink, FileText } from "lucide-react";
 import {
   Handle,
@@ -13,6 +13,10 @@ import {
   type CanvasNode,
   type CanvasSide,
 } from "@/core/vault/canvas";
+import {
+  attachmentObjectUrl,
+  isSafeAttachmentPath,
+} from "@/core/vault/attachments";
 
 export interface CanvasCardData extends Record<string, unknown> {
   node: CanvasNode;
@@ -36,10 +40,35 @@ export const CanvasNodeCard = memo(function CanvasNodeCard({
   const color = canvasColorValue(node.color);
   const isGroup = node.type === "group";
   const safeUrl = node.type === "link" ? externalUrl(node.url) : null;
+  const backgroundPath = isGroup ? node.background : undefined;
+  const [backgroundUrl, setBackgroundUrl] = useState<string | null>(null);
 
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, updateNodeInternals]);
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+    const loaded =
+      backgroundPath && isSafeAttachmentPath(backgroundPath)
+        ? attachmentObjectUrl(backgroundPath)
+        : Promise.resolve(null);
+    loaded
+      .then((url) => {
+        objectUrl = url;
+        if (active) setBackgroundUrl(url);
+        else if (url) URL.revokeObjectURL(url);
+      })
+      .catch(() => {
+        if (active) setBackgroundUrl(null);
+      });
+
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [backgroundPath]);
 
   return (
     <>
@@ -47,9 +76,26 @@ export const CanvasNodeCard = memo(function CanvasNodeCard({
         className={`pointer-events-none relative h-full w-full overflow-hidden rounded-xl border bg-surface-1 text-foreground shadow-sm transition-shadow ${selected ? "shadow-lg ring-2 ring-primary/40" : ""}`}
         style={{
           borderColor: color ?? "hsl(var(--border))",
-          background: color
+          backgroundColor: color
             ? `color-mix(in srgb, ${color} 12%, hsl(var(--surface-1)))`
             : undefined,
+          ...(backgroundUrl
+            ? {
+                backgroundImage: `url("${backgroundUrl}")`,
+                backgroundPosition: "center",
+                backgroundRepeat:
+                  node.type === "group" && node.backgroundStyle === "repeat"
+                    ? "repeat"
+                    : "no-repeat",
+                backgroundSize:
+                  node.type === "group" && node.backgroundStyle === "ratio"
+                    ? "contain"
+                    : node.type === "group" &&
+                        node.backgroundStyle === "repeat"
+                      ? "auto"
+                      : "cover",
+              }
+            : {}),
         }}
       >
         <div className="h-full w-full">

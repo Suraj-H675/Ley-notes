@@ -9,6 +9,7 @@ import {
   newGroupCanvasNode,
   newLinkCanvasNode,
   newTextCanvasNode,
+  canvasBackgroundPresentation,
   normalizeCanvas,
   saveCanvas,
 } from "./canvas";
@@ -100,7 +101,7 @@ describe("JSON Canvas persistence", () => {
           width: 800,
           height: 500,
           color: "4",
-          background: "assets/grid.png",
+          background: "attachments/grid.png",
           backgroundStyle: "repeat",
         },
         {
@@ -150,6 +151,45 @@ describe("JSON Canvas persistence", () => {
     } as const;
 
     expect(normalizeCanvas(document)).toEqual(document);
+  });
+
+  it("keeps only safe image attachments as group backgrounds", async () => {
+    const canvas = await createCanvas("Visual map");
+    const group = newGroupCanvasNode({ x: 0, y: 0 });
+    group.background = "attachments/photo.png";
+    group.backgroundStyle = "ratio";
+    const unsafe = newGroupCanvasNode({ x: 0, y: 0 });
+    unsafe.id = "unsafe-group";
+    unsafe.background = "../../../etc/passwd.png";
+
+    await saveCanvas(canvas.path, {
+      nodes: [group, unsafe],
+      edges: [],
+    });
+
+    const restored = (await listCanvases())[0].document.nodes;
+    expect(
+      canvasBackgroundPresentation(group.background, group.backgroundStyle),
+    ).toEqual({
+      backgroundImage: 'url("attachments/photo.png")',
+      backgroundPosition: "center",
+      backgroundRepeat: "no-repeat",
+      backgroundSize: "contain",
+    });
+    expect(restored[0]).toMatchObject({
+      id: group.id,
+      background: "attachments/photo.png",
+      backgroundStyle: "ratio",
+    });
+    expect(restored[1]).toMatchObject({
+      id: "unsafe-group",
+    });
+    const restoredUnsafe = restored[1];
+    expect(restoredUnsafe.type).toBe("group");
+    if (restoredUnsafe.type === "group") {
+      expect(restoredUnsafe.background).toBeUndefined();
+      expect(restoredUnsafe.backgroundStyle).toBeUndefined();
+    }
   });
 
   it("rejects malformed geometry and dangling edges without discarding valid content", () => {

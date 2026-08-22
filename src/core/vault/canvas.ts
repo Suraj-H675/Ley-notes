@@ -6,6 +6,7 @@ import {
 } from "@/infrastructure/vault/filesystem-vault";
 import { nanoid } from "@/shared/lib/nanoid";
 import { slugify } from "@/shared/lib/slug";
+import { isImagePath, isSafeAttachmentPath } from "./attachments";
 
 export interface CanvasTextNode {
   id: string;
@@ -75,6 +76,37 @@ export function canvasColorValue(color?: unknown): string | undefined {
   return /^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(color)
     ? color
     : undefined;
+}
+
+export function canvasBackgroundPresentation(
+  background?: unknown,
+  backgroundStyle?: unknown,
+): {
+  backgroundImage: string;
+  backgroundPosition: string;
+  backgroundRepeat: string;
+  backgroundSize: string;
+} | null {
+  if (
+    typeof background !== "string" ||
+    !isSafeAttachmentPath(background) ||
+    !isImagePath(background)
+  )
+    return null;
+
+  const mode =
+    backgroundStyle === "cover" ||
+    backgroundStyle === "ratio" ||
+    backgroundStyle === "repeat"
+      ? backgroundStyle
+      : "cover";
+  return {
+    backgroundImage: `url("${background.replaceAll('"', "%22")}")`,
+    backgroundPosition: "center",
+    backgroundRepeat: mode === "repeat" ? "repeat" : "no-repeat",
+    backgroundSize:
+      mode === "cover" ? "cover" : mode === "ratio" ? "contain" : "auto",
+  };
 }
 
 export interface CanvasEdge {
@@ -346,7 +378,8 @@ function normalizeCanvasNode(node: unknown): CanvasNode[] {
         ...base,
         type: "group",
         ...(typeof value.label === "string" ? { label: value.label } : {}),
-        ...(typeof value.background === "string"
+        ...(typeof value.background === "string" &&
+        canvasBackgroundPresentation(value.background, value.backgroundStyle)
           ? { background: value.background }
           : {}),
         ...(isBackgroundStyle(value.backgroundStyle)

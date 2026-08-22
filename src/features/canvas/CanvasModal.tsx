@@ -21,6 +21,7 @@ import {
   StickyNote,
   Trash2,
   X,
+  Image as ImageIcon,
 } from "lucide-react";
 import {
   canvasContentNodeCount,
@@ -43,6 +44,7 @@ import { CanvasEdgeLayer } from "./CanvasEdgeLayer";
 import { usePages } from "@/features/notes/usePages";
 import { useNavStore } from "@/shared/state/nav";
 import { nanoid } from "@/shared/lib/nanoid";
+import { saveAttachment } from "@/core/vault/attachments";
 import { useUIStore } from "@/shared/state/ui";
 import * as Dialog from "@radix-ui/react-dialog";
 
@@ -416,6 +418,40 @@ export function CanvasModal({
     setDirty(true);
   }
 
+  async function setSelectionBackground(file: File | undefined) {
+    if (!selectedNode || selectedNode.type !== "group" || !file) return;
+    try {
+      setStatus("Adding background…");
+      const attachment = await saveAttachment(selectedNode.id, file);
+      setDocument((current) => ({
+        ...current,
+        nodes: current.nodes.map((node) =>
+          node.id === selectedNode.id && node.type === "group"
+            ? { ...node, background: attachment.path, backgroundStyle: "cover" }
+            : node,
+        ),
+      }));
+      setDirty(true);
+      setStatus("Background added");
+      window.setTimeout(() => setStatus(null), 1500);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function removeSelectionBackground() {
+    if (!selectedNode || selectedNode.type !== "group") return;
+    setDocument((current) => ({
+      ...current,
+      nodes: current.nodes.map((node) =>
+        node.id === selectedNode.id && node.type === "group"
+          ? { ...node, background: undefined, backgroundStyle: undefined }
+          : node,
+      ),
+    }));
+    setDirty(true);
+  }
+
   function updateEdgeLabel(label: string) {
     if (!selectedEdgeId) return;
     setDocument((current) => ({
@@ -724,6 +760,33 @@ export function CanvasModal({
                           />
                         ))}
                       </div>
+                      {selectedNode?.type === "group" && (
+                        <div className="flex gap-1">
+                          <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border border-border px-2 py-1.5 text-meta hover:bg-surface-2">
+                            <ImageIcon size={13} />
+                            {selectedNode.background ? "Replace image" : "Set image"}
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/gif,image/webp"
+                              className="sr-only"
+                              onChange={(event) => {
+                                void setSelectionBackground(event.target.files?.[0]);
+                                event.target.value = "";
+                              }}
+                            />
+                          </label>
+                          {selectedNode.background && (
+                            <button
+                              type="button"
+                              onClick={removeSelectionBackground}
+                              className="rounded-md border border-border p-2 text-muted-foreground hover:bg-surface-2 hover:text-destructive"
+                              aria-label="Remove background"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </section>
                   )}
                   <p className="text-micro leading-relaxed text-muted-foreground">
