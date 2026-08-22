@@ -700,6 +700,13 @@ export async function restorePage(pageId: string): Promise<Page> {
 export async function restoreTrashedFilesystemPage(
   trashedPath: string,
 ): Promise<Page> {
+  const allBefore = await db.pages.toArray();
+  const missingProjection = allBefore.find(
+    (page) =>
+      page.path.toLowerCase() === trashedPath.toLowerCase() &&
+      page.deletedAt === null &&
+      Boolean(page.missingFromDisk),
+  );
   const restoredPath = await restoreActiveVaultTrashFile(trashedPath);
   if (!restoredPath)
     throw new Error("This vault cannot restore trashed notes.");
@@ -722,8 +729,13 @@ export async function restoreTrashedFilesystemPage(
       ? parsed.frontmatter.title.trim()
       : filenameTitle;
 
-  const id = previousProjection?.id ?? stableTrashPageId(trashedPath);
-  if (!previousProjection && (await db.pages.get(id))) {
+  const id =
+    previousProjection?.id ?? missingProjection?.id ?? stableTrashPageId(trashedPath);
+  if (
+    !previousProjection &&
+    !(missingProjection && missingProjection.id === id) &&
+    (await db.pages.get(id))
+  ) {
     throw new Error(
       "This trashed note cannot be restored because Ley already has its recovery record.",
     );
@@ -734,7 +746,7 @@ export async function restoreTrashedFilesystemPage(
 
   const updatedAt = now();
   const restored: Page = {
-    ...(previousProjection ?? ({} as Page)),
+    ...(previousProjection ?? missingProjection ?? ({} as Page)),
     id,
     title,
     lcTitle: title.toLowerCase(),
@@ -745,6 +757,7 @@ export async function restoreTrashedFilesystemPage(
     aliases: getAliases(parsed.frontmatter),
     createdAt:
       previousProjection?.createdAt ??
+      missingProjection?.createdAt ??
       Date.now(),
     updatedAt,
     deletedAt: null,

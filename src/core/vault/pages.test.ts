@@ -382,6 +382,36 @@ describe("pages CRUD", () => {
     expect(await db.tags.get([page.id, "restored"])).toBeTruthy();
   });
 
+  it("restores a missing recovery projection from filesystem trash", async () => {
+    const readActiveVaultFile = vi.mocked(
+      (await import("@/infrastructure/vault/filesystem-vault"))
+        .readActiveVaultFile,
+    );
+    readActiveVaultFile.mockResolvedValueOnce(
+      "Recovery buffer.\n\n #recovered",
+    );
+    await createPage({ title: "Target" });
+    const page = await createPage({
+      title: "Missing note",
+      folder: "projects",
+      content: "Recovery buffer.",
+    });
+    await db.pages.update(page.id, { missingFromDisk: true });
+
+    const restored = await restoreTrashedFilesystemPage(
+      "projects/Missing note.md",
+    );
+
+    expect(restored).toMatchObject({
+      id: page.id,
+      title: "Missing note",
+      path: "projects/Missing note.md",
+      deletedAt: null,
+      missingFromDisk: undefined,
+    });
+    expect(await db.tags.get([page.id, "recovered"])).toBeTruthy();
+  });
+
   it("permanently deletes only recycled notes and their private data", async () => {
     const page = await createPage({ title: "Disposable" });
     const source = await createPage({
