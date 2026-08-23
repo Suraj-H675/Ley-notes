@@ -60,7 +60,7 @@ export function RevisionPanel({ pageId }: { pageId: string | null }) {
       {selected && (
         <div className="flex min-h-0 flex-1 flex-col p-3">
           <div className="mb-2 text-micro uppercase tracking-[0.12em] text-muted-foreground">Snapshot preview</div>
-          <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-background p-3 font-mono text-micro leading-relaxed text-muted-foreground-strong">{selected.content}</pre>
+          <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background p-3 font-mono text-micro leading-relaxed text-muted-foreground-strong">{selected.content}</pre>
           {status && <p className="mt-2 text-micro text-muted-foreground">{status}</p>}
           <button type="button" onClick={() => void restoreSelected()} className="mt-3 flex items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-meta font-medium text-primary-foreground hover:opacity-90">
             <RotateCcw size={13} /> Restore this version

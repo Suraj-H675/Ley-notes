@@ -15,7 +15,7 @@ export function VaultLauncher({
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-55 [background-image:linear-gradient(to_right,hsl(var(--border)/0.35)_1px,transparent_1px)] [background-size:72px_100%]" />
       <section className="relative my-auto w-full max-w-xl rounded-sm border border-border bg-surface-1 p-8 shadow-popover">
         <div className="mb-8 flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+          <div className="flex size-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <span className="text-lg font-semibold">L</span>
           </div>
           <div>

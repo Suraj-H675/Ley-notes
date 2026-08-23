@@ -310,7 +310,7 @@ export function ProjectKnowledgeGraph({
                   );
                 }}
                 disabled={!history || history.entries.length === 0}
-                className="h-10 w-full appearance-none rounded-lg border border-border bg-surface-1 pl-9 pr-9 text-meta text-foreground outline-none transition-[border-color,box-shadow] focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-10 w-full appearance-none rounded-md border border-border bg-surface-1 pl-9 pr-9 text-meta text-foreground outline-none transition-[border-color,box-shadow] focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {!history && (
                   <option value={view?.graphSnapshotId ?? ""}>
@@ -349,7 +349,7 @@ export function ProjectKnowledgeGraph({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="File, symbol, package…"
-                className="h-10 w-full rounded-lg border border-border bg-surface-1 pl-9 pr-3 text-meta text-foreground outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20"
+                className="h-10 w-full rounded-md border border-border bg-surface-1 pl-9 pr-3 text-meta text-foreground outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20"
               />
             </span>
           </label>
@@ -723,7 +723,7 @@ function FilterGroup<T extends string>({
                   ? `Keep at least one ${legend.toLowerCase()} filter selected`
                   : undefined
               }
-              className="inline-flex min-h-8 cursor-pointer touch-manipulation items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-micro text-muted-foreground transition-[transform,border-color,background-color,color] hover:border-primary/30 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary has-[:checked]:border-primary/30 has-[:checked]:bg-primary/8 has-[:checked]:text-foreground"
+              className="inline-flex min-h-8 cursor-pointer touch-manipulation items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-micro text-muted-foreground transition-[transform,border-color,background-color,color] hover:border-primary/30 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary has-[:checked]:border-primary/30 has-[:checked]:bg-primary/8 has-[:checked]:text-foreground"
             >
               <input
                 type="checkbox"
@@ -799,7 +799,7 @@ function FocusedEvidenceInspector({
       <button
         type="button"
         onClick={() => onOpenArtifact(evidence.artifactPath)}
-        className="mt-3 inline-flex h-9 touch-manipulation items-center gap-2 rounded-lg border border-border bg-surface-1 px-3 text-micro font-semibold text-foreground outline-none transition-[transform,border-color,background-color] hover:border-primary/35 hover:bg-surface-2 active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+        className="mt-3 inline-flex h-9 touch-manipulation items-center gap-2 rounded-md border border-border bg-surface-1 px-3 text-micro font-semibold text-foreground outline-none transition-[transform,border-color,background-color] hover:border-primary/35 hover:bg-surface-2 active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         <FileCode2 size={14} aria-hidden="true" />
         Open artifact record
@@ -927,7 +927,7 @@ function GraphInspector({
             <button
               type="button"
               onClick={() => onInspect({ kind: "node", value: sourceNode })}
-              className="min-w-0 touch-manipulation truncate rounded-lg border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="min-w-0 touch-manipulation truncate rounded-md border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
               translate="no"
             >
               {sourceNode.name}
@@ -938,7 +938,7 @@ function GraphInspector({
             <button
               type="button"
               onClick={() => onInspect({ kind: "node", value: targetNode })}
-              className="min-w-0 touch-manipulation truncate rounded-lg border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="min-w-0 touch-manipulation truncate rounded-md border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
               translate="no"
             >
               {targetNode.name}
@@ -962,7 +962,7 @@ function GraphInspector({
                   key={connection.id}
                   type="button"
                   onClick={() => onInspect({ kind: "edge", value: connection })}
-                  className="flex min-w-0 touch-manipulation items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-micro outline-none transition-transform hover:bg-surface-2 active:scale-[0.985] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                  className="flex min-w-0 touch-manipulation items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-micro outline-none transition-transform hover:bg-surface-2 active:scale-[0.985] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
                 >
                   <span className="min-w-0 truncate">
                     {humanize(connection.kind)} ·{" "}
@@ -985,7 +985,7 @@ function GraphInspector({
           citation={citation}
         />
       ) : (
-        <p className="mt-4 rounded-lg bg-surface-1 p-3 text-micro text-muted-foreground">
+        <p className="mt-4 rounded-md bg-surface-1 p-3 text-micro text-muted-foreground">
           This aggregate fact has no single captured source range.
         </p>
       )}
@@ -1037,7 +1037,7 @@ function CapturedSource({
   }, [citation, direct, evidenceKey, graphSnapshotId, projectPath]);
 
   return (
-    <div className="mt-4 overflow-hidden rounded-lg border border-border bg-surface-1">
+    <div className="mt-4 overflow-hidden rounded-md border border-border bg-surface-1">
       <div className="border-b border-border px-3 py-2">
         <p className="text-micro font-semibold">Captured source</p>
         <p

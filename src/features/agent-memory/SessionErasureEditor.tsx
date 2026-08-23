@@ -103,7 +103,7 @@ export function SessionErasureEditor({
               setConfirmation(event.target.value);
               onDirtyChange(event.target.value.length > 0);
             }}
-            className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-meta text-foreground outline-none transition-[border-color,box-shadow] focus:border-destructive/60 focus:ring-2 focus:ring-destructive/15 disabled:opacity-60"
+            className="mt-2 h-10 w-full rounded-md border border-border bg-background px-3 text-meta text-foreground outline-none transition-[border-color,box-shadow] focus:border-destructive/60 focus:ring-2 focus:ring-destructive/15 disabled:opacity-60"
           />
         </label>
 

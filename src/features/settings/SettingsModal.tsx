@@ -298,7 +298,7 @@ export function SettingsModal({
           <section>
             <div className="mb-2 flex items-center justify-between gap-3"><span className="text-meta font-medium text-foreground">Vault</span><span className="max-w-56 truncate font-mono text-micro text-muted-foreground">{vaultName}</span></div>
             {filesystemVault ? (
-              <div className="rounded-lg border border-border bg-surface-2 p-3 text-meta text-muted-foreground">
+              <div className="rounded-md border border-border bg-surface-2 p-3 text-meta text-muted-foreground">
                 <div className="flex items-center gap-2 font-medium text-foreground"><FolderOpen size={14} className="text-secondary" />Already portable</div>
                 <p className="mt-1 leading-relaxed">This vault is an ordinary folder. Back it up, sync it, zip it, or commit it with your normal filesystem tools.</p>
                 <div className="mt-2 flex items-center gap-1.5 text-micro text-muted-foreground"><span className={`size-1.5 rounded-full ${vaultMode === 'desktop' && watcherStatus === 'watching' ? 'bg-emerald-400' : watcherStatus === 'error' ? 'bg-destructive' : 'bg-muted-foreground'}`} />{vaultMode === 'desktop' ? watcherStatus === 'watching' ? 'Watching external changes live' : watcherStatus === 'error' ? 'Live watcher unavailable · focus and manual refresh remain active' : 'Starting live filesystem watcher…' : 'Refreshes after returning to Ley or on request'}</div>
@@ -332,7 +332,7 @@ export function SettingsModal({
             <div className="mt-1 text-micro text-muted-foreground">
               Exports use Obsidian-compatible folders (.md files). Imports accept any Obsidian vault ZIP.
             </div>
-            <div className="mt-3 rounded-lg border border-border bg-surface-2 p-3 text-meta text-muted-foreground">
+            <div className="mt-3 rounded-md border border-border bg-surface-2 p-3 text-meta text-muted-foreground">
               <div className="flex items-center gap-2 font-medium text-foreground"><ShieldCheck size={14} className="text-secondary" />On-device browser storage</div>
               <p className="mt-1 leading-relaxed">Ley stores this vault on this device. {storagePersistence === 'persistent' ? 'This browser has protected Ley from automatic storage cleanup.' : 'Your browser may clear this vault under storage pressure or when site data is removed, so keep ZIP backups.'}</p>
               {storagePersistence === 'best-effort' && <button type="button" onClick={() => void requestBrowserStoragePersistence().then(setStoragePersistence)} className="mt-3 rounded-md border border-border bg-background px-2.5 py-1.5 text-meta text-foreground hover:bg-surface-3">Protect local storage</button>}
@@ -349,9 +349,9 @@ export function SettingsModal({
               <span className="text-micro text-muted-foreground">{deletedPages.length} {deletedPages.length === 1 ? 'note' : 'notes'}</span>
             </div>
             {deletedPages.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-meta text-muted-foreground">Deleted browser-local notes can be restored here.</div>
+              <div className="rounded-md border border-dashed border-border px-3 py-4 text-center text-meta text-muted-foreground">Deleted browser-local notes can be restored here.</div>
             ) : (
-              <div className="max-h-44 divide-y divide-border overflow-y-auto rounded-lg border border-border bg-surface-2">
+              <div className="max-h-44 divide-y divide-border overflow-y-auto rounded-md border border-border bg-surface-2">
                 {deletedPages.map((page) => <div key={page.id} className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-meta font-medium text-foreground">{page.title}</div>
@@ -371,11 +371,11 @@ export function SettingsModal({
               <span className="text-micro text-muted-foreground">{filesystemTrash?.length ?? 0} {filesystemTrash?.length === 1 ? 'note' : 'notes'}</span>
             </div>
             {filesystemTrash === null ? (
-              <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-meta text-muted-foreground">Checking .trash…</div>
+              <div className="rounded-md border border-dashed border-border px-3 py-4 text-center text-meta text-muted-foreground">Checking .trash…</div>
             ) : filesystemTrash.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-meta text-muted-foreground">Trashed folder notes can be restored here.</div>
+              <div className="rounded-md border border-dashed border-border px-3 py-4 text-center text-meta text-muted-foreground">Trashed folder notes can be restored here.</div>
             ) : (
-              <div className="max-h-44 divide-y divide-border overflow-y-auto rounded-lg border border-border bg-surface-2">
+              <div className="max-h-44 divide-y divide-border overflow-y-auto rounded-md border border-border bg-surface-2">
                 {filesystemTrash.map((file) => <div key={file.path} className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-meta font-medium text-foreground">{file.path.split('/').at(-1)?.replace(/\.md$/i, '')}</div>

@@ -117,7 +117,7 @@ export function CollectionModal({ request, onClose }: { request: CollectionReque
         <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[80]" />
         <Dialog.Content aria-describedby={undefined} onEscapeKeyDown={(event) => { if (columnsOpen) { event.preventDefault(); setColumnsOpen(false); return; } if ((document.activeElement as HTMLElement | null)?.dataset.collectionCell === 'true') event.preventDefault(); }} className="app-modal-surface fixed left-1/2 top-1/2 z-[81] flex h-[calc(100vh-16px)] w-[calc(100vw-16px)] max-w-[1380px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-md border outline-none sm:h-[min(88vh,900px)] sm:w-[min(94vw,1380px)]">
           <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border px-3 py-3 sm:px-5">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-secondary/20 bg-secondary/10 text-secondary">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-secondary/20 bg-secondary/10 text-secondary">
               <TableProperties size={17} />
             </div>
             <div className="min-w-0 flex-1">
@@ -126,7 +126,7 @@ export function CollectionModal({ request, onClose }: { request: CollectionReque
             </div>
             <div className="relative">
               <button type="button" onClick={() => setColumnsOpen((open) => !open)} aria-expanded={columnsOpen} className="flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-meta text-muted-foreground hover:bg-surface-2 hover:text-foreground"><SlidersHorizontal size={12} />Columns <span className="rounded bg-surface-3 px-1 text-micro">{columns.length}</span></button>
-              {columnsOpen && <div className="absolute right-0 top-10 z-20 w-64 max-w-[calc(100vw-32px)] rounded-lg border border-border bg-surface-1 p-1.5 shadow-menu">
+              {columnsOpen && <div className="absolute right-0 top-10 z-20 w-64 max-w-[calc(100vw-32px)] rounded-md border border-border bg-surface-1 p-1.5 shadow-menu">
                 <p className="px-2 pb-1 pt-0.5 text-micro font-medium uppercase tracking-wide text-subtle-foreground">Visible columns</p>
                 <ColumnOption label="Tags" detail="Vault index" active={columns.includes('tags')} onToggle={() => toggleColumn('tags')} />
                 <ColumnOption label="Path" detail="Markdown file" active={columns.includes('path')} onToggle={() => toggleColumn('path')} />

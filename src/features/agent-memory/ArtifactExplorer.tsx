@@ -95,7 +95,7 @@ export function ArtifactExplorer({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Path, language, or kind"
-            className="h-10 w-full rounded-lg border border-border bg-surface-1 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+            className="h-10 w-full rounded-md border border-border bg-surface-1 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
           />
         </label>
       </div>

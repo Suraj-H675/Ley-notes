@@ -121,7 +121,7 @@ export function ProjectActivityExplorer({
                 ? "Decision, rationale, or session"
                 : "Symptom, attempt, resolution"
             }
-            className="h-10 w-full rounded-lg border border-border bg-surface-1 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+            className="h-10 w-full rounded-md border border-border bg-surface-1 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
           />
         </label>
       </div>
@@ -252,7 +252,7 @@ function DecisionCard({
           onSession={() => onSession(decision.sessionId)}
         />
         <div className="mt-4 flex items-start gap-3">
-          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
             <Signpost size={16} aria-hidden="true" />
           </span>
           <div className="min-w-0">
@@ -407,7 +407,7 @@ function ProblemCard({
           )}
         </div>
         {problem.resolution && (
-          <div className="mt-4 rounded-lg border border-emerald-500/20 bg-emerald-500/7 p-3">
+          <div className="mt-4 rounded-md border border-emerald-500/20 bg-emerald-500/7 p-3">
             <p className="flex items-center gap-2 text-micro font-semibold uppercase tracking-wider text-emerald-500">
               <CheckCircle2 size={13} aria-hidden="true" />
               Resolution
@@ -443,7 +443,7 @@ function ProblemCard({
             </ol>
           )}
           {problem.resolution && (
-            <div className="grid gap-3 rounded-lg border border-border bg-background/45 p-3 sm:grid-cols-2">
+            <div className="grid gap-3 rounded-md border border-border bg-background/45 p-3 sm:grid-cols-2">
               <DetailBlock
                 label="Root cause"
                 value={problem.resolution.rootCause}
@@ -600,7 +600,7 @@ function CitationList({
 
 function TruncationNotice({ onSession }: { onSession: () => void }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-background/45 px-3 py-2 text-micro text-muted-foreground">
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/45 px-3 py-2 text-micro text-muted-foreground">
       <span>This project view is bounded.</span>
       <button
         type="button"

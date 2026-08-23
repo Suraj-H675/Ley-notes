@@ -54,7 +54,7 @@ export function SessionRenameEditor({
   return (
     <div className="flex max-h-[46vh] flex-col overflow-hidden">
       <div className="min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-5">
-        <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/8 p-3">
+        <div className="flex items-start gap-3 rounded-md border border-primary/20 bg-primary/8 p-3">
           <History
             size={15}
             className="mt-0.5 shrink-0 text-primary"

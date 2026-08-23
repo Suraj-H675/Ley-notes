@@ -48,7 +48,7 @@ export function SessionPromotionEditor({
   return (
     <div className="flex max-h-[52vh] min-h-0 flex-col p-4 sm:px-5">
       <div className="min-h-0 overflow-y-auto overscroll-contain pr-1">
-        <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/7 p-3">
+        <div className="flex items-start gap-3 rounded-md border border-primary/20 bg-primary/7 p-3">
           <ShieldCheck
             size={15}
             className="mt-0.5 shrink-0 text-primary"
@@ -74,11 +74,11 @@ export function SessionPromotionEditor({
               setTitle(event.target.value);
               onDirtyChange(event.target.value !== initialTitle);
             }}
-            className="mt-1.5 w-full rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+            className="mt-1.5 w-full rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
           />
         </label>
 
-        <div className="mt-3 rounded-lg border border-border bg-background/35 p-3">
+        <div className="mt-3 rounded-md border border-border bg-background/35 p-3">
           <div className="flex min-w-0 items-center gap-2">
             <FilePlus2
               size={14}

@@ -62,7 +62,7 @@ export function LearningCorrectionEditor({
 
   return (
     <div className="max-h-[48vh] overflow-y-auto overscroll-contain pr-1">
-      <div className="flex items-start gap-3 rounded-lg border border-primary/20 bg-primary/8 p-3">
+      <div className="flex items-start gap-3 rounded-md border border-primary/20 bg-primary/8 p-3">
         <PencilLine
           size={15}
           className="mt-0.5 shrink-0 text-primary"

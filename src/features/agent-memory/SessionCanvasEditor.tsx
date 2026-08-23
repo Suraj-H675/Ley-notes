@@ -132,7 +132,7 @@ export function SessionCanvasEditor({
               setTitle(next);
               markDirty({ title: next });
             }}
-            className="mt-1.5 w-full rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none transition-[border-color,box-shadow] focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+            className="mt-1.5 w-full rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none transition-[border-color,box-shadow] focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
           />
         </label>
 
@@ -217,7 +217,7 @@ export function SessionCanvasEditor({
                 setCanvasPath(next);
                 markDirty({ canvasPath: next });
               }}
-              className="mt-1.5 w-full rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+              className="mt-1.5 w-full rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
             >
               {canvases.map((canvas) => (
                 <option
@@ -245,7 +245,7 @@ export function SessionCanvasEditor({
                 setCanvasName(next);
                 markDirty({ canvasName: next });
               }}
-              className="mt-1.5 w-full rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+              className="mt-1.5 w-full rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
             />
             <span className="mt-1 block text-micro leading-5 text-muted-foreground">
               If a Canvas with this generated filename already exists, Ley

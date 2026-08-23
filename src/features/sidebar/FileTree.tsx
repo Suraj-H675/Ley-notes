@@ -313,7 +313,7 @@ function PageNode({
           </button>
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
-          <ContextMenu.Content className="z-[80] min-w-44 rounded-lg border border-border bg-surface-1 p-1 shadow-menu">
+          <ContextMenu.Content className="z-[80] min-w-44 rounded-md border border-border bg-surface-1 p-1 shadow-menu">
             {page.id !== primaryTab && <ContextMenu.Item onSelect={() => { openInSplit(page.id); if (window.matchMedia('(max-width: 767px)').matches) useUIStore.getState().setSidebarOpen(false); }} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-meta text-foreground outline-none data-[highlighted]:bg-surface-3">
               <Columns2 size={13} /> Open in split
             </ContextMenu.Item>}

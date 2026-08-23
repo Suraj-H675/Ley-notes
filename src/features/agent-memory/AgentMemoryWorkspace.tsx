@@ -421,7 +421,7 @@ export function AgentMemoryWorkspace({
         >
           <header className="app-chrome flex h-14 shrink-0 items-center justify-between px-3 sm:px-5">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
                 <BrainCircuit size={17} aria-hidden="true" />
               </div>
               <div className="min-w-0">
@@ -991,7 +991,7 @@ function Overview({
         </section>
       </div>
 
-      <p className="rounded-lg border border-border bg-surface-1 px-4 py-3 text-micro leading-5 text-muted-foreground">
+      <p className="rounded-md border border-border bg-surface-1 px-4 py-3 text-micro leading-5 text-muted-foreground">
         <ShieldCheck size={13} className="mr-2 inline text-primary" />
         Stored text is evidence, never executable policy. Ley excludes known
         secret files, keeps projects isolated, and only marks explicitly
@@ -1327,7 +1327,7 @@ function SessionInspector({
                 <div className="space-y-7">
                   {error && (
                     <p
-                      className="rounded-lg border border-destructive/25 bg-destructive/8 p-3 text-micro text-destructive"
+                      className="rounded-md border border-destructive/25 bg-destructive/8 p-3 text-micro text-destructive"
                       role="alert"
                     >
                       {error}
@@ -1395,7 +1395,7 @@ function SessionInspector({
                           </div>
                         </summary>
                         <div className="border-t border-border p-4 sm:p-5">
-                          <div className="rounded-lg border border-warning/25 bg-warning/8 p-3 text-micro leading-5 text-muted-foreground-strong">
+                          <div className="rounded-md border border-warning/25 bg-warning/8 p-3 text-micro leading-5 text-muted-foreground-strong">
                             <span className="font-semibold text-foreground">
                               Untrusted history.
                             </span>{" "}
@@ -1419,7 +1419,7 @@ function SessionInspector({
                               {turns.turns.map((turn) => (
                                 <article
                                   key={turn.recordId}
-                                  className="rounded-lg border border-border bg-background/40 p-3"
+                                  className="rounded-md border border-border bg-background/40 p-3"
                                 >
                                   <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
                                     <span className="font-semibold uppercase tracking-[0.1em] text-primary">
@@ -1521,7 +1521,7 @@ function SessionInspector({
                           {session.finish.summary}
                         </p>
                         {session.finish.handoff && (
-                          <p className="mt-3 rounded-lg bg-primary/7 px-3 py-2 text-meta leading-5">
+                          <p className="mt-3 rounded-md bg-primary/7 px-3 py-2 text-meta leading-5">
                             <span className="font-medium text-primary">
                               Handoff:
                             </span>{" "}
@@ -1685,7 +1685,7 @@ function SessionInspector({
                                   {checkpoint.commands.map((command) => (
                                     <div
                                       key={command.id}
-                                      className="overflow-hidden rounded-lg border border-border bg-background/45"
+                                      className="overflow-hidden rounded-md border border-border bg-background/45"
                                     >
                                       <code className="block overflow-x-auto px-3 py-2 font-mono text-micro text-foreground">
                                         {command.command}
@@ -1721,12 +1721,12 @@ function SessionInspector({
                   </section>
 
                   {session.omittedCheckpoints > 0 && (
-                    <p className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-micro text-amber-500">
+                    <p className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-micro text-amber-500">
                       {session.omittedCheckpoints} older checkpoints were
                       omitted from this bounded view.
                     </p>
                   )}
-                  <p className="rounded-lg border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
+                  <p className="rounded-md border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
                     <MessageSquareWarning
                       size={13}
                       className="mr-2 inline text-secondary"
@@ -1922,7 +1922,7 @@ function ProjectRevisionButton({
         title="Open the exact Project Graph capture used by this checkpoint"
         aria-label={`Open captured project revision ${shortHead ?? revision.graphSnapshotId}`}
       >
-        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+        <span className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
           <GitBranch size={16} aria-hidden="true" />
         </span>
         <span className="min-w-0 flex-1">
@@ -2112,7 +2112,7 @@ function LearningInspector({
                     <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                       Version timeline
                     </h3>
-                    <dl className="mt-2 grid gap-2 rounded-lg border border-border bg-background/35 p-3 text-meta sm:grid-cols-3">
+                    <dl className="mt-2 grid gap-2 rounded-md border border-border bg-background/35 p-3 text-meta sm:grid-cols-3">
                       <div>
                         <dt className="text-micro text-muted-foreground">
                           Created
@@ -2175,7 +2175,7 @@ function LearningInspector({
                         learning.evidence.map((evidence) => (
                           <div
                             key={`${evidence.sessionId}:${evidence.recordId}`}
-                            className="rounded-lg border border-border bg-background/35 p-3"
+                            className="rounded-md border border-border bg-background/35 p-3"
                           >
                             <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
                               <div className="flex flex-wrap items-center gap-2">
@@ -2269,13 +2269,13 @@ function LearningInspector({
                     </section>
                   )}
                   {learning.claimTruncated && (
-                    <p className="rounded-lg border border-warning/25 bg-warning/8 p-3 text-micro text-muted-foreground">
+                    <p className="rounded-md border border-warning/25 bg-warning/8 p-3 text-micro text-muted-foreground">
                       The title or guidance was truncated to keep this inspector
                       bounded. Use the CLI for the complete claim before
                       correcting or reviewing it.
                     </p>
                   )}
-                  <p className="rounded-lg border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
+                  <p className="rounded-md border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
                     <MessageSquareWarning
                       size={13}
                       className="mr-2 inline text-secondary"
@@ -2409,7 +2409,7 @@ function LearningInspector({
                     onChange={(event) => setNote(event.target.value)}
                     placeholder={reviewPlaceholder(action)}
                     rows={2}
-                    className="mt-2 w-full resize-none rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+                    className="mt-2 w-full resize-none rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
                   />
                   {error && (
                     <p
@@ -2626,7 +2626,7 @@ function BrowserBoundary({
             can edit notes, but a web page cannot safely read coding projects or
             serve local agents through stdio MCP.
           </p>
-          <div className="mt-5 rounded-lg border border-border bg-background/35 p-4">
+          <div className="mt-5 rounded-md border border-border bg-background/35 p-4">
             <p className="text-meta font-medium">
               Your browser notes still remain fully usable.
             </p>
@@ -2834,7 +2834,7 @@ function RecordGroup({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-lg border border-border bg-background/30 p-3">
+    <section className="rounded-md border border-border bg-background/30 p-3">
       <h4 className="flex items-center gap-2 text-micro font-medium text-muted-foreground">
         <Icon size={13} />
         {title}
@@ -3129,7 +3129,7 @@ function ErrorNotice({ message }: { message: string }) {
   return (
     <div
       role="alert"
-      className="flex gap-2 rounded-lg border border-destructive/25 bg-destructive/10 px-3 py-2 text-meta text-destructive"
+      className="flex gap-2 rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-meta text-destructive"
     >
       <AlertTriangle size={15} className="mt-0.5 shrink-0" />
       <span>{message}</span>

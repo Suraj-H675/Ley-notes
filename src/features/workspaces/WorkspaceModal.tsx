@@ -228,9 +228,9 @@ function WorkspaceRow({ workspace, editing, renameDraft, confirmDelete, busy, on
   const tabs = workspace.navigation.openTabs.length;
   const split = Boolean(workspace.navigation.secondaryTab);
   return (
-    <article className="group rounded-lg border border-border bg-background/55 p-3 transition-colors hover:border-secondary/25 hover:bg-background">
+    <article className="group rounded-md border border-border bg-background/55 p-3 transition-colors hover:border-secondary/25 hover:bg-background">
       <div className="flex min-w-0 items-start gap-3">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-secondary">{split ? <Columns2 size={15} /> : <PanelsTopLeft size={15} />}</div>
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-2 text-secondary">{split ? <Columns2 size={15} /> : <PanelsTopLeft size={15} />}</div>
         <div className="min-w-0 flex-1">
           {editing ? (
             <form className="flex gap-1.5" onSubmit={(event) => { event.preventDefault(); onCommitRename(); }}>

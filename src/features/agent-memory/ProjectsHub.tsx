@@ -113,7 +113,7 @@ export function ProjectsHub({
         <section aria-labelledby="memory-search-title" className="mt-5 overflow-hidden rounded-sm border border-border bg-surface-1 shadow-panel">
           <div className="border-b border-border/70 p-4 sm:p-5">
             <div className="flex items-start gap-3">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
                 <Search size={16} aria-hidden="true" />
               </span>
               <div className="min-w-0">
@@ -149,7 +149,7 @@ export function ProjectsHub({
                   maxLength={256}
                   onChange={(event) => setMemoryQuery(event.target.value)}
                   placeholder="What did we decide about offline sync?"
-                  className="h-11 w-full rounded-lg border border-border bg-background/55 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+                  className="h-11 w-full rounded-md border border-border bg-background/55 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
                 />
               </label>
               <Button
@@ -234,7 +234,7 @@ export function ProjectsHub({
                   value={filterQuery}
                   onChange={(event) => setFilterQuery(event.target.value)}
                   placeholder="Name, folder, vault, or status"
-                  className="h-10 w-full rounded-lg border border-border bg-surface-1 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+                  className="h-10 w-full rounded-md border border-border bg-surface-1 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
                 />
               </label>
               <Button
@@ -508,7 +508,7 @@ function SummaryTile({
         </div>
         <span
           className={cn(
-            "flex size-8 items-center justify-center rounded-lg",
+            "flex size-8 items-center justify-center rounded-md",
             positive
               ? "bg-emerald-500/10 text-emerald-500"
               : attention
@@ -548,7 +548,7 @@ function ProjectCard({
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
               <BrainCircuit size={17} aria-hidden="true" />
             </span>
             <div className="min-w-0">
@@ -657,7 +657,7 @@ function Metric({
   label: string;
 }) {
   return (
-    <div className="rounded-lg bg-background/45 p-2.5">
+    <div className="rounded-md bg-background/45 p-2.5">
       <p className="flex items-center gap-1.5 text-micro text-muted-foreground">
         <Icon size={11} aria-hidden="true" />
         {label}

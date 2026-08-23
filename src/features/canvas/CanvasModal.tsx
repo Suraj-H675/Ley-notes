@@ -703,7 +703,7 @@ export function CanvasModal({
                   </div>
                   {(selectedNodeIds.length > 0 || selectedEdge) && (
                     <section
-                      className="space-y-2 rounded-lg border border-border bg-background/70 p-2.5"
+                      className="space-y-2 rounded-md border border-border bg-background/70 p-2.5"
                       aria-label="Canvas selection"
                     >
                       <div className="flex items-center justify-between gap-2">

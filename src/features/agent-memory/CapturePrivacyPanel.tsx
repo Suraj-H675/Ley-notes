@@ -487,7 +487,7 @@ export function CapturePrivacyPanel({
                     onChange={(event) =>
                       setEraseConfirmation(event.target.value)
                     }
-                    className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-meta outline-none transition-[border-color,box-shadow] focus:border-destructive/60 focus:ring-2 focus:ring-destructive/15 disabled:opacity-60 sm:max-w-md"
+                    className="mt-2 h-10 w-full rounded-md border border-border bg-background px-3 text-meta outline-none transition-[border-color,box-shadow] focus:border-destructive/60 focus:ring-2 focus:ring-destructive/15 disabled:opacity-60 sm:max-w-md"
                   />
                 </label>
                 {eraseError && (
@@ -546,7 +546,7 @@ function BoundaryMetric({
           <p className="text-micro text-muted-foreground">{label}</p>
           <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
         </div>
-        <span className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <span className="flex size-8 items-center justify-center rounded-md bg-primary/10 text-primary">
           <Icon size={15} aria-hidden="true" />
         </span>
       </div>

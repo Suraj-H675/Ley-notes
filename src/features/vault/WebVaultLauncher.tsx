@@ -37,15 +37,15 @@ export function WebVaultLauncher({
           </button>
 
           <button type="button" disabled={busy} onClick={onBrowserLocal} className="group flex min-h-52 flex-col rounded-sm border border-border bg-surface-1 p-5 text-left transition hover:border-border-strong hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-45">
-            <span className="flex size-10 items-center justify-center rounded-lg bg-surface-3 text-secondary"><Database size={19} /></span>
+            <span className="flex size-10 items-center justify-center rounded-md bg-surface-3 text-secondary"><Database size={19} /></span>
             <span className="mt-5 font-semibold">Use browser-local vault</span>
             <span className="mt-1 text-meta leading-5 text-muted-foreground">Store notes in this browser. Works broadly, but requires ZIP export for portable Markdown files.</span>
             <span className="mt-auto flex items-center gap-1 pt-5 text-micro text-muted-foreground">Compatibility mode <ArrowRight size={12} className="transition-transform group-hover:translate-x-0.5" /></span>
           </button>
         </div>
 
-        {!folderSupported && <div className="mt-3 rounded-lg border border-border bg-surface-1 px-4 py-3 text-meta text-muted-foreground"><Globe2 size={14} className="mr-2 inline text-secondary" />This browser does not expose folder access. Browser-local mode is still fully offline.</div>}
-        {error && <div className="mt-3 rounded-lg bg-destructive/10 px-4 py-3 text-meta text-destructive">{error}</div>}
+        {!folderSupported && <div className="mt-3 rounded-md border border-border bg-surface-1 px-4 py-3 text-meta text-muted-foreground"><Globe2 size={14} className="mr-2 inline text-secondary" />This browser does not expose folder access. Browser-local mode is still fully offline.</div>}
+        {error && <div className="mt-3 rounded-md bg-destructive/10 px-4 py-3 text-meta text-destructive">{error}</div>}
         <div className="mt-6 flex items-center justify-center gap-2 text-micro text-subtle-foreground"><ShieldCheck size={13} /> Ley never uploads either vault without an explicit future sync action.</div>
       </section>
     </main>
