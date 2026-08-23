@@ -205,18 +205,21 @@ export function SearchModal({
               icon={<ListFilter size={11} />}
               label="Property"
               title="Add property:status=active"
+              filter="property:"
               onClick={() => addFilter("property:")}
             />
             <FilterChip
               icon={<ListTodo size={11} />}
               label="To do"
               title="Find uncompleted Markdown tasks"
+              filter="task-todo:"
               onClick={() => addFilter("task-todo:")}
             />
             <FilterChip
               icon={<CircleCheckBig size={11} />}
               label="Done"
               title="Find completed Markdown tasks"
+              filter="task-done:"
               onClick={() => addFilter("task-done:")}
             />
             <FilterChip
@@ -313,8 +316,9 @@ export function SearchModal({
               </span>
               <code className="text-secondary">task-todo:call</code>
               <span>
-                Matches text inside open tasks; use <code>task:</code> for
-                either state or <code>task-done:</code> for completed tasks.
+                Matches text inside open tasks. Use{" "}
+                <code>task:call</code> for either state or{" "}
+                <code>task-done:ship</code> for completed tasks.
               </span>
               <code className="text-secondary">-tag:archive</code>
               <span>
@@ -403,11 +407,13 @@ function FilterChip({
   icon,
   label,
   title,
+  filter,
   onClick,
 }: {
   icon: ReactNode;
   label: string;
   title: string;
+  filter?: string;
   onClick: () => void;
 }) {
   return (
@@ -419,6 +425,11 @@ function FilterChip({
     >
       {icon}
       {label}
+      {filter && (
+        <span className="ml-0.5 rounded-sm bg-surface-3 px-1 font-mono text-[10px] text-muted-foreground">
+          {filter}
+        </span>
+      )}
     </button>
   );
 }
