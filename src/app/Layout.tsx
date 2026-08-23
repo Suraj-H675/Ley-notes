@@ -397,7 +397,6 @@ export function Layout({
           <Button
             size="sm"
             variant="ghost"
-            className="hidden sm:inline-flex"
             onClick={() => setAgentMemoryOpen(true)}
             aria-label="Agent Memory"
             title="Agent Memory"
