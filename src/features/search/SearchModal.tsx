@@ -99,7 +99,7 @@ export function SearchModal({
 
   async function commit(id: string, split = false) {
     const page = await db.pages.get(id);
-    if (!page || page.deletedAt !== null) return;
+    if (!page || page.deletedAt !== null || page.missingFromDisk) return;
     if (split) openInSplit(id);
     else openPage(id);
     pushRecent(id);

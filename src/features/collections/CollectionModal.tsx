@@ -87,10 +87,13 @@ export function CollectionModal({ request, onClose }: { request: CollectionReque
   }
 
   function openNote(pageId: string, split = false) {
-    if (split) openInSplit(pageId);
-    else openPage(pageId);
-    pushRecent(pageId);
-    onClose();
+    void db.pages.get(pageId).then((page) => {
+      if (!page || page.deletedAt !== null || page.missingFromDisk) return;
+      if (split) openInSplit(pageId);
+      else openPage(pageId);
+      pushRecent(pageId);
+      onClose();
+    });
   }
 
   const propertyOptions = useMemo(() => {

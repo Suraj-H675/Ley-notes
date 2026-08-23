@@ -31,6 +31,10 @@ describe("collection projection", () => {
       }),
       deletedAt: Date.now(),
     },
+    {
+      ...makePage({ id: "missing", title: "External deletion" }),
+      missingFromDisk: true,
+    },
   ];
   const tags: Tag[] = [
     { pageId: "a", tag: "project/ley", source: "inline" },
@@ -61,6 +65,12 @@ describe("collection projection", () => {
         (row) => row.page.id,
       ),
     ).toEqual(["b"]);
+  });
+
+  it("excludes externally deleted cache projections from collections", () => {
+    expect(
+      buildCollectionRows(pages, tags, "").map((row) => row.page.id),
+    ).toEqual(["a", "b"]);
   });
 
   it("discovers portable YAML columns by coverage", () => {

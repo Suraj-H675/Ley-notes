@@ -41,7 +41,7 @@ export function buildCollectionRows(
   const terms = filter.terms.toLocaleLowerCase().split(/\s+/).filter(Boolean);
 
   return pages
-    .filter((page) => page.deletedAt === null)
+    .filter((page) => page.deletedAt === null && !page.missingFromDisk)
     .map((page) => ({ page, tags: (tagsByPage.get(page.id) ?? []).sort() }))
     .filter(({ page, tags }) => {
       const properties = normalizeProperties(page.frontmatter);
