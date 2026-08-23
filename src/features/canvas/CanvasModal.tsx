@@ -30,7 +30,6 @@ import {
   deleteCanvas,
   listCanvases,
   newFileCanvasNode,
-  newGroupCanvasNode,
   newLinkCanvasNode,
   newTextCanvasNode,
   nextCanvasCardPosition,
@@ -39,6 +38,7 @@ import {
   type CanvasSide,
   type CanvasSummary,
 } from "@/core/vault/canvas";
+import { groupAroundContent, resizeCanvasNode } from "@/core/vault/canvas-geometry";
 import { CanvasNodeCard, type CanvasFlowNode } from "./CanvasNodeCard";
 import { CanvasEdgeLayer } from "./CanvasEdgeLayer";
 import { usePages } from "@/features/notes/usePages";
@@ -852,20 +852,6 @@ export function CanvasModal({
   );
 }
 
-function groupAroundContent(nodes: CanvasDocument["nodes"]) {
-  const content = nodes.filter((node) => node.type !== "group");
-  if (content.length === 0) return newGroupCanvasNode({ x: 40, y: 40 });
-  const left = Math.min(...content.map((node) => node.x));
-  const top = Math.min(...content.map((node) => node.y));
-  const right = Math.max(...content.map((node) => node.x + node.width));
-  const bottom = Math.max(...content.map((node) => node.y + node.height));
-  return {
-    ...newGroupCanvasNode({ x: left - 40, y: top - 56 }),
-    width: Math.max(320, right - left + 80),
-    height: Math.max(220, bottom - top + 96),
-  };
-}
-
 function canvasSide(value: string | null | undefined): CanvasSide | undefined {
   return value === "top" ||
     value === "right" ||
@@ -924,18 +910,4 @@ function canvasFlowHandles(width: number, height: number) {
       height: size,
     },
   ];
-}
-
-function resizeCanvasNode<T extends CanvasDocument["nodes"][number]>(
-  node: T,
-  width: number,
-  height: number,
-): T {
-  const minWidth = node.type === "group" ? 320 : 180;
-  const minHeight = node.type === "group" ? 220 : 96;
-  return {
-    ...node,
-    width: Number.isFinite(width) ? Math.max(minWidth, width) : node.width,
-    height: Number.isFinite(height) ? Math.max(minHeight, height) : node.height,
-  };
 }
