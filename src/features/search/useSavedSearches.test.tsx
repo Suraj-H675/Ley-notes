@@ -22,4 +22,21 @@ describe('useSavedSearches', () => {
     await act(async () => renameSavedSearch(id, 'Current work'));
     await waitFor(() => expect(result.current.map((search) => search.name)).toEqual(['Current work']));
   });
+
+  it('re-reads the active vault identity before loading searches', async () => {
+    const first = renderHook(() => useSavedSearches());
+    await waitFor(() => expect(first.result.current).toEqual([]));
+    await act(async () => saveSearch('Local query', 'tag:local'));
+    await waitFor(() =>
+      expect(first.result.current.map((search) => search.name)).toEqual(['Local query']),
+    );
+
+    await act(async () => markActiveDataKind('filesystem:/vault/next'));
+    const second = renderHook(() => useSavedSearches());
+    await waitFor(() => expect(second.result.current).toEqual([]));
+    await act(async () => saveSearch('Folder query', 'tag:folder'));
+    await waitFor(() =>
+      expect(second.result.current.map((search) => search.name)).toEqual(['Folder query']),
+    );
+  });
 });

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { activeDataKind } from '@/infrastructure/database/browser-local-vault';
 import { db } from '@/infrastructure/database/db';
@@ -12,6 +13,16 @@ export interface ResolvedDestinationBookmark {
 }
 
 export function useDestinationBookmarks(): ResolvedDestinationBookmark[] {
+  const [kind, setKind] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void activeDataKind().then((value) => {
+      if (active) setKind(value);
+    });
+    return () => { active = false; };
+  }, []);
+
   return useLiveQuery(async () => {
     const key = bookmarksDataKey(await activeDataKind());
     const bookmarks = parseBookmarksSetting((await db.settings.get(key))?.value);
@@ -31,5 +42,5 @@ export function useDestinationBookmarks(): ResolvedDestinationBookmark[] {
         )),
       };
     });
-  }, []) ?? [];
+  }, [kind]) ?? [];
 }
