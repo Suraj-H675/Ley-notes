@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
@@ -37,10 +37,20 @@ interface WorkspaceModalProps {
 }
 
 export function WorkspaceModal({ open, splitPercent, onSplitPercentChange, onClose }: WorkspaceModalProps) {
+  const [dataKind, setDataKind] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void activeDataKind().then((kind) => {
+      if (active) setDataKind(kind);
+    });
+    return () => { active = false; };
+  }, []);
+
   const workspaces = useLiveQuery(async () => {
     const key = workspaceLayoutsDataKey(await activeDataKind());
     return parseWorkspaceLayoutsSetting((await db.settings.get(key))?.value);
-  }, []) ?? [];
+  }, [dataKind]) ?? [];
   const [name, setName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
