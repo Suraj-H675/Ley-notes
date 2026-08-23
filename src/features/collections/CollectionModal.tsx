@@ -23,7 +23,11 @@ import {
   type CollectionColumn,
   type CollectionSort,
 } from '@/core/index/collection';
-import { formatPropertyValue, parsePropertyValue } from '@/core/parser/property-values';
+import {
+  formatPropertyValue,
+  parsePropertyValue,
+  propertyValueError,
+} from '@/core/parser/property-values';
 import { updatePageProperty } from '@/core/vault/pages';
 import {
   updateSavedSearchTable,
@@ -178,28 +182,68 @@ function CollectionCell({ column, page, tags, onStatus }: { column: CollectionCo
   if (column === 'modified') return <td className="min-w-44 border-b border-r border-border px-3 py-2 text-muted-foreground"><time dateTime={new Date(page.updatedAt).toISOString()}>{formatModified(page.updatedAt)}</time></td>;
   const key = propertyKey(column);
   const value = page.frontmatter[key];
-  return <td className="min-w-44 border-b border-r border-border px-2 py-1"><PropertyCellEditor key={`${page.id}:${column}:${formatPropertyValue(value)}`} value={value} onSave={async (next) => { onStatus(`Saving ${key}…`); await updatePageProperty(page.id, key, next); onStatus(`${key} saved to ${page.path}`); }} /></td>;
+  return <td className="min-w-44 border-b border-r border-border px-2 py-1"><PropertyCellEditor key={`${page.id}:${column}:${formatPropertyValue(value)}`} value={value} propertyKey={key} onStatus={onStatus} onSave={async (next) => { await updatePageProperty(page.id, key, next); }} /></td>;
 }
 
-function PropertyCellEditor({ value, onSave }: { value: unknown; onSave: (value: unknown) => Promise<void> }) {
+function PropertyCellEditor({
+  value,
+  propertyKey,
+  onStatus,
+  onSave,
+}: {
+  value: unknown;
+  propertyKey: string;
+  onStatus: (status: string | null) => void;
+  onSave: (value: unknown) => Promise<void>;
+}) {
   const initial = formatPropertyValue(value);
   const [draft, setDraft] = useState(initial);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const error = draft === initial ? null : propertyValueError(draft, value);
   async function commit() {
-    if (draft === initial || busy) return;
+    if (draft === initial || busy || error) return;
     setBusy(true);
+    onStatus(`Saving ${propertyKey}…`);
     try {
       await onSave(parsePropertyValue(draft, value));
-      setError(null);
+      onStatus(`${propertyKey} saved`);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      onStatus(cause instanceof Error ? cause.message : String(cause));
       setDraft(initial);
     } finally {
       setBusy(false);
     }
   }
-  return <div className="relative"><input data-collection-cell="true" value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={() => void commit()} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setDraft(initial); } }} placeholder="—" aria-invalid={Boolean(error)} title={error ?? 'Edit YAML property'} className="h-8 w-full rounded-md border border-transparent bg-transparent px-2 text-foreground outline-none placeholder:text-subtle-foreground hover:border-border hover:bg-background focus:border-primary focus:bg-background disabled:opacity-50" disabled={busy} />{busy && <span className="absolute right-2 top-1/2 h-1.5 w-1.5 -translate-y-1/2 animate-pulse rounded-full bg-secondary" />}</div>;
+  return (
+    <div className="relative">
+      <input
+        data-collection-cell="true"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !error) event.currentTarget.blur();
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            setDraft(initial);
+          }
+        }}
+        placeholder="—"
+        aria-invalid={Boolean(error)}
+        aria-label={`Edit ${propertyKey} property`}
+        title={error ?? `Edit ${propertyKey}`}
+        className={`h-8 w-full rounded-md border border-transparent bg-transparent px-2 outline-none placeholder:text-subtle-foreground hover:border-border hover:bg-background focus:bg-background disabled:opacity-50 ${
+          error
+            ? 'text-destructive focus:border-destructive'
+            : 'text-foreground focus:border-primary'
+        }`}
+        disabled={busy}
+      />
+      {busy && <span className="absolute right-2 top-1/2 h-1.5 w-1.5 -translate-y-1/2 animate-pulse rounded-full bg-secondary" />}
+      {error && <p className="mt-0.5 text-micro leading-4 text-destructive" role="alert">{error}</p>}
+    </div>
+  );
 }
 
 function ColumnOption({ label, detail, active, onToggle }: { label: string; detail: string; active: boolean; onToggle: () => void }) {
