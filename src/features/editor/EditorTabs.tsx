@@ -37,20 +37,20 @@ export function EditorTabs() {
   if (!tabs || tabs.length === 0) return null;
 
   return (
-    <div className="flex shrink-0 items-stretch overflow-x-auto border-b border-border bg-surface-1">
+    <div className="flex shrink-0 items-stretch overflow-x-auto border-b border-border bg-[#141416]">
       {tabs.map((t) => (
         <div
           key={t.id}
           className={cn(
             'group flex h-8 shrink-0 items-center border-r border-border text-meta',
             activeTab === t.id
-              ? 'bg-background text-foreground shadow-[inset_0_-2px_0_var(--color-primary)]'
+              ? 'bg-[#1a1a1c] text-foreground shadow-[inset_0_-2px_0_hsl(41_34%_66%)]'
               : t.id === primaryTab || t.id === secondaryTab
                 ? 'bg-surface-2 text-foreground'
-              : 'bg-surface-1 text-muted-foreground hover:bg-surface-2',
+              : 'bg-transparent text-muted-foreground hover:bg-surface-2',
           )}
         >
-          <button type="button" onClick={() => setActiveTab(t.id)} onAuxClick={(event) => { if (event.button === 1 && !t.missingFromDisk) closeTab(t.id); }} className="h-full max-w-44 truncate pl-3 pr-1 text-left">
+          <button type="button" onClick={() => setActiveTab(t.id)} onAuxClick={(event) => { if (event.button === 1 && !t.missingFromDisk) closeTab(t.id); }} className="h-full max-w-44 truncate pl-3 pr-1 text-left tracking-tight">
             {t.title}{t.missingFromDisk ? ' · missing' : ''}
           </button>
           {t.id !== primaryTab && (

@@ -336,7 +336,7 @@ export function Layout({
             onClick={() => openSearch()}
             aria-label="Open note"
             title={`Open note (${shortcutLabel("O")})`}
-            className="flex h-7 touch-manipulation items-center gap-1.5 rounded-md border border-border bg-surface-2/80 px-2 text-meta text-muted-foreground outline-none transition-[transform,background-color,border-color,color] hover:border-border-strong hover:bg-surface-3 hover:text-foreground active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+            className="flex h-7 touch-manipulation items-center gap-1.5 rounded-sm border border-border bg-surface-2/70 px-2 text-meta text-muted-foreground outline-none transition-[transform,background-color,border-color,color] hover:border-border-strong hover:bg-surface-3 hover:text-foreground active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
           >
             <Search size={12} aria-hidden="true" />
             <span className="hidden sm:inline">Open note</span>
@@ -738,7 +738,7 @@ function PaneHeader({
 }) {
   return (
     <div
-      className={`flex h-7 shrink-0 items-center justify-between border-b px-3 text-micro ${active ? "border-primary/40 bg-primary/5 text-foreground" : "border-border bg-surface-1 text-muted-foreground"}`}
+      className={`flex h-7 shrink-0 items-center justify-between border-b px-3 text-micro ${active ? "border-[#c2b28f]/45 bg-[#c2b28f]/8 text-foreground" : "border-border bg-surface-1 text-muted-foreground"}`}
     >
       <span className="font-medium">{label}</span>
       {onClose && (

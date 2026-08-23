@@ -17,8 +17,8 @@ export function PropertiesPanel({ pageId, frontmatter }: { pageId: string; front
   const entries = Object.entries(frontmatter).filter(([key]) => key !== 'title');
   return (
     <div className="mx-auto w-full max-w-[820px] px-4 pt-4 sm:px-10 sm:pt-5">
-      <div className="rounded-lg border border-border bg-surface-1/55">
-        <div className="flex items-center gap-2 px-3 py-2 text-micro font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="rounded-sm border border-border/70 bg-surface-1/45">
+        <div className="flex items-center gap-2 border-b border-border/50 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
           <Tags size={12} /> Properties
           <button type="button" onClick={() => setAdding(true)} className="ml-auto rounded p-1 hover:bg-surface-3" aria-label="Add property"><Plus size={12} /></button>
         </div>
@@ -33,7 +33,7 @@ export function PropertiesPanel({ pageId, frontmatter }: { pageId: string; front
 
 function PropertyRow({ name, value, onSave, onRemove }: { name: string; value: unknown; onSave: (value: unknown) => void; onRemove: () => void }) {
   const [draft, setDraft] = useState(formatPropertyValue(value));
-  return <div className="group grid grid-cols-[140px_1fr_24px] items-center gap-2 rounded px-1 py-1 text-meta hover:bg-surface-2">
+  return <div className="group grid grid-cols-[140px_1fr_24px] items-center gap-2 rounded-sm px-1 py-1 text-meta hover:bg-white/[0.035]">
     <span className="truncate text-muted-foreground">{name}</span>
     <input value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={() => onSave(parsePropertyValue(draft, value))} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} className="min-w-0 bg-transparent text-foreground outline-none" />
     <button type="button" onClick={onRemove} className="rounded p-1 text-muted-foreground opacity-0 hover:bg-surface-3 hover:text-destructive group-hover:opacity-100" aria-label={`Remove ${name}`}><X size={11} /></button>

@@ -88,8 +88,7 @@ export function ProjectsHub({
   return (
     <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
-        <section className="relative overflow-hidden rounded-2xl border border-border bg-surface-1 p-5 shadow-panel sm:p-7">
-          <div className="pointer-events-none absolute -right-20 -top-24 size-64 rounded-full bg-primary/10 blur-3xl" />
+        <section className="relative overflow-hidden rounded-sm border border-border bg-surface-1 p-5 shadow-panel sm:p-7">
           <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
             <div className="max-w-2xl">
               <p className="text-micro font-semibold uppercase tracking-[0.14em] text-primary">
@@ -111,10 +110,7 @@ export function ProjectsHub({
           </div>
         </section>
 
-        <section
-          className="mt-5 overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/8 via-surface-1 to-surface-1 shadow-panel"
-          aria-labelledby="memory-search-title"
-        >
+        <section aria-labelledby="memory-search-title" className="mt-5 overflow-hidden rounded-sm border border-border bg-surface-1 shadow-panel">
           <div className="border-b border-border/70 p-4 sm:p-5">
             <div className="flex items-start gap-3">
               <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/12 text-primary">

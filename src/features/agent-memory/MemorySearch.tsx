@@ -104,7 +104,7 @@ export function MemorySearch({
   return (
     <section aria-labelledby="memory-search-title" className="space-y-6">
       <div className="max-w-3xl">
-        <div className="mb-3 flex size-10 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary shadow-sm">
+        <div className="mb-3 flex size-9 items-center justify-center rounded-sm border border-primary/30 bg-primary/8 text-primary">
           <Sparkles size={19} aria-hidden="true" />
         </div>
         <h1
@@ -120,7 +120,7 @@ export function MemorySearch({
       </div>
 
       <form onSubmit={(event) => void submit(event)} className="max-w-3xl">
-        <div className="group flex min-h-14 items-center gap-3 rounded-2xl border border-border bg-surface-1 px-4 shadow-sm transition-[border-color,box-shadow,transform] duration-200 focus-within:border-primary/50 focus-within:shadow-[0_10px_35px_-18px_hsl(var(--primary)/0.45)] motion-reduce:transition-none">
+        <div className="group flex min-h-14 items-center gap-3 rounded-sm border border-border bg-surface-1 px-4 transition-colors duration-150 focus-within:border-primary/60 motion-reduce:transition-none">
           <Search
             size={18}
             className="shrink-0 text-muted-foreground group-focus-within:text-primary"
@@ -165,11 +165,11 @@ export function MemorySearch({
       {semanticSetup && semanticSetup.status.state !== "ready" && (
         <section
           aria-labelledby="semantic-search-setup-title"
-          className="max-w-3xl overflow-hidden rounded-2xl border border-primary/20 bg-[linear-gradient(135deg,hsl(var(--surface-1)),hsl(var(--primary)/0.055))] shadow-sm"
+          className="max-w-3xl overflow-hidden rounded-sm border border-border bg-surface-1 shadow-sm"
         >
           <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
             <div className="flex min-w-0 items-start gap-3.5">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-sm border border-primary/25 bg-primary/7 text-primary">
                 <BrainCircuit size={18} aria-hidden="true" />
               </div>
               <div className="min-w-0">
@@ -340,12 +340,12 @@ function MemoryResult({
       disabled={!actionable}
       onClick={onOpen}
       className={cn(
-        "group flex w-full items-start gap-3 rounded-2xl border border-border bg-surface-1 p-4 text-left shadow-[0_1px_0_hsl(var(--foreground)/0.03)] transition-[border-color,background-color,transform,box-shadow] duration-150 motion-reduce:transition-none",
+          "group flex w-full items-start gap-3 rounded-sm border border-border bg-surface-1 p-4 transition-[border-color,background-color] duration-150 hover:border-primary/45 hover:bg-white/[0.03] motion-reduce:transition-none",
         actionable &&
           "hover:border-primary/25 hover:bg-surface-2 hover:shadow-sm active:scale-[0.995]",
       )}
     >
-      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-surface-3 text-muted-foreground group-hover:text-primary">
+      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-sm bg-surface-3 text-muted-foreground group-hover:text-primary">
         <Icon size={15} aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">

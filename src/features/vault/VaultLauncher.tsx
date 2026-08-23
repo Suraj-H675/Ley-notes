@@ -12,8 +12,8 @@ export function VaultLauncher({
 }) {
   return (
     <main data-page="desktop-vault-launcher" className="relative flex h-full flex-col items-center overflow-y-auto overscroll-y-contain bg-background px-6 py-6 text-foreground">
-      <div className="pointer-events-none absolute inset-0 opacity-60 [background:radial-gradient(circle_at_50%_20%,hsl(var(--primary)/0.16),transparent_42%)]" />
-      <section className="relative my-auto w-full max-w-xl rounded-xl border border-border bg-surface-1 p-8 shadow-popover">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 opacity-55 [background-image:linear-gradient(to_right,hsl(var(--border)/0.35)_1px,transparent_1px)] [background-size:72px_100%]" />
+      <section className="relative my-auto w-full max-w-xl rounded-sm border border-border bg-surface-1 p-8 shadow-popover">
         <div className="mb-8 flex items-center gap-3">
           <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <span className="text-lg font-semibold">L</span>
@@ -24,12 +24,7 @@ export function VaultLauncher({
           </div>
         </div>
 
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void onOpen()}
-          className="group flex w-full items-center gap-4 rounded-lg border border-border bg-surface-2 p-4 text-left transition hover:border-primary/60 hover:bg-surface-3 disabled:pointer-events-none disabled:opacity-60"
-        >
+          <button type="button" disabled={busy} onClick={() => void onOpen()} className="group flex w-full items-center gap-4 rounded-sm border border-border bg-surface-2 p-4 text-left transition hover:border-primary/70 hover:bg-white/[0.045] disabled:pointer-events-none disabled:opacity-60">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-background text-primary">
             <FolderOpen size={19} />
           </div>
@@ -44,7 +39,7 @@ export function VaultLauncher({
 
         {error && <p className="mt-3 rounded-md bg-destructive/10 px-3 py-2 text-meta text-destructive">{error}</p>}
 
-        <div className="mt-8 grid grid-cols-2 gap-4 border-t border-border pt-6 text-meta text-muted-foreground">
+        <div className="mt-8 grid grid-cols-2 gap-4 border-t border-border/70 pt-6 text-meta text-muted-foreground">
           <div className="flex gap-2">
             <FileText size={15} className="mt-0.5 shrink-0 text-secondary" />
             <span>Plain `.md` files remain readable in any editor.</span>

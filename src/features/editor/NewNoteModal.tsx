@@ -68,15 +68,15 @@ export function NewNoteModal({
         <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[75]" />
         <Dialog.Content aria-describedby={undefined} className="app-modal-surface app-modal-top fixed left-1/2 top-[16vh] z-[76] w-[460px] max-w-[calc(100vw-24px)] -translate-x-1/2 rounded-xl border outline-none">
       <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-        <Dialog.Title className="flex items-center gap-2 border-b border-border px-4 py-3 font-medium"><FilePlus2 size={16} className="text-primary" />New note</Dialog.Title>
+        <Dialog.Title className="flex items-center gap-2 border-b border-border px-4 py-3 font-medium tracking-tight"><FilePlus2 size={15} className="text-primary" />New note</Dialog.Title>
         <div className="space-y-4 p-4">
           <label className="block text-meta text-muted-foreground-strong">
             Title
-            <input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Untitled note" className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-foreground outline-none focus:border-primary" />
+            <input ref={titleRef} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Untitled note" className="mt-1 h-9 w-full rounded-sm border border-border bg-background px-3 text-foreground outline-none focus:border-primary" />
           </label>
           <label className="block text-meta text-muted-foreground-strong">
             <span className="flex items-center gap-1"><Files size={13} />Template <span className="text-muted-foreground">(optional)</span></span>
-            <select value={templateId} onChange={(event) => setTemplateId(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-meta text-foreground outline-none focus:border-primary">
+            <select value={templateId} onChange={(event) => setTemplateId(event.target.value)} className="mt-1 h-9 w-full rounded-sm border border-border bg-background px-2 text-meta text-foreground outline-none focus:border-primary">
               <option value="">Blank note</option>
               {templates.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}
             </select>
@@ -84,13 +84,13 @@ export function NewNoteModal({
           </label>
           <label className="block text-meta text-muted-foreground-strong">
             <span className="flex items-center gap-1"><Folder size={13} />Folder <span className="text-muted-foreground">(optional)</span></span>
-            <input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder="e.g. projects/ley" className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 font-mono text-meta text-foreground outline-none focus:border-primary" />
+            <input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder="projects/ley" className="mt-1 h-9 w-full rounded-sm border border-border bg-background px-3 font-mono text-meta text-foreground outline-none focus:border-primary" />
           </label>
           {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-meta text-destructive">{error}</div>}
         </div>
         <div className="flex items-center justify-between border-t border-border px-4 py-3">
           <span className="text-micro text-muted-foreground">{getActiveVaultKind() ? 'Creates a real Markdown file' : 'Saved in this browser vault'}</span>
-          <div className="flex items-center gap-2"><button type="button" onClick={onClose} className="rounded-md px-3 py-1.5 text-meta text-muted-foreground hover:bg-surface-2">Cancel</button><button type="submit" disabled={busy} className="rounded-md bg-primary px-3 py-1.5 text-meta font-medium text-primary-foreground disabled:opacity-50">{busy ? 'Creating…' : 'Create note'} <Kbd>↵</Kbd></button></div>
+          <div className="flex items-center gap-2"><button type="button" onClick={onClose} className="rounded-sm px-3 py-1.5 text-meta text-muted-foreground hover:bg-surface-2">Cancel</button><button type="submit" disabled={busy} className="rounded-sm bg-primary px-3 py-1.5 text-meta font-semibold text-primary-foreground disabled:opacity-50">{busy ? 'Creating…' : 'Create note'} <Kbd>↵</Kbd></button></div>
         </div>
       </form>
         </Dialog.Content>

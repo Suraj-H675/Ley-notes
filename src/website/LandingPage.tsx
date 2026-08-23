@@ -1,122 +1,142 @@
 import {
   ArrowRight,
-  Braces,
+  CalendarDays,
   Download,
   FileText,
   FolderOpen,
   GitBranch,
-  Link2,
   LockKeyhole,
-  Network,
-  Search,
-  Sparkles,
 } from 'lucide-react';
 
 const FEATURES = [
-  { icon: <Link2 size={18} />, title: 'Links that think with you', body: 'Connect ideas with wiki-links. Ley derives backlinks, outgoing links, and unresolved mentions automatically.' },
-  { icon: <Search size={18} />, title: 'Find it again', body: 'Search titles, content, aliases, tags, and paths from a keyboard-first quick switcher.' },
-  { icon: <Network size={18} />, title: 'See the shape of knowledge', body: 'Move from a focused local neighborhood to the full vault graph without leaving your notes.' },
-  { icon: <Braces size={18} />, title: 'Markdown without lock-in', body: 'Desktop vaults are ordinary folders and .md files. Your knowledge outlives Ley.' },
+  {
+    label: '01',
+    title: 'Write first',
+    body: 'Live Preview stays close to the page. Wiki links, headings, tasks, properties, and unresolved mentions become structure while you type.',
+  },
+  {
+    label: '02',
+    title: 'Find it later',
+    body: 'Search across titles, content, aliases, tags, paths, and YAML properties from a quick switcher built for muscle memory.',
+  },
+  {
+    label: '03',
+    title: 'Follow the thought',
+    body: 'Backlinks and a local graph appear when they answer something—not as another dashboard to maintain.',
+  },
+  {
+    label: '04',
+    title: 'Own the files',
+    body: 'A desktop vault is just a folder of Markdown files. Git, grep, editors, backups, and scripts all keep working.',
+  },
 ];
+
+const PROMISES = [
+  { icon: <LockKeyhole size={13} />, text: 'No account' },
+  { icon: <FolderOpen size={13} />, text: 'Filesystem vaults' },
+  { icon: <GitBranch size={13} />, text: 'Git-friendly' },
+];
+
+const VAULT_ITEMS = ['Learning', 'Mental models', 'Books', 'Projects', 'Daily notes'];
+const BACKLINKS = ['Mental models', 'Reading queue', 'Project review'];
+const TOKENS = ['[[Mental models]]', '#systems', '#reading'];
 
 export function LandingPage() {
   return (
-    <div data-page="website" className="min-h-screen bg-[#0d0f12] text-[#f3f1eb] selection:bg-[#9b87f5]/30">
-      <header className="sticky top-0 z-30 border-b border-white/8 bg-[#0d0f12]/85 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
-          <a href="/" className="flex items-center gap-2.5 font-semibold tracking-tight">
-            <span className="flex size-8 items-center justify-center rounded-lg bg-[#9b87f5] text-[#111217]">L</span>
+    <div className="min-h-screen bg-[#101114] text-[#eae7df] selection:bg-[#c2b28f]/25" data-page="website">
+      <header className="sticky top-0 z-30 border-b border-white/6 bg-[#101114]/88 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-5">
+          <a href="/" className="flex min-w-0 items-center gap-3 font-semibold tracking-tight">
+            <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center border border-white/12 bg-[#181a1d] text-xs font-bold">L</span>
             <span>Ley</span>
           </a>
-          <nav className="hidden items-center gap-7 text-sm text-white/60 md:flex">
+          <nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-6 text-sm text-[#b4b1a9] md:flex">
             <a href="#why" className="hover:text-white">Why Ley</a>
             <a href="#features" className="hover:text-white">Features</a>
             <a href="#desktop" className="hover:text-white">Desktop</a>
           </nav>
-          <a href="/app" className="flex items-center gap-2 rounded-lg border border-white/12 bg-white/6 px-3.5 py-2 text-sm font-medium hover:bg-white/10">
+          <a href="/app" className="flex h-9 items-center gap-2 bg-[#c2b28f] px-3.5 text-sm font-semibold text-[#15161a] transition-colors hover:bg-[#d3c39d]">
             Open web app <ArrowRight size={14} />
           </a>
         </div>
       </header>
 
       <main>
-        <section className="relative isolate overflow-hidden px-5 pb-24 pt-24 md:pb-32 md:pt-32">
-          <div className="absolute left-1/2 top-0 -z-10 h-[520px] w-[760px] -translate-x-1/2 rounded-full bg-[#7c67da]/12 blur-[120px]" />
-          <div className="mx-auto grid max-w-6xl items-center gap-16 lg:grid-cols-[1.02fr_0.98fr]">
+        <section className="relative isolate overflow-hidden border-b border-white/5 px-5 pb-20 pt-20 md:pb-24 md:pt-28">
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 -z-10 opacity-70 [background-image:linear-gradient(to_right,rgba(255,255,255,.04)_1px,transparent_1px)] [background-size:82px_100%]" />
+          <div className="mx-auto grid max-w-5xl items-center gap-14 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:gap-16">
             <div>
-              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#9b87f5]/25 bg-[#9b87f5]/8 px-3 py-1.5 text-xs font-medium text-[#b9aaf9]">
-                <Sparkles size={13} /> Your notes. Their connections. Nothing else in the way.
-              </div>
-              <h1 className="max-w-3xl text-5xl font-semibold leading-[1.04] tracking-[-0.045em] md:text-7xl">
-                A quiet place for a <span className="text-[#a997f3]">loud mind.</span>
-              </h1>
-              <p className="mt-7 max-w-xl text-lg leading-8 text-white/58">
-                Ley is a local-first second brain for connected Markdown notes. Capture quickly, link naturally, and rediscover what you already know.
+              <p className="mb-5 max-w-sm text-sm leading-6 text-[#a19e96]">A local-first notebook for people whose ideas refuse to arrive one at a time.</p>
+              <h1 className="max-w-xl font-serif text-5xl leading-[0.99] tracking-[-0.03em] md:text-[4.35rem]">Notes with a memory.</h1>
+              <p className="mt-7 max-w-xl border-l border-white/10 pl-5 text-lg leading-8 text-[#aaa79f]">
+                Write Markdown naturally. Let links, backlinks, and structure accumulate quietly around your thinking—without surrendering your files to a service.
               </p>
               <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-                <a href="/app" className="flex items-center justify-center gap-2 rounded-lg bg-[#a997f3] px-5 py-3 text-sm font-semibold text-[#111217] hover:bg-[#b7a8f7]">
+                <a href="/app" className="flex h-11 items-center justify-center gap-2 bg-[#c2b28f] px-5 text-sm font-semibold text-[#15161a] transition-colors hover:bg-[#d3c39d]">
                   Start in your browser <ArrowRight size={15} />
                 </a>
-                <a href="#desktop" className="flex items-center justify-center gap-2 rounded-lg border border-white/12 bg-white/5 px-5 py-3 text-sm font-medium hover:bg-white/9">
+                <a href="#desktop" className="flex h-11 items-center justify-center gap-2 border border-white/10 px-5 text-sm font-medium text-[#d8d5cd] transition-colors hover:border-white/18 hover:bg-white/4">
                   <Download size={15} /> Explore the desktop app
                 </a>
               </div>
-              <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-white/38">
-                <span className="flex items-center gap-1.5"><LockKeyhole size={12} /> No account</span>
-                <span className="flex items-center gap-1.5"><FolderOpen size={12} /> Filesystem vaults</span>
-                <span className="flex items-center gap-1.5"><GitBranch size={12} /> Git-friendly</span>
+              <div className="mt-7 flex flex-wrap gap-x-5 gap-y-2 border-t border-white/6 pt-5 text-xs text-[#807d76]">
+                {PROMISES.map(({ icon, text }) => (
+                  <span key={text} className="flex items-center gap-1.5">{icon}{text}</span>
+                ))}
               </div>
             </div>
             <KnowledgePreview />
           </div>
         </section>
 
-        <section id="why" className="border-y border-white/8 bg-white/[0.018] px-5 py-20">
-          <div className="mx-auto grid max-w-6xl gap-12 md:grid-cols-[0.8fr_1.2fr] md:items-start">
+        <section id="why" className="border-b border-white/5 bg-[#131417] px-5 py-20">
+          <div className="mx-auto grid max-w-5xl gap-10 md:grid-cols-[0.72fr_1.28fr] md:items-start">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#9b87f5]">The premise</div>
-              <h2 className="mt-4 text-3xl font-semibold tracking-[-0.03em]">The graph should emerge from thinking—not become another chore.</h2>
+              <p className="font-medium uppercase tracking-[0.15em] text-micro text-[#8a877f]">The premise</p>
+              <h2 className="mt-4 font-serif text-3xl leading-[1.08] tracking-[-0.02em] md:text-4xl">The graph should emerge from thinking—not become another chore.</h2>
             </div>
-            <div className="grid gap-5 text-base leading-7 text-white/55 sm:grid-cols-2">
+            <div className="grid gap-x-10 gap-y-6 text-base leading-7 text-[#a5a29a] sm:grid-cols-2">
               <p>Write in a familiar workspace. Ley quietly indexes links, headings, tags, and properties while you focus on the idea itself.</p>
               <p>Use the graph when it answers a question: what connects, what is isolated, and where an idea might lead next.</p>
             </div>
           </div>
         </section>
 
-        <section id="features" className="px-5 py-24">
-          <div className="mx-auto max-w-6xl">
+        <section id="features" className="border-b border-white/5 px-5 py-20">
+          <div className="mx-auto max-w-5xl">
             <div className="max-w-2xl">
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#9b87f5]">Built for recall</div>
-              <h2 className="mt-4 text-4xl font-semibold tracking-[-0.035em]">Capture is only half the job.</h2>
-              <p className="mt-4 text-white/50">Ley is designed around retrieving, connecting, and developing ideas over years—not collecting forgotten documents.</p>
+              <p className="font-medium uppercase tracking-[0.15em] text-micro text-[#8a877f]">Built for recall</p>
+              <h2 className="mt-4 font-serif text-4xl leading-[1.05] tracking-[-0.025em]">Capture is only half the job.</h2>
+              <p className="mt-4 text-[#a5a29a]">Ley is designed around retrieving, connecting, and developing ideas over years—not collecting forgotten documents.</p>
             </div>
-            <div className="mt-12 grid gap-px overflow-hidden rounded-xl border border-white/8 bg-white/8 md:grid-cols-2">
+            <dl className="mt-12 grid border-t border-white/7 md:grid-cols-2">
               {FEATURES.map((feature) => (
-                <article key={feature.title} className="bg-[#111318] p-7 md:p-9">
-                  <span className="flex size-9 items-center justify-center rounded-lg bg-[#9b87f5]/10 text-[#aa98f3]">{feature.icon}</span>
-                  <h3 className="mt-5 font-semibold">{feature.title}</h3>
-                  <p className="mt-2 max-w-md text-sm leading-6 text-white/48">{feature.body}</p>
+                <article key={feature.title} className="group relative border-b border-r border-white/7 p-6 last:border-b-0 md:p-8 md:[&:nth-child(2n)]:border-r-0">
+                  <div className="flex min-h-7 items-start justify-between">
+                    <dt className="font-serif text-xl font-medium">{feature.title}</dt>
+                    <span aria-hidden="true" className="font-mono text-xs tabular-nums text-[#6f6c65] transition-colors group-hover:text-[#c2b28f]">{feature.label}</span>
+                  </div>
+                  <dd className="mt-3 max-w-md text-sm leading-6 text-[#98958e]">{feature.body}</dd>
                 </article>
               ))}
-            </div>
+            </dl>
           </div>
         </section>
 
-        <section id="desktop" className="px-5 pb-24">
-          <div className="mx-auto flex max-w-6xl flex-col items-start justify-between gap-8 rounded-2xl border border-[#9b87f5]/18 bg-[#9b87f5]/7 p-8 md:flex-row md:items-center md:p-12">
+        <section id="desktop" className="px-5 py-20">
+          <div className="mx-auto flex max-w-5xl flex-col gap-8 border-y border-white/8 bg-[#141518] p-8 md:flex-row md:items-center md:justify-between md:px-12 md:py-11">
             <div className="max-w-2xl">
-              <div className="flex items-center gap-2 text-sm font-medium text-[#b5a5f5]"><FileText size={16} /> Desktop is where your files become the vault</div>
-              <h2 className="mt-3 text-3xl font-semibold tracking-[-0.03em]">Keep every note in a folder you control.</h2>
-              <p className="mt-3 leading-7 text-white/50">The native app reads and writes ordinary Markdown, supports external editors and Git, and keeps indexes disposable.</p>
+              <p className="flex items-center gap-2 text-sm font-medium text-[#bfbcb4]"><FileText size={15} /> Desktop is where your files become the vault</p>
+              <h2 className="mt-4 font-serif text-3xl leading-[1.06] tracking-[-0.022em]">Keep every note in a folder you control.</h2>
+              <p className="mt-4 leading-7 text-[#a5a29a]">The native app reads and writes ordinary Markdown, supports external editors and Git, and keeps indexes disposable.</p>
             </div>
-            <div className="shrink-0 rounded-lg border border-white/10 bg-black/20 px-5 py-3 font-mono text-sm text-white/55">npm run desktop:build</div>
+            <div className="shrink-0 border-l-2 border-[#c2b28f]/70 pl-4 font-mono text-sm text-[#b4b1a9]">npm run desktop:build</div>
           </div>
         </section>
       </main>
 
-      <footer className="border-t border-white/8 px-5 py-8 text-sm text-white/35">
-        <div className="mx-auto flex max-w-6xl items-center justify-between"><span>Ley</span><span>Local-first by design.</span></div>
+      <footer className="border-t border-white/6 px-5 py-7 text-sm text-[#75726b]">
+        <div className="mx-auto flex max-w-5xl items-center justify-between"><span>Ley</span><span>Local-first by design.</span></div>
       </footer>
     </div>
   );
@@ -124,22 +144,63 @@ export function LandingPage() {
 
 function KnowledgePreview() {
   return (
-    <div className="relative mx-auto aspect-[1.05] w-full max-w-[540px] rounded-2xl border border-white/10 bg-[#111318] p-4 shadow-[0_40px_100px_rgba(0,0,0,.45)]">
-      <div className="flex items-center justify-between border-b border-white/8 px-2 pb-3 text-xs text-white/35"><span>Local graph · Learning</span><span>12 notes · 18 links</span></div>
-      <svg viewBox="0 0 520 420" className="h-full w-full" aria-label="Connected notes preview">
-        <g stroke="#6f668f" strokeOpacity=".42" strokeWidth="1">
-          <path d="M258 202 L140 112 M258 202 L395 105 M258 202 L397 286 M258 202 L147 316 M140 112 L78 208 M140 112 L245 60 M395 105 L466 195 M397 286 L466 195 M397 286 L302 365 M147 316 L302 365 M147 316 L78 208" />
-        </g>
-        {[
-          [258, 202, 12, '#a997f3'], [140, 112, 8, '#6ea8fe'], [395, 105, 7, '#79d0a5'], [397, 286, 8, '#e3ae67'], [147, 316, 7, '#d68bd2'], [78, 208, 5, '#6ea8fe'], [245, 60, 5, '#79d0a5'], [466, 195, 5, '#e3ae67'], [302, 365, 5, '#d68bd2'],
-        ].map(([cx, cy, r, fill], index) => <circle key={index} cx={cx} cy={cy} r={r} fill={String(fill)} />)}
-        <g fill="#e7e3dc" fontSize="11" fontFamily="system-ui">
-          <text x="276" y="207">Learning</text><text x="99" y="94">Mental models</text><text x="365" y="87">Books</text><text x="414" y="310">Projects</text><text x="90" y="344">Daily notes</text>
-        </g>
-      </svg>
-      <div className="absolute bottom-4 left-4 right-4 rounded-lg border border-white/8 bg-[#17191f]/95 px-4 py-3 backdrop-blur">
-        <div className="text-xs font-medium">Learning</div><div className="mt-1 text-xs text-white/38">Connected to 4 notes · 2 backlinks · updated today</div>
+    <figure className="relative mx-auto w-full max-w-[590px] overflow-hidden border border-white/9 bg-[#17181b] shadow-[0_34px_84px_rgba(0,0,0,.38)]">
+      <figcaption className="flex h-9 items-center justify-between border-b border-white/6 bg-[#141518] px-3 font-mono text-[11px] uppercase tracking-[0.09em] text-[#7d7a73]">
+        <span>Learning.md</span>
+      </figcaption>
+      <div className="relative grid min-h-[430px] grid-cols-[190px_minmax(0,1fr)]">
+        <aside className="hidden border-r border-white/6 bg-[#151619] p-3 sm:block">
+          <p className="px-2 pb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-[#6f6c65]">Vault</p>
+          <nav className="space-y-0.5">
+            {VAULT_ITEMS.map((name, index) => (
+              <span key={name} className={`flex h-7 items-center truncate px-2 text-[12px] ${index === 0 ? 'bg-[#222427] text-[#dedbd3]' : 'text-[#8f8c85]'}`}>{name}</span>
+            ))}
+          </nav>
+          <div className="mt-5 border-t border-white/5 pt-4">
+            <p className="px-2 pb-1.5 text-[10px] uppercase tracking-[0.1em] text-[#64615b]">Backlinks</p>
+            {BACKLINKS.map((item) => (
+              <p key={item} className="truncate px-2 py-1 text-[11px] text-[#847f74]">{item}</p>
+            ))}
+          </div>
+        </aside>
+        <div className="min-w-0 p-5 sm:p-7">
+          <div className="mb-5 border-b border-white/5 pb-4">
+            <h3 className="font-serif text-3xl leading-tight text-[#eae7df]">Learning</h3>
+            <p className="mt-1.5 font-mono text-[11px] text-[#6f6c65]">#systems · updated today</p>
+          </div>
+          <div className="space-y-3 text-[13px] leading-6 text-[#a8a59d]">
+            <p>A note becomes useful when it can be found again. Ley derives those paths from ordinary writing instead of asking for metadata first.</p>
+            <p>Links are visible but quiet. The graph is a tool for orientation, not a replacement for the page.</p>
+          </div>
+          <div className="mt-6 flex flex-wrap gap-1.5">
+            {TOKENS.map((token) => (
+              <code key={token} className="border border-white/7 bg-white/[0.035] px-2 py-1 font-mono text-[11px] text-[#cfc3a5]">{token}</code>
+            ))}
+          </div>
+          <div className="mt-7 border border-white/6 bg-[#121316] p-3">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.1em] text-[#6f6c65]"><CalendarDays size={11} /> Local graph · depth 2</div>
+            <svg viewBox="0 0 340 120" className="mt-3 h-[92px]" role="img" aria-label="Small connected note graph">
+              <g stroke="#63615b" strokeOpacity=".42" strokeWidth="1">
+                <path d="M170 62 L92 32 M170 62 L246 33 M170 62 L108 94 M170 62 L236 93 M92 32 L43 63" />
+              </g>
+              {[
+                [170, 62, 7, '#c2b28f'],
+                [92, 32, 5, '#8f9a86'],
+                [246, 33, 4, '#8f9a86'],
+                [108, 94, 4, '#8f9a86'],
+                [236, 93, 4, '#8f9a86'],
+                [43, 63, 3, '#8f9a86'],
+              ].map(([cx, cy, radius, fill], index) => (
+                <circle key={index} cx={cx} cy={cy} r={radius} fill={String(fill)} />
+              ))}
+            </svg>
+          </div>
+        </div>
       </div>
-    </div>
+      <div className="absolute bottom-4 right-4 hidden border border-white/8 bg-[#1b1c20]/95 px-3 py-2 backdrop-blur-sm sm:block">
+        <p className="text-[12px] font-medium text-[#dedbd3]">Learning</p>
+        <p className="mt-0.5 text-[11px] text-[#827f78]">Connected to 4 notes · 2 backlinks</p>
+      </div>
+    </figure>
   );
 }

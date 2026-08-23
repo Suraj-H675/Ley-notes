@@ -40,16 +40,16 @@ export default {
         ring: 'hsl(var(--ring))',
         // Knowledge graph node colors — desaturated, restraint palette
         node: {
-          document: 'hsl(217 70% 62%)',
-          task: 'hsl(150 50% 55%)',
-          project: 'hsl(265 55% 65%)',
-          concept: 'hsl(35 70% 60%)',
+          document: 'hsl(41 34% 66%)',
+          task: 'hsl(155 16% 62%)',
+          project: 'hsl(210 20% 64%)',
+          concept: 'hsl(25 30% 63%)',
         },
         edge: {
-          wiki: 'hsl(225 55% 60%)',
-          explicit: 'hsl(265 50% 62%)',
-          depends: 'hsl(0 55% 58%)',
-          related: 'hsl(220 8% 55%)',
+          wiki: 'hsl(205 18% 61%)',
+          explicit: 'hsl(155 16% 60%)',
+          depends: 'hsl(8 48% 59%)',
+          related: 'hsl(42 5% 56%)',
         },
       },
       borderRadius: {
@@ -65,6 +65,14 @@ export default {
           'Segoe UI',
           'system-ui',
           'sans-serif',
+        ],
+        serif: [
+          'Iowan Old Style',
+          'Palatino Linotype',
+          'Palatino',
+          'Book Antiqua',
+          'Georgia',
+          'serif',
         ],
         mono: [
           'Geist Mono',

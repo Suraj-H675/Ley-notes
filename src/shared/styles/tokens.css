@@ -10,89 +10,89 @@
 :root,
 :root[data-theme='dark'] {
   /* Surfaces — slightly tinted, not pure black. */
-  --background: 220 14% 9%;
-  --surface-1: 220 13% 12%;
-  --surface-2: 220 12% 15%;
-  --surface-3: 220 11% 18%;
+  --background: 225 7% 7.5%;
+  --surface-1: 225 6% 10.5%;
+  --surface-2: 225 5% 14%;
+  --surface-3: 225 4% 18%;
 
   /* Text — high contrast for body, muted for metadata. */
-  --foreground: 220 14% 92%;
-  --muted-foreground: 220 8% 60%;
-  --subtle-foreground: 220 6% 45%;
+  --foreground: 45 12% 89%;
+  --muted-foreground: 40 6% 61%;
+  --subtle-foreground: 40 5% 47%;
 
   /* Borders and dividers. */
-  --border: 220 10% 22%;
-  --border-strong: 220 10% 32%;
+  --border: 45 6% 23%;
+  --border-strong: 45 8% 33%;
 
   /* Accent — blue for primary actions. */
-  --primary: 217 70% 62%;
-  --primary-foreground: 220 14% 98%;
+  --primary: 41 34% 66%;
+  --primary-foreground: 225 8% 11%;
 
   /* Secondary — purple for tags and links. */
-  --secondary: 265 55% 65%;
-  --secondary-foreground: 220 14% 98%;
+  --secondary: 155 16% 62%;
+  --secondary-foreground: 225 8% 11%;
 
   /* Muted — neutral grey for chips and metadata pills. */
-  --muted: 220 10% 22%;
-  --muted-foreground-strong: 220 8% 75%;
+  --muted: 225 5% 22%;
+  --muted-foreground-strong: 40 7% 76%;
 
   /* Destructive. */
-  --destructive: 0 55% 58%;
-  --destructive-foreground: 220 14% 98%;
+  --destructive: 8 52% 60%;
+  --destructive-foreground: 45 12% 96%;
 
   /* Graph node colors (shared with light theme — these are desaturated). */
-  --node-document: 217 70% 62%;
-  --node-task: 150 50% 55%;
-  --node-project: 265 55% 65%;
-  --node-concept: 35 70% 60%;
+  --node-document: 41 34% 66%;
+  --node-task: 155 16% 62%;
+  --node-project: 210 20% 64%;
+  --node-concept: 25 30% 63%;
 
-  --edge-wiki: 225 55% 60%;
-  --edge-explicit: 265 50% 62%;
-  --edge-depends: 0 55% 58%;
-  --edge-related: 220 8% 55%;
+  --edge-wiki: 205 18% 61%;
+  --edge-explicit: 155 16% 60%;
+  --edge-depends: 8 48% 59%;
+  --edge-related: 42 5% 56%;
 
   /* Shadows — tinted, not black. */
-  --shadow-panel: 0 1px 0 hsl(220 20% 4% / 0.4), 0 0 0 1px hsl(220 10% 100% / 0.04);
-  --shadow-popover: 0 8px 24px hsl(220 20% 4% / 0.32), 0 0 0 1px hsl(220 10% 100% / 0.06);
-  --shadow-menu: 0 12px 32px hsl(220 20% 4% / 0.4), 0 0 0 1px hsl(220 10% 100% / 0.06);
+  --shadow-panel: 0 1px 0 hsl(225 10% 3% / 0.38), 0 0 0 1px hsl(45 10% 100% / 0.035);
+  --shadow-popover: 0 8px 24px hsl(225 12% 3% / 0.3), 0 0 0 1px hsl(45 10% 100% / 0.05);
+  --shadow-menu: 0 12px 32px hsl(225 12% 3% / 0.36), 0 0 0 1px hsl(45 10% 100% / 0.055);
 
   /* Functional materials. Opacity is centralized so desktop chrome and
      floating workspaces retain the same depth language. */
-  --material-chrome: 220 13% 12% / 0.82;
-  --material-sidebar: 220 13% 12% / 0.94;
-  --material-floating: 220 13% 12% / 0.88;
-  --material-scrim: 220 14% 5% / 0.68;
-  --material-highlight: 220 14% 100% / 0.065;
+  --material-chrome: 225 6% 10.5% / 0.86;
+  --material-sidebar: 225 6% 10.5% / 0.95;
+  --material-floating: 225 6% 10.5% / 0.91;
+  --material-scrim: 225 7% 4% / 0.68;
+  --material-highlight: 45 14% 100% / 0.055;
 }
 
 :root[data-theme='light'] {
-  --background: 220 16% 96%;
+  --background: 45 17% 94%;
   --surface-1: 0 0% 100%;
-  --surface-2: 220 14% 92%;
-  --surface-3: 220 12% 86%;
+  --surface-2: 45 13% 92%;
+  --surface-3: 45 11% 86%;
 
-  --foreground: 220 14% 14%;
-  --muted-foreground: 220 8% 38%;
-  --subtle-foreground: 220 6% 55%;
+  --foreground: 35 14% 15%;
+  --muted-foreground: 35 7% 39%;
+  --subtle-foreground: 35 5% 55%;
 
-  --border: 220 10% 86%;
-  --border-strong: 220 10% 70%;
+  --border: 40 10% 85%;
+  --border-strong: 40 9% 69%;
 
-  --primary: 217 70% 50%;
+  --primary: 37 31% 44%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 265 55% 55%;
+  --secondary: 150 18% 43%;
   --secondary-foreground: 0 0% 100%;
 
-  --muted: 220 14% 92%;
-  --muted-foreground-strong: 220 8% 28%;
+  --muted: 45 13% 90%;
+  --muted-foreground-strong: 35 8% 28%;
 
-  --destructive: 0 55% 48%;
+  --destructive: 5 54% 46%;
   --destructive-foreground: 0 0% 100%;
 
-  --shadow-panel: 0 1px 0 hsl(220 14% 70% / 0.4), 0 0 0 1px hsl(220 10% 14% / 0.04);
-  --shadow-popover: 0 8px 24px hsl(220 20% 14% / 0.12), 0 0 0 1px hsl(220 10% 14% / 0.06);
-  --shadow-menu: 0 12px 32px hsl(220 20% 14% / 0.16), 0 0 0 1px hsl(220 10% 14% / 0.06);
+  --shadow-panel: 0 1px 0 hsl(38 14% 72% / 0.4), 0 0 0 1px hsl(35 12% 15% / 0.04);
+  --shadow-popover: 0 8px 24px hsl(36 14% 16% / 0.11), 0 0 0 1px hsl(35 12% 15% / 0.055);
+  --shadow-menu: 0 12px 32px hsl(36 14% 16% / 0.14), 0 0 0 1px hsl(35 12% 15% / 0.06);
 
   --material-chrome: 0 0% 100% / 0.82;
   --material-sidebar: 0 0% 100% / 0.94;
