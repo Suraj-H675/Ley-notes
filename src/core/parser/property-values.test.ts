@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { comparePropertyValues, formatPropertyValue, parsePropertyValue } from './property-values';
+import {
+  comparePropertyValues,
+  formatPropertyValue,
+  parsePropertyValue,
+  propertyValueError,
+} from './property-values';
 
 describe('property values', () => {
   it('formats portable scalar, list, and object values', () => {
@@ -17,5 +22,15 @@ describe('property values', () => {
 
   it('sorts numeric values numerically', () => {
     expect(comparePropertyValues(2, 10)).toBeLessThan(0);
+  });
+
+  it('reports invalid edits before they rewrite portable YAML types', () => {
+    expect(propertyValueError('one,, three', ['two'])).toMatch(/Separate list/);
+    expect(propertyValueError('maybe', true)).toMatch(/true or false/);
+    expect(propertyValueError('', 12)).toMatch(/finite number/);
+    expect(propertyValueError('{bad json}', { score: 4 })).toMatch(/valid JSON/);
+    expect(propertyValueError('planned', 'active')).toBeNull();
+    expect(propertyValueError('true', false)).toBeNull();
+    expect(propertyValueError('18', 3)).toBeNull();
   });
 });
