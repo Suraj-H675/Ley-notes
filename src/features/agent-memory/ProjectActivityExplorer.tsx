@@ -391,7 +391,7 @@ function ProblemCard({
                 className={cn(
                   "rounded-full px-2 py-0.5 text-[10px] font-semibold",
                   resolved
-                    ? "bg-emerald-500/10 text-emerald-500"
+                    ? "bg-success/10 text-success"
                     : "bg-warning/10 text-warning",
                 )}
               >
@@ -407,8 +407,8 @@ function ProblemCard({
           )}
         </div>
         {problem.resolution && (
-          <div className="mt-4 rounded-md border border-emerald-500/20 bg-emerald-500/7 p-3">
-            <p className="flex items-center gap-2 text-micro font-semibold uppercase tracking-wider text-emerald-500">
+          <div className="mt-4 rounded-md border border-success/20 bg-success/7 p-3">
+            <p className="flex items-center gap-2 text-micro font-semibold uppercase tracking-wider text-success">
               <CheckCircle2 size={13} aria-hidden="true" />
               Resolution
             </p>
@@ -544,7 +544,7 @@ function OutcomeBadge({
         "inline-flex shrink-0 items-center gap-1 rounded-full font-semibold",
         compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-micro",
         positive
-          ? "bg-emerald-500/10 text-emerald-500"
+          ? "bg-success/10 text-success"
           : negative
             ? "bg-destructive/10 text-destructive"
             : "bg-warning/10 text-warning",

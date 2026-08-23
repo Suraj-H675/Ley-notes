@@ -101,7 +101,7 @@ export function SessionPromotionEditor({
             labeled as a bounded snapshot and never silently synchronizes.
           </p>
           {(session.truncated || session.omittedCheckpoints > 0) && (
-            <p className="mt-2 rounded-md bg-amber-500/10 px-2.5 py-2 text-micro leading-5 text-amber-500">
+            <p className="mt-2 rounded-md bg-warning/10 px-2.5 py-2 text-micro leading-5 text-warning">
               This inspected projection omits {session.omittedCheckpoints} older
               checkpoints or clipped text. The note will preserve that
               disclosure.

@@ -41,7 +41,7 @@ const modes: Array<{
       "Keeps deterministic structure, hashes, graph relationships, and structured session memory.",
     retention:
       "Project source and automatic prompt/response bodies are not retained.",
-    tone: "bg-emerald-500/10 text-emerald-500",
+    tone: "bg-success/10 text-success",
   },
   {
     id: "structured",

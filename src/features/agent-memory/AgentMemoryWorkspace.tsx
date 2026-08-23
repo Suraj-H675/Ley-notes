@@ -1721,7 +1721,7 @@ function SessionInspector({
                   </section>
 
                   {session.omittedCheckpoints > 0 && (
-                    <p className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-micro text-amber-500">
+                    <p className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-micro text-warning">
                       {session.omittedCheckpoints} older checkpoints were
                       omitted from this bounded view.
                     </p>
@@ -2911,8 +2911,8 @@ function ProblemItem({
         </ol>
       )}
       {problem.resolutionDetail && (
-        <div className="mt-3 rounded-md border border-emerald-500/15 bg-emerald-500/7 px-3 py-2">
-          <p className="text-micro font-medium text-emerald-500">Resolution</p>
+        <div className="mt-3 rounded-md border border-success/15 bg-success/7 px-3 py-2">
+          <p className="text-micro font-medium text-success">Resolution</p>
           <p className="mt-1 text-micro leading-5 text-muted-foreground-strong">
             <span className="font-medium text-foreground">Root cause:</span>{" "}
             {problem.resolutionDetail.rootCause}
@@ -2947,7 +2947,7 @@ function MemoryList({
       <p
         className={cn(
           "text-micro font-medium",
-          tone === "warning" ? "text-amber-500" : "text-muted-foreground",
+          tone === "warning" ? "text-warning" : "text-muted-foreground",
         )}
       >
         {title}
@@ -3002,9 +3002,9 @@ function StatusPill({
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-micro font-medium",
         tone === "success" &&
-          "border-emerald-500/20 bg-emerald-500/10 text-emerald-500",
+          "border-success/20 bg-success/10 text-success",
         tone === "warning" &&
-          "border-amber-500/20 bg-amber-500/10 text-amber-500",
+          "border-warning/20 bg-warning/10 text-warning",
         tone === "neutral" &&
           "border-border bg-surface-2 text-muted-foreground-strong",
       )}
@@ -3024,9 +3024,9 @@ function SessionStatus({
 }) {
   const color =
     status === "active"
-      ? "bg-emerald-500"
+      ? "bg-success"
       : status === "paused"
-        ? "bg-amber-500"
+        ? "bg-warning"
         : status === "completed"
           ? "bg-primary"
           : "bg-subtle-foreground";
@@ -3058,10 +3058,10 @@ function TrustDot({
       className={cn(
         "mt-1.5 size-2.5 shrink-0 rounded-full ring-4",
         trusted
-          ? "bg-emerald-500 ring-emerald-500/10"
+          ? "bg-success ring-success/10"
           : rejected
             ? "bg-destructive ring-destructive/10"
-            : "bg-amber-500 ring-amber-500/10",
+            : "bg-warning ring-warning/10",
       )}
     />
   );

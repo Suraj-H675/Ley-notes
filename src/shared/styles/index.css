@@ -25,6 +25,8 @@
   --color-muted-foreground-strong: hsl(var(--muted-foreground-strong));
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
 
   --color-node-document: hsl(var(--node-document));
   --color-node-task: hsl(var(--node-task));

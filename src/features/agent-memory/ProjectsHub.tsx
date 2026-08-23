@@ -453,13 +453,13 @@ function resultKindMeta(kind: AgentProjectSearchResultKind) {
       return {
         label: "Problem & outcome",
         icon: AlertTriangle,
-        className: "bg-amber-500/10 text-amber-500",
+        className: "bg-warning/10 text-warning",
       };
     case "learning":
       return {
         label: "Lesson",
         icon: BookCheck,
-        className: "bg-emerald-500/10 text-emerald-500",
+        className: "bg-success/10 text-success",
       };
     case "artifact":
       return {
@@ -510,7 +510,7 @@ function SummaryTile({
           className={cn(
             "flex size-8 items-center justify-center rounded-md",
             positive
-              ? "bg-emerald-500/10 text-emerald-500"
+              ? "bg-success/10 text-success"
               : attention
                 ? "bg-warning/10 text-warning"
                 : "bg-primary/10 text-primary",
@@ -713,7 +713,7 @@ function projectStatus(state: AgentProjectCatalogState): {
       return {
         label: "Ready",
         icon: CheckCircle2,
-        className: "bg-emerald-500/10 text-emerald-500",
+        className: "bg-success/10 text-success",
       };
     case "unbound":
       return {

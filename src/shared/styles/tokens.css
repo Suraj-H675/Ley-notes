@@ -2,9 +2,9 @@
  * Design tokens. Both themes share the same variable names; values flip.
  * All component CSS reads these — never hardcode colors.
  *
- * Color scale: 220 (blue-grey) for backgrounds, 220 (cool) for text, accents
- * 217 (blue) for primary, 265 (purple) for accent, 150 (green) for success,
- * 0 (red) for destructive.
+ * Color scale: 225 (ink) for backgrounds, 45 (paper) for text, brass for
+ * primary actions, sage for links/tags, 0 (red) for destructive. Success and
+ * warning are semantic status accents used sparingly by Agent Memory.
  */
 
 :root,
@@ -39,6 +39,10 @@
   /* Destructive. */
   --destructive: 8 52% 60%;
   --destructive-foreground: 45 12% 96%;
+
+  /* Status accents — reserved for trust and freshness signals. */
+  --success: 150 18% 62%;
+  --warning: 35 42% 64%;
 
   /* Graph node colors (shared with light theme — these are desaturated). */
   --node-document: 41 34% 66%;
@@ -89,6 +93,9 @@
 
   --destructive: 5 54% 46%;
   --destructive-foreground: 0 0% 100%;
+
+  --success: 150 18% 40%;
+  --warning: 32 45% 45%;
 
   --shadow-panel: 0 1px 0 hsl(38 14% 72% / 0.4), 0 0 0 1px hsl(35 12% 15% / 0.04);
   --shadow-popover: 0 8px 24px hsl(36 14% 16% / 0.11), 0 0 0 1px hsl(35 12% 15% / 0.055);
