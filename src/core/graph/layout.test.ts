@@ -12,8 +12,8 @@ function makeSmallGraph(): Graph {
   // 25 nodes, 50 edges — matches demo-vault scale
   for (let i = 0; i < 25; i++) g.addNode(`n${i}`, { degree: 0 });
   for (let i = 0; i < 50; i++) {
-    const s = Math.floor(Math.random() * 25);
-    const t = Math.floor(Math.random() * 25);
+    const s = (i * 7 + 3) % 25;
+    const t = (i * 11 + 17) % 25;
     if (s !== t) g.addDirectedEdge(`n${s}`, `n${t}`);
   }
   return g;
