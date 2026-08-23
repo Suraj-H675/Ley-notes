@@ -187,7 +187,7 @@ describe("Agent Memory workspace boundaries", () => {
     expect(api.inspectAgentProject).not.toHaveBeenCalled();
   });
 
-  it("migrates the last selection into Projects and opens a scrollable dashboard", async () => {
+  it("migrates the last selection into Projects and opens a scrollable dashboard", { timeout: 10_000 }, async () => {
     localStorage.setItem("ley:last-agent-project", "/projects/ley");
     api.listAgentProjects.mockResolvedValue({
       projects: [

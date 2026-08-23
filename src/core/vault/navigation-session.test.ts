@@ -93,6 +93,31 @@ describe('navigation sessions', () => {
     expect(useNavStore.getState().openTabs).not.toEqual([first.id, second.id]);
   });
 
+  it('flushes the old identity before starting a new vault session', async () => {
+    await markActiveDataKind('filesystem:/vault/a');
+    const note = await createPage({ title: 'Vault A' });
+    await startNavigationSession();
+    useNavStore.getState().hydrate({
+      openTabs: [note.id],
+      activeTab: note.id,
+      primaryTab: note.id,
+      secondaryTab: null,
+      activePane: 'primary',
+      recentPages: [note.id],
+    });
+
+    await stopNavigationSession();
+
+    await markActiveDataKind('filesystem:/vault/b');
+    await startNavigationSession();
+
+    expect(await db.settings.get('navigation-session:filesystem:/vault/a')).toBeTruthy();
+    expect(await db.settings.get('navigation-session:filesystem:/vault/b')).toBeUndefined();
+    expect(useNavStore.getState().openTabs).toHaveLength(1);
+    expect(useNavStore.getState().openTabs).toEqual([note.id]);
+    await stopNavigationSession();
+  });
+
   it('captures and reapplies a split navigation layout without replacing recents', async () => {
     const source = await createPage({ title: 'Source' });
     const reference = await createPage({ title: 'Reference' });
