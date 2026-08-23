@@ -4,6 +4,7 @@ import { createPage, getPageById } from '@/core/vault/pages';
 import { useNavStore } from '@/shared/state/nav';
 import { resolveInternalMarkdownPath } from '@/core/parser/markdown-links';
 import { db } from '@/infrastructure/database/db';
+import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
 import type { EditorPane } from '@/shared/state/nav';
 
 export interface WikiDestination {
@@ -13,14 +14,20 @@ export interface WikiDestination {
 }
 
 export async function openWikiDestination({ target, heading, blockId }: WikiDestination, pane?: EditorPane): Promise<void> {
-  const id = await resolveTitle(target) ?? (await createPage({ title: target })).id;
-  await openPageDestination(id, heading, blockId, pane);
+  const id = await resolveTitle(target);
+  if (id) {
+    await openPageDestination(id, heading, blockId, pane);
+    return;
+  }
+  if (!getActiveVaultKind()) throw new Error('Open a vault before creating missing notes.');
+  const created = await createPage({ title: target });
+  await openPageDestination(created.id, heading, blockId, pane);
 }
 
 export async function openMarkdownDestination(sourcePath: string, path: string, heading?: string | null, blockId?: string | null, pane?: EditorPane): Promise<boolean> {
   const targetPath = resolveInternalMarkdownPath(sourcePath, path);
   if (!targetPath) return false;
-  const page = await db.pages.filter((candidate) => candidate.deletedAt === null && candidate.path.toLowerCase() === targetPath.toLowerCase()).first();
+  const page = await db.pages.filter((candidate) => candidate.deletedAt === null && !candidate.missingFromDisk && candidate.path.toLowerCase() === targetPath.toLowerCase()).first();
   if (!page) return false;
   await openPageDestination(page.id, heading, blockId, pane);
   return true;

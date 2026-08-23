@@ -96,11 +96,24 @@ export async function getPageById(pageId: string): Promise<Page | null> {
  */
 export async function createPage(input: CreatePageInput): Promise<Page> {
   const title = requirePortablePageTitle(input.title);
+  const lcTitle = title.toLowerCase();
+  const allBefore = await db.pages.toArray();
+  const missingProjection = allBefore.find(
+    (page) =>
+      page.lcTitle === lcTitle &&
+      page.deletedAt === null &&
+      Boolean(page.missingFromDisk),
+  );
+  if (missingProjection) {
+    throw new Error(
+      `“${missingProjection.title}” was deleted outside Ley. Restore or discard its open recovery copy first.`,
+    );
+  }
   const existing = await getPageByTitle(title);
   if (existing) return existing;
 
   const ts = now();
-  const all = await db.pages.toArray();
+  const all = allBefore;
   const folder = canonicalFolderCase(normalizeFolder(input.folder ?? ""), all);
   const path = pagePathForTitle(title, folder, all);
 
