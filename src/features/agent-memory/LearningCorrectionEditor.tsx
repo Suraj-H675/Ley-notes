@@ -30,6 +30,13 @@ export function LearningCorrectionEditor({
     guidance.trim().length > 0 &&
     reason.trim().length > 0 &&
     changed;
+  const titleError = title.trim() === "" ? "A title is required." : null;
+  const guidanceError =
+    guidance.trim() === "" ? "Corrected guidance is required." : null;
+  const reasonError =
+    reason.trim() === ""
+      ? "Explain what changed or why the previous claim was wrong."
+      : null;
 
   async function submit() {
     if (!canSubmit || busy) return;
@@ -78,8 +85,18 @@ export function LearningCorrectionEditor({
             maxLength={256}
             disabled={busy}
             onChange={(event) => setTitle(event.target.value)}
-            className="mt-1.5 w-full rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+            aria-invalid={Boolean(titleError)}
+            className={`mt-1.5 w-full rounded-md border bg-background/45 px-3 py-2 text-meta outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+              titleError
+                ? "border-destructive text-destructive"
+                : "border-border text-foreground"
+            }`}
           />
+          {titleError && (
+            <p className="mt-0.5 text-micro text-destructive" role="alert">
+              {titleError}
+            </p>
+          )}
         </label>
         <label className="block text-meta font-medium">
           Corrected guidance
@@ -91,8 +108,18 @@ export function LearningCorrectionEditor({
             rows={4}
             disabled={busy}
             onChange={(event) => setGuidance(event.target.value)}
-            className="mt-1.5 w-full resize-y rounded-lg border border-border bg-background/45 px-3 py-2 text-meta leading-5 text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+            aria-invalid={Boolean(guidanceError)}
+            className={`mt-1.5 w-full resize-y rounded-md border bg-background/45 px-3 py-2 text-meta leading-5 outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+              guidanceError
+                ? "border-destructive text-destructive"
+                : "border-border text-foreground"
+            }`}
           />
+          {guidanceError && (
+            <p className="mt-0.5 text-micro text-destructive" role="alert">
+              {guidanceError}
+            </p>
+          )}
         </label>
         <label className="block text-meta font-medium">
           <span className="flex items-center justify-between gap-3">
@@ -127,8 +154,18 @@ export function LearningCorrectionEditor({
             disabled={busy}
             placeholder="Explain what changed or what the previous claim got wrong…"
             onChange={(event) => setReason(event.target.value)}
-            className="mt-1.5 w-full resize-none rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+            aria-invalid={Boolean(reasonError)}
+            className={`mt-1.5 w-full resize-none rounded-md border bg-background/45 px-3 py-2 text-meta outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+              reasonError
+                ? "border-destructive text-destructive"
+                : "border-border text-foreground"
+            }`}
           />
+          {reasonError && (
+            <p className="mt-0.5 text-micro text-destructive" role="alert">
+              {reasonError}
+            </p>
+          )}
         </label>
       </div>
       {error && (

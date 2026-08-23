@@ -24,6 +24,12 @@ export function SessionRenameEditor({
   const changed = name.trim() !== session.name;
   const canSubmit =
     name.trim().length > 0 && reason.trim().length > 0 && changed;
+  const nameError =
+    name.trim() === "" ? "A session name is required." : null;
+  const reasonError =
+    reason.trim() === ""
+      ? "Explain why this rename is needed."
+      : null;
 
   async function submit() {
     if (!canSubmit || busy) return;
@@ -76,8 +82,18 @@ export function SessionRenameEditor({
                   next.trim() !== session.name || reason.trim().length > 0,
                 );
               }}
-              className="mt-1.5 w-full rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+              aria-invalid={Boolean(nameError)}
+              className={`mt-1.5 w-full rounded-md border bg-background/45 px-3 py-2 text-meta outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+                nameError
+                  ? "border-destructive text-destructive"
+                  : "border-border text-foreground"
+              }`}
             />
+            {nameError && (
+              <p className="mt-0.5 text-micro text-destructive" role="alert">
+                {nameError}
+              </p>
+            )}
           </label>
           <label className="block text-meta font-medium">
             Why are you renaming this session?
@@ -99,8 +115,18 @@ export function SessionRenameEditor({
                   name.trim() !== session.name || next.trim().length > 0,
                 );
               }}
-              className="mt-1.5 w-full resize-none rounded-lg border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+              aria-invalid={Boolean(reasonError)}
+              className={`mt-1.5 w-full resize-none rounded-md border bg-background/45 px-3 py-2 text-meta outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+                reasonError
+                  ? "border-destructive text-destructive"
+                  : "border-border text-foreground"
+              }`}
             />
+            {reasonError && (
+              <p className="mt-0.5 text-micro text-destructive" role="alert">
+                {reasonError}
+              </p>
+            )}
           </label>
         </div>
         {error && (
