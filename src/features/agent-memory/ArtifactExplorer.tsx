@@ -100,7 +100,7 @@ export function ArtifactExplorer({
         </label>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-1 p-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-1 p-2">
         <div className="flex gap-1" role="tablist" aria-label="Artifact status">
           <InventoryTab
             active={view === "captured"}
@@ -123,7 +123,7 @@ export function ArtifactExplorer({
       </div>
 
       {focus && (
-        <div className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/6 px-4 py-3 text-meta">
+        <div className="flex items-start gap-3 rounded-md border border-primary/20 bg-primary/6 px-4 py-3 text-meta">
           <FileCode2
             size={17}
             className="mt-0.5 shrink-0 text-primary"
@@ -149,7 +149,7 @@ export function ArtifactExplorer({
       )}
 
       {inventory && (
-        <div className="flex flex-col gap-2 rounded-xl border border-border/80 bg-surface-1 px-4 py-3 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 rounded-md border border-border/80 bg-surface-1 px-4 py-3 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-2">
             <ShieldCheck
               size={14}
@@ -183,7 +183,7 @@ function CapturedArtifacts({
     );
   }
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-surface-1">
+    <div className="overflow-hidden rounded-md border border-border bg-surface-1">
       <div className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_6rem] gap-4 border-b border-border px-4 py-2 text-micro font-semibold uppercase tracking-wider text-muted-foreground sm:grid">
         <span>Artifact</span>
         <span>Kind</span>
@@ -291,7 +291,7 @@ function SkippedArtifacts({
     );
   }
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-surface-1">
+    <div className="overflow-hidden rounded-md border border-border bg-surface-1">
       <div className="divide-y divide-border/70">
         {inventory.skipped.map((artifact) => (
           <div
@@ -378,7 +378,7 @@ function EmptyState({
   detail: string;
 }) {
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface-1 px-5 text-center">
+    <div className="flex min-h-56 flex-col items-center justify-center rounded-md border border-dashed border-border bg-surface-1 px-5 text-center">
       <Icon
         size={24}
         className="mb-3 text-muted-foreground"
@@ -394,7 +394,7 @@ function ErrorState({ message }: { message: string }) {
   return (
     <div
       role="alert"
-      className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/8 p-4 text-meta"
+      className="flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta"
     >
       <AlertTriangle
         size={17}
@@ -412,7 +412,7 @@ function ErrorState({ message }: { message: string }) {
 function ArtifactSkeleton() {
   return (
     <div
-      className="space-y-px overflow-hidden rounded-xl border border-border bg-surface-1"
+      className="space-y-px overflow-hidden rounded-md border border-border bg-surface-1"
       aria-label="Loading artifacts"
     >
       {[0, 1, 2, 3].map((item) => (

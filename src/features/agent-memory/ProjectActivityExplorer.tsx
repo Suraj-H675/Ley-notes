@@ -126,7 +126,7 @@ export function ProjectActivityExplorer({
         </label>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface-1 p-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-1 p-2">
         {isDecisions ? (
           <p className="px-2 text-meta font-medium">Newest decisions first</p>
         ) : (
@@ -174,7 +174,7 @@ export function ProjectActivityExplorer({
       )}
 
       {visibleActivity && (
-        <div className="flex flex-col gap-2 rounded-xl border border-border/80 bg-surface-1 px-4 py-3 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 rounded-md border border-border/80 bg-surface-1 px-4 py-3 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-2">
             <ShieldCheck
               size={14}
@@ -243,7 +243,7 @@ function DecisionCard({
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
 }) {
   return (
-    <article className="overflow-hidden rounded-xl border border-border bg-surface-1 shadow-panel">
+    <article className="overflow-hidden rounded-md border border-border bg-surface-1 shadow-panel">
       <div className="p-4 sm:p-5">
         <ActivityMeta
           sessionName={decision.sessionName}
@@ -375,7 +375,7 @@ function ProblemCard({
 }) {
   const resolved = Boolean(problem.resolution);
   return (
-    <article className="overflow-hidden rounded-xl border border-border bg-surface-1 shadow-panel">
+    <article className="overflow-hidden rounded-md border border-border bg-surface-1 shadow-panel">
       <div className="p-4 sm:p-5">
         <ActivityMeta
           sessionName={problem.sessionName}
@@ -653,7 +653,7 @@ function DetailBlock({ label, value }: { label: string; value: string }) {
 
 function OmissionNotice({ count, noun }: { count: number; noun: string }) {
   return (
-    <p className="rounded-xl border border-dashed border-border bg-surface-1 px-4 py-3 text-center text-micro text-muted-foreground">
+    <p className="rounded-md border border-dashed border-border bg-surface-1 px-4 py-3 text-center text-micro text-muted-foreground">
       {count.toLocaleString()} more {noun} omitted by the local response bound.
       Refine the search to inspect them.
     </p>
@@ -670,7 +670,7 @@ function EmptyState({
   detail: string;
 }) {
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface-1 px-5 text-center">
+    <div className="flex min-h-56 flex-col items-center justify-center rounded-md border border-dashed border-border bg-surface-1 px-5 text-center">
       <Icon
         size={24}
         className="mb-3 text-muted-foreground"
@@ -692,7 +692,7 @@ function ErrorState({
   return (
     <div
       role="alert"
-      className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/8 p-4 text-meta"
+      className="flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta"
     >
       <AlertTriangle
         size={17}
@@ -715,7 +715,7 @@ function ActivitySkeleton() {
       {[0, 1, 2].map((item) => (
         <div
           key={item}
-          className="h-40 animate-pulse rounded-xl border border-border bg-surface-1"
+          className="h-40 animate-pulse rounded-md border border-border bg-surface-1"
         />
       ))}
     </div>

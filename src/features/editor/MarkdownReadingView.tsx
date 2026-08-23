@@ -87,7 +87,7 @@ function EmbeddedNoteCard({ destination, pane }: { destination: Extract<ReadingP
     return id ? db.pages.get(id) : undefined;
   }, [target]);
 
-  if (!page) return <div className="my-4 rounded-xl border border-dashed border-border bg-surface-1 p-4 text-meta text-muted-foreground">Embedded note “{target}” does not exist yet.</div>;
+  if (!page) return <div className="my-4 rounded-md border border-dashed border-border bg-surface-1 p-4 text-meta text-muted-foreground">Embedded note “{target}” does not exist yet.</div>;
   const embeddedPage = page;
   const embeddedContent = extractMarkdownDestination(embeddedPage.content, heading, blockId);
   async function toggleEmbeddedTask(taskIndex: number, checked: boolean) {
@@ -97,7 +97,7 @@ function EmbeddedNoteCard({ destination, pane }: { destination: Extract<ReadingP
     await updatePageContent(embeddedPage.id, updated);
   }
   return (
-    <section className="my-5 overflow-hidden rounded-xl border border-border bg-surface-1 shadow-sm">
+    <section className="my-5 overflow-hidden rounded-md border border-border bg-surface-1 shadow-sm">
       <button type="button" onClick={() => void openWikiDestination(destination, pane)} className="flex w-full items-center justify-between border-b border-border px-4 py-2 text-left text-meta font-medium text-foreground hover:bg-surface-2"><span>{page.title}{heading ? ` › ${heading}` : blockId ? ` › ^${blockId}` : ''}</span><span className="font-mono text-micro text-muted-foreground">{page.path}</span></button>
       <div className="max-h-[420px] overflow-auto px-4 py-3"><MarkdownBody content={replaceEmbedsWithLinks(embeddedContent)} sourcePath={embeddedPage.path} onToggleTask={toggleEmbeddedTask} pane={pane} /></div>
     </section>

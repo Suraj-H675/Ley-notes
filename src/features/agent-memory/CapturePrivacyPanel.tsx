@@ -150,7 +150,7 @@ export function CapturePrivacyPanel({
   if (loading && !settings) {
     return (
       <div
-        className="flex min-h-80 items-center justify-center rounded-xl border border-border bg-surface-1 text-meta text-muted-foreground"
+        className="flex min-h-80 items-center justify-center rounded-md border border-border bg-surface-1 text-meta text-muted-foreground"
         aria-label="Loading capture and privacy settings"
       >
         <RefreshCw
@@ -164,7 +164,7 @@ export function CapturePrivacyPanel({
 
   if (!settings) {
     return (
-      <div className="rounded-xl border border-destructive/25 bg-destructive/8 p-5">
+      <div className="rounded-md border border-destructive/25 bg-destructive/8 p-5">
         <p className="font-semibold">Capture policy is unavailable</p>
         <p className="mt-1 text-meta text-muted-foreground">{error}</p>
       </div>
@@ -179,8 +179,7 @@ export function CapturePrivacyPanel({
 
   return (
     <div className="space-y-7">
-      <section className="relative overflow-hidden rounded-2xl border border-border bg-surface-1 p-5 shadow-panel sm:p-7">
-        <div className="pointer-events-none absolute -right-20 -top-24 size-64 rounded-full bg-primary/10 blur-3xl" />
+      <section className="relative overflow-hidden rounded-sm border border-border bg-surface-1 p-5 shadow-panel sm:p-7">
         <div className="relative max-w-3xl">
           <p className="text-micro font-semibold uppercase tracking-[0.14em] text-primary">
             Capture & privacy
@@ -200,7 +199,7 @@ export function CapturePrivacyPanel({
       {error && (
         <div
           role="alert"
-          className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/8 p-4 text-meta"
+          className="flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta"
         >
           <AlertTriangle
             size={17}
@@ -237,7 +236,7 @@ export function CapturePrivacyPanel({
               <label
                 key={mode.id}
                 className={cn(
-                  "relative min-w-0 cursor-pointer rounded-xl border bg-surface-1 p-4 text-left outline-none transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary",
+                  "relative min-w-0 cursor-pointer rounded-md border bg-surface-1 p-4 text-left outline-none transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-primary",
                   active
                     ? "border-primary/55 shadow-[0_0_0_1px_hsl(var(--primary)/0.12)]"
                     : "border-border hover:border-border-strong",
@@ -289,7 +288,7 @@ export function CapturePrivacyPanel({
         </div>
 
         {selected === "full-evidence" && !settings.storeRawTranscripts && (
-          <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-warning/30 bg-warning/8 p-4">
+          <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-md border border-warning/30 bg-warning/8 p-4">
             <input
               type="checkbox"
               checked={fullConsent}
@@ -311,7 +310,7 @@ export function CapturePrivacyPanel({
           </label>
         )}
 
-        <div className="mt-4 flex flex-col gap-3 rounded-xl border border-border bg-surface-1 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-4 flex flex-col gap-3 rounded-md border border-border bg-surface-1 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-meta font-semibold">
               {changed
@@ -383,7 +382,7 @@ export function CapturePrivacyPanel({
         </div>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          <div className="rounded-xl border border-border bg-surface-1 p-4">
+          <div className="rounded-md border border-border bg-surface-1 p-4">
             <p className="text-meta font-semibold">Approved roots</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {settings.approvedRoots.map((root) => (
@@ -400,7 +399,7 @@ export function CapturePrivacyPanel({
               · .leyignore: {settings.ignoreFilePresent ? "present" : "missing"}
             </p>
           </div>
-          <div className="rounded-xl border border-border bg-surface-1 p-4">
+          <div className="rounded-md border border-border bg-surface-1 p-4">
             <div className="flex items-start gap-3">
               <LockKeyhole
                 size={16}
@@ -427,7 +426,7 @@ export function CapturePrivacyPanel({
       </section>
 
       <section aria-labelledby="erase-memory-title">
-        <div className="overflow-hidden rounded-2xl border border-destructive/25 bg-surface-1 shadow-panel">
+        <div className="overflow-hidden rounded-sm border border-destructive/25 bg-surface-1 shadow-panel">
           <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
             <div className="max-w-2xl">
               <p className="text-micro font-semibold uppercase tracking-[0.14em] text-destructive">
@@ -541,7 +540,7 @@ function BoundaryMetric({
   detail: string;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-panel">
+    <div className="rounded-md border border-border bg-surface-1 p-4 shadow-panel">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-micro text-muted-foreground">{label}</p>

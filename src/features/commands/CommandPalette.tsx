@@ -249,7 +249,7 @@ export function CommandPalette({
         <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[70]" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="app-modal-surface app-modal-top fixed left-1/2 top-[12vh] z-[71] w-[600px] max-w-[calc(100vw-24px)] -translate-x-1/2 overflow-hidden rounded-xl border outline-none"
+          className="app-modal-surface app-modal-top fixed left-1/2 top-[12vh] z-[71] w-[600px] max-w-[calc(100vw-24px)] -translate-x-1/2 overflow-hidden rounded-md border outline-none"
         >
           <Dialog.Title className="sr-only">Command palette</Dialog.Title>
           <div className="flex items-center gap-2 border-b border-border px-3">

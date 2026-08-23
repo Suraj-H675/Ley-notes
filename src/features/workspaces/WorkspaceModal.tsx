@@ -149,9 +149,9 @@ export function WorkspaceModal({ open, splitPercent, onSplitPercentChange, onClo
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[80]" />
-        <Dialog.Content aria-describedby="workspace-description" className="app-modal-surface fixed left-1/2 top-1/2 z-[81] flex max-h-[calc(100vh-24px)] w-[min(720px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border outline-none">
+        <Dialog.Content aria-describedby="workspace-description" className="app-modal-surface fixed left-1/2 top-1/2 z-[81] flex max-h-[calc(100vh-24px)] w-[min(720px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-md border outline-none">
           <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-4 sm:px-5">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-secondary/20 bg-secondary/10 text-secondary">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-secondary/20 bg-secondary/10 text-secondary">
               <PanelsTopLeft size={19} />
             </div>
             <div className="min-w-0 flex-1">
@@ -172,7 +172,7 @@ export function WorkspaceModal({ open, splitPercent, onSplitPercentChange, onClo
           <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
             {workspaces.length === 0 ? (
               <div className="mx-auto flex max-w-sm flex-col items-center px-4 py-10 text-center">
-                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-surface-2 text-subtle-foreground"><PanelsTopLeft size={22} /></div>
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-sm border border-border bg-surface-2 text-subtle-foreground"><PanelsTopLeft size={22} /></div>
                 <h2 className="text-body font-medium text-foreground">No saved layouts yet</h2>
                 <p className="mt-1 text-meta leading-relaxed text-muted-foreground">Arrange your tabs, split panes, and sidebars, then save the view above.</p>
               </div>

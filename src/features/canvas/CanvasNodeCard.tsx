@@ -73,7 +73,7 @@ export const CanvasNodeCard = memo(function CanvasNodeCard({
   return (
     <>
       <div
-        className={`pointer-events-none relative h-full w-full overflow-hidden rounded-xl border bg-surface-1 text-foreground shadow-sm transition-shadow ${selected ? "shadow-lg ring-2 ring-primary/40" : ""}`}
+        className={`pointer-events-none relative h-full w-full overflow-hidden rounded-md border bg-surface-1 text-foreground shadow-sm transition-shadow ${selected ? "shadow-lg ring-2 ring-primary/40" : ""}`}
         style={{
           borderColor: color ?? "hsl(var(--border))",
           backgroundColor: color

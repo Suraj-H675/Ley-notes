@@ -364,7 +364,7 @@ export function ProjectKnowledgeGraph({
       )}
 
       {historical && view && (
-        <div className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/6 px-4 py-3 text-meta">
+        <div className="flex items-start gap-3 rounded-md border border-primary/20 bg-primary/6 px-4 py-3 text-meta">
           <Clock3
             size={17}
             className="mt-0.5 shrink-0 text-primary"
@@ -393,7 +393,7 @@ export function ProjectKnowledgeGraph({
       {error && !loading ? (
         <div
           role="alert"
-          className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/8 p-4 text-meta"
+          className="flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta"
         >
           <AlertTriangle
             size={17}
@@ -406,7 +406,7 @@ export function ProjectKnowledgeGraph({
           </div>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border bg-surface-1">
+        <div className="overflow-hidden rounded-md border border-border bg-surface-1">
           <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
             <div className="flex flex-wrap gap-1.5" aria-label="Node legend">
               {NODE_KINDS.filter((kind) =>
@@ -553,7 +553,7 @@ export function ProjectKnowledgeGraph({
       )}
 
       {view?.git && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-surface-1 px-4 py-3 text-micro text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border bg-surface-1 px-4 py-3 text-micro text-muted-foreground">
           <span className="inline-flex items-center gap-2 font-medium text-foreground">
             <GitBranch size={14} className="text-primary" aria-hidden="true" />
             <span translate="no">{view.git.branch ?? "Detached HEAD"}</span>
@@ -572,7 +572,7 @@ export function ProjectKnowledgeGraph({
       )}
 
       {view && view.diagnostics.length > 0 && (
-        <details className="group overflow-hidden rounded-xl border border-warning/25 bg-warning/5">
+        <details className="group overflow-hidden rounded-md border border-warning/25 bg-warning/5">
           <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-meta font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary">
             <AlertTriangle
               size={15}
@@ -637,7 +637,7 @@ function GraphFilters({
   onReset: () => void;
 }) {
   return (
-    <details className="group overflow-hidden rounded-xl border border-border bg-surface-1">
+    <details className="group overflow-hidden rounded-md border border-border bg-surface-1">
       <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-meta font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary">
         <span className="inline-flex items-center gap-2">
           <Filter size={15} className="text-primary" aria-hidden="true" />
@@ -766,7 +766,7 @@ function FocusedEvidenceInspector({
   return (
     <aside
       aria-label="Memory evidence inspector"
-      className="graph-source-inspector absolute inset-x-3 bottom-3 z-10 max-h-[82%] overflow-y-auto overscroll-contain rounded-xl border p-4 sm:inset-x-auto sm:right-3 sm:w-[27rem]"
+      className="graph-source-inspector absolute inset-x-3 bottom-3 z-10 max-h-[82%] overflow-y-auto overscroll-contain rounded-md border p-4 sm:inset-x-auto sm:right-3 sm:w-[27rem]"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -848,7 +848,7 @@ function GraphInspector({
   return (
     <aside
       aria-label="Graph source inspector"
-      className="graph-source-inspector absolute inset-x-3 bottom-3 z-10 max-h-[82%] overscroll-contain overflow-y-auto rounded-xl border p-4 sm:inset-x-auto sm:right-3 sm:w-[27rem]"
+      className="graph-source-inspector absolute inset-x-3 bottom-3 z-10 max-h-[82%] overscroll-contain overflow-y-auto rounded-md border p-4 sm:inset-x-auto sm:right-3 sm:w-[27rem]"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">

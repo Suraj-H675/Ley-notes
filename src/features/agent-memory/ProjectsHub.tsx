@@ -261,7 +261,7 @@ export function ProjectsHub({
           {error && (
             <div
               role="alert"
-              className="mt-4 flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/8 p-4 text-meta"
+              className="mt-4 flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta"
             >
               <AlertTriangle
                 size={17}
@@ -283,7 +283,7 @@ export function ProjectsHub({
               {[0, 1, 2, 3].map((item) => (
                 <div
                   key={item}
-                  className="h-56 animate-pulse rounded-xl border border-border bg-surface-1"
+                  className="h-56 animate-pulse rounded-md border border-border bg-surface-1"
                 />
               ))}
             </div>
@@ -303,14 +303,14 @@ export function ProjectsHub({
           )}
 
           {catalog && catalog.omittedProjects > 0 && (
-            <p className="mt-3 rounded-xl border border-dashed border-border bg-surface-1 px-4 py-3 text-center text-micro text-muted-foreground">
+            <p className="mt-3 rounded-md border border-dashed border-border bg-surface-1 px-4 py-3 text-center text-micro text-muted-foreground">
               {catalog.omittedProjects.toLocaleString()} older projects are
               omitted by the local response bound.
             </p>
           )}
         </section>
 
-        <div className="mt-8 flex flex-col gap-3 rounded-xl border border-border bg-surface-1 px-4 py-4 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-8 flex flex-col gap-3 rounded-md border border-border bg-surface-1 px-4 py-4 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-start gap-2">
             <ShieldCheck
               size={14}
@@ -388,7 +388,7 @@ function SearchResultCard({
     <button
       type="button"
       onClick={onOpen}
-      className="group min-w-0 touch-manipulation overflow-hidden rounded-xl border border-border bg-background/45 p-3.5 text-left outline-none transition-[transform,border-color,background-color] hover:border-primary/35 hover:bg-surface-2 active:scale-[0.99] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+      className="group min-w-0 touch-manipulation overflow-hidden rounded-md border border-border bg-background/45 p-3.5 text-left outline-none transition-[transform,border-color,background-color] hover:border-primary/35 hover:bg-surface-2 active:scale-[0.99] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
     >
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -498,7 +498,7 @@ function SummaryTile({
   attention?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-border bg-surface-1 p-4 shadow-panel">
+    <div className="rounded-md border border-border bg-surface-1 p-4 shadow-panel">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-micro font-medium text-muted-foreground">
@@ -539,7 +539,7 @@ function ProjectCard({
   const status = projectStatus(project.state);
   const StatusIcon = status.icon;
   return (
-    <article className="group overflow-hidden rounded-xl border border-border bg-surface-1 shadow-panel transition hover:border-border-strong">
+    <article className="group overflow-hidden rounded-md border border-border bg-surface-1 shadow-panel transition hover:border-border-strong">
       <button
         type="button"
         onClick={onOpen}
@@ -671,7 +671,7 @@ function Metric({
 
 function EmptyProjects({ query, onAdd }: { query: string; onAdd: () => void }) {
   return (
-    <div className="mt-4 flex min-h-72 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-surface-1 px-5 text-center">
+    <div className="mt-4 flex min-h-72 flex-col items-center justify-center rounded-md border border-dashed border-border bg-surface-1 px-5 text-center">
       {query ? (
         <Search
           size={24}

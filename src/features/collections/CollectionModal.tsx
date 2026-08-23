@@ -115,7 +115,7 @@ export function CollectionModal({ request, onClose }: { request: CollectionReque
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[80]" />
-        <Dialog.Content aria-describedby={undefined} onEscapeKeyDown={(event) => { if (columnsOpen) { event.preventDefault(); setColumnsOpen(false); return; } if ((document.activeElement as HTMLElement | null)?.dataset.collectionCell === 'true') event.preventDefault(); }} className="app-modal-surface fixed left-1/2 top-1/2 z-[81] flex h-[calc(100vh-16px)] w-[calc(100vw-16px)] max-w-[1380px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border outline-none sm:h-[min(88vh,900px)] sm:w-[min(94vw,1380px)]">
+        <Dialog.Content aria-describedby={undefined} onEscapeKeyDown={(event) => { if (columnsOpen) { event.preventDefault(); setColumnsOpen(false); return; } if ((document.activeElement as HTMLElement | null)?.dataset.collectionCell === 'true') event.preventDefault(); }} className="app-modal-surface fixed left-1/2 top-1/2 z-[81] flex h-[calc(100vh-16px)] w-[calc(100vw-16px)] max-w-[1380px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-md border outline-none sm:h-[min(88vh,900px)] sm:w-[min(94vw,1380px)]">
           <header className="flex shrink-0 flex-wrap items-center gap-3 border-b border-border px-3 py-3 sm:px-5">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-secondary/20 bg-secondary/10 text-secondary">
               <TableProperties size={17} />

@@ -106,7 +106,7 @@ export function SessionCanvasEditor({
   return (
     <div className="flex h-[min(38rem,62vh)] min-h-0 w-full flex-col overflow-hidden p-4 sm:px-5">
       <div className="min-h-0 overflow-y-auto overscroll-contain pr-1">
-        <div className="flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/7 p-3">
+        <div className="flex items-start gap-3 rounded-md border border-primary/20 bg-primary/7 p-3">
           <ShieldCheck
             size={15}
             className="mt-0.5 shrink-0 text-primary"
@@ -140,7 +140,7 @@ export function SessionCanvasEditor({
           <legend className="text-meta font-medium">Canvas destination</legend>
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             <label
-              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-[transform,background-color,border-color] active:scale-[0.99] motion-reduce:transform-none ${
+              className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-[transform,background-color,border-color] active:scale-[0.99] motion-reduce:transform-none ${
                 mode === "existing"
                   ? "border-primary/40 bg-primary/8"
                   : "border-border bg-background/30 hover:bg-surface-2"
@@ -171,7 +171,7 @@ export function SessionCanvasEditor({
               </span>
             </label>
             <label
-              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-[transform,background-color,border-color] active:scale-[0.99] motion-reduce:transform-none ${
+              className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-[transform,background-color,border-color] active:scale-[0.99] motion-reduce:transform-none ${
                 mode === "new"
                   ? "border-primary/40 bg-primary/8"
                   : "border-border bg-background/30 hover:bg-surface-2"
@@ -254,7 +254,7 @@ export function SessionCanvasEditor({
           </label>
         )}
 
-        <div className="mt-4 grid gap-2 rounded-xl border border-border bg-background/35 p-3 sm:grid-cols-2">
+        <div className="mt-4 grid gap-2 rounded-md border border-border bg-background/35 p-3 sm:grid-cols-2">
           <div className="flex min-w-0 items-center gap-2">
             <FileText size={14} className="shrink-0 text-primary" />
             <div className="min-w-0">

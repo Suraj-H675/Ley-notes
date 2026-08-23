@@ -21,7 +21,7 @@ export class FeatureErrorBoundary extends Component<Props, State> {
     if (!this.state.error) return this.props.children;
     return (
       <div className={this.props.overlay ? 'fixed inset-0 z-[100] flex items-center justify-center bg-background p-6' : 'flex h-full min-h-60 items-center justify-center bg-background p-6'} role="alert">
-        <div className="max-w-md rounded-xl border border-destructive/30 bg-surface-1 p-6 text-center shadow-panel">
+        <div className="max-w-md rounded-md border border-destructive/30 bg-surface-1 p-6 text-center shadow-panel">
           <AlertTriangle size={24} className="mx-auto text-destructive" />
           <h2 className="mt-3 text-body font-semibold text-foreground">{this.props.feature} could not open</h2>
           <p className="mt-1 text-meta leading-relaxed text-muted-foreground">Your vault data is unchanged. Retry the feature; if it fails again, reload Ley to rebuild its local UI state.</p>

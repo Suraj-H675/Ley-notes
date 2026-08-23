@@ -47,7 +47,7 @@ export function SessionErasureEditor({
   return (
     <div className="flex max-h-[68vh] flex-col overflow-hidden">
       <div className="min-h-0 overflow-y-auto overscroll-contain p-4 sm:p-5">
-        <div className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/8 p-4">
+        <div className="flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/8 p-4">
           <LockKeyhole
             size={16}
             className="mt-0.5 shrink-0 text-destructive"
@@ -66,7 +66,7 @@ export function SessionErasureEditor({
           </div>
         </div>
 
-        <div className="mt-3 rounded-xl border border-border bg-background/35 p-4">
+        <div className="mt-3 rounded-md border border-border bg-background/35 p-4">
           <p className="text-micro font-semibold uppercase tracking-[0.12em] text-muted-foreground">
             Kept in place
           </p>

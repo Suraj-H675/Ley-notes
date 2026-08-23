@@ -232,7 +232,7 @@ export function MemorySearch({
       )}
 
       {error && (
-        <div className="max-w-3xl rounded-xl border border-destructive/25 bg-destructive/8 p-4 text-meta text-destructive">
+        <div className="max-w-3xl rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta text-destructive">
           {error}
         </div>
       )}
@@ -249,7 +249,7 @@ export function MemorySearch({
               key={suggestion}
               type="button"
               onClick={() => setQuery(suggestion)}
-              className="rounded-xl border border-border bg-surface-1 px-4 py-3 text-left text-meta text-muted-foreground transition-[background-color,color,transform] duration-150 hover:bg-surface-2 hover:text-foreground active:scale-[0.99] motion-reduce:transition-none"
+              className="rounded-md border border-border bg-surface-1 px-4 py-3 text-left text-meta text-muted-foreground transition-[background-color,color,transform] duration-150 hover:bg-surface-2 hover:text-foreground active:scale-[0.99] motion-reduce:transition-none"
             >
               {suggestion}
             </button>
@@ -274,7 +274,7 @@ export function MemorySearch({
           </div>
 
           {search.conflicts.length > 0 && (
-            <div className="rounded-xl border border-warning/25 bg-warning/8 p-4">
+            <div className="rounded-md border border-warning/25 bg-warning/8 p-4">
               <div className="flex items-center gap-2 text-meta font-semibold text-foreground">
                 <AlertTriangle size={15} className="text-warning" />
                 Memory needs interpretation

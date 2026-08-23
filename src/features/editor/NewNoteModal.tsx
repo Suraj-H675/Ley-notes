@@ -66,7 +66,7 @@ export function NewNoteModal({
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-[75]" />
-        <Dialog.Content aria-describedby={undefined} className="app-modal-surface app-modal-top fixed left-1/2 top-[16vh] z-[76] w-[460px] max-w-[calc(100vw-24px)] -translate-x-1/2 rounded-xl border outline-none">
+        <Dialog.Content aria-describedby={undefined} className="app-modal-surface app-modal-top fixed left-1/2 top-[16vh] z-[76] w-[460px] max-w-[calc(100vw-24px)] -translate-x-1/2 rounded-md border outline-none">
       <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
         <Dialog.Title className="flex items-center gap-2 border-b border-border px-4 py-3 font-medium tracking-tight"><FilePlus2 size={15} className="text-primary" />New note</Dialog.Title>
         <div className="space-y-4 p-4">

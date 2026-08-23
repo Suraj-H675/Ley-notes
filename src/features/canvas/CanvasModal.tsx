@@ -829,7 +829,7 @@ export function CanvasModal({
                 </ReactFlow>
               ) : (
                 <div className="flex h-full items-center justify-center p-6">
-                  <div className="max-w-sm rounded-2xl border border-border bg-surface-1 p-7 text-center shadow-sm">
+                  <div className="max-w-sm rounded-sm border border-border bg-surface-1 p-7 text-center shadow-sm">
                     <LayoutDashboard
                       size={28}
                       className="mx-auto mb-3 text-primary"
