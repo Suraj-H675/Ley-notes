@@ -256,6 +256,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the `tag:autosave-final` collection was opened at 390×844. The dialog stayed within the 390px document width, and the column picker remained fully visible.
 - The three-column table scrolled internally by 452px while the Name column stayed sticky. The document had no horizontal overflow.
 
+## Verified nested-folder Markdown links
+
+- On 2026-08-25, `docs/Link Source.md` and `guides/Link Target.md` were created in separate nested folders. Relative Markdown links with URL-encoded spaces and a heading anchor indexed correctly as two outgoing links.
+- Opening Link Target showed two linked mentions from Link Source, and clicking the outgoing-link row navigated to the intended note. Unencoded spaces in link destinations were not indexed; URL encoding is required. The browser reported no application errors.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
