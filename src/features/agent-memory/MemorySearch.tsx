@@ -340,7 +340,7 @@ function MemoryResult({
       disabled={!actionable}
       onClick={onOpen}
       className={cn(
-          "group flex w-full items-start gap-3 rounded-sm border border-border bg-surface-1 p-4 transition-[border-color,background-color] duration-150 hover:border-primary/45 hover:bg-white/[0.03] motion-reduce:transition-none",
+          "group flex w-full items-start gap-3 rounded-sm border border-border bg-surface-1 p-4 transition-[border-color,background-color] duration-150 hover:border-primary/45 hover:bg-surface-2/70 motion-reduce:transition-none",
         actionable &&
           "hover:border-primary/25 hover:bg-surface-2 hover:shadow-sm active:scale-[0.995]",
       )}

@@ -85,9 +85,9 @@ function GraphNodeImpl({ data }: NodeProps) {
         <div
           className="pointer-events-none absolute left-1/2 top-full mt-1.5 -translate-x-1/2 select-none whitespace-nowrap rounded-sm px-1.5 py-0.5 font-mono text-micro font-medium text-foreground"
           style={{
-            background: 'hsl(220 14% 9% / 0.92)',
-            border: '1px solid hsl(220 10% 22%)',
-            color: 'hsl(220 14% 92%)',
+            background: 'hsl(var(--foreground) / 0.94)',
+            border: '1px solid hsl(var(--foreground) / 0.3)',
+            color: 'hsl(var(--background))',
           }}
         >
           {truncate(d.label, 30)}

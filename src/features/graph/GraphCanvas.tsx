@@ -286,7 +286,7 @@ export function GraphCanvas({
           zoomOnPinch
           zoomOnScroll={false}
         >
-          <Background gap={32} size={1} color="hsl(220 10% 18%)" />
+          <Background gap={32} size={1} color="hsl(var(--border) / 0.55)" />
           <Controls showInteractive={false} />
         </ReactFlow>
       </ReactFlowProvider>
@@ -340,8 +340,8 @@ function nodeColor(
     case 'community':
       return communityPalette[attrs.community % communityPalette.length];
     case 'tag':
-      if (attrs.tags.length === 0) return 'hsl(220 10% 50%)';
-      return tagColors.get(attrs.tags[0]) ?? 'hsl(220 10% 50%)';
+      if (attrs.tags.length === 0) return 'hsl(var(--muted-foreground))';
+      return tagColors.get(attrs.tags[0]) ?? 'hsl(var(--muted-foreground))';
     case 'folder': {
       const hash = attrs.folder.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
       const hue = (hash * 47) % 360;

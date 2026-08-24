@@ -24,7 +24,7 @@ export function VaultLauncher({
           </div>
         </div>
 
-          <button type="button" disabled={busy} onClick={() => void onOpen()} className="group flex w-full items-center gap-4 rounded-sm border border-border bg-surface-2 p-4 text-left transition hover:border-primary/70 hover:bg-white/[0.045] disabled:pointer-events-none disabled:opacity-60">
+          <button type="button" disabled={busy} onClick={() => void onOpen()} className="group flex w-full items-center gap-4 rounded-sm border border-border bg-surface-2 p-4 text-left transition hover:border-primary/70 hover:bg-surface-3 disabled:pointer-events-none disabled:opacity-60">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-background text-primary">
             <FolderOpen size={19} />
           </div>

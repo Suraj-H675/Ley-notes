@@ -29,7 +29,7 @@ export function WebVaultLauncher({
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
-          <button type="button" disabled={!folderSupported || busy} onClick={onOpenFolder} className="group flex min-h-52 flex-col rounded-sm border border-primary/50 bg-primary/9 p-5 text-left transition hover:border-primary hover:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-45">
+          <button type="button" disabled={!folderSupported || busy} onClick={onOpenFolder} className="group flex min-h-52 flex-col rounded-sm border border-primary/50 bg-primary/9 p-5 text-left transition hover:border-primary hover:bg-primary/14 disabled:pointer-events-none disabled:opacity-45">
             <span className="flex size-10 items-center justify-center rounded-sm bg-primary/14 text-primary"><FolderOpen size={19} /></span>
             <span className="mt-5 font-semibold">Open a folder</span>
             <span className="mt-1 text-meta leading-5 text-muted-foreground">Read and write ordinary `.md` files. Best for ownership, Git, backups, and interoperability.</span>

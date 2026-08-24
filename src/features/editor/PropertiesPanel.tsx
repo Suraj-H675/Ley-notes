@@ -45,7 +45,7 @@ function PropertyRow({ name, value, onSave, onRemove }: { name: string; value: u
   }
 
   return (
-    <div className="group grid grid-cols-[140px_1fr_24px] items-center gap-2 rounded-sm px-1 py-1 text-meta hover:bg-white/[0.035]">
+    <div className="group grid grid-cols-[140px_1fr_24px] items-center gap-2 rounded-sm px-1 py-1 text-meta hover:bg-surface-2/60">
       <label htmlFor={`property-${name}`} className="truncate text-muted-foreground">{name}</label>
       <div className="min-w-0">
         <input
