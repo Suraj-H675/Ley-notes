@@ -73,6 +73,7 @@ describe('Settings filesystem trash restore', () => {
         onSwitchVault={vi.fn()}
         onClose={onClose}
         onOpenNote={onOpenNote}
+        launcherRef={{ current: null }}
       />,
     );
 
@@ -112,6 +113,7 @@ describe('Settings filesystem trash restore', () => {
         onSwitchVault={vi.fn()}
         onClose={onClose}
         onOpenNote={onOpenNote}
+        launcherRef={{ current: null }}
       />,
     );
 

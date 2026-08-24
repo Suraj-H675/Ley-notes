@@ -3,7 +3,7 @@
  * the `settings` table; theme also flips the document attribute live.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X, Download, FolderOpen, RefreshCw, Repeat2, RotateCcw, ShieldCheck, Trash2, Upload } from 'lucide-react';
@@ -41,6 +41,7 @@ export function SettingsModal({
   onSwitchVault,
   onClose,
   onOpenNote,
+  launcherRef,
 }: {
   open: boolean;
   vaultMode: 'desktop' | 'browser-folder' | 'browser-local';
@@ -50,6 +51,7 @@ export function SettingsModal({
   onSwitchVault: () => Promise<void>;
   onOpenNote: (id: string) => void;
   onClose: () => void;
+  launcherRef: RefObject<HTMLButtonElement | null>;
 }) {
   const theme = useUIStore((s) => s.theme);
   const setTheme = useUIStore((s) => s.setTheme);
@@ -214,7 +216,7 @@ export function SettingsModal({
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="app-modal-overlay fixed inset-0 z-50" />
-        <Dialog.Content aria-describedby={undefined} className="app-modal-surface fixed left-1/2 top-1/2 z-[51] flex max-h-[min(760px,92vh)] w-[520px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-md border outline-none">
+        <Dialog.Content aria-describedby={undefined} onCloseAutoFocus={(event) => { event.preventDefault(); launcherRef.current?.focus(); }} className="app-modal-surface fixed left-1/2 top-1/2 z-[51] flex max-h-[min(760px,92vh)] w-[520px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-md border outline-none">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <Dialog.Title className="text-body font-semibold">Settings</Dialog.Title>
           <Dialog.Close

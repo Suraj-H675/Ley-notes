@@ -160,6 +160,7 @@ export function Layout({
   const [agentMemoryOpen, setAgentMemoryOpen] = useState(false);
   const isNarrowViewport = useMediaQuery("(max-width: 767px)");
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const settingsToggleRef = useRef<HTMLButtonElement>(null);
   const desktopSidebarPreference = useRef(isNarrowViewport ? true : sidebarOpen);
   const wasNarrowViewport = useRef(isNarrowViewport);
   const [splitPercent, setSplitPercent] = useState(() => {
@@ -350,6 +351,7 @@ export function Layout({
             aria-hidden="true"
           />
           <Button
+            ref={settingsToggleRef}
             size="sm"
             variant="ghost"
             onClick={() => {
@@ -616,6 +618,7 @@ export function Layout({
                 nav.pushRecent(id);
               }}
               onClose={() => setSettingsOpen(false)}
+              launcherRef={settingsToggleRef}
             />
           </Suspense>
         </FeatureErrorBoundary>

@@ -167,6 +167,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, three rapid tag-bearing edits were typed consecutively into Project Beta before the save settled. The final editor content retained all three tags, and the sidebar tag index reported exactly `autosave-alpha`, `autosave-beta`, and `autosave-final`.
 - Reloading `/app` preserved the newest Markdown and the same three tag rows. The browser reported no CodeMirror plugin errors.
 
+## Verified Settings focus trap
+
+- On 2026-08-25, opening Settings moved focus inside the dialog, and twenty-five Tab presses kept focus within its focusable controls.
+- Closing with Escape returned focus to the Settings launcher. A runtime defect where focus fell back to `BODY` was fixed by wiring `onCloseAutoFocus` to the actual opener; the same behavior now works from the toolbar button and the `Ctrl/Cmd+,` hotkey. Type checking and lint pass.
+
 - Open a project whose Agent Memory is bound to the active filesystem vault. Promote a current trusted lesson and export a completed session through **To notes**; each creates and opens ordinary Markdown with the expected portable project/source ID, timestamp, tag, provenance warning, and visible content.
 - Rename and move both notes, repeat each action, and verify Ley opens the existing note without creating a duplicate. Create an unrelated title collision and verify the proposed link refuses to overwrite it.
 - Open a catalog project bound to another available vault while the first notes vault remains active. Both learning promotion and session export must fail before any note/index mutation, name both vault folders without revealing absolute paths, and succeed only after the bound vault is deliberately opened.
