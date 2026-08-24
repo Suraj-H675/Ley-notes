@@ -221,6 +221,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the in-note find-and-replace panel was opened at 320×568. All five inputs and six buttons remained fully reachable, including next, previous, match case, regexp, whole word, replace, and replace-all controls.
 - The panel stayed within the 320px document width with no horizontal overflow and remained beneath the mobile sidebar overlay.
 
+## Verified 390px bookmarks
+
+- On 2026-08-25, Project Beta was bookmarked and the sidebar overlay was opened at 390×844. The bookmark row under Notes remained fully visible and reachable.
+- The sidebar overlay stayed within the 390px document width with no horizontal overflow.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
