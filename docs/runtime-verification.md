@@ -271,6 +271,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the graph view was opened at 320×568. The controls panel scrolled independently by 155px, and all 22 controls remained reachable after scrolling.
 - The document stayed exactly 320px wide with no horizontal overflow.
 
+## Verified 320px workspace manager
+
+- On 2026-08-25, the Workspace layouts dialog was opened at 320×568. It stayed within the 320px document width, and all nine enabled controls remained fully reachable.
+- The document had no horizontal overflow.
+
 ## Verified nested-folder Markdown links
 
 - On 2026-08-25, `docs/Link Source.md` and `guides/Link Target.md` were created in separate nested folders. Relative Markdown links with URL-encoded spaces and a heading anchor indexed correctly as two outgoing links.
