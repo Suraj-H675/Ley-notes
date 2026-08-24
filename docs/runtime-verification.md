@@ -201,6 +201,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, opening Agent Memory from the browser-local vault showed the honest desktop-only boundary rather than a broken or partially available surface. The screen explains that a web page cannot safely read coding projects or serve local agents through stdio MCP, and that browser notes remain fully usable.
 - Graph history ingestion must be verified in Ley Desktop against a real initialized and bound project; this remains desktop/platform verification work rather than a browser-verifiable slice.
 
+## Verified 390px canvas behavior
+
+- On 2026-08-25, the Verification Board canvas was opened at 390×844 through the compact command palette. The canvas tab remained horizontally reachable, the tool shelf scrolled independently, and the graph retained a useful 501px height.
+- Repeated zoom-out reached 0.16×, comfortably below 0.5×, while the document stayed exactly 390px wide with no horizontal overflow.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
