@@ -104,6 +104,12 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Editing one property cell to `archived` committed the YAML value, removed that row immediately, and left the other active row intact.
 - The column picker added Path, and clicking its header cycled ascending/descending sort. Saving the query preserved both the query and the four-column/sorted layout after closing and reopening from Saved searches; ad-hoc table changes were not silently saved.
 
+## Verified browser revision workflow
+
+- On 2026-08-25, Project Alpha received two explicit save checkpoints after separate body edits. The History dock exposed both snapshots with relative timestamps.
+- Selecting the earlier snapshot restored it through the normal editor path: the body returned to empty while the `status` frontmatter remained intact.
+- Closing History, reloading `/app`, and reopening History preserved the same restored note content and revision timeline; no stale in-memory state was required.
+
 - Open a project whose Agent Memory is bound to the active filesystem vault. Promote a current trusted lesson and export a completed session through **To notes**; each creates and opens ordinary Markdown with the expected portable project/source ID, timestamp, tag, provenance warning, and visible content.
 - Rename and move both notes, repeat each action, and verify Ley opens the existing note without creating a duplicate. Create an unrelated title collision and verify the proposed link refuses to overwrite it.
 - Open a catalog project bound to another available vault while the first notes vault remains active. Both learning promotion and session export must fail before any note/index mutation, name both vault folders without revealing absolute paths, and succeed only after the bound vault is deliberately opened.
