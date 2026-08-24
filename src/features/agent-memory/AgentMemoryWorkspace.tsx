@@ -1665,7 +1665,7 @@ function SessionInspector({
                                         key={`${artifact.artifactPath}:${artifact.startLine}`}
                                         title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
                                         onClick={() => onEvidence(artifact)}
-                                        className="max-w-full touch-manipulation truncate rounded-md border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                                        className="max-w-full touch-manipulation truncate rounded-sm border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
                                       >
                                         {artifact.artifactPath}:
                                         {artifact.startLine}
@@ -2211,7 +2211,7 @@ function LearningInspector({
                                     onClick={() =>
                                       onArtifact(artifact.artifactPath)
                                     }
-                                    className="max-w-full touch-manipulation truncate rounded-md border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                                    className="max-w-full touch-manipulation truncate rounded-sm border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
                                   >
                                     {artifact.artifactPath}:{artifact.startLine}
                                   </button>
@@ -2513,7 +2513,7 @@ function ProjectOnboarding({
           </p>
           {projectPath && (
             <p
-              className="mt-4 truncate rounded-md bg-background/40 px-3 py-2 font-mono text-micro text-muted-foreground"
+              className="mt-4 truncate rounded-sm bg-background/40 px-3 py-2 font-mono text-micro text-muted-foreground"
               title={projectPath}
             >
               {projectPath}

@@ -388,7 +388,7 @@ export function CapturePrivacyPanel({
               {settings.approvedRoots.map((root) => (
                 <span
                   key={root}
-                  className="rounded-md bg-surface-3 px-2 py-1 font-mono text-micro"
+                  className="rounded-sm bg-surface-3 px-2 py-1 font-mono text-micro"
                 >
                   {root}
                 </span>
