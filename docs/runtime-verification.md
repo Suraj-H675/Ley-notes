@@ -127,6 +127,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the saved-search row and its open, rename, and delete actions were reachable at 320×568. The sidebar overlay stayed at the 320px document width with no horizontal overflow.
 - Renaming the query inline worked immediately, and deleting it removed the row without leaving stale actions. No console errors were produced.
 
+## Verified tab session restore
+
+- On 2026-08-25, a Welcome → Project Alpha → Project Beta tab set was reduced to two tabs by closing Welcome, then Project Alpha was activated as the non-final tab.
+- Reloading `/app` restored the exact Project Alpha → Project Beta tab order, kept Project Alpha active, and preserved the matching recent-note order. The browser reported no application errors.
+
 - Open a project whose Agent Memory is bound to the active filesystem vault. Promote a current trusted lesson and export a completed session through **To notes**; each creates and opens ordinary Markdown with the expected portable project/source ID, timestamp, tag, provenance warning, and visible content.
 - Rename and move both notes, repeat each action, and verify Ley opens the existing note without creating a duplicate. Create an unrelated title collision and verify the proposed link refuses to overwrite it.
 - Open a catalog project bound to another available vault while the first notes vault remains active. Both learning promotion and session export must fail before any note/index mutation, name both vault folders without revealing absolute paths, and succeed only after the bound vault is deliberately opened.
