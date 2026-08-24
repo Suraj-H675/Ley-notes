@@ -266,6 +266,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, `guides/Link Target.md` was renamed to “Renamed Target” through the title input. Both incoming Markdown-link destinations in `docs/Link Source.md` rewrote automatically to `../guides/Renamed%20Target.md`, preserving the heading anchor.
 - The outgoing-link panel still indexed both links, and clicking one navigated to the renamed note. The browser reported no application errors.
 
+## Verified missing Markdown destinations
+
+- On 2026-08-25, a link to `../guides/Missing%20File.md` was added from `docs/Link Source.md`. The outgoing-link panel showed it as a visible “Missing File” row without creating a clickable page button.
+- No ghost note appeared in the sidebar or pages list. The missing destination stayed visible as missing rather than being auto-created.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
