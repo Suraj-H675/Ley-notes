@@ -246,6 +246,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the quick-switcher filter chips were viewed at 390×844. All eight chips (Tag, Path, Title, Property, To do, Done, Exclude, and Table) fit within the 390px row without requiring horizontal scroll.
 - The document stayed exactly 390px wide with no horizontal overflow.
 
+## Verified 320px filter chips
+
+- On 2026-08-25, the same filter chip row was viewed at 320×568. The chips scrolled horizontally inside their own 292px row with a 619px overflow range.
+- The document stayed exactly 320px wide with no horizontal overflow, confirming the chip row scrolls without widening the page.
+
 ## Verified 390px workspace manager
 
 - On 2026-08-25, the Workspace layouts dialog was opened at 390×844. It stayed within the 390px document width, and all nine enabled controls remained fully reachable.
