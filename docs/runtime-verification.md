@@ -191,6 +191,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 
 ## Release evidence
 
+## Verified JSON Canvas workflow
+
+- On 2026-08-25, a new “Verification Board” canvas was created in the browser-local vault. It received a named group, a text card, a Project Beta note card, and an `https://example.com` link card.
+- The group and text card labels were edited, and a two-click connection from the text card to the link card was labeled “Verified link.” After saving, closing, reloading `/app`, and reopening the canvas, every card type, label, and the labeled connection persisted.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
