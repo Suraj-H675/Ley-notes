@@ -116,6 +116,12 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Loading Focus restored one pane; loading Research restored the split with both intended notes.
 - Closing the dialog, reloading `/app`, reopening Workspace layouts, and loading each saved layout preserved their distinct arrangements after persistence. The browser reported no page errors during the pass.
 
+## Verified 390px collections behavior
+
+- On 2026-08-25, the same live `property:status=active` collection was reopened at 390×844. The document stayed at 390px with no horizontal overflow, and the dialog content remained within 372px.
+- The column picker opened and added Path without leaving the viewport. The four-column table scrolled internally by 676px while the Name column remained sticky.
+- The browser console reported no application errors during the pass.
+
 - Open a project whose Agent Memory is bound to the active filesystem vault. Promote a current trusted lesson and export a completed session through **To notes**; each creates and opens ordinary Markdown with the expected portable project/source ID, timestamp, tag, provenance warning, and visible content.
 - Rename and move both notes, repeat each action, and verify Ley opens the existing note without creating a duplicate. Create an unrelated title collision and verify the proposed link refuses to overwrite it.
 - Open a catalog project bound to another available vault while the first notes vault remains active. Both learning promotion and session export must fail before any note/index mutation, name both vault folders without revealing absolute paths, and succeed only after the bound vault is deliberately opened.
