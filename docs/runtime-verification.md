@@ -305,6 +305,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the “Autosave test” saved-search row was viewed at 320×568. Its open-as-table, rename, and delete actions all remained fully visible and reachable.
 - The sidebar overlay stayed within the 320px document width with no horizontal overflow.
 
+## Verified 320px bookmarks
+
+- On 2026-08-25, the Project Beta bookmark row was viewed at 320×568. The row remained fully visible and reachable within the sidebar overlay.
+- The sidebar overlay stayed within the 320px document width with no horizontal overflow.
+
 ## Verified nested-folder Markdown links
 
 - On 2026-08-25, `docs/Link Source.md` and `guides/Link Target.md` were created in separate nested folders. Relative Markdown links with URL-encoded spaces and a heading anchor indexed correctly as two outgoing links.
