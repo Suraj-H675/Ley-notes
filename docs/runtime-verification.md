@@ -251,6 +251,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the Workspace layouts dialog was opened at 390×844. It stayed within the 390px document width, and all nine enabled controls remained fully reachable.
 - The layout list had an independent internal scroll container. It did not overflow at this content size, but the mechanism was present and separate from the document.
 
+## Verified 390px collection dialog
+
+- On 2026-08-25, the `tag:autosave-final` collection was opened at 390×844. The dialog stayed within the 390px document width, and the column picker remained fully visible.
+- The three-column table scrolled internally by 452px while the Name column stayed sticky. The document had no horizontal overflow.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
