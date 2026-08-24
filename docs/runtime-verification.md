@@ -241,6 +241,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the same “Autosave test” row was viewed at 320×568. Its open-as-table, rename, and delete actions all remained fully visible and reachable.
 - The sidebar overlay stayed within the 320px document width with no horizontal overflow.
 
+## Verified 390px filter chips
+
+- On 2026-08-25, the quick-switcher filter chips were viewed at 390×844. All eight chips (Tag, Path, Title, Property, To do, Done, Exclude, and Table) fit within the 390px row without requiring horizontal scroll.
+- The document stayed exactly 390px wide with no horizontal overflow.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
