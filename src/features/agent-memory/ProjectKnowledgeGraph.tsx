@@ -310,7 +310,7 @@ export function ProjectKnowledgeGraph({
                   );
                 }}
                 disabled={!history || history.entries.length === 0}
-                className="h-10 w-full appearance-none rounded-md border border-border bg-surface-1 pl-9 pr-9 text-meta text-foreground outline-none transition-[border-color,box-shadow] focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-60"
+                className="h-10 w-full appearance-none rounded-md border border-border bg-surface-1 pl-9 pr-9 text-meta text-foreground outline-none transition-[border-color,box-shadow] focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/35 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {!history && (
                   <option value={view?.graphSnapshotId ?? ""}>
@@ -349,7 +349,7 @@ export function ProjectKnowledgeGraph({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="File, symbol, package…"
-                className="h-10 w-full rounded-md border border-border bg-surface-1 pl-9 pr-3 text-meta text-foreground outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/20"
+                className="h-10 w-full rounded-md border border-border bg-surface-1 pl-9 pr-3 text-meta text-foreground outline-none transition-[border-color,box-shadow] placeholder:text-muted-foreground/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/35"
               />
             </span>
           </label>

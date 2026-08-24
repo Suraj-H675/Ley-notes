@@ -83,7 +83,7 @@ export function SessionRenameEditor({
                 );
               }}
               aria-invalid={Boolean(nameError)}
-              className={`mt-1.5 w-full rounded-md border bg-background/45 px-3 py-2 text-meta outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+              className={`mt-1.5 w-full rounded-md border bg-background/45 px-3 py-2 text-meta outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary ${
                 nameError
                   ? "border-destructive text-destructive"
                   : "border-border text-foreground"
@@ -116,7 +116,7 @@ export function SessionRenameEditor({
                 );
               }}
               aria-invalid={Boolean(reasonError)}
-              className={`mt-1.5 w-full resize-none rounded-md border bg-background/45 px-3 py-2 text-meta outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+              className={`mt-1.5 w-full resize-none rounded-md border bg-background/45 px-3 py-2 text-meta outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary ${
                 reasonError
                   ? "border-destructive text-destructive"
                   : "border-border text-foreground"

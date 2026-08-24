@@ -86,7 +86,7 @@ export function LearningCorrectionEditor({
             disabled={busy}
             onChange={(event) => setTitle(event.target.value)}
             aria-invalid={Boolean(titleError)}
-            className={`mt-1.5 w-full rounded-md border bg-background/45 px-3 py-2 text-meta outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+            className={`mt-1.5 w-full rounded-md border bg-background/45 px-3 py-2 text-meta outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary ${
               titleError
                 ? "border-destructive text-destructive"
                 : "border-border text-foreground"
@@ -109,7 +109,7 @@ export function LearningCorrectionEditor({
             disabled={busy}
             onChange={(event) => setGuidance(event.target.value)}
             aria-invalid={Boolean(guidanceError)}
-            className={`mt-1.5 w-full resize-y rounded-md border bg-background/45 px-3 py-2 text-meta leading-5 outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+            className={`mt-1.5 w-full resize-y rounded-md border bg-background/45 px-3 py-2 text-meta leading-5 outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary ${
               guidanceError
                 ? "border-destructive text-destructive"
                 : "border-border text-foreground"
@@ -155,7 +155,7 @@ export function LearningCorrectionEditor({
             placeholder="Explain what changed or what the previous claim got wrong…"
             onChange={(event) => setReason(event.target.value)}
             aria-invalid={Boolean(reasonError)}
-            className={`mt-1.5 w-full resize-none rounded-md border bg-background/45 px-3 py-2 text-meta outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary ${
+            className={`mt-1.5 w-full resize-none rounded-md border bg-background/45 px-3 py-2 text-meta outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary ${
               reasonError
                 ? "border-destructive text-destructive"
                 : "border-border text-foreground"

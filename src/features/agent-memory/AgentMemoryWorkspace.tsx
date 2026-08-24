@@ -2409,7 +2409,7 @@ function LearningInspector({
                     onChange={(event) => setNote(event.target.value)}
                     placeholder={reviewPlaceholder(action)}
                     rows={2}
-                    className="mt-2 w-full resize-none rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+                    className="mt-2 w-full resize-none rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary"
                   />
                   {error && (
                     <p

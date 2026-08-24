@@ -60,7 +60,7 @@ export function LearningPromotionEditor({
             maxLength={256}
             disabled={busy}
             onChange={(event) => setTitle(event.target.value)}
-            className="mt-1.5 w-full rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary"
+            className="mt-1.5 w-full rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary"
           />
         </label>
 
