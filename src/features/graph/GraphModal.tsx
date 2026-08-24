@@ -142,12 +142,12 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-        <button ref={controlsToggleRef} type="button" onClick={() => setControlsOpen((value) => !value)} aria-expanded={controlsOpen} aria-controls="graph-controls-panel" className="flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-meta text-muted-foreground md:hidden"><SlidersHorizontal size={12} />Controls</button>
+        <button ref={controlsToggleRef} type="button" onClick={() => setControlsOpen((value) => !value)} aria-expanded={controlsOpen} aria-controls="graph-controls-panel" className="flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2 py-1 text-meta text-muted-foreground outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary md:hidden"><SlidersHorizontal size={12} />Controls</button>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close graph view"
-          className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-meta text-muted-foreground hover:bg-surface-3"
+          className="flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-meta text-muted-foreground outline-none transition-colors hover:bg-surface-3 focus-visible:ring-2 focus-visible:ring-primary"
         >
           <X size={12} />
           <span className="hidden sm:inline">Close</span>
@@ -158,7 +158,7 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
 
       {/* Body: sidebar + canvas */}
       <div className="relative flex flex-1 overflow-hidden">
-        {controlsOpen && <button type="button" onClick={closeControls} className="absolute inset-0 z-10 bg-background/55 backdrop-blur-sm md:hidden" aria-label="Close graph controls" />}
+        {controlsOpen && <button type="button" onClick={closeControls} className="absolute inset-0 z-10 bg-background/55 outline-none backdrop-blur-sm focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary md:hidden" aria-label="Close graph controls" />}
         <aside
           ref={controlsPanelRef}
           id="graph-controls-panel"

@@ -76,7 +76,7 @@ export function GraphControls({ state, stats }: GraphControlsProps) {
                 type="button"
                 onClick={() => state.setColorMode(m)}
                 className={cn(
-                  'rounded-sm border px-2 py-1 text-meta capitalize',
+                  'rounded-sm border px-2 py-1 text-meta capitalize outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary',
                   state.colorMode === m
                     ? 'border-primary bg-primary/15 text-foreground'
                     : 'border-border bg-surface-1 text-muted-foreground-strong hover:bg-surface-2',

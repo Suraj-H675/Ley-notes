@@ -572,7 +572,7 @@ export function CanvasModal({
                   onClick={() => void removeActiveCanvas()}
                   aria-label={deleteArmed ? "Confirm delete canvas" : "Delete canvas"}
                   title={deleteArmed ? "Confirm delete canvas" : "Delete canvas"}
-                  className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-meta ${deleteArmed ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-surface-3 hover:text-destructive"}`}
+                  className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-meta outline-none transition-colors focus-visible:ring-2 focus-visible:ring-destructive ${deleteArmed ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-surface-3 hover:text-destructive"}`}
                 >
                   <Trash2 size={13} />
                   {deleteArmed ? (
@@ -586,7 +586,7 @@ export function CanvasModal({
                 type="button"
                 disabled={!dirty || !activePath}
                 onClick={() => void persist()}
-                className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-meta font-medium text-primary-foreground disabled:opacity-40"
+                className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-meta font-medium text-primary-foreground outline-none transition-transform hover:opacity-90 active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:opacity-40"
               >
                 <Save size={13} />
                 Save
@@ -594,7 +594,7 @@ export function CanvasModal({
               <button
                 type="button"
                 onClick={() => void closeCanvas()}
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground"
+                className="rounded-md p-1.5 text-muted-foreground outline-none transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
                 aria-label="Close canvas"
               >
                 <X size={16} />
@@ -612,7 +612,7 @@ export function CanvasModal({
                     key={canvas.path}
                     type="button"
                     onClick={() => void chooseCanvas(canvas)}
-                    className={`min-w-32 shrink-0 rounded-md px-2 py-1.5 text-left text-meta md:w-full ${canvas.path === activePath ? "bg-surface-3 text-foreground" : "text-muted-foreground-strong hover:bg-surface-2"}`}
+                    className={`min-w-32 shrink-0 rounded-sm px-2 py-1.5 text-left text-meta outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${canvas.path === activePath ? "bg-surface-3 text-foreground" : "text-muted-foreground-strong hover:bg-surface-2"}`}
                   >
                     {canvas.name}
                   </button>
@@ -626,12 +626,12 @@ export function CanvasModal({
                     if (event.key === "Enter") void addCanvas();
                   }}
                   placeholder="New canvas"
-                  className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-meta outline-none focus:border-primary"
+                  className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-meta outline-none transition-[border-color,box-shadow] focus:border-primary focus:ring-2 focus:ring-primary/35"
                 />
                 <button
                   type="button"
                   onClick={() => void addCanvas()}
-                  className="rounded-md border border-border p-2 hover:bg-surface-2"
+                  className="rounded-md border border-border p-2 outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
                   aria-label="Create canvas"
                 >
                   <Plus size={13} />
@@ -643,7 +643,7 @@ export function CanvasModal({
                     <button
                       type="button"
                       onClick={addText}
-                      className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-meta hover:bg-surface-2"
+                      className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-meta outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       <StickyNote size={13} />
                       Text
@@ -651,7 +651,7 @@ export function CanvasModal({
                     <button
                       type="button"
                       onClick={addGroup}
-                      className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-meta hover:bg-surface-2"
+                      className="flex items-center gap-2 rounded-md border border-border px-2 py-1.5 text-meta outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       <Boxes size={13} />
                       Group
@@ -661,7 +661,7 @@ export function CanvasModal({
                     <select
                       value={selectedPage}
                       onChange={(event) => setSelectedPage(event.target.value)}
-                      className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-micro outline-none"
+                      className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-micro outline-none transition-[border-color,box-shadow] focus:border-primary focus:ring-2 focus:ring-primary/35"
                     >
                       <option value="">Choose note…</option>
                       {pages.map((page) => (
@@ -674,7 +674,7 @@ export function CanvasModal({
                       type="button"
                       onClick={addFile}
                       disabled={!selectedPage}
-                      className="rounded-md border border-border p-2 disabled:opacity-40"
+                      className="rounded-md border border-border p-2 outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40"
                       aria-label="Add note card"
                     >
                       <Link2 size={13} />
@@ -689,13 +689,13 @@ export function CanvasModal({
                       }}
                       placeholder="https://example.com"
                       aria-label="Link card URL"
-                      className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-micro outline-none focus:border-primary"
+                      className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-micro outline-none transition-[border-color,box-shadow] focus:border-primary focus:ring-2 focus:ring-primary/35"
                     />
                     <button
                       type="button"
                       onClick={addLink}
                       disabled={!linkUrl.trim()}
-                      className="rounded-md border border-border p-2 disabled:opacity-40"
+                      className="rounded-md border border-border p-2 outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40"
                       aria-label="Add link card"
                     >
                       <ExternalLink size={13} />
@@ -727,12 +727,12 @@ export function CanvasModal({
                             }
                             placeholder="Connection label"
                             aria-label="Connection label"
-                            className="min-w-0 flex-1 rounded-md border border-border bg-surface-1 px-2 py-1.5 text-meta outline-none focus:border-primary"
+                            className="min-w-0 flex-1 rounded-md border border-border bg-surface-1 px-2 py-1.5 text-meta outline-none transition-[border-color,box-shadow] focus:border-primary focus:ring-2 focus:ring-primary/35"
                           />
                           <button
                             type="button"
                             onClick={removeSelectedEdge}
-                            className="rounded-md border border-border p-2 text-muted-foreground hover:bg-surface-2 hover:text-destructive"
+                            className="rounded-md border border-border p-2 text-muted-foreground outline-none transition-colors hover:bg-surface-2 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive"
                             aria-label="Delete connection"
                           >
                             <Trash2 size={13} />
@@ -762,7 +762,7 @@ export function CanvasModal({
                       </div>
                       {selectedNode?.type === "group" && (
                         <div className="flex gap-1">
-                          <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border border-border px-2 py-1.5 text-meta hover:bg-surface-2">
+                          <label className="flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-1 rounded-md border border-border px-2 py-1.5 text-meta outline-none transition-colors hover:bg-surface-2 has-focus-visible:ring-2 has-focus-visible:ring-primary">
                             <ImageIcon size={13} />
                             {selectedNode.background ? "Replace image" : "Set image"}
                             <input
@@ -779,7 +779,7 @@ export function CanvasModal({
                             <button
                               type="button"
                               onClick={removeSelectionBackground}
-                              className="rounded-md border border-border p-2 text-muted-foreground hover:bg-surface-2 hover:text-destructive"
+                              className="rounded-md border border-border p-2 text-muted-foreground outline-none transition-colors hover:bg-surface-2 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive"
                               aria-label="Remove background"
                             >
                               <Trash2 size={13} />
