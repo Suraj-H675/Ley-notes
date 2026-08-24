@@ -290,6 +290,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 
 - On 2026-08-25, the graph view was zoomed out repeatedly at 320×568. It reached 0.21×, comfortably below 0.5×, while the document stayed exactly 320px wide with no horizontal overflow.
 
+## Verified 320px collection dialog
+
+- On 2026-08-25, the `tag:autosave-final` collection was opened at 320×568. The dialog stayed within the 320px document width, and the column picker remained fully visible.
+- The table scrolled internally by 522px while the Name column stayed sticky. The document had no horizontal overflow.
+
 ## Verified nested-folder Markdown links
 
 - On 2026-08-25, `docs/Link Source.md` and `guides/Link Target.md` were created in separate nested folders. Relative Markdown links with URL-encoded spaces and a heading anchor indexed correctly as two outgoing links.
