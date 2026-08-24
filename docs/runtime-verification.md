@@ -196,6 +196,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
 - The document remained exactly 320px wide with no horizontal overflow, and the oversized layout started from a reachable top rather than being vertically centered above it.
 
+## Verified 320px authoring layout
+
+- On 2026-08-25, the editor was viewed at 320×568. The title retained a useful 159px width, secondary actions collapsed to labeled icons, and all eight formatting toolbelt controls remained visible.
+- The CodeMirror document scrolled independently while the document stayed exactly 320px wide with no horizontal overflow.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
