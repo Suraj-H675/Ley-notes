@@ -238,7 +238,7 @@ export function SettingsModal({
                     db.settings.put({ key: 'theme', value: t });
                   }}
                   className={cn(
-                    'flex-1 rounded-md border px-3 py-2 text-left text-meta',
+                    'flex-1 rounded-sm border px-3 py-2 text-left text-meta outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary',
                     theme === t
                       ? 'border-primary bg-primary/10 text-foreground'
                       : 'border-border bg-surface-2 text-muted-foreground-strong hover:bg-surface-3',
@@ -262,7 +262,7 @@ export function SettingsModal({
                 defaultValue={templateFolder ?? 'templates'}
                 key={templateFolder ?? 'templates'}
                 onBlur={(event) => void db.settings.put({ key: 'template-folder', value: event.target.value.trim() || 'templates' })}
-                className="h-8 rounded-md border border-border bg-surface-1 px-2 font-mono text-meta text-foreground focus:border-primary focus:outline-none"
+                className="h-8 rounded-md border border-border bg-surface-1 px-2 font-mono text-meta text-foreground focus:border-primary focus:ring-2 focus:ring-primary/35 focus:outline-none"
                 placeholder="templates"
               />
               <span className="text-micro text-muted-foreground">Markdown files in this vault folder appear in the new-note dialog.</span>
@@ -278,7 +278,7 @@ export function SettingsModal({
                 defaultValue={dailyFormat ?? 'yyyy-MM-dd'}
                 key={dailyFormat ?? 'default'}
                 onBlur={(e) => void saveFormat(e.target.value)}
-                className="h-8 rounded-md border border-border bg-surface-1 px-2 text-meta text-foreground focus:border-primary focus:outline-none"
+                className="h-8 rounded-md border border-border bg-surface-1 px-2 text-meta text-foreground focus:border-primary focus:ring-2 focus:ring-primary/35 focus:outline-none"
                 placeholder="yyyy-MM-dd"
               />
               <span className="text-micro text-muted-foreground">
@@ -288,7 +288,7 @@ export function SettingsModal({
             </label>
             <label className="mt-3 flex flex-col gap-1 text-meta text-muted-foreground-strong">
               Daily note template
-              <select value={dailyTemplatePath ?? ''} onChange={(event) => void db.settings.put({ key: 'daily-note-template-path', value: event.target.value })} className="h-8 rounded-md border border-border bg-surface-1 px-2 text-meta text-foreground focus:border-primary focus:outline-none">
+              <select value={dailyTemplatePath ?? ''} onChange={(event) => void db.settings.put({ key: 'daily-note-template-path', value: event.target.value })} className="h-8 rounded-md border border-border bg-surface-1 px-2 text-meta text-foreground focus:border-primary focus:ring-2 focus:ring-primary/35 focus:outline-none">
                 <option value="">Built-in daily note</option>
                 {vaultTemplates.map((template) => <option key={template.id} value={template.path}>{template.title}</option>)}
               </select>
@@ -302,7 +302,7 @@ export function SettingsModal({
                 <div className="flex items-center gap-2 font-medium text-foreground"><FolderOpen size={14} className="text-secondary" />Already portable</div>
                 <p className="mt-1 leading-relaxed">This vault is an ordinary folder. Back it up, sync it, zip it, or commit it with your normal filesystem tools.</p>
                 <div className="mt-2 flex items-center gap-1.5 text-micro text-muted-foreground"><span className={`size-1.5 rounded-full ${vaultMode === 'desktop' && watcherStatus === 'watching' ? 'bg-success' : watcherStatus === 'error' ? 'bg-destructive' : 'bg-muted-foreground'}`} />{vaultMode === 'desktop' ? watcherStatus === 'watching' ? 'Watching external changes live' : watcherStatus === 'error' ? 'Live watcher unavailable · focus and manual refresh remain active' : 'Starting live filesystem watcher…' : 'Refreshes after returning to Ley or on request'}</div>
-                <button type="button" disabled={vaultActionBusy} onClick={() => void handleRefreshVault()} className="mt-3 flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-meta text-foreground hover:bg-surface-3 disabled:opacity-50"><RefreshCw size={13} className={vaultActionBusy ? 'animate-spin motion-reduce:animate-none' : ''} />Refresh from folder</button>
+                <button type="button" disabled={vaultActionBusy} onClick={() => void handleRefreshVault()} className="mt-3 flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-meta text-foreground outline-none transition-colors hover:bg-surface-3 focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"><RefreshCw size={13} className={vaultActionBusy ? 'animate-spin motion-reduce:animate-none' : ''} />Refresh from folder</button>
               </div>
             ) : <><div className="flex gap-2">
               <button
@@ -335,12 +335,12 @@ export function SettingsModal({
             <div className="mt-3 rounded-md border border-border bg-surface-2 p-3 text-meta text-muted-foreground">
               <div className="flex items-center gap-2 font-medium text-foreground"><ShieldCheck size={14} className="text-secondary" />On-device browser storage</div>
               <p className="mt-1 leading-relaxed">Ley stores this vault on this device. {storagePersistence === 'persistent' ? 'This browser has protected Ley from automatic storage cleanup.' : 'Your browser may clear this vault under storage pressure or when site data is removed, so keep ZIP backups.'}</p>
-              {storagePersistence === 'best-effort' && <button type="button" onClick={() => void requestBrowserStoragePersistence().then(setStoragePersistence)} className="mt-3 rounded-md border border-border bg-background px-2.5 py-1.5 text-meta text-foreground hover:bg-surface-3">Protect local storage</button>}
+              {storagePersistence === 'best-effort' && <button type="button" onClick={() => void requestBrowserStoragePersistence().then(setStoragePersistence)} className="mt-3 rounded-md border border-border bg-background px-2.5 py-1.5 text-meta text-foreground outline-none transition-colors hover:bg-surface-3 focus-visible:ring-2 focus-visible:ring-primary">Protect local storage</button>}
             </div>
             {transferStatus && <div className="mt-1 text-meta text-secondary" role="status">{transferStatus}</div>}
             </>}
-            <button type="button" onClick={() => { onClose(); void onSwitchVault(); }} className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-3 py-2 text-meta text-muted-foreground-strong hover:bg-surface-2 hover:text-foreground"><Repeat2 size={13} />{vaultMode === 'desktop' ? 'Open another folder' : 'Change vault or storage'}</button>
-            {vaultActionStatus && <button type="button" onClick={() => setVaultActionStatus(null)} className="mt-2 text-left text-micro text-secondary" role="status">{vaultActionStatus}</button>}
+            <button type="button" onClick={() => { onClose(); void onSwitchVault(); }} className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-md border border-border px-3 py-2 text-meta text-muted-foreground-strong outline-none transition-colors hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"><Repeat2 size={13} />{vaultMode === 'desktop' ? 'Open another folder' : 'Change vault or storage'}</button>
+            {vaultActionStatus && <button type="button" onClick={() => setVaultActionStatus(null)} className="mt-2 text-left text-micro text-secondary outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-primary rounded-sm" role="status">{vaultActionStatus}</button>}
           </section>
 
           {!filesystemVault && <section>
@@ -357,12 +357,12 @@ export function SettingsModal({
                     <div className="truncate text-meta font-medium text-foreground">{page.title}</div>
                     <div className="truncate font-mono text-micro text-muted-foreground">{page.path}</div>
                   </div>
-                  <button type="button" onClick={() => void handleRestore(page.id)} className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label={`Restore ${page.title}`} title="Restore"><RotateCcw size={13} /></button>
-                  <button type="button" onClick={() => void handleErase(page.id)} className={cn('flex items-center gap-1 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive', eraseArmed === page.id && 'bg-destructive text-destructive-foreground')} aria-label={`Permanently delete ${page.title}`} title={eraseArmed === page.id ? 'Click again to permanently delete' : 'Permanently delete'}><Trash2 size={13} />{eraseArmed === page.id && <span className="text-micro">Confirm</span>}</button>
+                  <button type="button" onClick={() => void handleRestore(page.id)} className="rounded-md border border-border p-1.5 text-muted-foreground outline-none transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary" aria-label={`Restore ${page.title}`} title="Restore"><RotateCcw size={13} /></button>
+                  <button type="button" onClick={() => void handleErase(page.id)} className={cn('flex items-center gap-1 rounded-md p-1.5 text-muted-foreground outline-none transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive', eraseArmed === page.id && 'bg-destructive text-destructive-foreground')} aria-label={`Permanently delete ${page.title}`} title={eraseArmed === page.id ? 'Click again to permanently delete' : 'Permanently delete'}><Trash2 size={13} />{eraseArmed === page.id && <span className="text-micro">Confirm</span>}</button>
                 </div>)}
               </div>
             )}
-            {trashStatus && <button type="button" onClick={() => setTrashStatus(null)} className="mt-2 text-left text-micro text-secondary" role="status">{trashStatus}</button>}
+            {trashStatus && <button type="button" onClick={() => setTrashStatus(null)} className="mt-2 text-left text-micro text-secondary outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-primary rounded-sm" role="status">{trashStatus}</button>}
           </section>}
 
           {filesystemVault && <section>
@@ -381,7 +381,7 @@ export function SettingsModal({
                     <div className="truncate text-meta font-medium text-foreground">{file.path.split('/').at(-1)?.replace(/\.md$/i, '')}</div>
                     <div className="truncate font-mono text-micro text-muted-foreground">{file.path}</div>
                   </div>
-                  <button type="button" onClick={() => void handleRestoreTrashed(file.path)} className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label={`Restore ${file.path}`} title="Restore"><RotateCcw size={13} /></button>
+                  <button type="button" onClick={() => void handleRestoreTrashed(file.path)} className="rounded-md border border-border p-1.5 text-muted-foreground outline-none transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary" aria-label={`Restore ${file.path}`} title="Restore"><RotateCcw size={13} /></button>
                 </div>)}
               </div>
             )}
