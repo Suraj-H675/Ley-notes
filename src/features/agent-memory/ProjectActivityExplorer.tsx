@@ -715,7 +715,7 @@ function ActivitySkeleton() {
       {[0, 1, 2].map((item) => (
         <div
           key={item}
-          className="h-40 animate-pulse rounded-md border border-border bg-surface-1"
+          className="h-40 animate-pulse rounded-sm border border-border bg-surface-1/60"
         />
       ))}
     </div>

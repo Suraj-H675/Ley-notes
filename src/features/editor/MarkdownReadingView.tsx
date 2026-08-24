@@ -127,7 +127,7 @@ function AttachmentImage({ path, alt }: { path: string; alt: string }) {
   }, [path]);
 
   if (failed) return <span className="inline-flex rounded-sm border border-dashed border-border px-3 py-2 text-meta text-muted-foreground">Missing attachment: {alt || path}</span>;
-  if (!source) return <span className="inline-block h-36 w-full animate-pulse rounded-md bg-surface-2" aria-label={`Loading ${alt || path}`} />;
+  if (!source) return <span className="inline-block h-36 w-full animate-pulse rounded-sm bg-surface-2/60" aria-label={`Loading ${alt || path}`} />;
   return <img src={source} alt={alt} loading="lazy" className="max-h-[70vh] rounded-md border border-border object-contain" />;
 }
 
