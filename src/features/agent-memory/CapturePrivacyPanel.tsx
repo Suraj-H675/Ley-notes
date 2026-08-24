@@ -258,7 +258,7 @@ export function CapturePrivacyPanel({
                 <div className="flex items-start justify-between gap-3">
                   <span
                     className={cn(
-                      "rounded-full px-2 py-1 text-micro font-semibold",
+                      "rounded-sm px-2 py-0.5 text-micro font-semibold",
                       mode.tone,
                     )}
                   >
@@ -414,7 +414,7 @@ export function CapturePrivacyPanel({
                   {settings.privacyNotice}
                 </p>
                 <p
-                  className="mt-2 truncate font-mono text-[10px] text-subtle-foreground"
+                  className="mt-2 truncate font-mono text-micro text-subtle-foreground"
                   title={settings.captureFingerprint}
                 >
                   {settings.captureFingerprint}

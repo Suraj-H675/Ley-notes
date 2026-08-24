@@ -755,7 +755,7 @@ function AgentMemoryNav({
               {item.count !== undefined && (
                 <span
                   className={cn(
-                    "ml-auto rounded-full px-1.5 text-micro tabular-nums",
+                    "ml-auto rounded-sm px-1.5 text-micro tabular-nums",
                     section === item.id
                       ? "bg-primary/15 text-primary"
                       : "bg-surface-3 text-muted-foreground",
@@ -1389,7 +1389,7 @@ function SessionInspector({
                                 omitted
                               </p>
                             </div>
-                            <span className="rounded-full border border-border px-2.5 py-1 text-micro text-muted-foreground">
+                            <span className="rounded-sm border border-border px-2 py-0.5 text-micro uppercase tracking-[0.08em] text-subtle-foreground">
                               Local only
                             </span>
                           </div>
@@ -3000,7 +3000,7 @@ function StatusPill({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-micro font-medium",
+        "inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-micro font-medium",
         tone === "success" &&
           "border-success/20 bg-success/10 text-success",
         tone === "warning" &&

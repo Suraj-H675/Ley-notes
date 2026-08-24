@@ -317,7 +317,7 @@ export function GraphCanvas({
               {hoverInfo.tags.slice(0, 4).map((t) => (
                 <span
                   key={t}
-                  className="rounded-sm border border-border bg-surface-2 px-1 font-mono text-[10px] text-muted-foreground-strong"
+                  className="rounded-sm border border-border bg-surface-2 px-1 font-mono text-micro text-muted-foreground-strong"
                 >
                   #{t}
                 </span>

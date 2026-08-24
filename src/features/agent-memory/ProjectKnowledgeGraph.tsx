@@ -498,7 +498,7 @@ export function ProjectKnowledgeGraph({
             {loading && view && (
               <div
                 role="status"
-                className="absolute left-3 top-3 rounded-full border border-border bg-background/90 px-2.5 py-1 text-micro text-muted-foreground shadow-sm backdrop-blur"
+                className="absolute left-3 top-3 rounded-sm border border-border bg-background/90 px-2 py-0.5 text-micro text-muted-foreground shadow-sm backdrop-blur"
               >
                 Updating view…
               </div>
@@ -1042,7 +1042,7 @@ function CapturedSource({
         <p className="text-micro font-semibold">Captured source</p>
         <p
           translate="no"
-          className="mt-0.5 break-all font-mono text-[10px] text-muted-foreground"
+          className="mt-0.5 break-all font-mono text-micro text-muted-foreground"
         >
           {citation.artifactPath}:{citation.startLine}
           {citation.endLine !== citation.startLine
@@ -1096,7 +1096,7 @@ function CapturedSource({
                 </div>
               ))}
             </div>
-            <div className="border-t border-border px-3 py-2 text-[10px] leading-relaxed text-muted-foreground">
+            <div className="border-t border-border px-3 py-2 text-micro leading-relaxed text-muted-foreground">
               Redacted snapshot evidence · live source not checked
               {evidence.truncated ? " · excerpt bounded" : ""}
             </div>

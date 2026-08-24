@@ -266,7 +266,7 @@ export function MemorySearch({
                 : `${search.results.length} relevant ${search.results.length === 1 ? "memory" : "memories"}`}
             </p>
             <div className="flex items-center gap-2 text-micro text-muted-foreground">
-              <span className="rounded-full border border-border bg-surface-1 px-2 py-1 capitalize">
+              <span className="rounded-sm border border-border bg-surface-1 px-1.5 py-0.5 capitalize">
                 {search.retrieval.mode}
               </span>
               <span>captured snapshot</span>

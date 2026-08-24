@@ -83,7 +83,7 @@ function GraphNodeImpl({ data }: NodeProps) {
       {/* Label chip — shown on hover, active, or hub. */}
       {d.showLabel && (
         <div
-          className="pointer-events-none absolute left-1/2 top-full mt-1.5 -translate-x-1/2 select-none whitespace-nowrap rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-medium text-foreground"
+          className="pointer-events-none absolute left-1/2 top-full mt-1.5 -translate-x-1/2 select-none whitespace-nowrap rounded-sm px-1.5 py-0.5 font-mono text-micro font-medium text-foreground"
           style={{
             background: 'hsl(220 14% 9% / 0.92)',
             border: '1px solid hsl(220 10% 22%)',

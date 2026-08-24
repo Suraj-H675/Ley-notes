@@ -556,7 +556,7 @@ function ProjectCard({
                 {project.projectName}
               </h3>
               <p
-                className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground"
+                className="mt-0.5 truncate font-mono text-micro text-muted-foreground"
                 title={project.projectPath}
               >
                 {project.projectPath}
@@ -575,7 +575,7 @@ function ProjectCard({
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <span
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-micro font-semibold",
+              "inline-flex items-center gap-1.5 rounded-sm px-2 py-0.5 text-micro font-semibold",
               status.className,
             )}
           >

@@ -426,7 +426,7 @@ function FilterChip({
       {icon}
       {label}
       {filter && (
-        <span className="ml-0.5 rounded-sm bg-surface-3 px-1 font-mono text-[10px] text-muted-foreground">
+        <span className="ml-0.5 rounded-sm bg-surface-3 px-1 font-mono text-micro text-muted-foreground">
           {filter}
         </span>
       )}
