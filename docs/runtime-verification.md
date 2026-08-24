@@ -211,6 +211,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the external-conflict workflow was investigated in the browser-local vault. With unsaved local edits present, direct projection changes did not activate the “Reload disk” / “Keep mine” banner because browser-local mode has no filesystem watcher or focus-based external-change check.
 - The conflict mechanism is correctly scoped to desktop and browser-folder vaults where an authoritative filesystem event can occur. Browser-local conflict behavior remains a design question rather than a broken desktop path; desktop verification still requires a real external file edit.
 
+## Verified 390px graph controls
+
+- On 2026-08-25, the graph view was opened at 390×844. A runtime defect where the Communities legend overflowed below the viewport was fixed by making the controls panel scroll independently.
+- After the fix, all 26 controls remained reachable through panel scrolling while the document stayed exactly 390px wide with no horizontal overflow. Type checking and lint pass.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.

@@ -164,7 +164,7 @@ export function GraphModal({ open, onClose }: { open: boolean; onClose: () => vo
           id="graph-controls-panel"
           aria-hidden={isNarrowViewport && !controlsOpen}
           inert={isNarrowViewport && !controlsOpen}
-          className={`absolute inset-y-0 left-0 z-20 shrink-0 overflow-hidden border-r border-border bg-surface-1 transition-transform md:static md:translate-x-0 ${controlsVisible ? 'translate-x-0' : '-translate-x-full'}`}
+          className={`absolute inset-y-0 left-0 z-20 shrink-0 overflow-y-auto border-r border-border bg-surface-1 transition-transform md:static md:translate-x-0 ${controlsVisible ? 'translate-x-0' : '-translate-x-full'}`}
           style={{ width: SIDEBAR_WIDTH }}
         >
           <GraphControls state={controlsState} stats={stats} />
