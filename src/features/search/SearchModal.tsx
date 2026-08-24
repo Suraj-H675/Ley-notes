@@ -173,7 +173,7 @@ export function SearchModal({
             />
             <Kbd>esc</Kbd>
             <Dialog.Close
-              className="rounded-sm p-1 text-muted-foreground hover:bg-surface-3 hover:text-foreground"
+              className="rounded-sm p-1 text-muted-foreground outline-none transition-colors hover:bg-surface-3 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
               aria-label="Close search"
             >
               <X size={14} />
@@ -234,7 +234,7 @@ export function SearchModal({
                 onClose();
                 onOpenCollection(query);
               }}
-              className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground"
+              className="ml-auto flex shrink-0 items-center gap-1 rounded-sm px-2 py-1 text-micro text-muted-foreground outline-none transition-colors hover:bg-surface-1 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
               title="View matching notes as a property table"
             >
               <TableProperties size={11} />
@@ -244,7 +244,7 @@ export function SearchModal({
               type="button"
               onClick={startSave}
               disabled={!query.trim()}
-              className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex shrink-0 items-center gap-1 rounded-sm px-2 py-1 text-micro text-muted-foreground outline-none transition-colors hover:bg-surface-1 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-40"
               title="Save this query"
             >
               <BookmarkPlus size={11} />
@@ -253,7 +253,7 @@ export function SearchModal({
             <button
               type="button"
               onClick={() => setSyntaxOpen((value) => !value)}
-              className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-micro text-muted-foreground hover:bg-surface-1 hover:text-foreground"
+              className="flex shrink-0 items-center gap-1 rounded-sm px-2 py-1 text-micro text-muted-foreground outline-none transition-colors hover:bg-surface-1 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
               aria-expanded={syntaxOpen}
               aria-controls="search-syntax"
             >
@@ -274,19 +274,19 @@ export function SearchModal({
                 }}
                 aria-label="Saved search name"
                 placeholder="Saved search name"
-                className="h-8 min-w-40 flex-1 rounded-md border border-border bg-background px-2 text-meta text-foreground outline-none focus:border-primary"
+                className="h-8 min-w-40 flex-1 rounded-md border border-border bg-background px-2 text-meta text-foreground outline-none transition-[border-color,box-shadow] focus:border-primary focus:ring-2 focus:ring-primary/35"
               />
               <button
                 type="button"
                 onClick={() => void commitSave()}
-                className="h-8 rounded-md bg-primary px-3 text-micro font-medium text-primary-foreground"
+                className="h-8 rounded-md bg-primary px-3 text-micro font-medium text-primary-foreground outline-none transition-transform hover:opacity-90 active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background"
               >
                 Save query
               </button>
               <button
                 type="button"
                 onClick={() => setSaveOpen(false)}
-                className="h-8 rounded-md px-2 text-micro text-muted-foreground hover:bg-surface-2"
+                className="h-8 rounded-md px-2 text-micro text-muted-foreground outline-none transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
               >
                 Cancel
               </button>
@@ -367,7 +367,7 @@ export function SearchModal({
                       <button
                         type="button"
                         onClick={() => commit(r.id, true)}
-                        className="mr-2 rounded p-1.5 text-muted-foreground opacity-70 hover:bg-surface-1 hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+                        className="mr-2 rounded p-1.5 text-muted-foreground opacity-70 outline-none transition-colors hover:bg-surface-1 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
                         aria-label={`Open ${r.title} in split`}
                         title="Open in split (Shift+Enter)"
                       >
@@ -421,7 +421,7 @@ function FilterChip({
       type="button"
       onClick={onClick}
       title={title}
-      className="flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface-1 px-2 py-1 text-micro text-muted-foreground hover:border-primary/30 hover:text-foreground"
+      className="flex shrink-0 items-center gap-1 rounded-sm border border-border bg-surface-1 px-2 py-1 text-micro text-muted-foreground outline-none transition-colors hover:border-primary/30 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
     >
       {icon}
       {label}

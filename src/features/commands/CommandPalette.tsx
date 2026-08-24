@@ -295,7 +295,7 @@ export function CommandPalette({
                   type="button"
                   onMouseEnter={() => setSelected(index)}
                   onClick={() => void run(command)}
-                  className={`flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left ${selected === index ? "bg-surface-3 text-foreground" : "text-muted-foreground-strong hover:bg-surface-2"}`}
+                  className={`flex w-full items-center gap-3 rounded-sm px-2.5 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${selected === index ? "bg-surface-3 text-foreground" : "text-muted-foreground-strong hover:bg-surface-2"}`}
                 >
                   <span className="text-secondary">{command.icon}</span>
                   <span className="min-w-0 flex-1">
