@@ -41,6 +41,20 @@
   --font-serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
   --font-mono: 'Geist Mono Variable', 'SF Mono', Menlo, monospace;
 
+  --text-display: 28px;
+  --text-display--line-height: 34px;
+  --text-display--letter-spacing: -0.015em;
+  --text-title: 20px;
+  --text-title--line-height: 26px;
+  --text-title--letter-spacing: -0.01em;
+  --text-body: 14px;
+  --text-body--line-height: 22px;
+  --text-meta: 12px;
+  --text-meta--line-height: 16px;
+  --text-micro: 11px;
+  --text-micro--line-height: 14px;
+  --text-micro--letter-spacing: 0.01em;
+
   --radius-lg: 8px;
   --radius-md: 6px;
   --radius-sm: 4px;
