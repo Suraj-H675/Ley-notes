@@ -303,7 +303,7 @@ export function ProjectsHub({
           )}
 
           {catalog && catalog.omittedProjects > 0 && (
-            <p className="mt-3 rounded-md border border-dashed border-border bg-surface-1 px-4 py-3 text-center text-micro text-muted-foreground">
+            <p className="mt-3 rounded-sm border border-dashed border-border bg-surface-1/45 px-4 py-3 text-center text-micro text-muted-foreground">
               {catalog.omittedProjects.toLocaleString()} older projects are
               omitted by the local response bound.
             </p>
@@ -671,7 +671,7 @@ function Metric({
 
 function EmptyProjects({ query, onAdd }: { query: string; onAdd: () => void }) {
   return (
-    <div className="mt-4 flex min-h-72 flex-col items-center justify-center rounded-md border border-dashed border-border bg-surface-1 px-5 text-center">
+    <div className="mt-4 flex min-h-72 flex-col items-center justify-center rounded-sm border border-dashed border-border bg-surface-1/45 px-5 text-center">
       {query ? (
         <Search
           size={24}

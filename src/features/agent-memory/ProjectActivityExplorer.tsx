@@ -653,7 +653,7 @@ function DetailBlock({ label, value }: { label: string; value: string }) {
 
 function OmissionNotice({ count, noun }: { count: number; noun: string }) {
   return (
-    <p className="rounded-md border border-dashed border-border bg-surface-1 px-4 py-3 text-center text-micro text-muted-foreground">
+    <p className="rounded-sm border border-dashed border-border bg-surface-1/45 px-4 py-3 text-center text-micro text-muted-foreground">
       {count.toLocaleString()} more {noun} omitted by the local response bound.
       Refine the search to inspect them.
     </p>
@@ -670,14 +670,14 @@ function EmptyState({
   detail: string;
 }) {
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center rounded-md border border-dashed border-border bg-surface-1 px-5 text-center">
+    <div className="flex min-h-56 flex-col items-center justify-center rounded-sm border border-dashed border-border bg-surface-1/45 px-5 text-center">
       <Icon
         size={24}
         className="mb-3 text-muted-foreground"
         aria-hidden="true"
       />
-      <h3 className="text-body font-semibold">{title}</h3>
-      <p className="mt-1 max-w-md text-meta text-muted-foreground">{detail}</p>
+      <h3 className="text-meta font-semibold text-foreground">{title}</h3>
+      <p className="mt-1 max-w-md text-meta leading-relaxed text-muted-foreground">{detail}</p>
     </div>
   );
 }

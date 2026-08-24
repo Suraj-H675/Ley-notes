@@ -14,7 +14,7 @@ export function OutlinePanel({ page }: { page: Page | undefined }) {
     <div className="h-full overflow-y-auto px-3 py-4">
       <div className="mb-3 flex items-center gap-1.5 text-meta font-medium text-muted-foreground"><ListTree size={13} />Outline<span className="ml-auto text-micro">{headings.length}</span></div>
       {headings.length === 0 ? (
-        <div className="rounded-md border border-dashed border-border px-3 py-5 text-center text-micro text-muted-foreground">Add Markdown headings to navigate this note.</div>
+        <div className="rounded-sm border border-dashed border-border px-3 py-5 text-center text-micro text-muted-foreground">Add Markdown headings to navigate this note.</div>
       ) : headings.map((heading) => {
         const bookmarked = bookmarkedHeadings.has(heading.title.toLowerCase());
         return <div key={`${heading.line}:${heading.title}`} className="group flex items-center rounded hover:bg-surface-2">

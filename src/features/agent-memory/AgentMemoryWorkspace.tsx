@@ -3097,10 +3097,10 @@ function LargeEmpty({
   body: string;
 }) {
   return (
-    <div className="rounded-md border border-dashed border-border bg-surface-1/50 px-6 py-14 text-center">
+    <div className="rounded-sm border border-dashed border-border bg-surface-1/45 px-6 py-14 text-center">
       <Icon size={22} className="mx-auto text-subtle-foreground" />
-      <h3 className="mt-3 text-body font-semibold">{title}</h3>
-      <p className="mx-auto mt-1 max-w-md text-meta leading-5 text-muted-foreground">
+      <h3 className="mt-3 text-meta font-semibold text-foreground">{title}</h3>
+      <p className="mx-auto mt-1 max-w-md text-meta leading-relaxed text-muted-foreground">
         {body}
       </p>
     </div>

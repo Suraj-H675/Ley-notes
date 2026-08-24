@@ -63,11 +63,11 @@ export function BacklinksPanel({ pageId }: { pageId: string | null }) {
             <Link2 size={13} className="shrink-0 text-secondary" /><span className="truncate">{target.title}</span>
           </button>
         ) : link.kind === 'markdown' ? (
-          <div key={link.id} className="flex w-full items-center gap-2 rounded-md border border-dashed border-border px-2 py-1.5 text-left text-meta text-muted-foreground" title="The linked Markdown file is not in this vault">
+          <div key={link.id} className="flex w-full items-center gap-2 rounded-sm border border-dashed border-border px-2 py-1.5 text-left text-meta text-muted-foreground" title="The linked Markdown file is not in this vault">
             <FileQuestion size={13} className="shrink-0" /><span className="truncate">{link.targetTitle}</span><span className="ml-auto text-micro">Missing</span>
           </div>
         ) : (
-          <button key={link.id} type="button" onClick={() => void createGhost(link.targetTitle)} className="flex w-full items-center gap-2 rounded-md border border-dashed border-border px-2 py-1.5 text-left text-meta hover:border-secondary hover:bg-surface-2">
+          <button key={link.id} type="button" onClick={() => void createGhost(link.targetTitle)} className="flex w-full items-center gap-2 rounded-sm border border-dashed border-border px-2 py-1.5 text-left text-meta hover:border-secondary hover:bg-surface-2">
             <FilePlus2 size={13} className="shrink-0 text-secondary" /><span className="truncate">{link.targetTitle}</span><span className="ml-auto text-micro text-muted-foreground">Create</span>
           </button>
         ))}
@@ -91,5 +91,5 @@ function Section({ title, count, icon, children }: { title: string; count: numbe
 }
 
 function Hint({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-md border border-dashed border-border px-3 py-4 text-center text-micro text-muted-foreground">{children}</div>;
+  return <div className="rounded-sm border border-dashed border-border px-3 py-4 text-center text-micro text-muted-foreground">{children}</div>;
 }

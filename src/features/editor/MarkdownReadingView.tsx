@@ -87,7 +87,7 @@ function EmbeddedNoteCard({ destination, pane }: { destination: Extract<ReadingP
     return id ? db.pages.get(id) : undefined;
   }, [target]);
 
-  if (!page) return <div className="my-4 rounded-md border border-dashed border-border bg-surface-1 p-4 text-meta text-muted-foreground">Embedded note “{target}” does not exist yet.</div>;
+  if (!page) return <div className="my-4 rounded-sm border border-dashed border-border bg-surface-1 p-4 text-meta text-muted-foreground">Embedded note “{target}” does not exist yet.</div>;
   const embeddedPage = page;
   const embeddedContent = extractMarkdownDestination(embeddedPage.content, heading, blockId);
   async function toggleEmbeddedTask(taskIndex: number, checked: boolean) {
@@ -126,7 +126,7 @@ function AttachmentImage({ path, alt }: { path: string; alt: string }) {
     };
   }, [path]);
 
-  if (failed) return <span className="inline-flex rounded-md border border-dashed border-border px-3 py-2 text-meta text-muted-foreground">Missing attachment: {alt || path}</span>;
+  if (failed) return <span className="inline-flex rounded-sm border border-dashed border-border px-3 py-2 text-meta text-muted-foreground">Missing attachment: {alt || path}</span>;
   if (!source) return <span className="inline-block h-36 w-full animate-pulse rounded-md bg-surface-2" aria-label={`Loading ${alt || path}`} />;
   return <img src={source} alt={alt} loading="lazy" className="max-h-[70vh] rounded-md border border-border object-contain" />;
 }
