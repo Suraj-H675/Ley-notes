@@ -196,6 +196,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, a new “Verification Board” canvas was created in the browser-local vault. It received a named group, a text card, a Project Beta note card, and an `https://example.com` link card.
 - The group and text card labels were edited, and a two-click connection from the text card to the link card was labeled “Verified link.” After saving, closing, reloading `/app`, and reopening the canvas, every card type, label, and the labeled connection persisted.
 
+## Verified Agent Memory browser boundary
+
+- On 2026-08-25, opening Agent Memory from the browser-local vault showed the honest desktop-only boundary rather than a broken or partially available surface. The screen explains that a web page cannot safely read coding projects or serve local agents through stdio MCP, and that browser notes remain fully usable.
+- Graph history ingestion must be verified in Ley Desktop against a real initialized and bound project; this remains desktop/platform verification work rather than a browser-verifiable slice.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
