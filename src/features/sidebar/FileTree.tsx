@@ -381,7 +381,7 @@ function PageNode({
             {error && <p className="mt-3 text-meta text-destructive">{error}</p>}
             <div className="mt-5 flex justify-end gap-2">
               <Dialog.Close className="rounded-md border border-border px-3 py-1.5 text-meta text-foreground hover:bg-surface-2">Cancel</Dialog.Close>
-              <button type="button" onClick={() => void handleDelete().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className="rounded-md bg-destructive px-3 py-1.5 text-meta font-medium text-white hover:opacity-90">Move to trash</button>
+              <button type="button" onClick={() => void handleDelete().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className="rounded-md bg-destructive px-3 py-1.5 text-meta font-medium text-destructive-foreground hover:opacity-90">Move to trash</button>
             </div>
           </Dialog.Content>
         </Dialog.Portal>

@@ -91,7 +91,7 @@ export function GraphLegend({
                         borderColor: PALETTE[id % PALETTE.length],
                       }}
                     >
-                      {!isHidden && <Check size={9} className="text-white" />}
+                      {!isHidden && <Check size={9} className="text-background" strokeWidth={3.5} />}
                     </span>
                     <span className="truncate text-foreground">Cluster {id + 1}</span>
                     <span className="ml-auto text-micro text-muted-foreground">{count}</span>

@@ -572,7 +572,7 @@ export function CanvasModal({
                   onClick={() => void removeActiveCanvas()}
                   aria-label={deleteArmed ? "Confirm delete canvas" : "Delete canvas"}
                   title={deleteArmed ? "Confirm delete canvas" : "Delete canvas"}
-                  className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-meta ${deleteArmed ? "bg-destructive text-white" : "text-muted-foreground hover:bg-surface-3 hover:text-destructive"}`}
+                  className={`flex items-center gap-1 rounded-md px-2 py-1.5 text-meta ${deleteArmed ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-surface-3 hover:text-destructive"}`}
                 >
                   <Trash2 size={13} />
                   {deleteArmed ? (

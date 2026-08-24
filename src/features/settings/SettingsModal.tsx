@@ -358,7 +358,7 @@ export function SettingsModal({
                     <div className="truncate font-mono text-micro text-muted-foreground">{page.path}</div>
                   </div>
                   <button type="button" onClick={() => void handleRestore(page.id)} className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground" aria-label={`Restore ${page.title}`} title="Restore"><RotateCcw size={13} /></button>
-                  <button type="button" onClick={() => void handleErase(page.id)} className={cn('flex items-center gap-1 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive', eraseArmed === page.id && 'bg-destructive text-white hover:bg-destructive hover:text-white')} aria-label={`Permanently delete ${page.title}`} title={eraseArmed === page.id ? 'Click again to permanently delete' : 'Permanently delete'}><Trash2 size={13} />{eraseArmed === page.id && <span className="text-micro">Confirm</span>}</button>
+                  <button type="button" onClick={() => void handleErase(page.id)} className={cn('flex items-center gap-1 rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive', eraseArmed === page.id && 'bg-destructive text-destructive-foreground')} aria-label={`Permanently delete ${page.title}`} title={eraseArmed === page.id ? 'Click again to permanently delete' : 'Permanently delete'}><Trash2 size={13} />{eraseArmed === page.id && <span className="text-micro">Confirm</span>}</button>
                 </div>)}
               </div>
             )}
