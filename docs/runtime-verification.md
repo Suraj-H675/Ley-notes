@@ -261,6 +261,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, `docs/Link Source.md` and `guides/Link Target.md` were created in separate nested folders. Relative Markdown links with URL-encoded spaces and a heading anchor indexed correctly as two outgoing links.
 - Opening Link Target showed two linked mentions from Link Source, and clicking the outgoing-link row navigated to the intended note. Unencoded spaces in link destinations were not indexed; URL encoding is required. The browser reported no application errors.
 
+## Verified target rename link rewriting
+
+- On 2026-08-25, `guides/Link Target.md` was renamed to “Renamed Target” through the title input. Both incoming Markdown-link destinations in `docs/Link Source.md` rewrote automatically to `../guides/Renamed%20Target.md`, preserving the heading anchor.
+- The outgoing-link panel still indexed both links, and clicking one navigated to the renamed note. The browser reported no application errors.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
