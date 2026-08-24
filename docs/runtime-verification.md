@@ -147,6 +147,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, Project Alpha was renamed to “Renamed Project Alpha” through Enter/blur commit. The sidebar, tab, recent row, and open pane updated immediately.
 - Reloading `/app` preserved the same open session and split by stable note identity while showing the renamed title. The first keyboard-only attempt did not blur the title field and therefore did not commit; Enter/blur is the expected commit path. No console errors appeared.
 
+## Verified open-note trash cleanup
+
+- On 2026-08-25, the renamed note was opened as the primary pane of a split and trashed from its explorer context menu. Its tab, split pane, and recent entry disappeared immediately, and the remaining Project Beta session stayed valid.
+- Reloading `/app` preserved the safe Project Beta session without resurrecting the trashed note. The browser reported no application errors.
+
 - Open a project whose Agent Memory is bound to the active filesystem vault. Promote a current trusted lesson and export a completed session through **To notes**; each creates and opens ordinary Markdown with the expected portable project/source ID, timestamp, tag, provenance warning, and visible content.
 - Rename and move both notes, repeat each action, and verify Ley opens the existing note without creating a duplicate. Create an unrelated title collision and verify the proposed link refuses to overwrite it.
 - Open a catalog project bound to another available vault while the first notes vault remains active. Both learning promotion and session export must fail before any note/index mutation, name both vault folders without revealing absolute paths, and succeed only after the bound vault is deliberately opened.
