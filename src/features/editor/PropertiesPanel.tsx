@@ -22,7 +22,7 @@ export function PropertiesPanel({ pageId, frontmatter }: { pageId: string; front
   return (
     <div className="mx-auto w-full max-w-[820px] px-4 pt-4 sm:px-10 sm:pt-5">
       <div className="rounded-sm border border-border/70 bg-surface-1/45">
-        <div className="flex items-center gap-2 border-b border-border/50 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+        <div className="flex items-center gap-2 border-b border-border/50 px-3 py-1.5 font-mono text-micro uppercase tracking-[0.12em] text-muted-foreground">
           <Tags size={12} /> Properties
           <button type="button" onClick={() => setAdding(true)} className="ml-auto rounded p-1 hover:bg-surface-3" aria-label="Add property"><Plus size={12} /></button>
         </div>

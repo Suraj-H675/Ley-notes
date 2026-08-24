@@ -389,7 +389,7 @@ function ProblemCard({
               <h3 className="text-body font-semibold">{problem.title}</h3>
               <span
                 className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                  "rounded-sm px-2 py-0.5 text-micro font-semibold",
                   resolved
                     ? "bg-success/10 text-success"
                     : "bg-warning/10 text-warning",
@@ -541,8 +541,8 @@ function OutcomeBadge({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center gap-1 rounded-full font-semibold",
-        compact ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-micro",
+        "inline-flex shrink-0 items-center gap-1 rounded-sm font-semibold",
+        compact ? "px-1.5 py-0.5 text-micro" : "px-2 py-1 text-micro",
         positive
           ? "bg-success/10 text-success"
           : negative

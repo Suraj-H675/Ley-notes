@@ -87,7 +87,7 @@ export function BacklinksPanel({ pageId }: { pageId: string | null }) {
 }
 
 function Section({ title, count, icon, children }: { title: string; count: number; icon: React.ReactNode; children: React.ReactNode }) {
-  return <section className="pt-4"><div className="mb-2 flex items-center gap-1.5 text-meta font-medium text-muted-foreground">{icon}<span>{title}</span><span className="ml-auto rounded-full bg-surface-3 px-1.5 text-micro">{count}</span></div><div className="space-y-2">{children}</div></section>;
+  return <section className="pt-4"><div className="mb-2 flex items-center gap-1.5 text-micro font-medium uppercase tracking-[0.08em] text-subtle-foreground">{icon}<span>{title}</span><span className="ml-auto tabular-nums text-subtle-foreground">{count}</span></div><div className="space-y-2">{children}</div></section>;
 }
 
 function Hint({ children }: { children: React.ReactNode }) {

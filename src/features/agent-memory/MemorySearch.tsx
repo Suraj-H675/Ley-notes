@@ -353,13 +353,13 @@ function MemoryResult({
           <span className="text-meta font-semibold text-foreground">
             {result.title}
           </span>
-          <span className="rounded-full bg-surface-3 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <span className="rounded-sm bg-surface-3/70 px-1 py-0.5 text-micro font-medium uppercase tracking-[0.08em] text-subtle-foreground">
             {result.kind}
           </span>
           {result.trustSignal && result.trustSignal !== "direct-evidence" && (
             <span
               className={cn(
-                "rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize",
+                "rounded-sm px-1.5 py-0.5 text-micro font-medium capitalize",
                 result.trustedForReuse
                   ? "bg-success/10 text-success"
                   : "bg-warning/10 text-warning",

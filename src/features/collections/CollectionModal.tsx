@@ -177,7 +177,7 @@ function SortableHeader({ label, column, sort, onSort, sticky = false }: { label
 }
 
 function CollectionCell({ column, page, tags, onStatus }: { column: CollectionColumn; page: import('@/infrastructure/database/schema').Page; tags: string[]; onStatus: (status: string | null) => void }) {
-  if (column === 'tags') return <td className="min-w-52 border-b border-r border-border px-3 py-2"><div className="flex max-w-72 flex-wrap gap-1">{tags.length > 0 ? tags.map((tag) => <span key={tag} className="inline-flex items-center gap-0.5 rounded-full bg-secondary/10 px-1.5 py-0.5 text-micro text-secondary"><Hash size={9} />{tag}</span>) : <span className="text-subtle-foreground">—</span>}</div></td>;
+  if (column === 'tags') return <td className="min-w-52 border-b border-r border-border px-3 py-2"><div className="flex max-w-72 flex-wrap gap-1">{tags.length > 0 ? tags.map((tag) => <span key={tag} className="inline-flex items-center gap-0.5 rounded-sm bg-secondary/10 px-1.5 py-0.5 text-micro text-secondary"><Hash size={9} />{tag}</span>) : <span className="text-subtle-foreground">—</span>}</div></td>;
   if (column === 'path') return <td className="min-w-56 max-w-80 border-b border-r border-border px-3 py-2 font-mono text-micro text-muted-foreground"><span className="block truncate">{page.path}</span></td>;
   if (column === 'modified') return <td className="min-w-44 border-b border-r border-border px-3 py-2 text-muted-foreground"><time dateTime={new Date(page.updatedAt).toISOString()}>{formatModified(page.updatedAt)}</time></td>;
   const key = propertyKey(column);

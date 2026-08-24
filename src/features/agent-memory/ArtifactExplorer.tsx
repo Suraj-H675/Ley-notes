@@ -219,7 +219,7 @@ function CapturedArtifacts({
                 </span>
                 {artifact.redactions.length > 0 && (
                   <span
-                    className="rounded-full bg-warning/12 px-1.5 py-0.5 text-[10px] font-semibold text-warning"
+                    className="rounded-sm bg-warning/12 px-1.5 py-0.5 text-micro font-semibold text-warning"
                     title="Sensitive values were redacted before storage"
                   >
                     redacted
@@ -349,7 +349,7 @@ function InventoryTab({
     >
       {label}
       {count !== undefined && (
-        <span className="rounded-full bg-background/70 px-1.5 text-[10px]">
+        <span className="tabular-nums text-micro text-subtle-foreground">
           {count}
         </span>
       )}

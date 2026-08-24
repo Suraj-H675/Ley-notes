@@ -583,7 +583,7 @@ function ProjectCard({
             {status.label}
           </span>
           {project.vaultName && (
-            <span className="truncate rounded-full bg-surface-3 px-2 py-1 text-micro text-muted-foreground">
+            <span className="truncate rounded-sm bg-surface-3/70 px-2 py-1 text-micro text-muted-foreground">
               {project.vaultName}
             </span>
           )}

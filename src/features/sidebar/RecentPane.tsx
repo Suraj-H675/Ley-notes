@@ -21,7 +21,7 @@ export function RecentPane() {
 
   return (
     <div className="flex flex-col gap-1 px-2">
-      <button type="button" onClick={() => setExpanded((value) => !value)} className="flex items-center gap-1.5 rounded px-2 py-1 text-meta font-medium text-muted-foreground hover:bg-surface-2 hover:text-foreground" aria-expanded={expanded}>
+      <button type="button" onClick={() => setExpanded((value) => !value)} className="flex items-center gap-1.5 rounded-sm px-2 py-1 text-meta font-medium uppercase tracking-[0.08em] text-subtle-foreground hover:bg-surface-2 hover:text-foreground" aria-expanded={expanded}>
         {expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<FileClock size={12} /><span>Recent</span><span className="ml-auto text-micro text-subtle-foreground">{pages.length}</span>
       </button>
       {expanded && pages.map((p) => (

@@ -414,7 +414,7 @@ export function ProjectKnowledgeGraph({
               ).map((kind) => (
                 <span
                   key={kind}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 px-2 py-1 text-[10px] font-medium text-muted-foreground"
+                  className="inline-flex items-center gap-1.5 rounded-sm bg-surface-2 px-2 py-1 text-micro font-medium text-muted-foreground"
                 >
                   <span
                     className="size-1.5 rounded-full"
@@ -580,7 +580,7 @@ export function ProjectKnowledgeGraph({
               aria-hidden="true"
             />
             Capture diagnostics
-            <span className="rounded-full bg-warning/10 px-1.5 text-micro tabular-nums text-warning">
+            <span className="rounded-sm bg-warning/10 px-1.5 py-0.5 text-micro tabular-nums text-warning">
               {NUMBER.format(view.diagnostics.length + view.omittedDiagnostics)}
             </span>
           </summary>
@@ -643,7 +643,7 @@ function GraphFilters({
           <Filter size={15} className="text-primary" aria-hidden="true" />
           Graph filters
           {activeGroups > 0 && (
-            <span className="rounded-full bg-primary/10 px-1.5 text-micro tabular-nums text-primary">
+            <span className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-micro tabular-nums text-primary">
               {activeGroups}
             </span>
           )}

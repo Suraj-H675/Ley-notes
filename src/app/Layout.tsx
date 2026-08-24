@@ -737,7 +737,7 @@ function PaneHeader({
 }) {
   return (
     <div
-      className={`flex h-7 shrink-0 items-center justify-between border-b px-3 text-micro ${active ? "border-[#c2b28f]/45 bg-[#c2b28f]/8 text-foreground" : "border-border bg-surface-1 text-muted-foreground"}`}
+      className={`flex h-7 shrink-0 items-center justify-between border-b px-3 text-micro ${active ? "border-primary/45 bg-primary/8 text-foreground" : "border-border bg-surface-1 text-muted-foreground"}`}
     >
       <span className="font-medium">{label}</span>
       {onClose && (

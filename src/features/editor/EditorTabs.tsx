@@ -37,14 +37,14 @@ export function EditorTabs() {
   if (!tabs || tabs.length === 0) return null;
 
   return (
-    <div className="flex shrink-0 items-stretch overflow-x-auto border-b border-border bg-[#141416]">
+    <div className="flex shrink-0 items-stretch overflow-x-auto border-b border-border bg-surface-1">
       {tabs.map((t) => (
         <div
           key={t.id}
           className={cn(
             'group flex h-8 shrink-0 items-center border-r border-border text-meta',
             activeTab === t.id
-              ? 'bg-[#1a1a1c] text-foreground shadow-[inset_0_-2px_0_hsl(41_34%_66%)]'
+              ? 'bg-background text-foreground shadow-[inset_0_-2px_0_hsl(var(--primary))]'
               : t.id === primaryTab || t.id === secondaryTab
                 ? 'bg-surface-2 text-foreground'
               : 'bg-transparent text-muted-foreground hover:bg-surface-2',
