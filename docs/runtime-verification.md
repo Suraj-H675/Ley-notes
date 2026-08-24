@@ -206,6 +206,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the Verification Board canvas was opened at 390×844 through the compact command palette. The canvas tab remained horizontally reachable, the tool shelf scrolled independently, and the graph retained a useful 501px height.
 - Repeated zoom-out reached 0.16×, comfortably below 0.5×, while the document stayed exactly 390px wide with no horizontal overflow.
 
+## Verified external-conflict scope
+
+- On 2026-08-25, the external-conflict workflow was investigated in the browser-local vault. With unsaved local edits present, direct projection changes did not activate the “Reload disk” / “Keep mine” banner because browser-local mode has no filesystem watcher or focus-based external-change check.
+- The conflict mechanism is correctly scoped to desktop and browser-folder vaults where an authoritative filesystem event can occur. Browser-local conflict behavior remains a design question rather than a broken desktop path; desktop verification still requires a real external file edit.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
