@@ -236,6 +236,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, a `tag:autosave-final` query was saved as “Autosave test” and the sidebar was opened at 390×844. Both the rename and delete actions were fully visible and reachable.
 - The sidebar overlay stayed within the 390px document width with no horizontal overflow.
 
+## Verified 320px saved searches
+
+- On 2026-08-25, the same “Autosave test” row was viewed at 320×568. Its open-as-table, rename, and delete actions all remained fully visible and reachable.
+- The sidebar overlay stayed within the 320px document width with no horizontal overflow.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
