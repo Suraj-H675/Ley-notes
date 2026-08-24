@@ -226,6 +226,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, Project Beta was bookmarked and the sidebar overlay was opened at 390×844. The bookmark row under Notes remained fully visible and reachable.
 - The sidebar overlay stayed within the 390px document width with no horizontal overflow.
 
+## Verified 320px bookmarks and toolbar
+
+- On 2026-08-25, the same bookmark row remained reachable at 320×568. The editor toolbar fit the full 320px width without horizontal scrolling, with all eight controls visible.
+- The sidebar overlay contained an independent vertical scroll container. It did not overflow at this content size, but the mechanism was present and separate from the document.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
