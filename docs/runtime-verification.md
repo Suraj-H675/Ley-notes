@@ -390,6 +390,12 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the editor was viewed at 320×568. The title retained a useful 159px width, secondary actions collapsed to labeled icons, and all eight formatting toolbelt controls remained visible.
 - The CodeMirror document scrolled independently while the document stayed exactly 320px wide with no horizontal overflow.
 
+## Verified block-ID completion workflow
+
+- On 2026-08-25, a “Block Targets” note containing prose, a list item, and fenced JavaScript was linked from Welcome. Typing `[[Block Targets#^` offered only the two explicit IDs (`^alpha-id` and `^alpha-list`) with their source previews and line numbers; content inside the fence was correctly excluded.
+- Pressing Enter accepted `^alpha-id` and wrote exactly `[[Block Targets#^alpha-id]]` into Markdown. Ctrl-clicking that rendered link navigated to Block Targets and focused the start of “Alpha prose block ^alpha-id” on line 2.
+- The browser reported no application errors during completion, acceptance, or navigation.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
