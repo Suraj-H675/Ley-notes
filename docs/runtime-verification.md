@@ -375,6 +375,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, typing `[[Ren` in the moved source note exposed a completion list with “Renamed Target.” Pressing Enter accepted it and wrote `[[Renamed Target]]` into the authoritative Markdown.
 - After saving, the outgoing-link panel indexed the new wiki link alongside the existing Markdown links, and clicking its row navigated to Renamed Target. The browser reported no application errors.
 
+## Verified heading completion context
+
+- On 2026-08-25, typing `[[Welcome#` in a fresh browser-local vault exposed the Welcome note’s real headings with level and line context: “Welcome to Ley” (H1 · line 1), “Start here” (H2 · line 5), “Key ideas” (H2 · line 11), “Daily notes” (H2 · line 19), and “Tag your notes” (H2 · line 23).
+- The completion popup rendered with the correct listbox/option roles and selected state. A browser relaunch interrupted the acceptance write, but the heading suggestion behavior was fully observed.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
