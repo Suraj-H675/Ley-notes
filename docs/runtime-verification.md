@@ -403,6 +403,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - The toolbelt Tag action inserted `#`, opened the same completion list in Source mode, and remained fully reachable at 390×844 with the popup inside the viewport and no document overflow.
 - Runtime inspection found that `<div class="#attribute">` was incorrectly indexed as a tag. The tag boundary now excludes quote characters, focused tests cover quoted attributes, and a real editor save rebuilt the stale projection correctly. Type checking and lint passed on the corrected tree.
 
+## Verified wiki-link click modes
+
+- On 2026-08-25, a real `[[Tag Fixture]]` link was added to Welcome and rendered as a decorated wiki link after saving. A normal click kept the editor in Live Preview and placed CodeMirror’s caret inside the bracketed source at offset 1.
+- Ctrl-clicking the same rendered link navigated directly to the existing Tag Fixture note. The pages list remained exactly Tag Fixture and Welcome, proving no ID-named ghost note was created.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
