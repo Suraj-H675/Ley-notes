@@ -322,6 +322,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 
 ## Verified 390px bookmarks
 
+- On 2026-08-25, the Project Beta bookmark row was viewed at 390×844 after the source move. The row remained fully visible and reachable within the sidebar overlay.
+- The sidebar overlay stayed within the 390px document width with no horizontal overflow.
+
+## Verified 390px bookmarks
+
 - On 2026-08-25, the same bookmark row was viewed at 390×844. The row remained fully visible and reachable within the sidebar overlay.
 - The sidebar overlay stayed within the 390px document width with no horizontal overflow.
 
