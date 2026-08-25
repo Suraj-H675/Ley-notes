@@ -335,6 +335,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, `docs/Link Source.md` was moved to `archive/Link Source.md` through the explorer context menu. Its outgoing relative destinations rebased automatically to `../guides/…`, preserving the correct depth for the new folder.
 - All three outgoing links still indexed after the move, and clicking the Renamed Target row navigated to the intended note. The browser reported no application errors.
 
+## Verified navigation after rename and move
+
+- On 2026-08-25, both outgoing Markdown links from the moved source were clicked repeatedly after the target rename and source move. Each click resolved to “Renamed Target” as intended.
+- Navigation was repeated after both changes without stale paths or broken destinations. The browser reported no application errors.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
