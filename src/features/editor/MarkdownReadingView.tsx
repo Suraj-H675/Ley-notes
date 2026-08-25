@@ -35,7 +35,7 @@ export function MarkdownReadingView({ pageId, pagePath, content, pane }: { pageI
 }
 
 function MarkdownBody({ content, sourcePath, taskOffset = 0, onToggleTask, pane }: { content: string; sourcePath: string; taskOffset?: number; onToggleTask: (taskIndex: number, checked: boolean) => Promise<void>; pane: EditorPane }) {
-  return <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => url.startsWith('ley:') ? url : defaultUrlTransform(url)} components={{
+  return <div data-markdown-body><ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={(url) => url.startsWith('ley:') ? url : defaultUrlTransform(url)} components={{
     a: ({ href, children }) => {
       if (href && isSafeAttachmentPath(href)) return <AttachmentLink path={href}>{children}</AttachmentLink>;
       if (href?.startsWith('ley:')) {
@@ -48,16 +48,18 @@ function MarkdownBody({ content, sourcePath, taskOffset = 0, onToggleTask, pane 
       }
       return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
     },
-    input: ({ type, checked, node, disabled: _disabled, ...props }) => {
+    input: ({ type, checked, disabled: _disabled, ...props }) => {
       if (type !== 'checkbox') return <input type={type} {...props} />;
-      const sourceLine = node?.position?.start.line ?? 1;
-      const localIndex = Math.max(0, countMarkdownTasks(content.split('\n').slice(0, sourceLine).join('\n')) - 1);
-      return <input type="checkbox" checked={checked} onChange={(event) => void onToggleTask(taskOffset + localIndex, event.currentTarget.checked)} {...props} />;
+      return <input type="checkbox" checked={checked} onChange={(event) => {
+        const scope = event.currentTarget.closest('[data-markdown-body]');
+        const localIndex = scope ? Array.from(scope.querySelectorAll('input[type=checkbox]')).indexOf(event.currentTarget) : 0;
+        void onToggleTask(taskOffset + Math.max(0, localIndex), !checked);
+      }} {...props} />;
     },
     img: ({ src, alt }) => src && isSafeAttachmentPath(src)
       ? <AttachmentImage path={src} alt={alt ?? ''} />
       : <img src={src} alt={alt ?? ''} loading="lazy" />,
-  }}>{renderableMarkdown(content)}</ReactMarkdown>;
+  }}>{renderableMarkdown(content)}</ReactMarkdown></div>;
 }
 
 function AttachmentLink({ path, children }: { path: string; children: ReactNode }) {

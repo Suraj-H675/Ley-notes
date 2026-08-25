@@ -408,6 +408,12 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, a real `[[Tag Fixture]]` link was added to Welcome and rendered as a decorated wiki link after saving. A normal click kept the editor in Live Preview and placed CodeMirror’s caret inside the bracketed source at offset 1.
 - Ctrl-clicking the same rendered link navigated directly to the existing Tag Fixture note. The pages list remained exactly Tag Fixture and Welcome, proving no ID-named ghost note was created.
 
+## Verified read-mode task persistence
+
+- On 2026-08-25, a host note embedded a heading section, a block ID, prose, and a trailing Markdown task. Clicking all five Read-mode checkboxes persisted authoritative `[x]` state to the correct host or source notes.
+- Heading-scoped tasks mapped by local order within their embed, the block-scoped task updated only its referenced line, and the direct task after both embeds remained on Task Host. Source mode confirmed every write without cross-note drift.
+- Runtime diagnosis found two root causes: checkbox handlers trusted transient DOM state instead of controlled props, and render-time counters advanced under React Strict Mode double invocation. Handlers now derive intent from authoritative checked state, while each Markdown body resolves checkbox order from its own rendered DOM scope.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
