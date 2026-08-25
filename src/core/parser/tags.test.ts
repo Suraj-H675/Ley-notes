@@ -45,6 +45,7 @@ describe('extractInlineTags', () => {
   it('does not index URL fragments or HTML-style attribute values', () => {
     expect(extractInlineTags('Visit https://example.com/#route')).toEqual([]);
     expect(extractInlineTags('<a href=#anchor>Jump</a>')).toEqual([]);
+    expect(extractInlineTags('<div class="#quoted">Text</div>')).toEqual([]);
   });
 
   it('recognizes tags beside ordinary punctuation', () => {

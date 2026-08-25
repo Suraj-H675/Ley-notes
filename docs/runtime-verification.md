@@ -396,6 +396,13 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Pressing Enter accepted `^alpha-id` and wrote exactly `[[Block Targets#^alpha-id]]` into Markdown. Ctrl-clicking that rendered link navigated to Block Targets and focused the start of “Alpha prose block ^alpha-id” on line 2.
 - The browser reported no application errors during completion, acceptance, or navigation.
 
+## Verified tag completion workflow
+
+- On 2026-08-25, a fresh browser-local fixture contained flat, nested, and deliberately invalid `#` syntax. The saved index exposed exactly four legitimate tags; headings, fenced code, inline code, URL fragments, unquoted HTML attributes, and quoted attribute values were excluded from the sidebar index after correction.
+- Typing `#pro` offered nested tags ranked by prefix before substring match. Typing `#project/ley/ver` filtered to Verification only, and Enter replaced just the query text to write `#project/ley/verification`.
+- The toolbelt Tag action inserted `#`, opened the same completion list in Source mode, and remained fully reachable at 390×844 with the popup inside the viewport and no document overflow.
+- Runtime inspection found that `<div class="#attribute">` was incorrectly indexed as a tag. The tag boundary now excludes quote characters, focused tests cover quoted attributes, and a real editor save rebuilt the stale projection correctly. Type checking and lint passed on the corrected tree.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
