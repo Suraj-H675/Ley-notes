@@ -370,6 +370,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, the `../guides/Missing%20File.md` destination was re-inspected after the source move. It remained visible in the outgoing-link panel as a non-clickable “Missing File” row.
 - No page button, sidebar entry, or title-based ghost note was created for the missing destination. The missing file stayed visible as missing rather than being auto-created.
 
+## Verified wiki-link completion and navigation
+
+- On 2026-08-25, typing `[[Ren` in the moved source note exposed a completion list with “Renamed Target.” Pressing Enter accepted it and wrote `[[Renamed Target]]` into the authoritative Markdown.
+- After saving, the outgoing-link panel indexed the new wiki link alongside the existing Markdown links, and clicking its row navigated to Renamed Target. The browser reported no application errors.
+
 ## Verified 320px vault onboarding
 
 - On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
