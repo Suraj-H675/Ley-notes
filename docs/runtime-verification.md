@@ -414,6 +414,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - Heading-scoped tasks mapped by local order within their embed, the block-scoped task updated only its referenced line, and the direct task after both embeds remained on Task Host. Source mode confirmed every write without cross-note drift.
 - Runtime diagnosis found two root causes: checkbox handlers trusted transient DOM state instead of controlled props, and render-time counters advanced under React Strict Mode double invocation. Handlers now derive intent from authoritative checked state, while each Markdown body resolves checkbox order from its own rendered DOM scope.
 
+## Verified anchored link navigation
+
+- On 2026-08-26, Link Host contained wiki links to `#Alpha`, `#^alpha-block`, `#Beta`, plus Markdown links with the same heading/block destinations. Read-mode clicks opened Link Targets and focused the exact Alpha heading, referenced block line, sibling Beta heading, or block source line.
+- Live Preview Ctrl-click navigation produced the same exact-line results for both wiki and internal Markdown links. A stale-editor listener leak was found during diagnosis; CodeMirror cleanup now removes both follow-link listeners explicitly.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
