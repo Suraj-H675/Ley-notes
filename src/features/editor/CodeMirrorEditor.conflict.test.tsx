@@ -154,4 +154,62 @@ describe('editor external conflict handling', () => {
     expect(screen.getByRole('button', { name: 'Restore to disk' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Close and discard' })).toBeVisible();
   });
+
+  it('replaces a clean editor with disk content and preserves disk on Reload disk', async () => {
+    const view = render(
+      <CodeMirrorEditor
+        pageId="conflict-page"
+        pagePath="Conflict note.md"
+        initialContent="original"
+        pane="primary"
+        livePreview={false}
+        missingFromDisk={false}
+        frontmatterError={undefined}
+      />,
+    );
+
+    await act(async () => {
+      view.rerender(
+        <CodeMirrorEditor
+          pageId="conflict-page"
+          pagePath="Conflict note.md"
+          initialContent="clean external update"
+          pane="primary"
+          livePreview={false}
+          missingFromDisk={false}
+          frontmatterError={undefined}
+        />,
+      );
+    });
+
+    expect(await screen.findByText('Updated from disk')).toBeInTheDocument();
+    expect(updatePageContent).not.toHaveBeenCalled();
+
+    await act(async () => {
+      typeInEditor('my local edit');
+    });
+
+    await db.pages.update('conflict-page', { content: 'dirty external update' });
+    await act(async () => {
+      view.rerender(
+        <CodeMirrorEditor
+          pageId="conflict-page"
+          pagePath="Conflict note.md"
+          initialContent="dirty external update"
+          pane="primary"
+          livePreview={false}
+          missingFromDisk={false}
+          frontmatterError={undefined}
+        />,
+      );
+    });
+
+    await screen.findByRole('alert');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload disk' }));
+
+    await waitFor(() => expect(screen.getByText('Reloaded external version')).toBeInTheDocument());
+    expect(updatePageContent).not.toHaveBeenCalled();
+
+  });
 });
