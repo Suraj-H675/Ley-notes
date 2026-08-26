@@ -64,6 +64,10 @@ describe('BookmarksPane', () => {
     await userEvent.type(input, 'Renamed heading{Enter}');
     await waitFor(() => expect(screen.getByText('Renamed heading')).toBeInTheDocument());
 
+    await userEvent.click(screen.getByRole('button', { name: 'Rename Renamed heading' }));
+    expect(screen.getByRole('textbox')).toHaveAccessibleName('Rename Renamed heading');
+    await userEvent.keyboard('{Escape}');
+
     await userEvent.click(screen.getByRole('button', { name: 'Delete Renamed heading' }));
     await waitFor(() => expect(screen.queryByText('Renamed heading')).not.toBeInTheDocument());
     expect(heading.id).toBeDefined();

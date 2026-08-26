@@ -69,6 +69,7 @@ function DestinationRow({ resolved, onOpen }: { resolved: ResolvedDestinationBoo
   const [error, setError] = useState<string | null>(null);
   const cancelRename = useRef(false);
   const automaticLabel = destinationLabel(bookmark, page);
+  const currentLabel = bookmark.title ?? automaticLabel;
 
   async function commitRename() {
     if (!editing) return;
@@ -82,13 +83,13 @@ function DestinationRow({ resolved, onOpen }: { resolved: ResolvedDestinationBoo
     }
   }
 
-  if (editing) return <div className="px-2 py-0.5"><input autoFocus value={draft} placeholder={automaticLabel} onChange={(event) => setDraft(event.target.value)} onBlur={() => void commitRename()} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { cancelRename.current = true; setDraft(bookmark.title ?? ''); setEditing(false); } }} aria-label={`Rename ${automaticLabel}`} className="h-7 w-full rounded-md border border-primary bg-background px-2 text-meta text-foreground outline-none" />{error && <p className="pt-1 text-micro text-destructive" role="alert">{error}</p>}</div>;
+  if (editing) return <div className="px-2 py-0.5"><input autoFocus value={draft} placeholder={currentLabel} onChange={(event) => setDraft(event.target.value)} onBlur={() => void commitRename()} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { cancelRename.current = true; setDraft(bookmark.title ?? ''); setEditing(false); } }} aria-label={`Rename ${currentLabel}`} className="h-7 w-full rounded-md border border-primary bg-background px-2 text-meta text-foreground outline-none" />{error && <p className="pt-1 text-micro text-destructive" role="alert">{error}</p>}</div>;
 
   const Icon = bookmark.target.kind === 'heading' ? Hash : TextQuote;
   return <div><div className={cn('group flex items-center rounded-sm', destinationAvailable ? 'text-muted-foreground-strong hover:bg-surface-2 hover:text-foreground' : 'text-subtle-foreground')}>
     <button type="button" onClick={() => void onOpen()} disabled={!destinationAvailable} className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1 text-left text-meta disabled:cursor-not-allowed" title={destinationAvailable ? `${bookmark.target.path}#${bookmark.target.kind === 'block' ? '^' : ''}${bookmark.target.anchor}` : `Unavailable: ${bookmark.target.path}#${bookmark.target.anchor}`}><Icon size={10} className="shrink-0 text-secondary" /><span className="truncate">{bookmark.title ?? automaticLabel}</span></button>
-    <button type="button" onClick={() => { cancelRename.current = false; setEditing(true); }} className="rounded p-1 text-muted-foreground opacity-60 hover:bg-surface-3 hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100" aria-label={`Rename ${bookmark.title ?? automaticLabel}`}><Pencil size={10} /></button>
-    <button type="button" onClick={() => void deleteDestinationBookmark(bookmark.id).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className="mr-1 rounded p-1 text-muted-foreground opacity-60 hover:bg-destructive/10 hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100" aria-label={`Delete ${bookmark.title ?? automaticLabel}`}><Trash2 size={10} /></button>
+    <button type="button" onClick={() => { cancelRename.current = false; setEditing(true); }} className="rounded p-1 text-muted-foreground opacity-60 hover:bg-surface-3 hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100" aria-label={`Rename ${currentLabel}`}><Pencil size={10} /></button>
+    <button type="button" onClick={() => void deleteDestinationBookmark(bookmark.id).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)))} className="mr-1 rounded p-1 text-muted-foreground opacity-60 hover:bg-destructive/10 hover:text-destructive sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100" aria-label={`Delete ${currentLabel}`}><Trash2 size={10} /></button>
   </div>{!destinationAvailable && <p className="px-2 pb-1 text-micro text-subtle-foreground">{page ? 'Destination unavailable' : 'Note unavailable'} · bookmark retained</p>}{error && <p className="px-2 py-1 text-micro text-destructive" role="alert">{error}</p>}</div>;
 }
 

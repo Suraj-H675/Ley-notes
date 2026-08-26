@@ -430,6 +430,8 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-26, note bookmarks appeared reactively in the unified Bookmarks hub with `aria-pressed` state. Heading and block anchors rendered with live previews, availability checks, custom titles, rename, delete, and exact-destination navigation wiring.
 - Renaming a heading bookmark updated its displayed title without changing its target; deletion removed only that record. Block bookmark logic appended a generated ID to authoritative Markdown, reused existing IDs, and refused blank lines or headings without creating metadata.
 - A browser automation environment reset prevented durable IndexedDB fixtures from surviving between daemon restarts. The remaining user-facing persistence behavior was therefore covered by deterministic Dexie-backed UI tests rather than claiming unobserved reload evidence.
+- In a continuous live browser session, the fixture note, two heading bookmarks, block bookmark, generated `^` Markdown ID, custom title, exact Alpha active line, and all `aria-pressed` states survived reload. Heading-line capture displayed the Outline-action refusal while preserving source.
+- Runtime inspection found that renaming controls used the automatic label even after a custom title existed, making edit/delete controls ambiguous for screen-reader users. Bookmark labels now consistently use the current title; focused tests cover this accessibility contract.
 
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
