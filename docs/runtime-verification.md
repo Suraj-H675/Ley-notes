@@ -467,6 +467,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-26, imported array order was verified with an unusual sequence: group first, then file and text cards, followed by a reverse-direction labeled edge carrying explicit sides, endpoints, preset color, custom color, file `subpath`, and group metadata. A save/reload preserved every node and edge in the original array order.
 - Existing source inspection confirms connections are keyboard-selectable through focus plus Enter/Space, while the inspector exposes connection labeling and deletion. The existing live workflow already proved two-click/drag creation and reload persistence.
 
+## Verified Agent Memory secret redaction
+
+- On 2026-08-26, ingestion redaction was audited against an adversarial source fixture containing private keys, named assignments, credential URLs, GitHub classic and fine-grained tokens, and AWS access keys. Every secret was replaced before durable storage while line count and citation lines remained stable.
+- Current Rust evidence continues to prove `.env`, ignored paths, binaries, oversized files, and symlinks are excluded or skipped; durable artifacts use private permissions; immutable snapshots detect corruption; concurrent ingestion is serialized; identical request IDs replay without duplicate events; MCP results are fixed-project, path-free, bounded, and marked untrusted.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.

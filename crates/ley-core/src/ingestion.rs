@@ -2250,6 +2250,8 @@ mod tests {
             "const password = \"weak-password\"\n",
             "\"apiKey\": \"sk-abcdefghijklmnopqrstuvwxyz123456\"\n",
             "token ghp_abcdefghijklmnopqrstuvwxyz123456\n",
+            "github_pat_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890\n",
+            "aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n",
             "Please use token=secret-value for this turn\n",
             "db=postgres://user:pass@localhost/db\n",
             "-----BEGIN RSA PRIVATE KEY-----\n",
@@ -2259,6 +2261,8 @@ mod tests {
         let (redacted, findings) = redact_secrets(source);
         assert!(!redacted.contains("weak-password"));
         assert!(!redacted.contains("abcdefghijklmnopqrstuvwxyz123456"));
+        assert!(!redacted.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"));
+        assert!(!redacted.contains("AKIAIOSFODNN7EXAMPLE"));
         assert!(!redacted.contains(":pass@"));
         assert!(!redacted.contains("private material"));
         assert!(!redacted.contains("secret-value"));
@@ -2279,7 +2283,7 @@ mod tests {
             .iter()
             .find(|finding| finding.kind == "provider-token")
             .unwrap();
-        assert_eq!(provider.lines, vec![3]);
+        assert_eq!(provider.lines, vec![3, 4, 5]);
         assert_eq!(line_count(&redacted), line_count(source));
     }
 
