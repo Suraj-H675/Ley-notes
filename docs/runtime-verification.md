@@ -499,7 +499,7 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 
 - On 2026-08-26, the current installed CLI binary drove real Codex (`ley hook --host codex`) and Claude Code (`ley hook --host claude`) lifecycle events against a temporary project with a filesystem vault. `SessionStart` returned bounded resume context including the stable Ley session ID, recent active sessions, and the untrusted-evidence warning. `UserPromptSubmit` stored a redacted prompt copy and reasserted the same session ID. `Stop` paired a bounded assistant response without error.
 - Deliberate `api_key=` and `password=` assignments in prompts were replaced by `[REDACTED:credential-inline-assignment]` in durable session Markdown; neither raw value reached the vault. Session listing showed one prompt and one response per host, confirming turn pairing without duplicates.
-- The Ley plugin is already installed and enabled in Codex (`ley-memory@ley` from the local marketplace). Claude Code has no plugins installed, so its integration remains available via the documented `--plugin-dir` path. Gemini CLI is not installed on this machine.
+- The Ley plugin is already installed and enabled in Codex (`ley-memory@ley` from the local marketplace). Claude Code has no plugins installed, so its integration remains available via the documented `--plugin-dir` path. 
 
 ## Verified adversarial prompt-injection boundaries
 

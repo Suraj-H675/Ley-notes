@@ -30,6 +30,6 @@ The desktop project graph indexes changed immutable graph/artifact pairs so an e
 
 ## Cloud-agent boundary
 
-Ley never uploads captured data independently. A cloud agent such as Claude, Codex, or Gemini may receive bounded context only when the user or host asks that agent to retrieve it. Capture mode controls local retention; it does not override the connected provider's handling of deliberately retrieved context.
+Ley never uploads captured data independently. A cloud agent such as Claude or Codex may receive bounded context only when the user or host asks that agent to retrieve it. Capture mode controls local retention; it does not override the connected provider's handling of deliberately retrieved context.
 
 See [ADR 0020](../adr/0020-reviewed-project-memory-erasure.md) and [ADR 0024](../adr/0024-reviewed-session-memory-erasure.md) for the erasure boundaries and concurrency contracts.

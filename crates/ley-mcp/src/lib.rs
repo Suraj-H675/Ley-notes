@@ -450,7 +450,7 @@ pub struct StartSessionParams {
     /// Concrete outcome this session is trying to achieve.
     #[schemars(length(min = 1, max = 16_000))]
     pub goal: String,
-    /// Optional host name such as codex, claude-code, or gemini-cli.
+    /// Optional host name such as codex or claude-code.
     #[serde(default)]
     #[schemars(inner(length(min = 1, max = 128)))]
     pub host: Option<String>,

@@ -2162,7 +2162,7 @@ fn print_help() {
     println!("  ley unbind [path] [--json]");
     println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley graph [path] [--vault TEMPORARY_VAULT] [--json]");
-    println!("  ley hook [path] --host codex|claude|gemini [--vault TEMPORARY_VAULT]");
+    println!("  ley hook [path] --host codex|claude [--vault TEMPORARY_VAULT]");
     println!("  ley mcp [path] [--vault TEMPORARY_VAULT] [--allow-session-writes]");
     println!("      [--allow-learning-proposals]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");

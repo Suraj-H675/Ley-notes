@@ -15,7 +15,7 @@ Browser-local mode requests persistent browser storage when available, but ZIP b
 
 ## Agent boundary
 
-Ley does not independently upload notes, project scans, sessions, queries, or indexes. When a user intentionally asks a cloud agent such as Claude, Codex, or Gemini to retrieve Ley context, that selected context becomes visible to the agent provider as part of the agent request.
+Ley does not independently upload notes, project scans, sessions, queries, or indexes. When a user intentionally asks a cloud agent such as Claude or Codex to retrieve Ley context, that selected context becomes visible to the agent provider as part of the agent request.
 
 Optional meaning-based retrieval uses a pinned local Model2Vec model. Status checks, startup, ingestion, and search never download it. Only the explicit **Enable semantic search** desktop action or `ley semantic install` command contacts Hugging Face, and only for the three files at Ley's pinned model revision. Ley streams those public files into owner-private staging, checks their expected sizes and SHA-256 hashes, and atomically installs the verified model in the operating-system user cache. Project content and search queries are not included in those requests; inference remains on-device. Without a valid installation, Ley continues with lexical retrieval and discloses that fallback.
 

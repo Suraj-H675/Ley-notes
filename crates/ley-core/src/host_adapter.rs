@@ -20,7 +20,6 @@ const HOST_RESUME_CHARACTERS: usize = 8_000;
 pub enum AgentHost {
     Codex,
     ClaudeCode,
-    GeminiCli,
 }
 
 impl AgentHost {
@@ -28,9 +27,8 @@ impl AgentHost {
         match value {
             "codex" => Ok(Self::Codex),
             "claude" | "claude-code" => Ok(Self::ClaudeCode),
-            "gemini" | "gemini-cli" => Ok(Self::GeminiCli),
             _ => Err(LeyCoreError::InvalidSessionRequest(format!(
-                "unsupported host '{value}'; use codex, claude, or gemini"
+                "unsupported host '{value}'; use codex or claude"
             ))),
         }
     }
@@ -39,7 +37,6 @@ impl AgentHost {
         match self {
             Self::Codex => "Codex",
             Self::ClaudeCode => "Claude Code",
-            Self::GeminiCli => "Gemini CLI",
         }
     }
 
@@ -47,7 +44,6 @@ impl AgentHost {
         match self {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude-code",
-            Self::GeminiCli => "gemini-cli",
         }
     }
 }
@@ -111,8 +107,7 @@ pub fn process_host_hook(
                 output,
             })
         }
-        (AgentHost::Codex | AgentHost::ClaudeCode, "UserPromptSubmit")
-        | (AgentHost::GeminiCli, "BeforeAgent") => {
+        (AgentHost::Codex | AgentHost::ClaudeCode, "UserPromptSubmit") => {
             let prompt = required_text(object.get("prompt"), "prompt")?;
             let session_id = ensure_host_session(
                 project_start.as_ref(),
@@ -152,13 +147,8 @@ pub fn process_host_hook(
                 output: turn_start_output(host, &session_id, &mutation.session),
             })
         }
-        (AgentHost::Codex | AgentHost::ClaudeCode, "Stop")
-        | (AgentHost::GeminiCli, "AfterAgent") => {
-            let response_field = if host == AgentHost::GeminiCli {
-                "prompt_response"
-            } else {
-                "last_assistant_message"
-            };
+        (AgentHost::Codex | AgentHost::ClaudeCode, "Stop") => {
+            let response_field = "last_assistant_message";
             let Some(response) = object.get(response_field).and_then(Value::as_str) else {
                 return Ok(noop(host, event));
             };
@@ -322,11 +312,8 @@ fn session_start_output(host: AgentHost, context: &str) -> Value {
     })
 }
 
-fn turn_start_output(host: AgentHost, session_id: &str, session: &AgentSession) -> Value {
-    let event = match host {
-        AgentHost::Codex | AgentHost::ClaudeCode => "UserPromptSubmit",
-        AgentHost::GeminiCli => "BeforeAgent",
-    };
+fn turn_start_output(_host: AgentHost, session_id: &str, session: &AgentSession) -> Value {
+    let event = "UserPromptSubmit";
     let capture = session.prompts.last().map_or(
         "Ley observed this turn but did not retain the prompt body.",
         |prompt| match prompt.retention {
@@ -375,9 +362,8 @@ fn host_turn_correlation(
         ));
     }
 
-    // Claude Code does not currently expose a stable per-turn identifier, and
-    // Gemini's pre/post timestamps identify hook executions rather than one
-    // shared turn. Pair them using the append-only Ley session state. A pending
+    // Claude Code does not currently expose a stable per-turn identifier.
+    // Pair turns using the append-only Ley session state. A pending
     // prompt reuses its ordinal on retry; a response consumes that ordinal.
     let prompts = session.prompts.len();
     let responses = session.responses.len();
@@ -573,9 +559,9 @@ mod tests {
         let next = process_host_hook(
             &project,
             &vault,
-            AgentHost::GeminiCli,
+            AgentHost::ClaudeCode,
             json!({
-                "session_id": "gemini-two",
+                "session_id": "claude-two",
                 "cwd": project,
                 "hook_event_name": "SessionStart",
                 "source": "startup",
@@ -673,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_and_gemini_pair_redacted_turns_without_host_turn_ids() {
+    fn claude_pair_redacted_turns_without_host_turn_ids() {
         let base = tempdir().unwrap();
         let project = base.path().join("project");
         let vault = base.path().join("vault");
@@ -683,87 +669,71 @@ mod tests {
         initialize_project(&project, Some("Host parity"), CaptureMode::Structured).unwrap();
         ingest_project(&project, &vault).unwrap();
 
-        for (host, event, external_session, prompt_field) in [
-            (
-                AgentHost::ClaudeCode,
-                "UserPromptSubmit",
-                "claude-thread",
-                "prompt",
-            ),
-            (
-                AgentHost::GeminiCli,
-                "BeforeAgent",
-                "gemini-thread",
-                "prompt",
-            ),
-        ] {
-            let payload = json!({
+        let host = AgentHost::ClaudeCode;
+        let event = "UserPromptSubmit";
+        let external_session = "claude-thread";
+        let prompt_field = "prompt";
+
+        let payload = json!({
+            "session_id": external_session,
+            "cwd": project,
+            "hook_event_name": event,
+            "timestamp": "2026-07-29T12:00:00Z",
+            (prompt_field): "api_key=NEVER_STORE_THIS_PROMPT"
+        });
+        let prepared = process_host_hook(&project, &vault, host, payload.clone()).unwrap();
+        process_host_hook(&project, &vault, host, payload.clone()).unwrap();
+
+        assert_eq!(prepared.disposition, HostHookDisposition::TurnPrepared);
+        assert_eq!(
+            prepared.output["hookSpecificOutput"]["hookEventName"],
+            event
+        );
+        let context = prepared.output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.contains(prepared.session_id.as_deref().unwrap()));
+        assert!(context.contains("ley_session_checkpoint"));
+        assert!(!context.contains("NEVER_STORE_THIS_PROMPT"));
+
+        let stored =
+            read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
+        assert_eq!(stored.prompts.len(), 1);
+        let stored_text = serde_json::to_string(&stored).unwrap();
+        assert!(!stored_text.contains("NEVER_STORE_THIS_PROMPT"));
+
+        let response_event = "Stop";
+        let response_field = "last_assistant_message";
+
+        process_host_hook(
+            &project,
+            &vault,
+            host,
+            json!({
                 "session_id": external_session,
                 "cwd": project,
-                "hook_event_name": event,
-                "timestamp": "2026-07-29T12:00:00Z",
-                (prompt_field): "api_key=NEVER_STORE_THIS_PROMPT"
-            });
-            let prepared = process_host_hook(&project, &vault, host, payload.clone()).unwrap();
-            process_host_hook(&project, &vault, host, payload.clone()).unwrap();
+                "hook_event_name": response_event,
+                "timestamp": "2026-07-29T12:00:01Z",
+                (response_field): "Finished the requested turn."
+            }),
+        )
+        .unwrap();
+        let paired =
+            read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
+        assert_eq!(paired.responses.len(), 1);
+        assert_eq!(
+            paired.prompts[0].turn_reference,
+            paired.responses[0].turn_reference
+        );
 
-            assert_eq!(prepared.disposition, HostHookDisposition::TurnPrepared);
-            assert_eq!(
-                prepared.output["hookSpecificOutput"]["hookEventName"],
-                event
-            );
-            let context = prepared.output["hookSpecificOutput"]["additionalContext"]
-                .as_str()
-                .unwrap();
-            assert!(context.contains(prepared.session_id.as_deref().unwrap()));
-            assert!(context.contains("ley_session_checkpoint"));
-            assert!(!context.contains("NEVER_STORE_THIS_PROMPT"));
-
-            let stored =
-                read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
-            assert_eq!(stored.prompts.len(), 1);
-            let stored_text = serde_json::to_string(&stored).unwrap();
-            assert!(!stored_text.contains("NEVER_STORE_THIS_PROMPT"));
-
-            let response_event = if host == AgentHost::GeminiCli {
-                "AfterAgent"
-            } else {
-                "Stop"
-            };
-            let response_field = if host == AgentHost::GeminiCli {
-                "prompt_response"
-            } else {
-                "last_assistant_message"
-            };
-            process_host_hook(
-                &project,
-                &vault,
-                host,
-                json!({
-                    "session_id": external_session,
-                    "cwd": project,
-                    "hook_event_name": response_event,
-                    "timestamp": "2026-07-29T12:00:01Z",
-                    (response_field): "Finished the requested turn."
-                }),
-            )
-            .unwrap();
-            let paired =
-                read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
-            assert_eq!(paired.responses.len(), 1);
-            assert_eq!(
-                paired.prompts[0].turn_reference,
-                paired.responses[0].turn_reference
-            );
-
-            process_host_hook(&project, &vault, host, payload).unwrap();
-            let repeated =
-                read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
-            assert_eq!(repeated.prompts.len(), 2);
-            assert_ne!(
-                repeated.prompts[0].turn_reference,
-                repeated.prompts[1].turn_reference
-            );
-        }
+        // Same prompt after a paired response starts a new turn.
+        process_host_hook(&project, &vault, host, payload).unwrap();
+        let repeated =
+            read_session(&project, &vault, prepared.session_id.as_deref().unwrap()).unwrap();
+        assert_eq!(repeated.prompts.len(), 2);
+        assert_ne!(
+            repeated.prompts[0].turn_reference,
+            repeated.prompts[1].turn_reference
+        );
     }
 }

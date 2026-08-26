@@ -254,7 +254,6 @@ Host capabilities differ and must remain versioned adapters:
 
 - **Codex:** local/project MCP config is supported. `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PostCompact`, `SubagentStop`, and `Stop` hooks expose session/turn IDs and a transcript path, but the transcript format is explicitly unstable. `Stop` supplies the latest assistant message. Use stable hook fields first and parse transcripts only in a quarantined adapter.
 - **Claude Code:** MCP plus `SessionStart`, per-turn/tool hooks, `PostCompact`, `Stop`, and `SessionEnd`. Hook input includes a transcript path and session ID; `PostCompact` includes a compact summary. Session end can finalize best-effort, while per-turn checkpoints prevent data loss on crashes.
-- **Gemini CLI:** MCP plus before/after agent/tool, session start/end, and pre-compress hooks. It exposes a transcript path and stable agent response fields.
 - **VS Code/Copilot:** MCP, skills, plugins, and lifecycle hooks exist, but hook support is newer/preview. Ship after the first three adapters prove the event schema.
 - **Other agents:** MCP read/write tools work immediately; automatic capture depends on host lifecycle APIs. Provide explicit CLI and prompt workflows instead of pretending support is equivalent.
 
@@ -276,7 +275,7 @@ Do not return a giant project summary on every turn. Session start should usuall
 
 ## Trust and privacy model
 
-Local storage is not the same as end-to-end local inference. Ley itself performs no upload. When a user asks Claude, Codex, Gemini, or another cloud agent to retrieve Ley context, that returned context becomes part of the provider request. The UI and setup flow must say this plainly.
+Local storage is not the same as end-to-end local inference. Ley itself performs no upload. When a user asks Claude, Codex, or another cloud agent to retrieve Ley context, that returned context becomes part of the provider request. The UI and setup flow must say this plainly.
 
 Additional controls:
 
@@ -348,14 +347,14 @@ Exit: a real repository can be indexed, updated, inspected, and deleted without 
 - stdio lifecycle and MCP Inspector coverage;
 - project/brief/search/path/neighbor/session/lesson tools and resources;
 - budgeted cited context with freshness/conflict/trust metadata;
-- installation commands for Codex, Claude, and Gemini.
+- installation commands for Codex and Claude.
 
 Exit: each host can ask a project question and receive the same bounded, cited local answer context.
 
 ### Phase 4 — structured session capture
 
 - session start/checkpoint/finish and idempotent event writes;
-- Codex, Claude Code, and Gemini adapters using stable lifecycle fields;
+- Codex and Claude Code adapters using stable lifecycle fields;
 - manual fallback commands;
 - crash recovery and resumed-session identity;
 - minimal/structured/full capture controls and transcript adapter versioning.
@@ -413,7 +412,6 @@ Measure recall@k, citation precision, answer key-fact coverage, stale/conflict a
 - [Codex lifecycle hooks](https://learn.chatgpt.com/docs/hooks)
 - [Claude Code lifecycle hooks](https://code.claude.com/docs/en/hooks)
 - [Claude Code MCP integration](https://code.claude.com/docs/en/mcp)
-- [Gemini CLI hook reference](https://geminicli.com/docs/hooks/reference/)
 - [VS Code agent customization](https://code.visualstudio.com/docs/copilot/concepts/customization)
 - [Obsidian internal links](https://obsidian.md/help/links)
 - [Obsidian backlinks](https://obsidian.md/help/Plugins/Backlinks)

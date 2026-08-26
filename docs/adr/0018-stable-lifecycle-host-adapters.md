@@ -4,13 +4,13 @@ Status: accepted; turn-capture semantics superseded by [ADR 0025](0025-bounded-s
 
 ## Context
 
-MCP gives agents deliberate, typed access to Ley, but MCP does not guarantee that an agent remembers to retrieve context or checkpoint a turn. Codex, Claude Code, and Gemini CLI now expose lifecycle hooks with JSON on standard input and stable fields for session identity, event name, working directory, and final assistant text. Each also exposes a transcript path, but all three explicitly treat transcript storage as a host-owned implementation detail.
+MCP gives agents deliberate, typed access to Ley, but MCP does not guarantee that an agent remembers to retrieve context or checkpoint a turn. Codex and Claude Code expose lifecycle hooks with JSON on standard input and stable fields for session identity, event name, working directory, and final assistant text. Each also exposes a transcript path, but both explicitly treat transcript storage as a host-owned implementation detail.
 
 A global integration must also be harmless in repositories where the user has not initialized Ley. A hook must not infer a project from a payload-controlled path, scan neighboring directories, emit protocol noise, or turn an agent-authored statement into a trusted lesson.
 
 ## Decision
 
-`ley hook --host codex|claude|gemini [project]` is the versioned lifecycle
+`ley hook --host codex|claude [project]` is the versioned lifecycle
 adapter entry point. Adapter schema version 3 uses the bounded turn-evidence
 semantics in ADR 0025; version 2 used prompt-free turn preparation and
 fallback checkpoints.
@@ -20,13 +20,13 @@ fallback checkpoints.
 - The packaged MCP command stays protocol-valid outside Ley projects by serving an inactive, zero-capability connection. It exposes no tools or resources and performs no discovery or writes; its server instructions explain the explicit setup required.
 - A host plus its stable external session ID deterministically maps to one Ley session inside one project. Replayed starts and turn deliveries use deterministic request IDs, so process crashes and hook retries cannot duplicate records.
 - `SessionStart` creates or reopens that session and returns the existing bounded project-resume projection as additional context. Stored text is labeled untrusted historical evidence, the captured snapshot is identified, and `liveSourceChecked` remains false.
-- Codex and Claude `UserPromptSubmit`, and Gemini `BeforeAgent`, return the exact current Ley session and append bounded turn evidence according to capture policy. Structured and Full Evidence retain pattern-redacted prompt bodies; Minimal retains only disclosure events.
-- Codex and Claude `Stop`, and Gemini `AfterAgent`, append the paired bounded response as turn evidence, not as a fabricated checkpoint. Tool traffic, hidden reasoning, and transcripts are not automatically retained.
+- Codex and Claude `UserPromptSubmit` return the exact current Ley session and append bounded turn evidence according to capture policy. Structured and Full Evidence retain pattern-redacted prompt bodies; Minimal retains only disclosure events.
+- Codex and Claude `Stop` append the paired bounded response as turn evidence, not as a fabricated checkpoint. Tool traffic, hidden reasoning, and transcripts are not automatically retained.
 - Rich decisions, tasks, problem attempts/outcomes, resolutions, citations, commands, verification, unresolved work, and handoffs remain typed MCP/CLI writes guided by the bundled agent skill.
 - Automatic checkpoints do not confirm or promote learnings. MCP can only propose review-required learnings when the integration was started with the independent proposal capability.
 - Every host response is one compact JSON value on stdout. Diagnostics use stderr. Stop events return `{}` so they never accidentally continue or block the host.
 
-Codex, Claude Code, and Gemini CLI receive separate installable packages under `integrations/`, but all call the same Rust engine and store the same session semantics. Adapter parity is semantic, not syntactic: host event names and packaging remain native to each host.
+Codex and Claude Code receive separate installable packages under `integrations/`, but all call the same Rust engine and store the same session semantics. Adapter parity is semantic, not syntactic: host event names and packaging remain native to each host.
 
 ## Consequences
 
@@ -42,5 +42,3 @@ Codex, Claude Code, and Gemini CLI receive separate installable packages under `
 - [Codex plugin packaging](https://learn.chatgpt.com/docs/build-plugins#bundled-mcp-servers-and-lifecycle-hooks)
 - [Claude Code hooks](https://code.claude.com/docs/en/hooks)
 - [Claude Code plugins](https://code.claude.com/docs/en/plugins-reference)
-- [Gemini CLI hook reference](https://geminicli.com/docs/hooks/reference/)
-- [Gemini CLI extension reference](https://geminicli.com/docs/extensions/reference/)

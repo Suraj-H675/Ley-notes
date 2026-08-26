@@ -13,7 +13,7 @@ Ordinary Markdown handoffs and JSON Canvas cards are different. They are explici
 
 ## Decision
 
-Ley provides a local user-authorized **Erase session memory** action from the desktop session inspector and an explicitly confirmed local CLI command. MCP tools and automatic Codex, Claude Code, and Gemini adapters receive no erasure authority.
+Ley provides a local user-authorized **Erase session memory** action from the desktop session inspector and an explicitly confirmed local CLI command. MCP tools and automatic Codex and Claude adapters receive no erasure authority.
 
 Before erasing, the caller must provide the exact current session name and the event count it inspected. Ley acquires the project’s exclusive lifecycle lock, replays and validates the authoritative session and learning ledgers, then rechecks both values. A stale inspector or concurrent writer fails without deleting memory.
 

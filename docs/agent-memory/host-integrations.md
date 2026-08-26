@@ -86,23 +86,6 @@ prompt according to project policy; `Stop` captures the paired bounded response.
 Claude Code's documented `${CLAUDE_PROJECT_DIR}` placeholder rather than
 assuming its process working directory.
 
-## Gemini CLI
-
-Clone Ley, link the self-contained extension, and restart Gemini CLI:
-
-```bash
-git clone https://github.com/Suraj-H675/Ley-notes.git
-gemini extensions link /absolute/path/to/Ley-notes/integrations/gemini-cli/ley-memory
-```
-
-Gemini substitutes the active `${workspacePath}` into the MCP and hook commands.
-`SessionStart` loads the bounded brief, `BeforeAgent` reasserts the current Ley
-session and captures the bounded prompt according to project policy, and
-`AfterAgent` captures the paired bounded response. Verify discovery with:
-
-```bash
-gemini extensions list
-```
 
 ## What automatic capture does
 
@@ -118,8 +101,7 @@ Minimal mode stores body-free prompt/response observation events so users can se
 
 Each adapter also injects the stable current Ley session ID at session and turn
 start so MCP writes continue the same session instead of creating duplicates.
-The native turn event is Codex/Claude `UserPromptSubmit` or Gemini
-`BeforeAgent`.
+The native turn event is Codex and Claude `UserPromptSubmit`.
 
 It does not automatically store:
 
@@ -139,7 +121,7 @@ checkpoints.
 
 ## Failure and retry behavior
 
-An uninitialized or unbound project returns `{}` and remains untouched. A stable host session maps to the same Ley session after process restart. Codex pairs retries with its documented stable `turn_id`; Claude Code and Gemini CLI use the append-only Ley session state because their pre/post events do not share a stable turn identifier. Exact hook retries replay instead of duplicating, while the same prompt submitted after a completed response becomes a new turn. A new host session receives the normal bounded resume pack, including earlier checkpoint evidence and only user-trusted, artifact-current learnings—not captured prompt/response bodies.
+An uninitialized or unbound project returns `{}` and remains untouched. A stable host session maps to the same Ley session after process restart. Codex pairs retries with its documented stable `turn_id`; Claude Code uses the append-only Ley session state because their pre/post events do not share a stable turn identifier. Exact hook retries replay instead of duplicating, while the same prompt submitted after a completed response becomes a new turn. A new host session receives the normal bounded resume pack, including earlier checkpoint evidence and only user-trusted, artifact-current learnings—not captured prompt/response bodies.
 
 The bundled MCP process also starts cleanly in an ordinary workspace, but advertises zero capabilities and no tools or resources. It never initializes or scans that directory. This keeps a globally installed integration quiet and harmless until the user explicitly sets up Ley for that project.
 

@@ -466,7 +466,7 @@ export function CapturePrivacyPanel({
                   This cannot be undone by Ley
                 </p>
                 <p className="mt-1 text-meta leading-5 text-muted-foreground">
-                  Stop connected Codex, Claude Code, and Gemini sessions first.
+                  Stop connected Codex and Claude Code sessions first.
                   Existing backups, filesystem snapshots, or copies outside this
                   vault are not securely wiped.
                 </p>

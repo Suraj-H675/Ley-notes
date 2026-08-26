@@ -14,7 +14,7 @@ Deletion can race with a running MCP server, host hook, ingestion, or desktop re
 
 - The desktop **Capture & privacy** surface provides a whole-project **Erase Agent Memory** action. It permanently removes captured artifacts and immutable history, the project graph, structured sessions, and learning ledgers for that project from the selected vault.
 - Erasure preserves the user’s project files, ordinary notes and Canvas documents, repository-local `.ley` identity/capture policy, private vault binding, and observation-catalog entry. The project becomes **Needs capture**, so the user can deliberately recapture later.
-- The confirmation names every deleted category, requires the exact project name, warns the user to stop Codex, Claude Code, and Gemini sessions, and states that Ley cannot securely wipe backups, filesystem snapshots, SSD remnants, or copies outside the vault.
+- The confirmation names every deleted category, requires the exact project name, warns the user to stop Codex and Claude sessions, and states that Ley cannot securely wipe backups, filesystem snapshots, SSD remnants, or copies outside the vault.
 - Every current-code memory reader and writer acquires a shared project lifecycle lock stored as a sibling of the erasable project directory. Erasure acquires the exclusive lock, waits for active operations, revalidates the no-follow project directory, and removes only that capability-scoped relative namespace.
 - The small lifecycle lock file remains after erasure. It contains no memory content and prevents a recapture/deletion race.
 - Erasure is desktop/user authority only. It is not exposed through MCP tools or automatic host adapters.

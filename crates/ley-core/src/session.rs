@@ -1347,13 +1347,13 @@ fn sanitize_turn_host(value: String) -> Result<String, LeyCoreError> {
         Ok(value.to_owned())
     } else {
         Err(LeyCoreError::InvalidSessionRequest(
-            "turn evidence host must be codex, claude-code, or gemini-cli".to_owned(),
+            "turn evidence host must be codex or claude-code".to_owned(),
         ))
     }
 }
 
 fn is_valid_turn_host(value: &str) -> bool {
-    matches!(value, "codex" | "claude-code" | "gemini-cli")
+    matches!(value, "codex" | "claude-code")
 }
 
 fn derive_validated_turn_reference(correlation_material: &str) -> Result<String, LeyCoreError> {

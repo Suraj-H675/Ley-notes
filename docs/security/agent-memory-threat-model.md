@@ -1,6 +1,6 @@
 # Agent memory threat model
 
-Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project MCP retrieval, opt-in structured session capture, stable-field Codex/Claude/Gemini lifecycle adapters, and evidence-backed learning review.
+Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project MCP retrieval, opt-in structured session capture, stable-field Codex and Claude lifecycle adapters, and evidence-backed learning review.
 
 ## Assets
 

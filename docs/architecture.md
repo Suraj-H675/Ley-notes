@@ -25,7 +25,7 @@ All surfaces follow the [local storage and data boundaries](privacy-and-storage.
 | `crates/ley-core`    | Identity, ingestion, graph, retrieval, sessions, and learning ledger    | capability I/O and deterministic parsers    |
 | `crates/ley-mcp`     | Fixed-project stdio retrieval and opt-in session capture                | `ley-core`, official Rust MCP SDK            |
 | `crates/ley-cli`     | Human/agent command surface and MCP process entry point                 | `ley-core`, `ley-mcp`                        |
-| `integrations/`      | Installable Codex, Claude Code, and Gemini CLI MCP/hook/skill packages  | published `ley` CLI contract                 |
+| `integrations/`      | Installable Codex and Claude Code MCP/hook/skill packages  | published `ley` CLI contract                 |
 
 Feature-specific hooks are colocated with their feature. Only genuinely reusable hooks belong in `shared/hooks`. Tests for pure domain behavior remain beside the module they verify.
 
