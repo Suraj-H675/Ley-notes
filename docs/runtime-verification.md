@@ -488,3 +488,9 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, lint, all 232 frontend tests across 60 files, the production web/PWA build, `cargo check`, and the complete Rust workspace test suite passed on the current tree.
 - On 2026-08-25, a current-source Linux desktop bundle completed successfully with the latest UI fixes. The generated `Ley_0.1.0_amd64.deb` (8.9 MB) and `Ley-0.1.0-1.x86_64.rpm` (8.9 MB) artifacts were inspected for expected package formats. Native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
 - Record any platform-specific packaging limitation honestly rather than substituting an unrelated artifact.
+
+## Verified raw MCP stdio workflow
+
+- On 2026-08-26, a real `ley mcp` process was driven with raw JSON-RPC lines over stdin/stdout against a temporary initialized and bound project. Initialize, tool/resource discovery, bounded project resume, hybrid memory search, cited evidence read, resource read, and the full append-only session lifecycle (start, checkpoint with decisions/verification/touched artifacts, finish with handoff) all succeeded.
+- The read-only default correctly omitted session write tools from discovery; they appeared only after explicit process-start opt-in. A traversal attempt to an unapproved artifact path was rejected without leaking scope paths; an overview URI for a different project ID returned the fixed-project-scope error. No absolute project or vault paths appeared in any protocol response.
+- A deliberate credential assignment in project text was redacted before durable storage and absent from the vault. The largest single response observed was approximately 19 KB against the 256 KB hard output limit.
