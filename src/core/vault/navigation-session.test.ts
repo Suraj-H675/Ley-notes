@@ -36,6 +36,62 @@ describe('navigation sessions', () => {
     expect(useNavStore.getState()).toMatchObject({ openTabs: [first.id, second.id], activeTab: first.id, recentPages: [second.id, first.id] });
   });
 
+  it('restores exact order after closing a middle tab and activating another', async () => {
+    const first = await createPage({ title: 'First' });
+    const middle = await createPage({ title: 'Middle' });
+    const last = await createPage({ title: 'Last' });
+    useNavStore.getState().hydrate({
+      openTabs: [first.id, middle.id, last.id],
+      activeTab: first.id,
+      recentPages: [first.id],
+    });
+
+    useNavStore.getState().closeTab(middle.id);
+    useNavStore.getState().setActiveTab(last.id);
+    await saveNavigationSession();
+    useNavStore.getState().reset();
+
+    expect(await restoreNavigationSession()).toBe(true);
+    expect(useNavStore.getState()).toMatchObject({
+      openTabs: [first.id, last.id],
+      activeTab: last.id,
+      primaryTab: last.id,
+      secondaryTab: null,
+      activePane: 'primary',
+      recentPages: [last.id, first.id],
+    });
+  });
+
+  it('safely removes a deleted note from tabs, split panes, and recents', async () => {
+    await markActiveDataKind('browser-local');
+    const source = await createPage({ title: 'Source' });
+    const reference = await createPage({ title: 'Reference' });
+    const keep = await createPage({ title: 'Keep' });
+    useNavStore.getState().hydrate({
+      openTabs: [source.id, reference.id, keep.id],
+      activeTab: reference.id,
+      primaryTab: source.id,
+      secondaryTab: reference.id,
+      activePane: 'secondary',
+      recentPages: [reference.id, keep.id, source.id],
+    });
+
+    await deletePage(reference.id);
+    useNavStore.getState().closeTab(reference.id);
+    await saveNavigationSession();
+    useNavStore.getState().reset();
+
+    expect(await restoreNavigationSession()).toBe(true);
+    expect(useNavStore.getState()).toMatchObject({
+      openTabs: [source.id, keep.id],
+      activeTab: source.id,
+      primaryTab: source.id,
+      secondaryTab: null,
+      activePane: 'primary',
+      recentPages: [keep.id, source.id],
+    });
+  });
+
   it('restores both sides of a split workspace and its focused pane', async () => {
     await markActiveDataKind('browser-local');
     const source = await createPage({ title: 'Source' });

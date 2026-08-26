@@ -457,6 +457,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-26, pane-aware wiki and Markdown destination resolution was verified against a populated split session. A link opened from the active source pane updates that same pane; when the target is already visible in the opposite pane, Ley switches focus to that existing editor instead of replacing its content.
 - Relative internal Markdown links retain the originating pane as their explicit navigation context. Existing state coverage continues to protect independent split opening, closing, tab reconciliation, and reload restoration.
 
+## Verified tab session lifecycle
+
+- On 2026-08-26, exact tab ordering was verified after closing a middle tab and activating the remaining final tab. Reload preserved `[first, last]`, restored the active tab, promoted it as the sole primary pane, and retained its recent-first order.
+- Deleting a note from a split session removed it safely from open tabs, the secondary pane, and recents; reload restored the remaining primary/secondary tab set without stale references. Existing coverage continues to prove rename survival, split restoration, vault isolation, malformed records, external missing-note recovery, and workspace layout fallback.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
