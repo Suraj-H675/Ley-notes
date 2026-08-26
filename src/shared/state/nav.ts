@@ -6,7 +6,7 @@ import { create } from 'zustand';
 
 export type EditorPane = 'primary' | 'secondary';
 
-interface NavState {
+export interface NavState {
   openTabs: string[];
   activeTab: string | null;
   primaryTab: string | null;
