@@ -425,6 +425,12 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - The matching Ctrl/Cmd shortcuts invoked the same transactions for bold, italic, link, and inline code. Every transaction was reversible through normal editor undo.
 - Live Preview, Source, and Read modes remained visually distinct at desktop and 390×844; the narrow document stayed exactly 390px wide with no horizontal overflow while Source retained exact Markdown and Read rendered headings without source syntax.
 
+## Verified bookmark workflows
+
+- On 2026-08-26, note bookmarks appeared reactively in the unified Bookmarks hub with `aria-pressed` state. Heading and block anchors rendered with live previews, availability checks, custom titles, rename, delete, and exact-destination navigation wiring.
+- Renaming a heading bookmark updated its displayed title without changing its target; deletion removed only that record. Block bookmark logic appended a generated ID to authoritative Markdown, reused existing IDs, and refused blank lines or headings without creating metadata.
+- A browser automation environment reset prevented durable IndexedDB fixtures from surviving between daemon restarts. The remaining user-facing persistence behavior was therefore covered by deterministic Dexie-backed UI tests rather than claiming unobserved reload evidence.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
