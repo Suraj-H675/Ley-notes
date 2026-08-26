@@ -69,6 +69,7 @@ let ready = false;
 /** Start the Dexie → search-index bridge. Safe under React Strict Mode. */
 export function startSearchIndex(): () => void {
   consumers += 1;
+  void ensureReady();
   if (!subscription) {
     subscription = liveQuery(async () => {
       const [pages, tags] = await Promise.all([
@@ -158,10 +159,24 @@ export async function searchPages(
   query: string,
   limit = 20,
 ): Promise<PageSearchResult[]> {
-  await ensureReady();
   const filter = parseFilter(query.trim());
+  if (query.trim() === "" || filter.tasks.length > 0) {
+    await ensureReady();
+    return [...docs.values()]
+      .filter((doc) => matchesFilters(doc, filter))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit)
+      .map((doc) => toResult(doc, filter.terms, 1, filter));
+  }
 
-  if (!filter.terms) {
+  await ensureReady();
+
+  const raw = await index.searchAsync(filter.terms, {
+    limit: Math.max(limit * 4, 40),
+    enrich: true,
+  });
+
+  if (raw.length === 0 && (filter.paths.length > 0 || filter.titles.length > 0)) {
     return [...docs.values()]
       .filter((doc) => matchesFilters(doc, filter))
       .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -169,10 +184,6 @@ export async function searchPages(
       .map((doc) => toResult(doc, "", 1, filter));
   }
 
-  const raw = await index.searchAsync(filter.terms, {
-    limit: Math.max(limit * 4, 40),
-    enrich: true,
-  });
   const ranked = new Map<string, number>();
   const queryLc = filter.terms.toLowerCase();
 

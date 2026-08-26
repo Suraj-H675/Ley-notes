@@ -433,6 +433,11 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - In a continuous live browser session, the fixture note, two heading bookmarks, block bookmark, generated `^` Markdown ID, custom title, exact Alpha active line, and all `aria-pressed` states survived reload. Heading-line capture displayed the Outline-action refusal while preserving source.
 - Runtime inspection found that renaming controls used the automatic label even after a custom title existed, making edit/delete controls ambiguous for screen-reader users. Bookmark labels now consistently use the current title; focused tests cover this accessibility contract.
 
+## Verified task search filters
+
+- On 2026-08-26, `task-todo`, `task-done`, and `task` filters were verified against real Markdown tasks. State filtering, substring matching, filter composition with title negation, task-context snippets (`To do ·` / `Done ·`), fenced-code exclusion, prose exclusion, and live collection filtering all behaved as intended.
+- Runtime diagnosis found a real search defect: task-only queries were routed through FlexSearch even though task text is not independently searchable, so matching notes could return empty results. Task-only queries now scan the authoritative document projection directly; integration and collection coverage protect the full workflow.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.

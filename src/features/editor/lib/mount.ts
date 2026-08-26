@@ -278,6 +278,11 @@ const cmHighlight = HighlightStyle.define([
 
 export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorController {
   const livePreviewCompartment = new Compartment();
+  const pasteTextHandler = EditorView.inputHandler.of((_view, _from, _to, text, insert) => {
+    if (!text.includes('\n')) return false;
+    view.dispatch(insert(), { userEvent: 'input.paste', scrollIntoView: true });
+    return true;
+  });
   const state = EditorState.create({
     doc: opts.initialDoc,
     extensions: [
@@ -291,6 +296,7 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       highlightSelectionMatches({ highlightWordAroundCursor: true }),
       keymap.of([...editorFormattingKeymap(), ...searchKeymap.filter((binding) => binding.key !== 'Mod-d'), ...defaultKeymap, ...historyKeymap, indentWithTab]),
       markdown({ extensions: GFM }),
+      pasteTextHandler,
       livePreviewCompartment.of(opts.livePreview === false ? [] : livePreviewExtension()),
       syntaxHighlighting(cmHighlight),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),

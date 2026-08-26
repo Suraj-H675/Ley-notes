@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { collectLivePreviewSyntax } from './live-preview';
 
 function preview(doc: string, cursorLine: number) {
-  const initial = EditorState.create({ doc, extensions: [markdown({ extensions: GFM })] });
+  const initial = EditorState.create({ doc });
   const cursor = initial.doc.line(cursorLine).from;
   const state = EditorState.create({
     doc,
@@ -35,11 +35,14 @@ describe('live preview syntax', () => {
   });
 
   it('renders inactive tasks as stateful checkbox replacements', () => {
-    const { syntax } = preview('- [ ] Open\n- [x] Done', 1);
+    const { syntax } = preview('Before\n- [ ] Open\n- [x] Done', 1);
     const tasks = syntax.replacements.filter((replacement) => replacement.kind === 'task');
 
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]).toMatchObject({ checked: true });
+    expect(tasks).toHaveLength(2);
+    expect(tasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ checked: false }),
+      expect.objectContaining({ checked: true }),
+    ]));
   });
 
   it('shows readable labels for wiki links and regular Markdown links', () => {

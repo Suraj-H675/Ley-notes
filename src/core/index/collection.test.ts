@@ -73,6 +73,30 @@ describe("collection projection", () => {
     ).toEqual(["a", "b"]);
   });
 
+  it("filters live collection rows by real task state and excludes fenced examples", () => {
+    const taskPages = [
+      makePage({
+        id: "todo",
+        title: "Open tasks",
+        content: "- [ ] Call Alice\n```md\n- [ ] Hidden Alice example\n```",
+      }),
+      makePage({
+        id: "done",
+        title: "Done tasks",
+        content: "- [x] Call Alice later",
+      }),
+    ];
+    expect(
+      buildCollectionRows(taskPages, [], "task-todo:alice").map((row) => row.page.id),
+    ).toEqual(["todo"]);
+    expect(
+      buildCollectionRows(taskPages, [], "task-done:alice").map((row) => row.page.id),
+    ).toEqual(["done"]);
+    expect(
+      buildCollectionRows(taskPages, [], "task-todo:bob").map((row) => row.page.id),
+    ).toEqual([]);
+  });
+
   it("discovers portable YAML columns by coverage", () => {
     const rows = buildCollectionRows(pages, tags, "");
     expect(discoverCollectionProperties(rows)).toEqual([
