@@ -150,7 +150,7 @@ export function CollectionModal({ request, onClose }: { request: CollectionReque
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map(({ page, tags }) => <tr key={page.id} className="group hover:bg-surface-2/65">
+                {sortedRows.map(({ page, tags }) => <tr key={page.id} data-page-id={page.id} className="group hover:bg-surface-2/65">
                   <td className="sticky left-0 z-[1] min-w-56 max-w-72 border-b border-border bg-background px-3 py-2 group-hover:bg-surface-2">
                     <button type="button" onClick={() => openNote(page.id)} className="flex w-full items-center gap-2 text-left"><FileText size={13} className="shrink-0 text-secondary" /><span className="min-w-0"><span className="block truncate font-medium text-foreground">{page.title}</span><span className="block truncate font-mono text-micro text-subtle-foreground">{page.path}</span></span></button>
                   </td>
@@ -182,17 +182,19 @@ function CollectionCell({ column, page, tags, onStatus }: { column: CollectionCo
   if (column === 'modified') return <td className="min-w-44 border-b border-r border-border px-3 py-2 text-muted-foreground"><time dateTime={new Date(page.updatedAt).toISOString()}>{formatModified(page.updatedAt)}</time></td>;
   const key = propertyKey(column);
   const value = page.frontmatter[key];
-  return <td className="min-w-44 border-b border-r border-border px-2 py-1"><PropertyCellEditor key={`${page.id}:${column}:${formatPropertyValue(value)}`} value={value} propertyKey={key} onStatus={onStatus} onSave={async (next) => { await updatePageProperty(page.id, key, next); }} /></td>;
+  return <td className="min-w-44 border-b border-r border-border px-2 py-1"><PropertyCellEditor key={`${page.id}:${column}:${formatPropertyValue(value)}`} value={value} propertyKey={key} rowId={page.id} onStatus={onStatus} onSave={async (next) => { await updatePageProperty(page.id, key, next); }} /></td>;
 }
 
 function PropertyCellEditor({
   value,
   propertyKey,
+  rowId,
   onStatus,
   onSave,
 }: {
   value: unknown;
   propertyKey: string;
+  rowId: string;
   onStatus: (status: string | null) => void;
   onSave: (value: unknown) => Promise<void>;
 }) {
@@ -231,7 +233,8 @@ function PropertyCellEditor({
         }}
         placeholder="—"
         aria-invalid={Boolean(error)}
-        aria-label={`Edit ${propertyKey} property`}
+        data-row-id={rowId}
+        aria-label={`Edit ${propertyKey} property for row ${rowId}`}
         title={error ?? `Edit ${propertyKey}`}
         className={`h-8 w-full rounded-md border border-transparent bg-transparent px-2 outline-none placeholder:text-subtle-foreground hover:border-border hover:bg-background focus:bg-background disabled:opacity-50 ${
           error

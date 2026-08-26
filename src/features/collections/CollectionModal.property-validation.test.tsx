@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/infrastructure/database/db';
@@ -43,7 +44,7 @@ describe('collection property validation', () => {
       />,
     );
 
-    const cell = await screen.findByLabelText('Edit priority property');
+    const cell = await screen.findByLabelText('Edit priority property for row typed');
     fireEvent.change(cell, { target: { value: 'soon' } });
     fireEvent.blur(cell);
 
@@ -52,5 +53,40 @@ describe('collection property validation', () => {
       expect(screen.queryByText('priority saved')).not.toBeInTheDocument(),
     );
     expect(updatePageProperty).not.toHaveBeenCalled();
+  });
+
+  it('commits two rapid property edits without losing either value or note content', async () => {
+    const user = userEvent.setup();
+    await db.pages.bulkPut([
+      {
+        ...makePage({ id: 'first', title: 'First note', content: 'First body' }),
+        frontmatter: { status: 'draft' },
+      },
+      {
+        ...makePage({ id: 'second', title: 'Second note', content: 'Second body' }),
+        frontmatter: { status: 'review' },
+      },
+    ]);
+
+    render(
+      <CollectionModal
+        request={{ query: '', title: 'All notes' }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const firstCell = await screen.findByLabelText('Edit status property for row second');
+    const secondCell = screen.getByLabelText('Edit status property for row first');
+    await user.clear(firstCell);
+    await user.type(firstCell, 'published{Enter}');
+    await user.clear(secondCell);
+    await user.type(secondCell, 'approved{Enter}');
+
+    await waitFor(() => {
+      expect(updatePageProperty).toHaveBeenNthCalledWith(1, 'second', 'status', 'published');
+      expect(updatePageProperty).toHaveBeenNthCalledWith(2, 'first', 'status', 'approved');
+    });
+    expect(await db.pages.get('first')).toMatchObject({ content: 'First body' });
+    expect(await db.pages.get('second')).toMatchObject({ content: 'Second body' });
   });
 });
