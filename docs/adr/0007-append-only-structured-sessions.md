@@ -37,7 +37,7 @@ Checkpoint artifact paths must match the current approved artifact manifest. Ley
 
 Ley trims and bounds every text field, rejects control characters, and runs the local credential redactor before persistence. It stores redaction metadata with the event. This filtering reduces accidental disclosure but cannot identify every possible secret.
 
-The command-line interface (CLI) supports manual start, checkpoint, finish, list, and show operations. A full checkpoint can use the versioned [checkpoint input schema](../../schemas/agent-memory/checkpoint-input.schema.json). Host adapters and future write-capable Model Context Protocol (MCP) tools must call the same core functions.
+The command-line interface (CLI) supports manual start, checkpoint, finish, list, and show operations. A full checkpoint can use the versioned the versioned checkpoint input schema. Host adapters and future write-capable Model Context Protocol (MCP) tools must call the same core functions.
 
 ## Consequences
 

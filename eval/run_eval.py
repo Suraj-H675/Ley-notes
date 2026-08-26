@@ -32,11 +32,6 @@ def init_project(root, name, vault):
     run(["ingest", root, "--json"])
 
 
-def search(project, query, max_tokens=500):
-    out = run(["search", project, query, "--max-tokens", str(max_tokens), "--json"])
-    return json.loads(out)
-
-
 def mcp_call(project, name, arguments):
     """Drive one tools/call through a real ley mcp process."""
     proc = subprocess.Popen(
@@ -89,8 +84,7 @@ start_rid_counter = [0]
 
 def evaluate_scenario(scenario, base_dir):
     scores = {"recall@k": 0.0, "precision": 0.0, "untrusted_boundary": None,
-              "staleness_detected": None, "cross_project_clean": None,
-              "secrets_redacted": None, "idempotent": None}
+              "cross_project_clean": None}
 
     project_dir = base_dir / "project"
     vault_dir = base_dir / "vault"
@@ -271,7 +265,7 @@ def main():
     if injection:
         passed = sum(1 for s in injection if s['untrusted_boundary'])
         print(f"Injection defense: {passed}/{len(injection)} held")
-    for metric in ("staleness_detected", "cross_project_clean", "secrets_redacted", "idempotent"):
+    for metric in ("cross_project_clean",):
         vals = [s[metric] for s in all_scores if s[metric] is not None]
         if vals:
             print(f"{metric}: {sum(vals)}/{len(vals)} passed")

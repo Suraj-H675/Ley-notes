@@ -94,7 +94,7 @@ ley session checkpoint ses_01234567890123456789012345678901 \
   --data checkpoint.json
 ```
 
-The document must match [checkpoint-input.schema.json](../../schemas/agent-memory/checkpoint-input.schema.json). Include a stable `requestId` when a hook may retry delivery:
+The document must match the versioned checkpoint input schema. Include a stable `requestId` when a hook may retry delivery:
 
 ```json
 {
