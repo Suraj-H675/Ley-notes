@@ -809,6 +809,7 @@ function SplitDivider({
       aria-valuemin={28}
       aria-valuemax={72}
       aria-valuenow={Math.round(value)}
+      aria-valuetext={`${Math.round(value)} percent primary pane width`}
       tabIndex={0}
       onPointerDown={startResize}
       onKeyDown={(event) => {

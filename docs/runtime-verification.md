@@ -448,6 +448,10 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-26, workspace navigation recovery was verified against moved and deleted notes. A saved layout dropped unavailable references, loaded the remaining valid note, refused an entirely stale layout without replacing the current workspace, and recovered a moved source by its stable path when the original ID no longer matched.
 - Existing storage tests continue to prove rename/update/delete behavior, duplicate-name rejection, shell clamping, malformed-record filtering, and strict per-vault workspace isolation.
 
+## Verified split divider accessibility
+
+- On 2026-08-26, the keyboard-operable split divider was inspected against its existing behavior: arrow keys commit clamped two-percent changes to persistent state, pointer resizing commits the final value, and both panes use the persisted width after reload. The separator now also exposes a human-readable `aria-valuetext` such as “58 percent primary pane width” rather than only a bare numeric value.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
