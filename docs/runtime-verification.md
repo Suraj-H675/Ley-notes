@@ -419,6 +419,12 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-26, Link Host contained wiki links to `#Alpha`, `#^alpha-block`, `#Beta`, plus Markdown links with the same heading/block destinations. Read-mode clicks opened Link Targets and focused the exact Alpha heading, referenced block line, sibling Beta heading, or block source line.
 - Live Preview Ctrl-click navigation produced the same exact-line results for both wiki and internal Markdown links. A stale-editor listener leak was found during diagnosis; CodeMirror cleanup now removes both follow-link listeners explicitly.
 
+## Verified formatting and mode distinctions
+
+- On 2026-08-26, a selected word in Live Preview was transformed by the Bold, Italic, Link note, and Inline code buttons into authoritative `**Alpha**`, `*Alpha*`, `[[Alpha]]`, and backtick syntax. Each button preserved the selected text as the formatting target.
+- The matching Ctrl/Cmd shortcuts invoked the same transactions for bold, italic, link, and inline code. Every transaction was reversible through normal editor undo.
+- Live Preview, Source, and Read modes remained visually distinct at desktop and 390×844; the narrow document stayed exactly 390px wide with no horizontal overflow while Source retained exact Markdown and Read rendered headings without source syntax.
+
 - Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
 - Verify generated Debian and RPM artifacts on Linux.
 - On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
