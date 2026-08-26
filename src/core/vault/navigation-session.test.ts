@@ -155,6 +155,22 @@ describe('navigation sessions', () => {
     expect(await applyNavigationLayout(layout)).toBe(false);
   });
 
+  it('recovers a moved workspace note by path when its ID is unavailable', async () => {
+    const original = await createPage({ title: 'Original' });
+    useNavStore.getState().hydrate({ openTabs: [original.id], activeTab: original.id, primaryTab: original.id, secondaryTab: null, activePane: 'primary', recentPages: [] });
+    const layout = await captureNavigationLayout();
+
+    await db.pages.update(original.id, { path: 'Projects/Original.md' });
+
+    expect(await applyNavigationLayout(layout)).toBe(true);
+    expect(useNavStore.getState()).toMatchObject({
+      openTabs: [original.id],
+      activeTab: original.id,
+      primaryTab: original.id,
+      recentPages: [original.id],
+    });
+  });
+
   it('preserves an externally deleted open tab for recovery after reload', async () => {
     await markActiveDataKind('browser-local');
     const keep = await createPage({ title: 'Keep' });
