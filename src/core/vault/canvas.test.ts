@@ -11,6 +11,7 @@ import {
   newTextCanvasNode,
   canvasBackgroundPresentation,
   normalizeCanvas,
+  type CanvasDocument,
   saveCanvas,
 } from "./canvas";
 
@@ -90,7 +91,7 @@ describe("JSON Canvas persistence", () => {
   });
 
   it("round-trips every JSON Canvas 1.0 node and edge field Ley supports", () => {
-    const document = {
+    const document: CanvasDocument = {
       nodes: [
         {
           id: "group",
@@ -148,9 +149,65 @@ describe("JSON Canvas persistence", () => {
           color: "6",
         },
       ],
-    } as const;
+    };
 
     expect(normalizeCanvas(document)).toEqual(document);
+  });
+
+  it("preserves imported node and edge array order through a save and reload", async () => {
+    const canvas = await createCanvas("Imported order");
+    const document: CanvasDocument = {
+      nodes: [
+        {
+          id: "z-group",
+          type: "group" as const,
+          label: "Later metadata",
+          x: -40,
+          y: -40,
+          width: 900,
+          height: 500,
+          color: "3",
+        },
+        {
+          id: "first-file",
+          type: "file" as const,
+          file: "Research/First.md",
+          subpath: "#Method",
+          x: 40,
+          y: 80,
+          width: 260,
+          height: 160,
+        },
+        {
+          id: "last-text",
+          type: "text" as const,
+          text: "Last imported",
+          x: 360,
+          y: 80,
+          width: 280,
+          height: 160,
+          color: "#123456",
+        },
+      ],
+      edges: [
+        {
+          id: "later-edge",
+          fromNode: "last-text",
+          fromSide: "left",
+          fromEnd: "arrow",
+          toNode: "first-file",
+          toSide: "right",
+          toEnd: "none",
+          label: "revises",
+          color: "5",
+        },
+      ],
+    };
+
+    await saveCanvas(canvas.path, document);
+    const [restored] = await listCanvases();
+
+    expect(restored.document).toEqual(document);
   });
 
   it("keeps only safe image attachments as group backgrounds", async () => {
