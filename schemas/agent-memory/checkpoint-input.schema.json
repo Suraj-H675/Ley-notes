@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ley.local/schemas/agent-memory/checkpoint-input.schema.json",
+  "title": "Ley checkpoint input",
+  "description": "The versioned JSON payload accepted by ley session checkpoint --data and the equivalent MCP tool.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requestId", "summary"],
+  "properties": {
+    "requestId": { "type": "string", "pattern": "^req_[0-9a-f]{32}$" },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 16000 },
+    "plan": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/planItem" } },
+    "decisions": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/decision" } },
+    "tasks": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/task" } },
+    "problems": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/problem" } },
+    "touchedArtifacts": { "type": "array", "maxItems": 200, "items": { "type": "string", "minLength": 1, "maxLength": 512 } },
+    "commands": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/command" } },
+    "verification": { "type": "array", "maxItems": 200, "items": { "$ref": "#/$defs/verification" } },
+    "unresolved": { "type": "array", "maxItems": 100, "items": { "type": "string", "minLength": 1, "maxLength": 4000 } }
+  },
+  "$defs": {
+    "planItem": {
+      "type": "object", "additionalProperties": false, "required": ["text", "status"],
+      "properties": { "text": { "type": "string", "minLength": 1, "maxLength": 4000 }, "status": { "$ref": "#/$defs/planStatus" } }
+    },
+    "decision": {
+      "type": "object", "additionalProperties": false, "required": ["title", "decision"],
+      "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 256 }, "decision": { "type": "string", "minLength": 1, "maxLength": 8000 }, "rationale": { "type": "string", "maxLength": 8000 }, "alternatives": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 8000 } } }
+    },
+    "task": {
+      "type": "object", "additionalProperties": false, "required": ["title", "status"],
+      "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 256 }, "status": { "type": "string", "enum": ["pending", "in-progress", "completed", "blocked", "cancelled"] }, "details": { "type": "string", "maxLength": 4000 } }
+    },
+    "attempt": {
+      "type": "object", "additionalProperties": false, "required": ["action", "outcome"],
+      "properties": { "action": { "type": "string", "minLength": 1, "maxLength": 8000 }, "outcome": { "type": "string", "enum": ["helped", "no-effect", "worsened", "unknown"] }, "evidence": { "type": "string", "maxLength": 8000 } }
+    },
+    "problem": {
+      "type": "object", "additionalProperties": false, "required": ["title", "symptom"],
+      "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 256 }, "symptom": { "type": "string", "minLength": 1, "maxLength": 8000 }, "expected": { "type": "string", "maxLength": 8000 }, "attempts": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/attempt" } }, "resolution": { "$ref": "#/$defs/resolution" } }
+    },
+    "resolution": {
+      "type": "object", "additionalProperties": false, "required": ["rootCause", "change"],
+      "properties": { "rootCause": { "type": "string", "minLength": 1, "maxLength": 8000 }, "change": { "type": "string", "minLength": 1, "maxLength": 8000 }, "verification": { "type": "string", "maxLength": 8000 } }
+    },
+    "command": {
+      "type": "object", "additionalProperties": false, "required": ["command"],
+      "properties": { "command": { "type": "string", "minLength": 1, "maxLength": 8000 }, "exitCode": { "type": "integer" }, "summary": { "type": "string", "maxLength": 4000 } }
+    },
+    "verification": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "status", "summary"],
+      "properties": { "kind": { "type": "string", "minLength": 1, "maxLength": 64 }, "status": { "type": "string", "enum": ["passed", "failed", "skipped", "unknown"] }, "summary": { "type": "string", "minLength": 1, "maxLength": 8000 }, "command": { "type": ["string", "null"], "maxLength": 8000 } }
+    },
+    "planStatus": { "type": "string", "enum": ["pending", "in-progress", "completed", "blocked"] }
+  }
+}

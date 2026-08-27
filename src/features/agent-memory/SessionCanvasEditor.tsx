@@ -104,6 +104,71 @@ export function SessionCanvasEditor({
   }
 
   return (
+    <SessionCanvasEditorContent
+      title={title}
+      setTitle={setTitle}
+      canvases={canvases}
+      mode={mode}
+      setMode={setMode}
+      canvasPath={canvasPath}
+      setCanvasPath={setCanvasPath}
+      canvasName={canvasName}
+      setCanvasName={setCanvasName}
+      loading={loading}
+      busy={busy}
+      error={error}
+      writableCanvases={writableCanvases}
+      canSubmit={canSubmit}
+      markDirty={markDirty}
+      submit={submit}
+      onCancel={onCancel}
+    />
+  );
+}
+
+function SessionCanvasEditorContent({
+  title,
+  setTitle,
+  canvases,
+  mode,
+  setMode,
+  canvasPath,
+  setCanvasPath,
+  canvasName,
+  setCanvasName,
+  loading,
+  busy,
+  error,
+  writableCanvases,
+  canSubmit,
+  markDirty,
+  submit,
+  onCancel,
+}: {
+  title: string;
+  setTitle: (value: string) => void;
+  canvases: CanvasSummary[];
+  mode: SessionCanvasDestination["kind"];
+  setMode: (value: SessionCanvasDestination["kind"]) => void;
+  canvasPath: string;
+  setCanvasPath: (value: string) => void;
+  canvasName: string;
+  setCanvasName: (value: string) => void;
+  loading: boolean;
+  busy: boolean;
+  error: string | null;
+  writableCanvases: CanvasSummary[];
+  canSubmit: boolean;
+  markDirty: (next: {
+    title?: string;
+    mode?: SessionCanvasDestination["kind"];
+    canvasPath?: string;
+    canvasName?: string;
+  }) => void;
+  submit: () => Promise<void>;
+  onCancel: () => void;
+}) {
+  return (
     <div className="flex h-[min(38rem,62vh)] min-h-0 w-full flex-col overflow-hidden p-4 sm:px-5">
       <div className="min-h-0 overflow-y-auto overscroll-contain pr-1">
         <div className="flex items-start gap-3 rounded-md border border-primary/20 bg-primary/7 p-3">

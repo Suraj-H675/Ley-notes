@@ -51,6 +51,16 @@ type FlowEdge = Edge<{ source: ProjectGraphViewEdge }>;
 type InspectionTarget =
   | { kind: "node"; value: ProjectGraphViewNode }
   | { kind: "edge"; value: ProjectGraphViewEdge };
+type ProjectGraphFocus = {
+  evidence?: ArtifactEvidenceReference;
+  graphSnapshotId?: string;
+  requestId: number;
+};
+type GraphHistoryResult = {
+  projectPath: string;
+  data?: ProjectGraphHistory;
+  error?: string;
+};
 
 const NODE_KINDS: ProjectGraphNodeKind[] = [
   "project",
@@ -101,28 +111,64 @@ const CAPTURE_DATE = new Intl.DateTimeFormat(undefined, {
 });
 const NUMBER = new Intl.NumberFormat();
 
+function currentGraphHistory(
+  result: GraphHistoryResult | null,
+  projectPath: string,
+): { history: ProjectGraphHistory | null; historyError: string | null } {
+  if (result?.projectPath !== projectPath) {
+    return { history: null, historyError: null };
+  }
+  return {
+    history: result.data ?? null,
+    historyError: result.error ?? null,
+  };
+}
+
+function resolveSelectedSnapshotId(
+  selection: { projectPath: string; snapshotId: string } | null,
+  projectPath: string,
+  focus: ProjectGraphFocus | null,
+  history: ProjectGraphHistory | null,
+): string | null {
+  if (selection?.projectPath === projectPath) return selection.snapshotId;
+  if (focus?.graphSnapshotId) return focus.graphSnapshotId;
+  const focusedCapture = focus
+    ? history?.entries.find(
+        (entry) =>
+          entry.graphSnapshotId === focus.graphSnapshotId ||
+          entry.artifactSnapshotId === focus.evidence?.artifactSnapshotId,
+      )
+    : undefined;
+  return focusedCapture && !focusedCapture.current
+    ? focusedCapture.graphSnapshotId
+    : null;
+}
+
+function isHistoricalGraph(
+  history: ProjectGraphHistory | null,
+  view: ProjectGraphView | null,
+): boolean {
+  return Boolean(
+    history && view && view.graphSnapshotId !== history.currentGraphSnapshotId,
+  );
+}
+
 export function ProjectKnowledgeGraph({
   projectPath,
   focus = null,
   onOpenArtifact = () => undefined,
 }: {
   projectPath: string;
-  focus?: {
-    evidence?: ArtifactEvidenceReference;
-    graphSnapshotId?: string;
-    requestId: number;
-  } | null;
+  focus?: ProjectGraphFocus | null;
   onOpenArtifact?: (path: string) => void;
 }) {
   const [query, setQuery] = useState(focus?.evidence?.artifactPath ?? "");
   const [deferredQuery, setDeferredQuery] = useState(
     focus?.evidence?.artifactPath ?? "",
   );
-  const [historyResult, setHistoryResult] = useState<{
-    projectPath: string;
-    data?: ProjectGraphHistory;
-    error?: string;
-  } | null>(null);
+  const [historyResult, setHistoryResult] = useState<GraphHistoryResult | null>(
+    null,
+  );
   const [snapshotSelection, setSnapshotSelection] = useState<{
     projectPath: string;
     snapshotId: string;
@@ -138,29 +184,16 @@ export function ProjectKnowledgeGraph({
   const [completedRequest, setCompletedRequest] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const history =
-    historyResult?.projectPath === projectPath
-      ? (historyResult.data ?? null)
-      : null;
-  const historyError =
-    historyResult?.projectPath === projectPath
-      ? (historyResult.error ?? null)
-      : null;
-  const focusedCapture = focus
-    ? history?.entries.find(
-        (entry) =>
-          entry.graphSnapshotId === focus.graphSnapshotId ||
-          entry.artifactSnapshotId === focus.evidence?.artifactSnapshotId,
-      )
-    : undefined;
-  const selectedSnapshotId =
-    snapshotSelection?.projectPath === projectPath
-      ? snapshotSelection.snapshotId
-      : focus?.graphSnapshotId
-        ? focus.graphSnapshotId
-        : focusedCapture && !focusedCapture.current
-          ? focusedCapture.graphSnapshotId
-          : null;
+  const { history, historyError } = currentGraphHistory(
+    historyResult,
+    projectPath,
+  );
+  const selectedSnapshotId = resolveSelectedSnapshotId(
+    snapshotSelection,
+    projectPath,
+    focus,
+    history,
+  );
   const filterKey = `${filters.nodeKinds.join(",")}|${filters.edgeKinds.join(",")}|${filters.provenances.join(",")}`;
   const requestKey = `${projectPath}\u0000${selectedSnapshotId ?? "current"}\u0000${deferredQuery}\u0000${filterKey}`;
   const loading = completedRequest !== requestKey;
@@ -231,10 +264,7 @@ export function ProjectKnowledgeGraph({
     () => new Map(view?.nodes.map((node) => [node.id, node]) ?? []),
     [view],
   );
-  const historical =
-    history !== null &&
-    view !== null &&
-    view.graphSnapshotId !== history.currentGraphSnapshotId;
+  const historical = isHistoricalGraph(history, view);
 
   function toggleNodeKind(kind: ProjectGraphNodeKind) {
     setFilters((current) => ({
@@ -264,9 +294,161 @@ export function ProjectKnowledgeGraph({
       provenances: PROVENANCES,
     });
   }
+  return (
+    <ProjectKnowledgeGraphView
+      projectPath={projectPath}
+      query={query}
+      setQuery={setQuery}
+      history={history}
+      historyError={historyError}
+      selectedSnapshotId={selectedSnapshotId}
+      setSnapshotSelection={setSnapshotSelection}
+      historical={historical}
+      filters={filters}
+      activeFilterGroups={activeFilterGroups}
+      onToggleNode={toggleNodeKind}
+      onToggleEdge={toggleEdgeKind}
+      onToggleProvenance={toggleProvenance}
+      onResetFilters={resetFilters}
+      loading={loading}
+      error={error}
+      view={view}
+      flow={flow}
+      nodesById={nodesById}
+      inspection={inspection}
+      setInspection={setInspection}
+      focus={focus}
+      dismissedFocusId={dismissedFocusId}
+      setDismissedFocusId={setDismissedFocusId}
+      onOpenArtifact={onOpenArtifact}
+    />
+  );
+}
 
+interface ProjectKnowledgeGraphViewProps {
+  projectPath: string;
+  query: string;
+  setQuery: (query: string) => void;
+  history: ProjectGraphHistory | null;
+  historyError: string | null;
+  selectedSnapshotId: string | null;
+  historical: boolean;
+  setSnapshotSelection: (
+    selection: { projectPath: string; snapshotId: string } | null,
+  ) => void;
+  filters: ProjectGraphFilters;
+  activeFilterGroups: number;
+  onToggleNode: (kind: ProjectGraphNodeKind) => void;
+  onToggleEdge: (kind: ProjectGraphEdgeKind) => void;
+  onToggleProvenance: (provenance: ProjectGraphProvenance) => void;
+  onResetFilters: () => void;
+  loading: boolean;
+  error: string | null;
+  view: ProjectGraphView | null;
+  flow: { nodes: FlowNode[]; edges: FlowEdge[] };
+  nodesById: Map<string, ProjectGraphViewNode>;
+  inspection: InspectionTarget | null;
+  setInspection: (inspection: InspectionTarget | null) => void;
+  focus: ProjectGraphFocus | null | undefined;
+  dismissedFocusId: number | null;
+  setDismissedFocusId: (id: number | null) => void;
+  onOpenArtifact: (path: string) => void;
+}
+
+function ProjectKnowledgeGraphView({
+  projectPath,
+  query,
+  setQuery,
+  history,
+  historyError,
+  selectedSnapshotId,
+  historical,
+  setSnapshotSelection,
+  filters,
+  activeFilterGroups,
+  onToggleNode,
+  onToggleEdge,
+  onToggleProvenance,
+  onResetFilters,
+  loading,
+  error,
+  view,
+  flow,
+  nodesById,
+  inspection,
+  setInspection,
+  focus,
+  dismissedFocusId,
+  setDismissedFocusId,
+  onOpenArtifact,
+}: ProjectKnowledgeGraphViewProps) {
   return (
     <section className="space-y-5" aria-labelledby="project-graph-title">
+      <ProjectGraphHeader
+        projectPath={projectPath}
+        query={query}
+        setQuery={setQuery}
+        history={history}
+        historyError={historyError}
+        selectedSnapshotId={selectedSnapshotId}
+        setSnapshotSelection={setSnapshotSelection}
+        historical={historical}
+        view={view}
+      />
+      <GraphFilters
+        filters={filters}
+        activeGroups={activeFilterGroups}
+        onToggleNode={onToggleNode}
+        onToggleEdge={onToggleEdge}
+        onToggleProvenance={onToggleProvenance}
+        onReset={onResetFilters}
+      />
+      <ProjectGraphSurface
+        projectPath={projectPath}
+        loading={loading}
+        error={error}
+        view={view}
+        nodeKinds={filters.nodeKinds}
+        flow={flow}
+        nodesById={nodesById}
+        inspection={inspection}
+        setInspection={setInspection}
+        focus={focus}
+        dismissedFocusId={dismissedFocusId}
+        setDismissedFocusId={setDismissedFocusId}
+        onOpenArtifact={onOpenArtifact}
+      />
+      <ProjectGraphGit view={view} />
+      <ProjectGraphDiagnostics view={view} history={history} />
+    </section>
+  );
+}
+
+function ProjectGraphHeader({
+  projectPath,
+  query,
+  setQuery,
+  history,
+  historyError,
+  selectedSnapshotId,
+  setSnapshotSelection,
+  historical,
+  view,
+}: {
+  projectPath: string;
+  query: string;
+  setQuery: (query: string) => void;
+  history: ProjectGraphHistory | null;
+  historyError: string | null;
+  selectedSnapshotId: string | null;
+  setSnapshotSelection: (
+    selection: { projectPath: string; snapshotId: string } | null,
+  ) => void;
+  historical: boolean;
+  view: ProjectGraphView | null;
+}) {
+  return (
+    <>
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="mb-1 text-micro font-semibold uppercase tracking-[0.14em] text-primary">
@@ -355,14 +537,12 @@ export function ProjectKnowledgeGraph({
           </label>
         </div>
       </div>
-
       {historyError && (
         <p role="status" className="text-micro text-warning">
           Capture history is unavailable; the current graph remains usable.{" "}
           {historyError}
         </p>
       )}
-
       {historical && view && (
         <div className="flex items-start gap-3 rounded-md border border-primary/20 bg-primary/6 px-4 py-3 text-meta">
           <Clock3
@@ -380,197 +560,257 @@ export function ProjectKnowledgeGraph({
           </div>
         </div>
       )}
+    </>
+  );
+}
 
-      <GraphFilters
-        filters={filters}
-        activeGroups={activeFilterGroups}
-        onToggleNode={toggleNodeKind}
-        onToggleEdge={toggleEdgeKind}
-        onToggleProvenance={toggleProvenance}
-        onReset={resetFilters}
-      />
-
-      {error && !loading ? (
-        <div
-          role="alert"
-          className="flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta"
-        >
-          <AlertTriangle
-            size={17}
-            className="mt-0.5 shrink-0 text-destructive"
-            aria-hidden="true"
-          />
-          <div>
-            <p className="font-semibold">Could not build this graph view</p>
-            <p className="mt-0.5 text-muted-foreground">{error}</p>
-          </div>
+function ProjectGraphSurface({
+  projectPath,
+  loading,
+  error,
+  view,
+  nodeKinds,
+  flow,
+  nodesById,
+  inspection,
+  setInspection,
+  focus,
+  dismissedFocusId,
+  setDismissedFocusId,
+  onOpenArtifact,
+}: {
+  projectPath: string;
+  loading: boolean;
+  error: string | null;
+  view: ProjectGraphView | null;
+  nodeKinds: ProjectGraphNodeKind[];
+  flow: { nodes: FlowNode[]; edges: FlowEdge[] };
+  nodesById: Map<string, ProjectGraphViewNode>;
+  inspection: InspectionTarget | null;
+  setInspection: (inspection: InspectionTarget | null) => void;
+  focus: ProjectGraphFocus | null | undefined;
+  dismissedFocusId: number | null;
+  setDismissedFocusId: (id: number | null) => void;
+  onOpenArtifact: (path: string) => void;
+}) {
+  if (error && !loading) {
+    return (
+      <div
+        role="alert"
+        className="flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta"
+      >
+        <AlertTriangle
+          size={17}
+          className="mt-0.5 shrink-0 text-destructive"
+          aria-hidden="true"
+        />
+        <div>
+          <p className="font-semibold">Could not build this graph view</p>
+          <p className="mt-0.5 text-muted-foreground">{error}</p>
         </div>
-      ) : (
-        <div className="overflow-hidden rounded-md border border-border bg-surface-1">
-          <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
-            <div className="flex flex-wrap gap-1.5" aria-label="Node legend">
-              {NODE_KINDS.filter((kind) =>
-                filters.nodeKinds.includes(kind),
-              ).map((kind) => (
-                <span
-                  key={kind}
-                  className="inline-flex items-center gap-1.5 rounded-sm bg-surface-2 px-2 py-1 text-micro font-medium text-muted-foreground"
-                >
-                  <span
-                    className="size-1.5 rounded-full"
-                    style={{ backgroundColor: KIND_COLORS[kind] }}
-                  />
-                  {humanize(kind)}
-                </span>
-              ))}
-            </div>
-            <p
-              className="text-micro tabular-nums text-muted-foreground"
-              aria-live="polite"
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-md border border-border bg-surface-1">
+      <div className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
+        <div className="flex flex-wrap gap-1.5" aria-label="Node legend">
+          {NODE_KINDS.filter((kind) => nodeKinds.includes(kind)).map((kind) => (
+            <span
+              key={kind}
+              className="inline-flex items-center gap-1.5 rounded-sm bg-surface-2 px-2 py-1 text-micro font-medium text-muted-foreground"
             >
-              {loading && !view
-                ? "Building bounded view…"
-                : view
-                  ? `${NUMBER.format(view.nodes.length)} of ${NUMBER.format(view.filteredNodes)} filtered nodes · ${NUMBER.format(view.edges.length)} of ${NUMBER.format(view.filteredEdges)} filtered links`
-                  : ""}
-            </p>
-          </div>
-
-          <div className="project-graph-canvas relative h-[36rem] min-h-[24rem]">
-            {view && view.nodes.length > 0 ? (
-              <ReactFlow<FlowNode, FlowEdge>
-                nodes={flow.nodes}
-                edges={flow.edges}
-                nodesDraggable={false}
-                nodesConnectable={false}
-                edgesReconnectable={false}
-                fitView
-                fitViewOptions={{ padding: 0.22, maxZoom: 1 }}
-                minZoom={0.12}
-                maxZoom={1.75}
-                onNodeClick={(_, node) =>
-                  setInspection({ kind: "node", value: node.data.source })
-                }
-                onEdgeClick={(_, edge) =>
-                  setInspection({ kind: "edge", value: edge.data!.source })
-                }
-                onPaneClick={() => setInspection(null)}
-                aria-label="Interactive captured project graph"
-                proOptions={{ hideAttribution: true }}
-              >
-                <Background
-                  variant={BackgroundVariant.Dots}
-                  gap={22}
-                  size={1}
-                  color="var(--border)"
-                />
-                <Controls showInteractive={false} />
-                <MiniMap
-                  pannable
-                  zoomable
-                  nodeColor={(node) => {
-                    const source = node.data?.source as
-                      ProjectGraphViewNode | undefined;
-                    return source ? KIND_COLORS[source.kind] : "#64748b";
-                  }}
-                  maskColor="color-mix(in srgb, var(--background) 72%, transparent)"
-                />
-              </ReactFlow>
-            ) : loading ? (
-              <div className="flex h-full items-center justify-center text-meta text-muted-foreground">
-                Building bounded view…
-              </div>
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center px-5 text-center">
-                <Network
-                  size={26}
-                  className="mb-3 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <p className="font-semibold">No graph facts match</p>
-                <p className="mt-1 max-w-sm text-meta text-muted-foreground">
-                  Change the search or include more node, relationship, or
-                  provenance filters.
-                </p>
-              </div>
-            )}
-
-            {loading && view && (
-              <div
-                role="status"
-                className="absolute left-3 top-3 rounded-sm border border-border bg-background/90 px-2 py-0.5 text-micro text-muted-foreground shadow-sm backdrop-blur"
-              >
-                Updating view…
-              </div>
-            )}
-
-            {inspection && view && (
-              <GraphInspector
-                projectPath={projectPath}
-                graphSnapshotId={view.graphSnapshotId}
-                target={inspection}
-                edges={view.edges}
-                nodesById={nodesById}
-                onInspect={setInspection}
-                onClose={() => setInspection(null)}
+              <span
+                className="size-1.5 rounded-full"
+                style={{ backgroundColor: KIND_COLORS[kind] }}
               />
-            )}
-            {view &&
-              focus &&
-              focus.evidence &&
-              dismissedFocusId !== focus.requestId &&
-              !inspection && (
-                <FocusedEvidenceInspector
-                  projectPath={projectPath}
-                  evidence={focus.evidence}
-                  onOpenArtifact={onOpenArtifact}
-                  onClose={() => setDismissedFocusId(focus.requestId)}
-                />
-              )}
-          </div>
-
-          {view && (
-            <div className="grid gap-3 border-t border-border px-4 py-3 text-micro text-muted-foreground sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-              <span className="inline-flex min-w-0 items-center gap-2">
-                <ShieldCheck
-                  size={14}
-                  className="shrink-0 text-primary"
-                  aria-hidden="true"
-                />
-                <span className="truncate">
-                  {view.selection}. Snapshot{" "}
-                  <span translate="no">{shortId(view.graphSnapshotId)}</span>.
-                </span>
-              </span>
-              <span className="tabular-nums">
-                {NUMBER.format(view.omittedNodes)} nodes and{" "}
-                {NUMBER.format(view.omittedEdges)} links outside this bounded
-                view
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {view?.git && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border bg-surface-1 px-4 py-3 text-micro text-muted-foreground">
-          <span className="inline-flex items-center gap-2 font-medium text-foreground">
-            <GitBranch size={14} className="text-primary" aria-hidden="true" />
-            <span translate="no">{view.git.branch ?? "Detached HEAD"}</span>
-          </span>
-          <span className="tabular-nums">
-            {NUMBER.format(view.git.changes.length)} local changes at capture
-          </span>
-          {(view.git.ahead > 0 || view.git.behind > 0) && (
-            <span className="tabular-nums">
-              {NUMBER.format(view.git.ahead)} ahead ·{" "}
-              {NUMBER.format(view.git.behind)} behind
+              {humanize(kind)}
             </span>
-          )}
-          <span>Live Git state not checked</span>
+          ))}
         </div>
-      )}
+        <p
+          className="text-micro tabular-nums text-muted-foreground"
+          aria-live="polite"
+        >
+          {loading && !view
+            ? "Building bounded view…"
+            : view
+              ? `${NUMBER.format(view.nodes.length)} of ${NUMBER.format(view.filteredNodes)} filtered nodes · ${NUMBER.format(view.edges.length)} of ${NUMBER.format(view.filteredEdges)} filtered links`
+              : ""}
+        </p>
+      </div>
+      <div className="project-graph-canvas relative h-[36rem] min-h-[24rem]">
+        <ProjectGraphFlow
+          view={view}
+          flow={flow}
+          loading={loading}
+          setInspection={setInspection}
+        />
+        {loading && view && (
+          <div
+            role="status"
+            className="absolute left-3 top-3 rounded-sm border border-border bg-background/90 px-2 py-0.5 text-micro text-muted-foreground shadow-sm backdrop-blur"
+          >
+            Updating view…
+          </div>
+        )}
+        {inspection && view && (
+          <GraphInspector
+            projectPath={projectPath}
+            graphSnapshotId={view.graphSnapshotId}
+            target={inspection}
+            edges={view.edges}
+            nodesById={nodesById}
+            onInspect={setInspection}
+            onClose={() => setInspection(null)}
+          />
+        )}
+        {view &&
+          focus?.evidence &&
+          dismissedFocusId !== focus.requestId &&
+          !inspection && (
+            <FocusedEvidenceInspector
+              projectPath={projectPath}
+              evidence={focus.evidence}
+              onOpenArtifact={onOpenArtifact}
+              onClose={() => setDismissedFocusId(focus.requestId)}
+            />
+          )}
+      </div>
+      {view && <ProjectGraphFooter view={view} />}
+    </div>
+  );
+}
 
+function ProjectGraphFlow({
+  view,
+  flow,
+  loading,
+  setInspection,
+}: {
+  view: ProjectGraphView | null;
+  flow: { nodes: FlowNode[]; edges: FlowEdge[] };
+  loading: boolean;
+  setInspection: (inspection: InspectionTarget | null) => void;
+}) {
+  if (view && view.nodes.length > 0) {
+    return (
+      <ReactFlow<FlowNode, FlowEdge>
+        nodes={flow.nodes}
+        edges={flow.edges}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        edgesReconnectable={false}
+        fitView
+        fitViewOptions={{ padding: 0.22, maxZoom: 1 }}
+        minZoom={0.12}
+        maxZoom={1.75}
+        onNodeClick={(_, node) =>
+          setInspection({ kind: "node", value: node.data.source })
+        }
+        onEdgeClick={(_, edge) =>
+          setInspection({ kind: "edge", value: edge.data!.source })
+        }
+        onPaneClick={() => setInspection(null)}
+        aria-label="Interactive captured project graph"
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={22}
+          size={1}
+          color="var(--border)"
+        />
+        <Controls showInteractive={false} />
+        <MiniMap
+          pannable
+          zoomable
+          nodeColor={(node) => {
+            const source = node.data?.source as
+              ProjectGraphViewNode | undefined;
+            return source ? KIND_COLORS[source.kind] : "#64748b";
+          }}
+          maskColor="color-mix(in srgb, var(--background) 72%, transparent)"
+        />
+      </ReactFlow>
+    );
+  }
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center text-meta text-muted-foreground">
+        Building bounded view…
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-full flex-col items-center justify-center px-5 text-center">
+      <Network
+        size={26}
+        className="mb-3 text-muted-foreground"
+        aria-hidden="true"
+      />
+      <p className="font-semibold">No graph facts match</p>
+      <p className="mt-1 max-w-sm text-meta text-muted-foreground">
+        Change the search or include more node, relationship, or provenance
+        filters.
+      </p>
+    </div>
+  );
+}
+
+function ProjectGraphFooter({ view }: { view: ProjectGraphView }) {
+  return (
+    <div className="grid gap-3 border-t border-border px-4 py-3 text-micro text-muted-foreground sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <ShieldCheck
+          size={14}
+          className="shrink-0 text-primary"
+          aria-hidden="true"
+        />
+        <span className="truncate">
+          {view.selection}. Snapshot{" "}
+          <span translate="no">{shortId(view.graphSnapshotId)}</span>.
+        </span>
+      </span>
+      <span className="tabular-nums">
+        {NUMBER.format(view.omittedNodes)} nodes and{" "}
+        {NUMBER.format(view.omittedEdges)} links outside this bounded view
+      </span>
+    </div>
+  );
+}
+
+function ProjectGraphGit({ view }: { view: ProjectGraphView | null }) {
+  if (!view?.git) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border bg-surface-1 px-4 py-3 text-micro text-muted-foreground">
+      <span className="inline-flex items-center gap-2 font-medium text-foreground">
+        <GitBranch size={14} className="text-primary" aria-hidden="true" />
+        <span translate="no">{view.git.branch ?? "Detached HEAD"}</span>
+      </span>
+      <span className="tabular-nums">
+        {NUMBER.format(view.git.changes.length)} local changes at capture
+      </span>
+      {(view.git.ahead > 0 || view.git.behind > 0) && (
+        <span className="tabular-nums">
+          {NUMBER.format(view.git.ahead)} ahead ·{" "}
+          {NUMBER.format(view.git.behind)} behind
+        </span>
+      )}
+      <span>Live Git state not checked</span>
+    </div>
+  );
+}
+
+function ProjectGraphDiagnostics({
+  view,
+  history,
+}: {
+  view: ProjectGraphView | null;
+  history: ProjectGraphHistory | null;
+}) {
+  return (
+    <>
       {view && view.diagnostics.length > 0 && (
         <details className="group overflow-hidden rounded-md border border-warning/25 bg-warning/5">
           <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-meta font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary">
@@ -610,14 +850,13 @@ export function ProjectKnowledgeGraph({
           </div>
         </details>
       )}
-
       {history && history.omittedEntries > 0 && (
         <p className="text-micro text-muted-foreground">
           Showing the newest {NUMBER.format(history.entries.length)} of{" "}
           {NUMBER.format(history.totalEntries)} indexed captures.
         </p>
       )}
-    </section>
+    </>
   );
 }
 
@@ -846,138 +1085,73 @@ function GraphInspector({
   const targetNode = edge ? nodesById.get(edge.target) : undefined;
 
   return (
+    <GraphInspectorView
+      projectPath={projectPath}
+      graphSnapshotId={graphSnapshotId}
+      node={node}
+      edge={edge}
+      citation={citation}
+      connections={connections}
+      sourceNode={sourceNode}
+      targetNode={targetNode}
+      nodesById={nodesById}
+      onInspect={onInspect}
+      onClose={onClose}
+    />
+  );
+}
+
+function GraphInspectorView({
+  projectPath,
+  graphSnapshotId,
+  node,
+  edge,
+  citation,
+  connections,
+  sourceNode,
+  targetNode,
+  nodesById,
+  onInspect,
+  onClose,
+}: {
+  projectPath: string;
+  graphSnapshotId: string;
+  node: ProjectGraphViewNode | null;
+  edge: ProjectGraphViewEdge | null;
+  citation: GraphCitation | undefined;
+  connections: ProjectGraphViewEdge[];
+  sourceNode: ProjectGraphViewNode | undefined;
+  targetNode: ProjectGraphViewNode | undefined;
+  nodesById: Map<string, ProjectGraphViewNode>;
+  onInspect: (target: InspectionTarget) => void;
+  onClose: () => void;
+}) {
+  return (
     <aside
       aria-label="Graph source inspector"
       className="graph-source-inspector absolute inset-x-3 bottom-3 z-10 max-h-[82%] overscroll-contain overflow-y-auto rounded-md border p-4 sm:inset-x-auto sm:right-3 sm:w-[27rem]"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <span className="text-micro font-semibold uppercase tracking-wider text-primary">
-            {node ? humanize(node.kind) : humanize(edge!.kind)}
-          </span>
-          <h3 className="mt-0.5 break-words text-body font-semibold text-pretty">
-            {node
-              ? node.name
-              : `${sourceNode?.name ?? "Visible node"} → ${targetNode?.name ?? "Visible node"}`}
-          </h3>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close graph inspector"
-          className="flex size-8 shrink-0 touch-manipulation items-center justify-center rounded-md text-muted-foreground outline-none transition-transform hover:bg-surface-2 hover:text-foreground active:scale-90 motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-        >
-          <X size={15} aria-hidden="true" />
-        </button>
-      </div>
-
-      <dl className="mt-4 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-micro">
-        {node?.path && (
-          <>
-            <dt className="text-muted-foreground">Path</dt>
-            <dd translate="no" className="break-all font-mono text-foreground">
-              {node.path}
-            </dd>
-          </>
-        )}
-        {node?.language && (
-          <>
-            <dt className="text-muted-foreground">Language</dt>
-            <dd translate="no">{node.language}</dd>
-          </>
-        )}
-        {node?.symbolKind && (
-          <>
-            <dt className="text-muted-foreground">Symbol</dt>
-            <dd>{node.symbolKind}</dd>
-          </>
-        )}
-        {node?.packageManager && (
-          <>
-            <dt className="text-muted-foreground">Package manager</dt>
-            <dd translate="no">{node.packageManager}</dd>
-          </>
-        )}
-        {edge?.label && (
-          <>
-            <dt className="text-muted-foreground">Label</dt>
-            <dd translate="no" className="break-words">
-              {edge.label}
-            </dd>
-          </>
-        )}
-        <dt className="text-muted-foreground">
-          {node ? "Connections" : "Relationship"}
-        </dt>
-        <dd className="tabular-nums">
-          {node ? NUMBER.format(node.degree) : humanize(edge!.kind)}
-        </dd>
-        <dt className="text-muted-foreground">Provenance</dt>
-        <dd>{humanize(node?.provenance ?? edge!.provenance)}</dd>
-        <dt className="text-muted-foreground">Confidence</dt>
-        <dd className="tabular-nums">
-          {Math.round((node?.confidence ?? edge!.confidence) * 100)}%
-        </dd>
-      </dl>
-
+      <GraphInspectorHeader
+        node={node}
+        edge={edge}
+        sourceNode={sourceNode}
+        targetNode={targetNode}
+        onClose={onClose}
+      />
+      <GraphInspectorMetadata node={node} edge={edge} />
       {edge && sourceNode && targetNode && (
-        <div className="mt-4">
-          <p className="text-micro font-semibold">Endpoints</p>
-          <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-            <button
-              type="button"
-              onClick={() => onInspect({ kind: "node", value: sourceNode })}
-              className="min-w-0 touch-manipulation truncate rounded-md border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-              translate="no"
-            >
-              {sourceNode.name}
-            </button>
-            <span className="text-muted-foreground" aria-hidden="true">
-              →
-            </span>
-            <button
-              type="button"
-              onClick={() => onInspect({ kind: "node", value: targetNode })}
-              className="min-w-0 touch-manipulation truncate rounded-md border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-              translate="no"
-            >
-              {targetNode.name}
-            </button>
-          </div>
-        </div>
+        <GraphInspectorEndpoints
+          sourceNode={sourceNode}
+          targetNode={targetNode}
+          onInspect={onInspect}
+        />
       )}
-
-      {connections.length > 0 && (
-        <div className="mt-4">
-          <p className="text-micro font-semibold">Visible connections</p>
-          <div className="mt-2 grid max-h-32 gap-1 overflow-y-auto overscroll-contain pr-1">
-            {connections.map((connection) => {
-              const neighborId =
-                connection.source === node!.id
-                  ? connection.target
-                  : connection.source;
-              const neighbor = nodesById.get(neighborId);
-              return (
-                <button
-                  key={connection.id}
-                  type="button"
-                  onClick={() => onInspect({ kind: "edge", value: connection })}
-                  className="flex min-w-0 touch-manipulation items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-micro outline-none transition-transform hover:bg-surface-2 active:scale-[0.985] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-                >
-                  <span className="min-w-0 truncate">
-                    {humanize(connection.kind)} ·{" "}
-                    <span translate="no">{neighbor?.name ?? neighborId}</span>
-                  </span>
-                  <span className="shrink-0 text-muted-foreground">
-                    Inspect
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
+      <GraphInspectorConnections
+        node={node}
+        connections={connections}
+        nodesById={nodesById}
+        onInspect={onInspect}
+      />
       {citation ? (
         <CapturedSource
           projectPath={projectPath}
@@ -990,6 +1164,181 @@ function GraphInspector({
         </p>
       )}
     </aside>
+  );
+}
+
+function GraphInspectorHeader({
+  node,
+  edge,
+  sourceNode,
+  targetNode,
+  onClose,
+}: {
+  node: ProjectGraphViewNode | null;
+  edge: ProjectGraphViewEdge | null;
+  sourceNode: ProjectGraphViewNode | undefined;
+  targetNode: ProjectGraphViewNode | undefined;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <span className="text-micro font-semibold uppercase tracking-wider text-primary">
+          {node ? humanize(node.kind) : humanize(edge!.kind)}
+        </span>
+        <h3 className="mt-0.5 break-words text-body font-semibold text-pretty">
+          {node
+            ? node.name
+            : `${sourceNode?.name ?? "Visible node"} → ${targetNode?.name ?? "Visible node"}`}
+        </h3>
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close graph inspector"
+        className="flex size-8 shrink-0 touch-manipulation items-center justify-center rounded-md text-muted-foreground outline-none transition-transform hover:bg-surface-2 hover:text-foreground active:scale-90 motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        <X size={15} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function GraphInspectorMetadata({
+  node,
+  edge,
+}: {
+  node: ProjectGraphViewNode | null;
+  edge: ProjectGraphViewEdge | null;
+}) {
+  return (
+    <dl className="mt-4 grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-micro">
+      {node?.path && (
+        <>
+          <dt className="text-muted-foreground">Path</dt>
+          <dd translate="no" className="break-all font-mono text-foreground">
+            {node.path}
+          </dd>
+        </>
+      )}
+      {node?.language && (
+        <>
+          <dt className="text-muted-foreground">Language</dt>
+          <dd translate="no">{node.language}</dd>
+        </>
+      )}
+      {node?.symbolKind && (
+        <>
+          <dt className="text-muted-foreground">Symbol</dt>
+          <dd>{node.symbolKind}</dd>
+        </>
+      )}
+      {node?.packageManager && (
+        <>
+          <dt className="text-muted-foreground">Package manager</dt>
+          <dd translate="no">{node.packageManager}</dd>
+        </>
+      )}
+      {edge?.label && (
+        <>
+          <dt className="text-muted-foreground">Label</dt>
+          <dd translate="no" className="break-words">
+            {edge.label}
+          </dd>
+        </>
+      )}
+      <dt className="text-muted-foreground">
+        {node ? "Connections" : "Relationship"}
+      </dt>
+      <dd className="tabular-nums">
+        {node ? NUMBER.format(node.degree) : humanize(edge!.kind)}
+      </dd>
+      <dt className="text-muted-foreground">Provenance</dt>
+      <dd>{humanize(node?.provenance ?? edge!.provenance)}</dd>
+      <dt className="text-muted-foreground">Confidence</dt>
+      <dd className="tabular-nums">
+        {Math.round((node?.confidence ?? edge!.confidence) * 100)}%
+      </dd>
+    </dl>
+  );
+}
+
+function GraphInspectorEndpoints({
+  sourceNode,
+  targetNode,
+  onInspect,
+}: {
+  sourceNode: ProjectGraphViewNode;
+  targetNode: ProjectGraphViewNode;
+  onInspect: (target: InspectionTarget) => void;
+}) {
+  return (
+    <div className="mt-4">
+      <p className="text-micro font-semibold">Endpoints</p>
+      <div className="mt-2 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onInspect({ kind: "node", value: sourceNode })}
+          className="min-w-0 touch-manipulation truncate rounded-md border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+          translate="no"
+        >
+          {sourceNode.name}
+        </button>
+        <span className="text-muted-foreground" aria-hidden="true">
+          →
+        </span>
+        <button
+          type="button"
+          onClick={() => onInspect({ kind: "node", value: targetNode })}
+          className="min-w-0 touch-manipulation truncate rounded-md border border-border bg-surface-1 px-2.5 py-2 text-left text-micro font-medium outline-none transition-[transform,border-color,background-color] hover:border-primary/30 hover:bg-surface-2 active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+          translate="no"
+        >
+          {targetNode.name}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GraphInspectorConnections({
+  node,
+  connections,
+  nodesById,
+  onInspect,
+}: {
+  node: ProjectGraphViewNode | null;
+  connections: ProjectGraphViewEdge[];
+  nodesById: Map<string, ProjectGraphViewNode>;
+  onInspect: (target: InspectionTarget) => void;
+}) {
+  if (connections.length === 0 || !node) return null;
+  return (
+    <div className="mt-4">
+      <p className="text-micro font-semibold">Visible connections</p>
+      <div className="mt-2 grid max-h-32 gap-1 overflow-y-auto overscroll-contain pr-1">
+        {connections.map((connection) => {
+          const neighborId =
+            connection.source === node.id
+              ? connection.target
+              : connection.source;
+          const neighbor = nodesById.get(neighborId);
+          return (
+            <button
+              key={connection.id}
+              type="button"
+              onClick={() => onInspect({ kind: "edge", value: connection })}
+              className="flex min-w-0 touch-manipulation items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-micro outline-none transition-transform hover:bg-surface-2 active:scale-[0.985] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <span className="min-w-0 truncate">
+                {humanize(connection.kind)} ·{" "}
+                <span translate="no">{neighbor?.name ?? neighborId}</span>
+              </span>
+              <span className="shrink-0 text-muted-foreground">Inspect</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

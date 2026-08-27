@@ -50,7 +50,7 @@ export function LandingPage() {
             <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center border border-white/12 bg-[#181a1d] text-xs font-bold">L</span>
             <span>Ley</span>
           </a>
-          <nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-6 text-sm text-[#b4b1a9] md:flex">
+          <nav aria-label="Landing page" className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-6 text-sm text-[#b4b1a9] md:flex">
             <a href="#why" className="hover:text-white">Why Ley</a>
             <a href="#features" className="hover:text-white">Features</a>
             <a href="#desktop" className="hover:text-white">Desktop</a>
@@ -107,19 +107,19 @@ export function LandingPage() {
             <div className="max-w-2xl">
               <p className="font-medium uppercase tracking-[0.15em] text-micro text-[#8a877f]">Built for recall</p>
               <h2 className="mt-4 font-serif text-4xl leading-[1.05] tracking-[-0.025em]">Capture is only half the job.</h2>
-              <p className="mt-4 text-[#a5a29a]">Ley is designed around retrieving, connecting, and developing ideas over years—not collecting forgotten documents.</p>
+              <p className="mt-4 text-[#b4b1a9]">Ley is designed around retrieving, connecting, and developing ideas over years—not collecting forgotten documents.</p>
             </div>
-            <dl className="mt-12 grid border-t border-white/7 md:grid-cols-2">
+            <div role="list" className="mt-12 grid border-t border-white/7 md:grid-cols-2">
               {FEATURES.map((feature) => (
-                <article key={feature.title} className="group relative border-b border-r border-white/7 p-6 last:border-b-0 md:p-8 md:[&:nth-child(2n)]:border-r-0">
+                <div key={feature.title} role="listitem" className="group relative border-b border-r border-white/7 p-6 last:border-b-0 md:p-8 md:[&:nth-child(2n)]:border-r-0">
                   <div className="flex min-h-7 items-start justify-between">
-                    <dt className="font-serif text-xl font-medium">{feature.title}</dt>
-                    <span aria-hidden="true" className="font-mono text-xs tabular-nums text-[#6f6c65] transition-colors group-hover:text-[#c2b28f]">{feature.label}</span>
+                    <h3 className="font-serif text-xl font-medium">{feature.title}</h3>
+                    <span aria-hidden="true" className="font-mono text-xs tabular-nums text-[#a5a29a] transition-colors group-hover:text-[#c2b28f]">{feature.label}</span>
                   </div>
-                  <dd className="mt-3 max-w-md text-sm leading-6 text-[#98958e]">{feature.body}</dd>
-                </article>
+                  <p className="mt-3 max-w-md text-sm leading-6 text-[#b4b1a9]">{feature.body}</p>
+                </div>
               ))}
-            </dl>
+            </div>
           </div>
         </section>
 
@@ -128,14 +128,14 @@ export function LandingPage() {
             <div className="max-w-2xl">
               <p className="flex items-center gap-2 text-sm font-medium text-[#bfbcb4]"><FileText size={15} /> Desktop is where your files become the vault</p>
               <h2 className="mt-4 font-serif text-3xl leading-[1.06] tracking-[-0.022em]">Keep every note in a folder you control.</h2>
-              <p className="mt-4 leading-7 text-[#a5a29a]">The native app reads and writes ordinary Markdown, supports external editors and Git, and keeps indexes disposable.</p>
+              <p className="mt-4 leading-7 text-[#b4b1a9]">The native app reads and writes ordinary Markdown, supports external editors and Git, and keeps indexes disposable.</p>
             </div>
             <div className="shrink-0 border-l-2 border-[#c2b28f]/70 pl-4 font-mono text-sm text-[#b4b1a9]">npm run desktop:build</div>
           </div>
         </section>
       </main>
 
-      <footer className="border-t border-white/6 px-5 py-7 text-sm text-[#75726b]">
+      <footer className="border-t border-white/6 px-5 py-7 text-sm text-[#a5a29a]">
         <div className="mx-auto flex max-w-5xl items-center justify-between"><span>Ley</span><span>Local-first by design.</span></div>
       </footer>
     </div>
@@ -146,27 +146,27 @@ function KnowledgePreview() {
   return (
     <figure className="relative mx-auto w-full max-w-[590px] overflow-hidden border border-white/9 bg-[#17181b] shadow-[0_34px_84px_rgba(0,0,0,.38)]">
       <figcaption className="flex h-9 items-center justify-between border-b border-white/6 bg-[#141518] px-3 font-mono text-[11px] uppercase tracking-[0.09em] text-[#7d7a73]">
-        <span>Learning.md</span>
+        <span className="text-[#b4b1a9]">Learning.md</span>
       </figcaption>
       <div className="relative grid min-h-[430px] grid-cols-[190px_minmax(0,1fr)]">
         <aside className="hidden border-r border-white/6 bg-[#151619] p-3 sm:block">
-          <p className="px-2 pb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-[#6f6c65]">Vault</p>
+          <p className="px-2 pb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-[#a5a29a]">Vault</p>
           <nav className="space-y-0.5">
             {VAULT_ITEMS.map((name, index) => (
               <span key={name} className={`flex h-7 items-center truncate px-2 text-[12px] ${index === 0 ? 'bg-[#222427] text-[#dedbd3]' : 'text-[#8f8c85]'}`}>{name}</span>
             ))}
           </nav>
           <div className="mt-5 border-t border-white/5 pt-4">
-            <p className="px-2 pb-1.5 text-[10px] uppercase tracking-[0.1em] text-[#64615b]">Backlinks</p>
+            <p className="px-2 pb-1.5 text-[10px] uppercase tracking-[0.1em] text-[#a5a29a]">Backlinks</p>
             {BACKLINKS.map((item) => (
-              <p key={item} className="truncate px-2 py-1 text-[11px] text-[#847f74]">{item}</p>
+              <p key={item} className="truncate px-2 py-1 text-[11px] text-[#b4b1a9]">{item}</p>
             ))}
           </div>
         </aside>
         <div className="min-w-0 p-5 sm:p-7">
           <div className="mb-5 border-b border-white/5 pb-4">
-            <h3 className="font-serif text-3xl leading-tight text-[#eae7df]">Learning</h3>
-            <p className="mt-1.5 font-mono text-[11px] text-[#6f6c65]">#systems · updated today</p>
+        <p className="bg-[#17181b] font-serif text-3xl leading-tight text-[#eae7df]">Learning</p>
+            <p className="mt-1.5 font-mono text-[11px] text-[#b4b1a9]">#systems · updated today</p>
           </div>
           <div className="space-y-3 text-[13px] leading-6 text-[#a8a59d]">
             <p>A note becomes useful when it can be found again. Ley derives those paths from ordinary writing instead of asking for metadata first.</p>
@@ -178,7 +178,7 @@ function KnowledgePreview() {
             ))}
           </div>
           <div className="mt-7 border border-white/6 bg-[#121316] p-3">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.1em] text-[#6f6c65]"><CalendarDays size={11} /> Local graph · depth 2</div>
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.1em] text-[#a5a29a]"><CalendarDays size={11} /> Local graph · depth 2</div>
             <svg viewBox="0 0 340 120" className="mt-3 h-[92px]" role="img" aria-label="Small connected note graph">
               <g stroke="#63615b" strokeOpacity=".42" strokeWidth="1">
                 <path d="M170 62 L92 32 M170 62 L246 33 M170 62 L108 94 M170 62 L236 93 M92 32 L43 63" />
@@ -197,9 +197,9 @@ function KnowledgePreview() {
           </div>
         </div>
       </div>
-      <div className="absolute bottom-4 right-4 hidden border border-white/8 bg-[#1b1c20]/95 px-3 py-2 backdrop-blur-sm sm:block">
+      <div aria-hidden="true" className="absolute bottom-4 right-4 hidden border border-white/8 bg-[#1b1c20]/95 px-3 py-2 backdrop-blur-sm sm:block">
         <p className="text-[12px] font-medium text-[#dedbd3]">Learning</p>
-        <p className="mt-0.5 text-[11px] text-[#827f78]">Connected to 4 notes · 2 backlinks</p>
+        <p className="mt-0.5 text-[11px] text-[#b4b1a9]">Connected to 4 notes · 2 backlinks</p>
       </div>
     </figure>
   );

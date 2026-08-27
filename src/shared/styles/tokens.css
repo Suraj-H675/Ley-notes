@@ -18,7 +18,7 @@
   /* Text — high contrast for body, muted for metadata. */
   --foreground: 45 12% 89%;
   --muted-foreground: 40 6% 61%;
-  --subtle-foreground: 40 5% 47%;
+  --subtle-foreground: 40 5% 51%;
 
   /* Borders and dividers. */
   --border: 45 6% 23%;

@@ -29,7 +29,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 - Sparse local revision snapshots with a user-facing recovery panel
 - Desktop Agent Memory workspace with an explicit multi-project catalog, local cross-project search across knowledge and captured revisions, capture/privacy controls, deterministic refresh, immutable graph time travel, semantic graph filters, captured-source inspection, complete session history, append-only user naming, reviewed per-session erasure, bounded continuity briefs, checkpoint/decision/problem/attempt/outcome inspection, navigable snapshot-pinned artifacts, trusted lessons, temporal provenance inspection, version-guarded corrections, vault-verified lesson and session handoff links into ordinary Markdown, user-directed session links into interoperable JSON Canvas, and append-only human review
 - Structured project-memory search across sessions, revisions, decisions, problems, lessons, artifacts, symbols, and dependencies, with deterministic ranking, trust/freshness signals, conflict disclosure, and an explicitly installed local semantic model for meaning-based recall
-- Installable Codex, Claude Code, and Gemini CLI integrations that combine local MCP, stable lifecycle hooks, bounded redacted turn capture, and a portable structured-memory skill without scraping transcripts
+- Installable Codex and Claude Code integrations that combine local MCP, stable lifecycle hooks, bounded redacted turn capture, and a portable structured-memory skill without scraping transcripts
 - An honest browser Agent Memory boundary: the PWA keeps notes usable but does not pretend a web page can serve external local agents or read arbitrary coding projects
 - Offline-capable PWA and a separate public website
 
@@ -39,7 +39,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 .
 ├── crates/               # Shared Rust core, `ley` CLI, and local stdio MCP server
 ├── docs/                 # Architecture, decisions, security, and product research
-├── integrations/         # Installable Codex, Claude Code, and Gemini CLI packages
+├── integrations/         # Installable Codex and Claude Code packages
 ├── schemas/              # Versioned open agent-memory contracts
 ├── src/
 │   ├── app/              # Application composition and workspace shell
@@ -122,8 +122,8 @@ Add the independent `--allow-learning-proposals` flag only when that host should
 
 The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), [ADR 0008](docs/adr/0008-explicit-mcp-session-write-consent.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
 
-For automatic session continuity, install Ley's Codex, Claude Code, or Gemini
-CLI package. Each combines the same local MCP tools, lifecycle hooks, and
+For automatic session continuity, install Ley's Codex or Claude Code package.
+Each combines the same local MCP tools, lifecycle hooks, and
 structured-memory skill while keeping host-specific packaging isolated.
 Adapters use documented session, prompt, and final-response fields, never read
 transcript paths, no-op outside explicitly initialized and bound projects, and

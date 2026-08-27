@@ -25,6 +25,7 @@ import type { Page } from "@/infrastructure/database/schema";
 import { retargetWikiLinks } from "@/core/parser/wiki-links";
 import { retargetInternalMarkdownLinks } from "@/core/parser/markdown-links";
 import { serializeFrontmatter } from "@/core/parser/frontmatter";
+import type { FrontmatterResult } from "@/core/parser/frontmatter";
 import { removeDestinationBookmarksForPage } from "@/core/vault/bookmarks";
 import { removePageBookmarkReference } from "@/core/vault/note-bookmarks";
 import {
@@ -624,7 +625,9 @@ function requirePortablePageTitle(value: string): string {
   const title = value.normalize("NFC").trim();
   if (!title) throw new Error("A note name is required");
   if (filenameStem(title) !== title) {
-    throw new Error("Note names cannot contain path separators, control characters, Windows-reserved names, or trailing dots/spaces.");
+    throw new Error(
+      "Note names cannot contain path separators, control characters, Windows-reserved names, or trailing dots/spaces.",
+    );
   }
   return title;
 }
@@ -723,7 +726,14 @@ export async function restorePage(pageId: string): Promise<Page> {
 export async function restoreTrashedFilesystemPage(
   trashedPath: string,
 ): Promise<Page> {
-  return queuePageMutation(stableTrashPageId(trashedPath), async () => {
+  return queuePageMutation(stableTrashPageId(trashedPath), () =>
+    restoreTrashedFilesystemPageMutation(trashedPath),
+  );
+}
+
+async function restoreTrashedFilesystemPageMutation(
+  trashedPath: string,
+): Promise<Page> {
   const allBefore = await db.pages.toArray();
   const missingProjection = allBefore.find(
     (page) =>
@@ -731,121 +741,195 @@ export async function restoreTrashedFilesystemPage(
       page.deletedAt === null &&
       Boolean(page.missingFromDisk),
   );
-  const restoredPath = await restoreActiveVaultTrashFile(trashedPath);
-  if (!restoredPath)
-    throw new Error("This vault cannot restore trashed notes.");
-
+  const restoredPath = await requireRestoredPath(trashedPath);
   const all = await db.pages.toArray();
   const previousProjection = all.find(
     (page) =>
       page.path.toLowerCase() === trashedPath.toLowerCase() &&
       page.deletedAt !== null,
   );
+  const source = await requireRestoredSource(restoredPath);
+  const prepared = await prepareRestoredTrashPage({
+    trashedPath,
+    restoredPath,
+    source,
+    all,
+    previousProjection,
+    missingProjection,
+  });
+  const { page: restored } = prepared;
+  await db.pages.put(restored);
+  await persistRestoredSource(restored, prepared.rewriteSource);
+  await maintainLinksAfterPathChange(
+    restored.id,
+    trashedPath,
+    restoredPath,
+    [restored.id],
+    previousProjection?.title,
+    previousProjection && restored.title !== previousProjection.title
+      ? restored.title
+      : undefined,
+  );
+  await rebuildPageLinks(restored.id, restored.content);
+  await rebuildPageTags(restored.id, restored.content, restored.frontmatter);
+  await resolveGhostLinksForPage(restored);
+  return restored;
+}
+
+async function requireRestoredPath(trashedPath: string): Promise<string> {
+  const restoredPath = await restoreActiveVaultTrashFile(trashedPath);
+  if (!restoredPath)
+    throw new Error("This vault cannot restore trashed notes.");
+  return restoredPath;
+}
+
+async function requireRestoredSource(restoredPath: string): Promise<string> {
   const source = await readActiveVaultFile(restoredPath);
   if (source === null)
     throw new Error("This vault cannot read the restored note.");
+  return source;
+}
+
+async function prepareRestoredTrashPage({
+  trashedPath,
+  restoredPath,
+  source,
+  all,
+  previousProjection,
+  missingProjection,
+}: {
+  trashedPath: string;
+  restoredPath: string;
+  source: string;
+  all: Page[];
+  previousProjection: Page | undefined;
+  missingProjection: Page | undefined;
+}): Promise<{ page: Page; rewriteSource: boolean }> {
   const sourceHash = await hashVaultSource(source);
   const parsed = parseFrontmatter(source);
-  const filenameTitle =
-    restoredPath.split("/").at(-1)?.replace(/\.md$/i, "") ?? "Untitled";
-  let title =
-    typeof parsed.frontmatter.title === "string" &&
-    parsed.frontmatter.title.trim()
-      ? parsed.frontmatter.title.trim()
-      : filenameTitle;
-
   const id =
-    previousProjection?.id ?? missingProjection?.id ?? stableTrashPageId(trashedPath);
-  if (
-    !previousProjection &&
-    !(missingProjection && missingProjection.id === id) &&
-    (await db.pages.get(id))
-  ) {
+    previousProjection?.id ??
+    missingProjection?.id ??
+    stableTrashPageId(trashedPath);
+  await ensureRecoveryRecordAvailable(
+    id,
+    previousProjection,
+    missingProjection,
+  );
+  const title = await restoredTitle(parsed, restoredPath, all, id);
+  const aliases = restoredAliases(parsed, all, id);
+  const updatedAt = now();
+  return {
+    page: {
+      ...(previousProjection ?? missingProjection ?? ({} as Page)),
+      id,
+      title,
+      lcTitle: title.toLowerCase(),
+      path: restoredPath,
+      content: parsed.body,
+      frontmatter: parsed.frontmatter,
+      frontmatterError: parsed.error,
+      aliases: parsed.error ? aliases.original : aliases.filtered,
+      createdAt:
+        previousProjection?.createdAt ??
+        missingProjection?.createdAt ??
+        Date.now(),
+      updatedAt,
+      deletedAt: null,
+      sourceHash,
+      missingFromDisk: undefined,
+    },
+    rewriteSource:
+      !parsed.error && aliases.filtered.length !== aliases.original.length,
+  };
+}
+
+async function ensureRecoveryRecordAvailable(
+  id: string,
+  previousProjection: Page | undefined,
+  missingProjection: Page | undefined,
+): Promise<void> {
+  if (previousProjection || missingProjection?.id === id) return;
+  if (await db.pages.get(id)) {
     throw new Error(
       "This trashed note cannot be restored because Ley already has its recovery record.",
     );
   }
-  const titleCollision = await getPageByTitle(title);
-  if (titleCollision && titleCollision.id !== id) {
-    const takenTitles = all
-      .filter((page) => page.deletedAt === null && !page.missingFromDisk)
-      .map((page) => page.title);
-    let suffix = 2;
-    while (takenTitles.some((candidate) => portableFilenameKey(candidate) === portableFilenameKey(`${title} ${suffix}`)))
-      suffix += 1;
-    title = `${title} ${suffix}`;
-    if (!parsed.error)
-      parsed.frontmatter = { ...parsed.frontmatter, title };
-  }
+}
 
+async function restoredTitle(
+  parsed: FrontmatterResult,
+  restoredPath: string,
+  all: Page[],
+  id: string,
+): Promise<string> {
+  const filenameTitle =
+    restoredPath.split("/").at(-1)?.replace(/\.md$/i, "") ?? "Untitled";
+  const configuredTitle =
+    typeof parsed.frontmatter.title === "string" &&
+    parsed.frontmatter.title.trim()
+      ? parsed.frontmatter.title.trim()
+      : filenameTitle;
+  const titleCollision = await getPageByTitle(configuredTitle);
+  if (!titleCollision || titleCollision.id === id) return configuredTitle;
+  const takenTitles = all
+    .filter((page) => page.deletedAt === null && !page.missingFromDisk)
+    .map((page) => page.title);
+  const title = uniqueRestoredTitle(configuredTitle, takenTitles);
+  if (!parsed.error) parsed.frontmatter = { ...parsed.frontmatter, title };
+  return title;
+}
+
+function uniqueRestoredTitle(title: string, takenTitles: string[]): string {
+  let suffix = 2;
+  while (
+    takenTitles.some(
+      (candidate) =>
+        portableFilenameKey(candidate) ===
+        portableFilenameKey(`${title} ${suffix}`),
+    )
+  ) {
+    suffix += 1;
+  }
+  return `${title} ${suffix}`;
+}
+
+function restoredAliases(
+  parsed: FrontmatterResult,
+  all: Page[],
+  id: string,
+): { original: string[]; filtered: string[] } {
   const activeAliases = new Set(
     all
       .filter(
         (page) =>
-          page.deletedAt === null &&
-          !page.missingFromDisk &&
-          page.id !== id,
+          page.deletedAt === null && !page.missingFromDisk && page.id !== id,
       )
       .flatMap((page) => page.aliases.map((alias) => alias.toLowerCase())),
   );
-  let originalAliases = getAliases(parsed.frontmatter);
-  const aliases = originalAliases.filter(
+  const original = getAliases(parsed.frontmatter);
+  const filtered = original.filter(
     (alias) => !activeAliases.has(alias.toLowerCase()),
   );
-  const aliasesChanged = aliases.length !== originalAliases.length;
-  if (aliasesChanged && !parsed.error) {
-    parsed.frontmatter = { ...parsed.frontmatter, aliases };
+  if (filtered.length !== original.length && !parsed.error) {
+    parsed.frontmatter = { ...parsed.frontmatter, aliases: filtered };
   }
+  return { original, filtered };
+}
 
-  const updatedAt = now();
-  const restored: Page = {
-    ...(previousProjection ?? missingProjection ?? ({} as Page)),
-    id,
-    title,
-    lcTitle: title.toLowerCase(),
-    path: restoredPath,
-    content: parsed.body,
-    frontmatter: parsed.frontmatter,
-    frontmatterError: parsed.error,
-    aliases: parsed.error ? originalAliases : aliases,
-    createdAt:
-      previousProjection?.createdAt ??
-      missingProjection?.createdAt ??
-      Date.now(),
-    updatedAt,
-    deletedAt: null,
-    sourceHash,
-    missingFromDisk: undefined,
-  };
-  await db.pages.put(restored);
-  if (
-    !parsed.error &&
-    (aliasesChanged ||
-      (Object.prototype.hasOwnProperty.call(parsed.frontmatter, "title") &&
-        parsed.frontmatter.title !== restored.frontmatter.title))
-  ) {
-    await writeActiveVaultFile(
-      restoredPath,
-      serializeFrontmatter(restored.frontmatter, restored.content),
+async function persistRestoredSource(
+  restored: Page,
+  rewriteSource: boolean,
+): Promise<void> {
+  if (rewriteSource) {
+    const serialized = serializeFrontmatter(
+      restored.frontmatter,
+      restored.content,
     );
-    restored.sourceHash = await hashVaultSource(
-      serializeFrontmatter(restored.frontmatter, restored.content),
-    );
+    await writeActiveVaultFile(restored.path, serialized);
+    restored.sourceHash = await hashVaultSource(serialized);
     await db.pages.put(restored);
   }
-  await maintainLinksAfterPathChange(
-    id,
-    trashedPath,
-    restoredPath,
-    [id],
-    previousProjection?.title,
-    previousProjection && title !== previousProjection.title ? title : undefined,
-  );
-  await rebuildPageLinks(id, restored.content);
-  await rebuildPageTags(id, restored.content, restored.frontmatter);
-  await resolveGhostLinksForPage(restored);
-  return restored;
-  });
 }
 
 function stableTrashPageId(trashedPath: string): string {

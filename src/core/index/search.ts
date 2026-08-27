@@ -176,7 +176,10 @@ export async function searchPages(
     enrich: true,
   });
 
-  if (raw.length === 0 && (filter.paths.length > 0 || filter.titles.length > 0)) {
+  if (
+    raw.length === 0 &&
+    (filter.paths.length > 0 || filter.titles.length > 0)
+  ) {
     return [...docs.values()]
       .filter((doc) => matchesFilters(doc, filter))
       .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -236,6 +239,20 @@ export interface ParsedFilter {
   tasks: SearchTaskFilter[];
 }
 
+type ParsedSearchPart =
+  | { kind: "term"; value: string }
+  | { kind: "property"; value: SearchPropertyFilter }
+  | { kind: "task"; value: SearchTaskFilter }
+  | { kind: "tag" | "path" | "title"; value: SearchValueFilter }
+  | { kind: "ignore" };
+
+const FILTER_TARGETS: Record<string, "tag" | "path" | "title" | undefined> = {
+  tag: "tag",
+  path: "path",
+  title: "title",
+  file: "title",
+};
+
 export function parseSearchQuery(query: string): ParsedFilter {
   const terms: string[] = [];
   const tags: SearchValueFilter[] = [];
@@ -244,59 +261,15 @@ export function parseSearchQuery(query: string): ParsedFilter {
   const properties: SearchPropertyFilter[] = [];
   const tasks: SearchTaskFilter[] = [];
   for (const rawPart of tokenizeQuery(query)) {
-    const exclude = rawPart.startsWith("-");
-    const part = exclude ? rawPart.slice(1) : rawPart;
-    const bracket = /^\[([^:\]]+)(?::([^\]]+))?\]$/.exec(part);
-    if (bracket) {
-      const key = cleanFilterValue(bracket[1]);
-      const value = bracket[2] ? cleanFilterValue(bracket[2]) : undefined;
-      if (key) properties.push({ key, value, exclude });
-      continue;
-    }
-    const separator = part.indexOf(":");
-    if (separator < 1) {
-      terms.push(cleanTerm(rawPart));
-      continue;
-    }
-    const operator = part.slice(0, separator).toLowerCase();
-    const rawValue = part.slice(separator + 1);
-    if (operator === "property") {
-      const equals = rawValue.indexOf("=");
-      const key = cleanFilterValue(
-        equals >= 0 ? rawValue.slice(0, equals) : rawValue,
-      );
-      const value =
-        equals >= 0 ? cleanFilterValue(rawValue.slice(equals + 1)) : undefined;
-      if (key) properties.push({ key, value, exclude });
-    } else if (
-      operator === "task" ||
-      operator === "task-todo" ||
-      operator === "task-done"
-    ) {
-      tasks.push({
-        value: cleanFilterValue(rawValue),
-        exclude,
-        state:
-          operator === "task-todo"
-            ? "todo"
-            : operator === "task-done"
-              ? "done"
-              : "any",
-      });
-    } else {
-      const cleaned = cleanFilterValue(rawValue);
-      const value = operator === "tag" ? cleaned.replace(/^#/, "") : cleaned;
-      const target =
-        operator === "tag"
-          ? tags
-          : operator === "path"
-            ? paths
-            : operator === "title" || operator === "file"
-              ? titles
-              : null;
-      if (target && value) target.push({ value, exclude });
-      else terms.push(cleanTerm(rawPart));
-    }
+    appendParsedSearchPart(
+      parseSearchPart(rawPart),
+      terms,
+      tags,
+      paths,
+      titles,
+      properties,
+      tasks,
+    );
   }
   return {
     terms: terms.filter(Boolean).join(" "),
@@ -306,6 +279,97 @@ export function parseSearchQuery(query: string): ParsedFilter {
     properties,
     tasks,
   };
+}
+
+function appendParsedSearchPart(
+  part: ParsedSearchPart,
+  terms: string[],
+  tags: SearchValueFilter[],
+  paths: SearchValueFilter[],
+  titles: SearchValueFilter[],
+  properties: SearchPropertyFilter[],
+  tasks: SearchTaskFilter[],
+): void {
+  if (part.kind === "term") terms.push(part.value);
+  if (part.kind === "property") properties.push(part.value);
+  if (part.kind === "task") tasks.push(part.value);
+  if (part.kind === "tag") tags.push(part.value);
+  if (part.kind === "path") paths.push(part.value);
+  if (part.kind === "title") titles.push(part.value);
+}
+
+function parseSearchPart(rawPart: string): ParsedSearchPart {
+  const exclude = rawPart.startsWith("-");
+  const part = exclude ? rawPart.slice(1) : rawPart;
+  const bracket = /^\[([^:\]]+)(?::([^\]]+))?\]$/.exec(part);
+  if (bracket) {
+    const key = cleanFilterValue(bracket[1]);
+    if (!key) return { kind: "ignore" };
+    return {
+      kind: "property",
+      value: {
+        key,
+        value: bracket[2] ? cleanFilterValue(bracket[2]) : undefined,
+        exclude,
+      },
+    };
+  }
+
+  const separator = part.indexOf(":");
+  if (separator < 1) return { kind: "term", value: cleanTerm(rawPart) };
+
+  const operator = part.slice(0, separator).toLowerCase();
+  const rawValue = part.slice(separator + 1);
+  if (operator === "property") return parsePropertyPart(rawValue, exclude);
+  if (
+    operator === "task" ||
+    operator === "task-todo" ||
+    operator === "task-done"
+  ) {
+    return {
+      kind: "task",
+      value: {
+        value: cleanFilterValue(rawValue),
+        exclude,
+        state:
+          operator === "task-todo"
+            ? "todo"
+            : operator === "task-done"
+              ? "done"
+              : "any",
+      },
+    };
+  }
+
+  const kind = FILTER_TARGETS[operator];
+  const cleaned = cleanFilterValue(rawValue);
+  const value = operator === "tag" ? cleaned.replace(/^#/, "") : cleaned;
+  return kind && value
+    ? { kind, value: { value, exclude } }
+    : { kind: "term", value: cleanTerm(rawPart) };
+}
+
+function parsePropertyPart(
+  rawValue: string,
+  exclude: boolean,
+): ParsedSearchPart {
+  const equals = rawValue.indexOf("=");
+  const key = cleanFilterValue(
+    equals >= 0 ? rawValue.slice(0, equals) : rawValue,
+  );
+  return key
+    ? {
+        kind: "property",
+        value: {
+          key,
+          value:
+            equals >= 0
+              ? cleanFilterValue(rawValue.slice(equals + 1))
+              : undefined,
+          exclude,
+        },
+      }
+    : { kind: "ignore" };
 }
 
 function parseFilter(query: string): ParsedFilter {

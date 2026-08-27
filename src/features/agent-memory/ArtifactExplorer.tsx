@@ -12,13 +12,14 @@ import { readAgentArtifacts } from "./api";
 import type { ProjectArtifactInventory } from "./types";
 
 type InventoryView = "captured" | "skipped";
+type ArtifactFocus = { path: string; requestId: number };
 
 export function ArtifactExplorer({
   projectPath,
   focus = null,
 }: {
   projectPath: string;
-  focus?: { path: string; requestId: number } | null;
+  focus?: ArtifactFocus | null;
 }) {
   const [query, setQuery] = useState(focus?.path ?? "");
   const [deferredQuery, setDeferredQuery] = useState(focus?.path ?? "");
@@ -65,6 +66,45 @@ export function ArtifactExplorer({
       ? (inventory?.totalMatchingArtifacts ?? 0)
       : (inventory?.totalMatchingSkipped ?? 0);
 
+  return (
+    <ArtifactExplorerContent
+      query={query}
+      setQuery={setQuery}
+      view={view}
+      setView={setView}
+      inventory={inventory}
+      loading={loading}
+      focus={focus}
+      error={error}
+      shown={shown}
+      matching={matching}
+    />
+  );
+}
+
+function ArtifactExplorerContent({
+  query,
+  setQuery,
+  view,
+  setView,
+  inventory,
+  loading,
+  focus,
+  error,
+  shown,
+  matching,
+}: {
+  query: string;
+  setQuery: (value: string) => void;
+  view: InventoryView;
+  setView: (value: InventoryView) => void;
+  inventory: ProjectArtifactInventory | null;
+  loading: boolean;
+  focus: ArtifactFocus | null | undefined;
+  error: string | null;
+  shown: number;
+  matching: number;
+}) {
   return (
     <section className="space-y-5" aria-labelledby="artifacts-title">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -385,7 +425,9 @@ function EmptyState({
         aria-hidden="true"
       />
       <h3 className="text-meta font-semibold text-foreground">{title}</h3>
-      <p className="mt-1 max-w-md text-meta leading-relaxed text-muted-foreground">{detail}</p>
+      <p className="mt-1 max-w-md text-meta leading-relaxed text-muted-foreground">
+        {detail}
+      </p>
     </div>
   );
 }

@@ -10,6 +10,8 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
 } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
@@ -28,6 +30,7 @@ import {
 } from "lucide-react";
 import { useUIStore } from "@/shared/state/ui";
 import { useNavStore } from "@/shared/state/nav";
+import type { EditorPane } from "@/shared/state/nav";
 import { usePages, usePageById } from "@/features/notes/usePages";
 import { useSearchHotkey } from "@/features/search/useSearchHotkey";
 import { useDailyNoteHotkey } from "@/features/notes/useDailyNoteHotkey";
@@ -69,6 +72,7 @@ import {
 } from "@/features/agent-memory/link-session-canvas";
 import { primaryModifierLabel, shortcutLabel } from "@/shared/lib/shortcut";
 import { useMediaQuery } from "@/shared/hooks/useMediaQuery";
+import type { Page } from "@/infrastructure/database/schema";
 
 const GraphView = lazy(() =>
   import("@/features/graph/GraphView").then((module) => ({
@@ -161,7 +165,9 @@ export function Layout({
   const isNarrowViewport = useMediaQuery("(max-width: 767px)");
   const sidebarToggleRef = useRef<HTMLButtonElement>(null);
   const settingsToggleRef = useRef<HTMLButtonElement>(null);
-  const desktopSidebarPreference = useRef(isNarrowViewport ? true : sidebarOpen);
+  const desktopSidebarPreference = useRef(
+    isNarrowViewport ? true : sidebarOpen,
+  );
   const wasNarrowViewport = useRef(isNarrowViewport);
   const [splitPercent, setSplitPercent] = useState(() => {
     const saved = Number(localStorage.getItem("ley:split-percent"));
@@ -289,13 +295,25 @@ export function Layout({
   const modifier = primaryModifierLabel();
   const sidebarContents = (
     <>
-      <FileTree onNewPage={(folder) => {
-        if (isNarrowViewport) setSidebarOpen(false);
-        setNewNoteFolder(folder ?? "");
-        setNewNoteOpen(true);
-      }} />
+      <FileTree
+        onNewPage={(folder) => {
+          if (isNarrowViewport) setSidebarOpen(false);
+          setNewNoteFolder(folder ?? "");
+          setNewNoteOpen(true);
+        }}
+      />
       <div className="mx-2 border-t border-border" />
-      <BookmarksPane onOpenSearch={openSearch} onOpenCollection={(search) => setCollectionRequest({ query: search.query, title: search.name, savedSearchId: search.id, table: search.table })} />
+      <BookmarksPane
+        onOpenSearch={openSearch}
+        onOpenCollection={(search) =>
+          setCollectionRequest({
+            query: search.query,
+            title: search.name,
+            savedSearchId: search.id,
+            table: search.table,
+          })
+        }
+      />
       <div className="mx-2 border-t border-border" />
       <RecentPane />
       <div className="mx-2 border-t border-border" />
@@ -304,293 +322,56 @@ export function Layout({
   );
 
   return (
-    <div className="flex h-full w-full flex-col bg-background text-foreground">
-      {/* Title bar */}
-      <header className="app-chrome flex h-11 shrink-0 items-center justify-between gap-3 px-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button
-            ref={sidebarToggleRef}
-            size="sm"
-            variant="ghost"
-            onClick={toggleSidebar}
-            aria-label="Toggle sidebar"
-            aria-expanded={sidebarOpen}
-            aria-controls={isNarrowViewport ? "mobile-vault-navigation" : undefined}
-            title="Toggle sidebar"
-          >
-            <PanelLeft size={14} aria-hidden="true" />
-          </Button>
-          <span className="text-body font-semibold tracking-tight">Ley</span>
-          <span
-            className="hidden max-w-36 truncate text-micro text-muted-foreground sm:inline"
-            title={vaultName}
-          >
-            {vaultName}
-          </span>
-        </div>
-        <nav
-          className="flex min-w-0 items-center gap-1"
-          aria-label="Workspace actions"
-        >
-          <button
-            type="button"
-            onClick={() => openSearch()}
-            aria-label="Open note"
-            title={`Open note (${shortcutLabel("O")})`}
-            className="flex h-7 touch-manipulation items-center gap-1.5 rounded-sm border border-border bg-surface-2/70 px-2 text-meta text-muted-foreground outline-none transition-[transform,background-color,border-color,color] hover:border-border-strong hover:bg-surface-3 hover:text-foreground active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-          >
-            <Search size={12} aria-hidden="true" />
-            <span className="hidden sm:inline">Open note</span>
-            <span className="hidden sm:flex">
-              <Kbd>{modifier}</Kbd>
-              <Kbd>O</Kbd>
-            </span>
-          </button>
-          <span
-            className="mx-0.5 hidden h-4 w-px bg-border md:block"
-            aria-hidden="true"
-          />
-          <Button
-            ref={settingsToggleRef}
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setNewNoteFolder("");
-              setNewNoteOpen(true);
-            }}
-            aria-label="New note"
-            title={`New note (${shortcutLabel("N")})`}
-          >
-            <FilePlus2 size={14} aria-hidden="true" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={openDailyNote}
-            aria-label="Open daily note"
-            title={`Open today's daily note (${shortcutLabel("D")})`}
-          >
-            <CalendarPlus size={14} aria-hidden="true" />
-          </Button>
-          <span
-            className="mx-0.5 hidden h-4 w-px bg-border sm:block"
-            aria-hidden="true"
-          />
-          <Button
-            size="sm"
-            variant="ghost"
-            className="hidden sm:inline-flex"
-            onClick={openCanvas}
-            aria-label="Canvas"
-            title="Canvas"
-          >
-            <LayoutDashboard size={14} aria-hidden="true" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="hidden sm:inline-flex"
-            onClick={() => setWorkspacesOpen(true)}
-            aria-label="Workspace layouts"
-            title="Workspace layouts"
-          >
-            <PanelsTopLeft size={14} aria-hidden="true" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setAgentMemoryOpen(true)}
-            aria-label="Agent Memory"
-            title="Agent Memory"
-          >
-            <BrainCircuit size={14} aria-hidden="true" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="hidden sm:inline-flex"
-            onClick={() => setGraphOpen(true)}
-            aria-label="Graph view"
-            title={`Graph view (${shortcutLabel("G")})`}
-          >
-            <Network size={14} aria-hidden="true" />
-          </Button>
-          <span
-            className="mx-0.5 hidden h-4 w-px bg-border md:block"
-            aria-hidden="true"
-          />
-          <Button
-            size="sm"
-            variant="ghost"
-            className="hidden sm:inline-flex"
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Settings"
-            title={`Settings (${shortcutLabel(",")})`}
-          >
-            <SettingsIcon size={14} aria-hidden="true" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="hidden lg:inline-flex"
-            onClick={toggleRightDock}
-            aria-label="Toggle right dock"
-          >
-            <PanelRight size={14} aria-hidden="true" />
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="sm:hidden"
-            onClick={() => setCommandOpen(true)}
-            aria-label="More workspace actions"
-            title="More workspace actions"
-          >
-            <Ellipsis size={16} aria-hidden="true" />
-          </Button>
-        </nav>
-      </header>
+    <div
+      className="flex h-full w-full flex-col bg-background text-foreground"
+      hidden={agentMemoryOpen}
+    >
+      <LayoutHeader
+        vaultName={vaultName}
+        sidebarToggleRef={sidebarToggleRef}
+        sidebarOpen={sidebarOpen}
+        isNarrowViewport={isNarrowViewport}
+        toggleSidebar={toggleSidebar}
+        settingsToggleRef={settingsToggleRef}
+        openSearch={openSearch}
+        modifier={modifier}
+        openDailyNote={openDailyNote}
+        openCanvas={openCanvas}
+        setWorkspacesOpen={setWorkspacesOpen}
+        setAgentMemoryOpen={setAgentMemoryOpen}
+        setGraphOpen={setGraphOpen}
+        setSettingsOpen={setSettingsOpen}
+        toggleRightDock={toggleRightDock}
+        setCommandOpen={setCommandOpen}
+        openNewNote={() => {
+          setNewNoteFolder("");
+          setNewNoteOpen(true);
+        }}
+      />
 
-      {/* Main: sidebar / editor / right dock */}
-      <div className="flex flex-1 overflow-hidden">
-        {isNarrowViewport ? (
-          <Dialog.Root open={sidebarOpen} onOpenChange={setSidebarOpen}>
-            <Dialog.Portal>
-              <Dialog.Overlay className="app-modal-overlay fixed inset-x-0 bottom-0 top-11 z-20" />
-              <Dialog.Content id="mobile-vault-navigation" aria-describedby={undefined} onCloseAutoFocus={(event) => { event.preventDefault(); sidebarToggleRef.current?.focus(); }} className="app-sidebar app-mobile-sidebar fixed inset-y-11 left-0 z-30 flex w-[min(18rem,calc(100vw-3rem))] flex-col overflow-hidden border-r border-border shadow-menu outline-none">
-                <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/70 px-3">
-                  <Dialog.Title className="text-body font-semibold tracking-tight">Vault navigation</Dialog.Title>
-                  <Dialog.Close asChild><Button size="sm" variant="ghost" aria-label="Close sidebar" title="Close sidebar"><X size={14} aria-hidden="true" /></Button></Dialog.Close>
-                </div>
-                <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">{sidebarContents}</div>
-              </Dialog.Content>
-            </Dialog.Portal>
-          </Dialog.Root>
-        ) : sidebarOpen ? (
-          <aside className="app-sidebar flex w-64 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border py-3">{sidebarContents}</aside>
-        ) : null}
-
-        <main className="flex min-w-0 flex-1 flex-col">
-          <EditorTabs />
-          {primaryTab && primaryPage?.id === primaryTab ? (
-            <div className="flex min-h-0 flex-1">
-              <section
-                className={`${secondaryTab && activePane !== "primary" ? "hidden lg:flex" : "flex"} min-w-0 flex-1 flex-col ${secondaryTab ? "lg:flex-none" : ""}`}
-                style={
-                  secondaryTab ? { flexBasis: `${splitPercent}%` } : undefined
-                }
-                aria-label="Primary note pane"
-                onPointerDownCapture={() => focusPane("primary")}
-              >
-                {secondaryTab && (
-                  <PaneHeader
-                    label="Primary"
-                    active={activePane === "primary"}
-                  />
-                )}
-                <FeatureErrorBoundary
-                  feature="Primary editor"
-                  resetKey={primaryTab}
-                >
-                  <Suspense fallback={<PanelLoading label="Opening note…" />}>
-                    <NoteWorkspace
-                      key={`primary:${primaryTab}`}
-                      page={primaryPage}
-                      pane="primary"
-                    />
-                  </Suspense>
-                </FeatureErrorBoundary>
-              </section>
-              {secondaryTab && secondaryPage?.id === secondaryTab && (
-                <>
-                  <SplitDivider
-                    value={splitPercent}
-                    onChange={setSplitPercent}
-                  />
-                  <section
-                    className={`${activePane !== "secondary" ? "hidden lg:flex" : "flex"} min-w-0 flex-1 flex-col lg:flex-none`}
-                    style={{ flexBasis: `${100 - splitPercent}%` }}
-                    aria-label="Secondary note pane"
-                    onPointerDownCapture={() => focusPane("secondary")}
-                  >
-                    <PaneHeader
-                      label="Reference"
-                      active={activePane === "secondary"}
-                      onClose={closeSplit}
-                    />
-                    <FeatureErrorBoundary
-                      feature="Secondary editor"
-                      resetKey={secondaryTab}
-                    >
-                      <Suspense
-                        fallback={<PanelLoading label="Opening reference…" />}
-                      >
-                        <NoteWorkspace
-                          key={`secondary:${secondaryTab}`}
-                          page={secondaryPage}
-                          pane="secondary"
-                        />
-                      </Suspense>
-                    </FeatureErrorBoundary>
-                  </section>
-                </>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-1 items-center justify-center">
-              <EmptyState
-                title={isEmpty ? "No pages yet" : "No page selected"}
-                description={
-                  isEmpty
-                    ? "Press the + button in the sidebar to create your first page."
-                    : "Pick a page from the sidebar or recent list."
-                }
-              />
-            </div>
-          )}
-        </main>
-
-        {rightDockOpen && (
-          <aside className="app-sidebar hidden w-80 shrink-0 flex-col border-l border-border lg:flex">
-            <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border/70 px-2">
-              {(["backlinks", "outline", "history", "graph"] as const).map(
-                (t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setRightDockTab(t)}
-                    className={
-                      rightDockTab === t
-                        ? "rounded-md bg-surface-3 px-2 py-1 text-meta font-medium text-foreground shadow-sm outline-none transition-transform active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-                        : "rounded-md px-2 py-1 text-meta text-muted-foreground outline-none transition-[transform,background-color,color] hover:bg-surface-2 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-                    }
-                  >
-                    {t.charAt(0).toUpperCase() + t.slice(1)}
-                  </button>
-                ),
-              )}
-            </div>
-            <div className="min-h-0 flex-1">
-              {rightDockTab === "backlinks" ? (
-                <BacklinksPanel pageId={activeTab} />
-              ) : rightDockTab === "outline" ? (
-                <OutlinePanel page={activePage} />
-              ) : rightDockTab === "history" ? (
-                <RevisionPanel pageId={activeTab} />
-              ) : (
-                <Suspense
-                  fallback={<PanelLoading label="Building local graph…" />}
-                >
-                  <GraphView
-                    activePageId={activeTab}
-                    onOpenFullGraph={() => setGraphOpen(true)}
-                  />
-                </Suspense>
-              )}
-            </div>
-          </aside>
-        )}
-      </div>
+      <LayoutWorkspace
+        isNarrowViewport={isNarrowViewport}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        sidebarToggleRef={sidebarToggleRef}
+        sidebarContents={sidebarContents}
+        primaryTab={primaryTab}
+        primaryPage={primaryPage}
+        secondaryTab={secondaryTab}
+        secondaryPage={secondaryPage}
+        activePane={activePane}
+        focusPane={focusPane}
+        splitPercent={splitPercent}
+        setSplitPercent={setSplitPercent}
+        closeSplit={closeSplit}
+        isEmpty={isEmpty}
+        rightDockOpen={rightDockOpen}
+        rightDockTab={rightDockTab}
+        setRightDockTab={setRightDockTab}
+        activeTab={activeTab}
+        activePage={activePage}
+        openGraph={() => setGraphOpen(true)}
+      />
       <SearchModal
         open={searchOpen}
         initialQuery={searchInitialQuery}
@@ -721,6 +502,418 @@ export function Layout({
     </div>
   );
 }
+
+function LayoutWorkspace({
+  isNarrowViewport,
+  sidebarOpen,
+  setSidebarOpen,
+  sidebarToggleRef,
+  sidebarContents,
+  primaryTab,
+  primaryPage,
+  secondaryTab,
+  secondaryPage,
+  activePane,
+  focusPane,
+  splitPercent,
+  setSplitPercent,
+  closeSplit,
+  isEmpty,
+  rightDockOpen,
+  rightDockTab,
+  setRightDockTab,
+  activeTab,
+  activePage,
+  openGraph,
+}: {
+  isNarrowViewport: boolean;
+  sidebarOpen: boolean;
+  setSidebarOpen: (open: boolean) => void;
+  sidebarToggleRef: RefObject<HTMLButtonElement | null>;
+  sidebarContents: ReactNode;
+  primaryTab: string | null;
+  primaryPage: Page | undefined;
+  secondaryTab: string | null;
+  secondaryPage: Page | undefined;
+  activePane: EditorPane;
+  focusPane: (pane: EditorPane) => void;
+  splitPercent: number;
+  setSplitPercent: (value: number) => void;
+  closeSplit: () => void;
+  isEmpty: boolean;
+  rightDockOpen: boolean;
+  rightDockTab: "graph" | "backlinks" | "outline" | "history";
+  setRightDockTab: (tab: "graph" | "backlinks" | "outline" | "history") => void;
+  activeTab: string | null;
+  activePage: Page | undefined;
+  openGraph: () => void;
+}) {
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      {isNarrowViewport ? (
+        <Dialog.Root open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="app-modal-overlay fixed inset-x-0 bottom-0 top-11 z-20" />
+            <Dialog.Content
+              id="mobile-vault-navigation"
+              aria-describedby={undefined}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                sidebarToggleRef.current?.focus();
+              }}
+              className="app-sidebar app-mobile-sidebar fixed inset-y-11 left-0 z-30 flex w-[min(18rem,calc(100vw-3rem))] flex-col overflow-hidden border-r border-border shadow-menu outline-none"
+            >
+              <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/70 px-3">
+                <Dialog.Title className="text-body font-semibold tracking-tight">
+                  Vault navigation
+                </Dialog.Title>
+                <Dialog.Close asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    aria-label="Close sidebar"
+                    title="Close sidebar"
+                  >
+                    <X size={14} aria-hidden="true" />
+                  </Button>
+                </Dialog.Close>
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                {sidebarContents}
+              </div>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      ) : sidebarOpen ? (
+        <aside className="app-sidebar flex w-64 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border py-3">
+          {sidebarContents}
+        </aside>
+      ) : null}
+
+      <main className="flex min-w-0 flex-1 flex-col">
+        <EditorTabs />
+        {primaryTab && primaryPage?.id === primaryTab ? (
+          <div className="flex min-h-0 flex-1">
+            <section
+              className={`${secondaryTab && activePane !== "primary" ? "hidden lg:flex" : "flex"} min-w-0 flex-1 flex-col ${secondaryTab ? "lg:flex-none" : ""}`}
+              style={
+                secondaryTab ? { flexBasis: `${splitPercent}%` } : undefined
+              }
+              aria-label="Primary note pane"
+              onPointerDownCapture={() => focusPane("primary")}
+            >
+              {secondaryTab && (
+                <PaneHeader label="Primary" active={activePane === "primary"} />
+              )}
+              <FeatureErrorBoundary
+                feature="Primary editor"
+                resetKey={primaryTab}
+              >
+                <Suspense fallback={<PanelLoading label="Opening note…" />}>
+                  <NoteWorkspace
+                    key={`primary:${primaryTab}`}
+                    page={primaryPage}
+                    pane="primary"
+                  />
+                </Suspense>
+              </FeatureErrorBoundary>
+            </section>
+            {secondaryTab && secondaryPage?.id === secondaryTab && (
+              <>
+                <SplitDivider value={splitPercent} onChange={setSplitPercent} />
+                <section
+                  className={`${activePane !== "secondary" ? "hidden lg:flex" : "flex"} min-w-0 flex-1 flex-col lg:flex-none`}
+                  style={{ flexBasis: `${100 - splitPercent}%` }}
+                  aria-label="Secondary note pane"
+                  onPointerDownCapture={() => focusPane("secondary")}
+                >
+                  <PaneHeader
+                    label="Reference"
+                    active={activePane === "secondary"}
+                    onClose={closeSplit}
+                  />
+                  <FeatureErrorBoundary
+                    feature="Secondary editor"
+                    resetKey={secondaryTab}
+                  >
+                    <Suspense
+                      fallback={<PanelLoading label="Opening reference…" />}
+                    >
+                      <NoteWorkspace
+                        key={`secondary:${secondaryTab}`}
+                        page={secondaryPage}
+                        pane="secondary"
+                      />
+                    </Suspense>
+                  </FeatureErrorBoundary>
+                </section>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-1 items-center justify-center">
+            <EmptyState
+              title={isEmpty ? "No pages yet" : "No page selected"}
+              description={
+                isEmpty
+                  ? "Press the + button in the sidebar to create your first page."
+                  : "Pick a page from the sidebar or recent list."
+              }
+            />
+          </div>
+        )}
+      </main>
+
+      <RightDock
+        open={rightDockOpen}
+        tab={rightDockTab}
+        setTab={setRightDockTab}
+        activeTab={activeTab}
+        activePage={activePage}
+        openGraph={openGraph}
+      />
+    </div>
+  );
+}
+
+function RightDock({
+  open,
+  tab,
+  setTab,
+  activeTab,
+  activePage,
+  openGraph,
+}: {
+  open: boolean;
+  tab: "graph" | "backlinks" | "outline" | "history";
+  setTab: (tab: "graph" | "backlinks" | "outline" | "history") => void;
+  activeTab: string | null;
+  activePage: Page | undefined;
+  openGraph: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <aside className="app-sidebar hidden w-80 shrink-0 flex-col border-l border-border lg:flex">
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border/70 px-2">
+        {(["backlinks", "outline", "history", "graph"] as const).map(
+          (dockTab) => (
+            <button
+              key={dockTab}
+              type="button"
+              onClick={() => setTab(dockTab)}
+              className={
+                tab === dockTab
+                  ? "rounded-md bg-surface-3 px-2 py-1 text-meta font-medium text-foreground shadow-sm outline-none transition-transform active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                  : "rounded-md px-2 py-1 text-meta text-muted-foreground outline-none transition-[transform,background-color,color] hover:bg-surface-2 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+              }
+            >
+              {dockTab.charAt(0).toUpperCase() + dockTab.slice(1)}
+            </button>
+          ),
+        )}
+      </div>
+      <div className="min-h-0 flex-1">
+        {tab === "backlinks" ? (
+          <BacklinksPanel pageId={activeTab} />
+        ) : tab === "outline" ? (
+          <OutlinePanel page={activePage} />
+        ) : tab === "history" ? (
+          <RevisionPanel pageId={activeTab} />
+        ) : (
+          <Suspense fallback={<PanelLoading label="Building local graph…" />}>
+            <GraphView activePageId={activeTab} onOpenFullGraph={openGraph} />
+          </Suspense>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function LayoutHeader({
+  vaultName,
+  sidebarToggleRef,
+  sidebarOpen,
+  isNarrowViewport,
+  toggleSidebar,
+  settingsToggleRef,
+  openSearch,
+  modifier,
+  openDailyNote,
+  openCanvas,
+  setWorkspacesOpen,
+  setAgentMemoryOpen,
+  setGraphOpen,
+  setSettingsOpen,
+  toggleRightDock,
+  setCommandOpen,
+  openNewNote,
+}: {
+  vaultName: string;
+  sidebarToggleRef: RefObject<HTMLButtonElement | null>;
+  sidebarOpen: boolean;
+  isNarrowViewport: boolean;
+  toggleSidebar: () => void;
+  settingsToggleRef: RefObject<HTMLButtonElement | null>;
+  openSearch: (query?: string) => void;
+  modifier: string;
+  openDailyNote: () => Promise<void>;
+  openCanvas: () => void;
+  setWorkspacesOpen: (open: boolean) => void;
+  setAgentMemoryOpen: (open: boolean) => void;
+  setGraphOpen: (open: boolean) => void;
+  setSettingsOpen: (open: boolean) => void;
+  toggleRightDock: () => void;
+  setCommandOpen: (open: boolean) => void;
+  openNewNote: () => void;
+}) {
+  return (
+    <header className="app-chrome flex h-11 shrink-0 items-center justify-between gap-3 px-3">
+      <h1 className="sr-only">Ley workspace</h1>
+      <div className="flex min-w-0 items-center gap-2">
+        <Button
+          ref={sidebarToggleRef}
+          size="sm"
+          variant="ghost"
+          onClick={toggleSidebar}
+          aria-label="Toggle sidebar"
+          aria-expanded={sidebarOpen}
+          aria-controls={
+            isNarrowViewport ? "mobile-vault-navigation" : undefined
+          }
+          title="Toggle sidebar"
+        >
+          <PanelLeft size={14} aria-hidden="true" />
+        </Button>
+        <span className="text-body font-semibold tracking-tight">Ley</span>
+        <span
+          className="hidden max-w-36 truncate text-micro text-muted-foreground sm:inline"
+          title={vaultName}
+        >
+          {vaultName}
+        </span>
+      </div>
+      <nav
+        className="flex min-w-0 items-center gap-1"
+        aria-label="Workspace actions"
+      >
+        <button
+          type="button"
+          onClick={() => openSearch()}
+          aria-label="Open note"
+          title={`Open note (${shortcutLabel("O")})`}
+          className="flex h-7 touch-manipulation items-center gap-1.5 rounded-sm border border-border bg-surface-2/70 px-2 text-meta text-muted-foreground outline-none transition-[transform,background-color,border-color,color] hover:border-border-strong hover:bg-surface-3 hover:text-foreground active:scale-[0.98] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <Search size={12} aria-hidden="true" />
+          <span className="hidden sm:inline">Open note</span>
+          <span className="hidden sm:flex">
+            <Kbd>{modifier}</Kbd>
+            <Kbd>O</Kbd>
+          </span>
+        </button>
+        <span
+          className="mx-0.5 hidden h-4 w-px bg-border md:block"
+          aria-hidden="true"
+        />
+        <Button
+          ref={settingsToggleRef}
+          size="sm"
+          variant="ghost"
+          onClick={openNewNote}
+          aria-label="New note"
+          title={`New note (${shortcutLabel("N")})`}
+        >
+          <FilePlus2 size={14} aria-hidden="true" />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={openDailyNote}
+          aria-label="Open daily note"
+          title={`Open today's daily note (${shortcutLabel("D")})`}
+        >
+          <CalendarPlus size={14} aria-hidden="true" />
+        </Button>
+        <span
+          className="mx-0.5 hidden h-4 w-px bg-border sm:block"
+          aria-hidden="true"
+        />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="hidden sm:inline-flex"
+          onClick={openCanvas}
+          aria-label="Canvas"
+          title="Canvas"
+        >
+          <LayoutDashboard size={14} aria-hidden="true" />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="hidden sm:inline-flex"
+          onClick={() => setWorkspacesOpen(true)}
+          aria-label="Workspace layouts"
+          title="Workspace layouts"
+        >
+          <PanelsTopLeft size={14} aria-hidden="true" />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setAgentMemoryOpen(true)}
+          aria-label="Agent Memory"
+          title="Agent Memory"
+        >
+          <BrainCircuit size={14} aria-hidden="true" />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="hidden sm:inline-flex"
+          onClick={() => setGraphOpen(true)}
+          aria-label="Graph view"
+          title={`Graph view (${shortcutLabel("G")})`}
+        >
+          <Network size={14} aria-hidden="true" />
+        </Button>
+        <span
+          className="mx-0.5 hidden h-4 w-px bg-border md:block"
+          aria-hidden="true"
+        />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="hidden sm:inline-flex"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Settings"
+          title={`Settings (${shortcutLabel(",")})`}
+        >
+          <SettingsIcon size={14} aria-hidden="true" />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="hidden lg:inline-flex"
+          onClick={toggleRightDock}
+          aria-label="Toggle right dock"
+        >
+          <PanelRight size={14} aria-hidden="true" />
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="sm:hidden"
+          onClick={() => setCommandOpen(true)}
+          aria-label="More workspace actions"
+          title="More workspace actions"
+        >
+          <Ellipsis size={16} aria-hidden="true" />
+        </Button>
+      </nav>
+    </header>
+  );
+}
+
 function PanelLoading({ label }: { label: string }) {
   return (
     <div className="flex h-full items-center justify-center text-micro text-muted-foreground">

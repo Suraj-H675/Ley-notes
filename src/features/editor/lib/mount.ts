@@ -39,6 +39,8 @@ export interface MountOptions {
   compact?: boolean;
   /** Conceal inactive Markdown syntax while retaining an editable source document. */
   livePreview?: boolean;
+  /** Accessible name for the editable Markdown surface. */
+  ariaLabel?: string;
 }
 
 export interface EditorController {
@@ -269,8 +271,8 @@ const cmHighlight = HighlightStyle.define([
   },
   {
     tag: t.monospace,
-    color: 'hsl(var(--secondary-foreground))',
-    backgroundColor: 'hsl(var(--muted))',
+    color: 'hsl(var(--foreground))',
+    backgroundColor: 'hsl(var(--surface-3))',
     borderRadius: '3px',
     padding: '0 3px',
   },
@@ -301,6 +303,9 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
       syntaxHighlighting(cmHighlight),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       cmTheme,
+      EditorView.contentAttributes.of({
+        'aria-label': opts.ariaLabel ?? 'Markdown editor',
+      }),
       wikiLinkDecoration(),
       markdownLinkNavigation(),
       wikiLinkAutocomplete(),
@@ -311,6 +316,12 @@ export function mountEditor(parent: HTMLElement, opts: MountOptions): EditorCont
   });
 
   const view = new EditorView({ state, parent });
+  // CodeMirror deliberately gives its scrolling element tabindex=-1. A
+  // keyboard-accessible scroll region must still be reachable when the editor
+  // is embedded in a modal or narrow viewport.
+  view.scrollDOM.tabIndex = 0;
+  view.scrollDOM.setAttribute('role', 'region');
+  view.scrollDOM.setAttribute('aria-label', 'Markdown document scrolling region');
 
   return {
     view,

@@ -71,6 +71,7 @@ export function CodeMirrorEditor({ pageId, pagePath, initialContent, pane, liveP
     const controller = mountEditor(containerRef.current, {
       initialDoc: initialContent,
       livePreview,
+      ariaLabel: `Markdown editor for ${pagePath}`,
       onChange: (value) => {
         if (syncingRef.current) return;
         dirtyRef.current = true;

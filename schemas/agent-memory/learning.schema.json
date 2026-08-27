@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ley.local/schemas/agent-memory/learning.schema.json",
+  "title": "Ley learning projection",
+  "description": "Versioned derived index of evidence-backed project learnings. Immutable events remain authoritative.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "generatedAtUnixMs", "learnings"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "projectId": { "type": "string", "minLength": 1 },
+    "generatedAtUnixMs": { "type": "integer", "minimum": 0 },
+    "learnings": { "type": "array", "items": { "$ref": "#/$defs/learning" } }
+  },
+  "$defs": {
+    "learning": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schemaVersion", "projectId", "learningId", "kind", "title", "guidance", "state", "trustState", "provenance", "confidencePercent", "freshness", "corroboratingSessions", "createdAtUnixMs", "updatedAtUnixMs", "validFromUnixMs", "evidence", "history", "eventCount"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "projectId": { "type": "string", "minLength": 1 }, "learningId": { "type": "string", "pattern": "^lrn_[0-9a-f]{32}$" }, "kind": { "type": "string", "enum": ["procedure", "constraint", "pitfall", "convention", "fact"] }, "title": { "type": "string", "minLength": 1, "maxLength": 256 }, "guidance": { "type": "string", "minLength": 1, "maxLength": 16000 }, "state": { "type": "string", "enum": ["tentative", "verified", "contested", "superseded", "rejected", "stale"] }, "trustState": { "type": "string", "enum": ["review-required", "trusted", "contested", "superseded", "rejected", "stale"] }, "provenance": { "type": "string", "enum": ["user-authored", "agent-authored", "inferred"] }, "confidencePercent": { "type": "integer", "minimum": 0, "maximum": 100 }, "freshness": { "type": "string", "enum": ["current", "source-changed", "uncited"] }, "corroboratingSessions": { "type": "integer", "minimum": 0 }, "createdAtUnixMs": { "type": "integer", "minimum": 0 }, "updatedAtUnixMs": { "type": "integer", "minimum": 0 }, "validFromUnixMs": { "type": "integer", "minimum": 0 }, "validUntilUnixMs": { "type": ["integer", "null"], "minimum": 0 }, "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }, "history": { "type": "array", "items": { "$ref": "#/$defs/history" } }, "supersededBy": { "type": ["string", "null"], "pattern": "^lrn_[0-9a-f]{32}$" }, "eventCount": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "evidence": { "type": "object", "additionalProperties": false, "required": ["sessionId", "recordId", "recordType", "sessionStatus", "sessionUpdatedAtUnixMs", "note", "artifacts"], "properties": { "sessionId": { "type": "string", "pattern": "^ses_[0-9a-f]{32}$" }, "recordId": { "type": "string", "minLength": 1 }, "recordType": { "type": "string" }, "sessionStatus": { "type": "string", "enum": ["active", "completed", "paused", "abandoned"] }, "sessionUpdatedAtUnixMs": { "type": "integer", "minimum": 0 }, "note": { "type": "string" }, "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } } } },
+    "artifact": { "type": "object", "additionalProperties": false, "required": ["artifactPath", "artifactSnapshotId", "contentHash", "startLine", "endLine"], "properties": { "artifactPath": { "type": "string" }, "artifactSnapshotId": { "type": "string" }, "contentHash": { "type": "string" }, "startLine": { "type": "integer", "minimum": 1 }, "endLine": { "type": "integer", "minimum": 1 } } },
+    "history": { "type": "object", "additionalProperties": false, "required": ["eventId", "recordedAtUnixMs", "actor", "action", "note"], "properties": { "eventId": { "type": "string", "pattern": "^lev_[0-9a-f]{64}$" }, "recordedAtUnixMs": { "type": "integer", "minimum": 0 }, "actor": { "type": "string", "enum": ["user", "agent"] }, "action": { "type": "string" }, "note": { "type": "string" } } }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ley.local/schemas/agent-memory/learning-event.schema.json",
+  "title": "Ley learning event",
+  "description": "Append-only event format for proposed, corrected, and reviewed project learnings.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "eventId", "projectId", "learningId", "requestId", "requestFingerprint", "sequence", "recordedAtUnixMs", "redactions", "kind", "data"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "eventId": { "type": "string", "pattern": "^lev_[0-9a-f]{64}$" },
+    "projectId": { "type": "string", "minLength": 1 },
+    "learningId": { "type": "string", "pattern": "^lrn_[0-9a-f]{32}$" },
+    "requestId": { "type": "string", "pattern": "^req_[0-9a-f]{32}$" },
+    "requestFingerprint": { "type": "string", "minLength": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "recordedAtUnixMs": { "type": "integer", "minimum": 0 },
+    "redactions": { "type": "array", "items": { "$ref": "#/$defs/redaction" } },
+    "kind": { "type": "string", "enum": ["proposed", "corrected", "reviewed"] },
+    "data": {
+      "oneOf": [
+        { "$ref": "#/$defs/proposed" },
+        { "$ref": "#/$defs/corrected" },
+        { "$ref": "#/$defs/reviewed" }
+      ]
+    }
+  },
+  "$defs": {
+    "actor": { "type": "string", "enum": ["user", "agent"] },
+    "learningKind": { "type": "string", "enum": ["procedure", "constraint", "pitfall", "convention", "fact"] },
+    "provenance": { "type": "string", "enum": ["user-authored", "agent-authored", "inferred"] },
+    "evidence": {
+      "type": "object", "additionalProperties": false, "required": ["sessionId", "recordId", "recordType", "sessionStatus", "sessionUpdatedAtUnixMs", "note", "artifacts"],
+      "properties": {
+        "sessionId": { "type": "string", "pattern": "^ses_[0-9a-f]{32}$" }, "recordId": { "type": "string", "minLength": 1 }, "recordType": { "type": "string" }, "sessionStatus": { "type": "string", "enum": ["active", "completed", "paused", "abandoned"] }, "sessionUpdatedAtUnixMs": { "type": "integer", "minimum": 0 }, "note": { "type": "string", "maxLength": 4000 }, "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } }
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false, "required": ["artifactPath", "artifactSnapshotId", "contentHash", "startLine", "endLine"],
+      "properties": { "artifactPath": { "type": "string", "minLength": 1 }, "artifactSnapshotId": { "type": "string" }, "contentHash": { "type": "string" }, "startLine": { "type": "integer", "minimum": 1 }, "endLine": { "type": "integer", "minimum": 1 } }
+    },
+    "redaction": { "type": "object", "additionalProperties": false, "required": ["field", "kind", "lines"], "properties": { "field": { "type": "string" }, "kind": { "type": "string" }, "lines": { "type": "array", "items": { "type": "integer", "minimum": 1 } } } },
+    "proposed": { "type": "object", "additionalProperties": false, "required": ["actor", "kind", "title", "guidance", "confidencePercent", "provenance", "evidence"], "properties": { "actor": { "$ref": "#/$defs/actor" }, "kind": { "$ref": "#/$defs/learningKind" }, "title": { "type": "string", "minLength": 1, "maxLength": 256 }, "guidance": { "type": "string", "minLength": 1, "maxLength": 16000 }, "confidencePercent": { "type": "integer", "minimum": 0, "maximum": 100 }, "provenance": { "$ref": "#/$defs/provenance" }, "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } } } },
+    "corrected": { "type": "object", "additionalProperties": false, "required": ["actor", "title", "guidance", "confidencePercent", "evidence", "note"], "properties": { "actor": { "$ref": "#/$defs/actor" }, "title": { "type": "string", "minLength": 1, "maxLength": 256 }, "guidance": { "type": "string", "minLength": 1, "maxLength": 16000 }, "confidencePercent": { "type": "integer", "minimum": 0, "maximum": 100 }, "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } }, "note": { "type": "string", "maxLength": 4000 } } },
+    "reviewed": { "type": "object", "additionalProperties": false, "required": ["actor", "action", "note"], "properties": { "actor": { "$ref": "#/$defs/actor" }, "action": { "type": "string", "enum": ["confirm", "contest", "reject", "mark-stale", "supersede"] }, "note": { "type": "string", "maxLength": 4000 }, "replacementLearningId": { "type": ["string", "null"], "pattern": "^lrn_[0-9a-f]{32}$" } } }
+  }
+}

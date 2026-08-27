@@ -254,7 +254,7 @@ Host capabilities differ and must remain versioned adapters:
 
 - **Codex:** local/project MCP config is supported. `SessionStart`, `UserPromptSubmit`, `PostToolUse`, `PostCompact`, `SubagentStop`, and `Stop` hooks expose session/turn IDs and a transcript path, but the transcript format is explicitly unstable. `Stop` supplies the latest assistant message. Use stable hook fields first and parse transcripts only in a quarantined adapter.
 - **Claude Code:** MCP plus `SessionStart`, per-turn/tool hooks, `PostCompact`, `Stop`, and `SessionEnd`. Hook input includes a transcript path and session ID; `PostCompact` includes a compact summary. Session end can finalize best-effort, while per-turn checkpoints prevent data loss on crashes.
-- **VS Code/Copilot:** MCP, skills, plugins, and lifecycle hooks exist, but hook support is newer/preview. Ship after the first three adapters prove the event schema.
+- **VS Code/Copilot:** MCP, skills, plugins, and lifecycle hooks exist, but hook support is newer/preview. Ship after the Codex and Claude Code adapters prove the event schema.
 - **Other agents:** MCP read/write tools work immediately; automatic capture depends on host lifecycle APIs. Provide explicit CLI and prompt workflows instead of pretending support is equivalent.
 
 MCP alone gives the agent memory access. Hooks make capture/resume reliable. Skills make usage habitual.

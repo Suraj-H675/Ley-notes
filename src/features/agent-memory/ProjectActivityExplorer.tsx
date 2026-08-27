@@ -85,6 +85,55 @@ export function ProjectActivityExplorer({
     : (visibleActivity?.totalMatchingProblems ?? 0);
 
   return (
+    <ProjectActivityContent
+      mode={mode}
+      query={query}
+      setQuery={setQuery}
+      scope={scope}
+      setScope={setScope}
+      loading={loading}
+      error={error}
+      visibleActivity={visibleActivity}
+      shown={shown}
+      matching={matching}
+      deferredQuery={deferredQuery}
+      onSession={onSession}
+      onEvidence={onEvidence}
+    />
+  );
+}
+
+function ProjectActivityContent({
+  mode,
+  query,
+  setQuery,
+  scope,
+  setScope,
+  loading,
+  error,
+  visibleActivity,
+  shown,
+  matching,
+  deferredQuery,
+  onSession,
+  onEvidence,
+}: {
+  mode: ActivityMode;
+  query: string;
+  setQuery: (value: string) => void;
+  scope: ProjectProblemScope;
+  setScope: (value: ProjectProblemScope) => void;
+  loading: boolean;
+  error: string | null;
+  visibleActivity: ProjectActivityView | null;
+  shown: number;
+  matching: number;
+  deferredQuery: string;
+  onSession: (sessionId: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
+}) {
+  const isDecisions = mode === "decisions";
+  return (
     <section className="space-y-5" aria-labelledby={`${mode}-activity-title`}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
@@ -677,7 +726,9 @@ function EmptyState({
         aria-hidden="true"
       />
       <h3 className="text-meta font-semibold text-foreground">{title}</h3>
-      <p className="mt-1 max-w-md text-meta leading-relaxed text-muted-foreground">{detail}</p>
+      <p className="mt-1 max-w-md text-meta leading-relaxed text-muted-foreground">
+        {detail}
+      </p>
     </div>
   );
 }

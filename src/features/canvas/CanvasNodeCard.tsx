@@ -90,73 +90,14 @@ export const CanvasNodeCard = memo(function CanvasNodeCard({
                 backgroundSize:
                   node.type === "group" && node.backgroundStyle === "ratio"
                     ? "contain"
-                    : node.type === "group" &&
-                        node.backgroundStyle === "repeat"
+                    : node.type === "group" && node.backgroundStyle === "repeat"
                       ? "auto"
                       : "cover",
               }
             : {}),
         }}
       >
-        <div className="h-full w-full">
-          {isGroup ? (
-            <input
-              value={node.label ?? ""}
-              onChange={(event) =>
-                data.onUpdateGroupLabel(node.id, event.target.value)
-              }
-              className="nodrag nowheel pointer-events-auto absolute left-3 top-2 max-w-[calc(100%-1.5rem)] bg-transparent text-meta font-semibold outline-none placeholder:text-muted-foreground"
-              placeholder="Group label"
-              aria-label="Canvas group label"
-            />
-          ) : node.type === "text" ? (
-            <textarea
-              className="nodrag nowheel pointer-events-auto h-full w-full resize-none bg-transparent p-3 text-meta leading-relaxed outline-none"
-              value={node.text}
-              aria-label="Canvas text card"
-              onChange={(event) =>
-                data.onUpdateText(node.id, event.target.value)
-              }
-            />
-          ) : node.type === "file" ? (
-            <button
-              type="button"
-              className="nodrag pointer-events-auto flex h-full w-full flex-col items-start justify-center gap-1 p-3 text-left hover:bg-surface-2/70"
-              onClick={() => data.onOpenFile(node.file)}
-            >
-              <span className="flex items-center gap-1.5 text-meta font-medium">
-                <FileText size={14} className="text-secondary" />
-                {data.fileTitle ?? node.file}
-              </span>
-              <span className="font-mono text-micro text-muted-foreground">
-                {node.file}
-                {node.subpath ?? ""}
-              </span>
-            </button>
-          ) : safeUrl ? (
-            <a
-              className="nodrag pointer-events-auto flex h-full w-full flex-col items-start justify-center gap-1 p-3 hover:bg-surface-2/70"
-              href={safeUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <span className="flex items-center gap-1.5 text-meta font-medium">
-                <ExternalLink size={14} className="text-secondary" />
-                {urlLabel(safeUrl)}
-              </span>
-              <span className="line-clamp-2 break-all font-mono text-micro text-muted-foreground">
-                {node.url}
-              </span>
-            </a>
-          ) : (
-            <div className="flex h-full w-full flex-col justify-center gap-1 p-3">
-              <span className="text-meta font-medium">Invalid link</span>
-              <span className="break-all font-mono text-micro text-muted-foreground">
-                {node.url}
-              </span>
-            </div>
-          )}
-        </div>
+        <CanvasNodeBody node={node} data={data} safeUrl={safeUrl} />
       </div>
       <NodeResizer
         isVisible={selected}
@@ -164,45 +105,128 @@ export const CanvasNodeCard = memo(function CanvasNodeCard({
         minHeight={isGroup ? 220 : 96}
         color={color ?? "hsl(var(--primary))"}
       />
-      <SideHandle
-        side="top"
-        position={Position.Top}
-        active={
-          data.pendingConnection?.nodeId === node.id &&
-          data.pendingConnection.side === "top"
-        }
-        onClick={() => data.onConnectClick(node.id, "top")}
-      />
-      <SideHandle
-        side="right"
-        position={Position.Right}
-        active={
-          data.pendingConnection?.nodeId === node.id &&
-          data.pendingConnection.side === "right"
-        }
-        onClick={() => data.onConnectClick(node.id, "right")}
-      />
-      <SideHandle
-        side="bottom"
-        position={Position.Bottom}
-        active={
-          data.pendingConnection?.nodeId === node.id &&
-          data.pendingConnection.side === "bottom"
-        }
-        onClick={() => data.onConnectClick(node.id, "bottom")}
-      />
-      <SideHandle
-        side="left"
-        position={Position.Left}
-        active={
-          data.pendingConnection?.nodeId === node.id &&
-          data.pendingConnection.side === "left"
-        }
-        onClick={() => data.onConnectClick(node.id, "left")}
+      <CanvasNodeHandles
+        nodeId={node.id}
+        pendingConnection={data.pendingConnection}
+        onConnectClick={data.onConnectClick}
       />
     </>
   );
 });
+
+function CanvasNodeBody({
+  node,
+  data,
+  safeUrl,
+}: {
+  node: CanvasNode;
+  data: CanvasCardData;
+  safeUrl: string | null;
+}) {
+  return (
+    <div className="h-full w-full">
+      {node.type === "group" ? (
+        <input
+          value={node.label ?? ""}
+          onChange={(event) =>
+            data.onUpdateGroupLabel(node.id, event.target.value)
+          }
+          className="nodrag nowheel pointer-events-auto absolute left-3 top-2 max-w-[calc(100%-1.5rem)] bg-transparent text-meta font-semibold outline-none placeholder:text-muted-foreground"
+          placeholder="Group label"
+          aria-label="Canvas group label"
+        />
+      ) : node.type === "text" ? (
+        <textarea
+          className="nodrag nowheel pointer-events-auto h-full w-full resize-none bg-transparent p-3 text-meta leading-relaxed outline-none"
+          value={node.text}
+          aria-label="Canvas text card"
+          onChange={(event) => data.onUpdateText(node.id, event.target.value)}
+        />
+      ) : node.type === "file" ? (
+        <button
+          type="button"
+          className="nodrag pointer-events-auto flex h-full w-full flex-col items-start justify-center gap-1 p-3 text-left hover:bg-surface-2/70"
+          onClick={() => data.onOpenFile(node.file)}
+        >
+          <span className="flex items-center gap-1.5 text-meta font-medium">
+            <FileText size={14} className="text-secondary" />
+            {data.fileTitle ?? node.file}
+          </span>
+          <span className="font-mono text-micro text-muted-foreground">
+            {node.file}
+            {node.subpath ?? ""}
+          </span>
+        </button>
+      ) : safeUrl ? (
+        <a
+          className="nodrag pointer-events-auto flex h-full w-full flex-col items-start justify-center gap-1 p-3 hover:bg-surface-2/70"
+          href={safeUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <span className="flex items-center gap-1.5 text-meta font-medium">
+            <ExternalLink size={14} className="text-secondary" />
+            {urlLabel(safeUrl)}
+          </span>
+          <span className="line-clamp-2 break-all font-mono text-micro text-muted-foreground">
+            {node.url}
+          </span>
+        </a>
+      ) : (
+        <div className="flex h-full w-full flex-col justify-center gap-1 p-3">
+          <span className="text-meta font-medium">Invalid link</span>
+          <span className="break-all font-mono text-micro text-muted-foreground">
+            {node.url}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CanvasNodeHandles({
+  nodeId,
+  pendingConnection,
+  onConnectClick,
+}: {
+  nodeId: string;
+  pendingConnection?: { nodeId: string; side: CanvasSide };
+  onConnectClick: (id: string, side: CanvasSide) => void;
+}) {
+  return (
+    <>
+      {(["top", "right", "bottom", "left"] as const).map((side) => (
+        <SideHandle
+          key={side}
+          side={side}
+          position={positionForSide(side)}
+          active={isHandleActive(pendingConnection, nodeId, side)}
+          onClick={() => onConnectClick(nodeId, side)}
+        />
+      ))}
+    </>
+  );
+}
+
+function positionForSide(side: CanvasSide): Position {
+  return side === "top"
+    ? Position.Top
+    : side === "right"
+      ? Position.Right
+      : side === "bottom"
+        ? Position.Bottom
+        : Position.Left;
+}
+
+function isHandleActive(
+  pendingConnection: { nodeId: string; side: CanvasSide } | undefined,
+  nodeId: string,
+  side: CanvasSide,
+): boolean {
+  return (
+    pendingConnection?.nodeId === nodeId && pendingConnection.side === side
+  );
+}
 
 function SideHandle({
   side,

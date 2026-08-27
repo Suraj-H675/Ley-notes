@@ -82,6 +82,13 @@ type Section =
   | "review"
   | "privacy";
 
+type ArtifactFocus = { path: string; requestId: number };
+type GraphFocus = {
+  evidence?: ArtifactEvidenceReference;
+  graphSnapshotId?: string;
+  requestId: number;
+};
+
 const ArtifactExplorer = lazy(() =>
   import("./ArtifactExplorer").then((module) => ({
     default: module.ArtifactExplorer,
@@ -170,15 +177,10 @@ export function AgentMemoryWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [learningId, setLearningId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [artifactFocus, setArtifactFocus] = useState<{
-    path: string;
-    requestId: number;
-  } | null>(null);
-  const [graphFocus, setGraphFocus] = useState<{
-    evidence?: ArtifactEvidenceReference;
-    graphSnapshotId?: string;
-    requestId: number;
-  } | null>(null);
+  const [artifactFocus, setArtifactFocus] = useState<ArtifactFocus | null>(
+    null,
+  );
+  const [graphFocus, setGraphFocus] = useState<GraphFocus | null>(null);
 
   useEffect(() => {
     if (!open || vaultMode !== "desktop" || projectPath || catalog) return;
@@ -403,8 +405,181 @@ export function AgentMemoryWorkspace({
     dashboard?.overview.projectName ??
     (inspection && "projectName" in inspection ? inspection.projectName : null);
 
+  function changeSection(nextSection: Section) {
+    if (nextSection === "artifacts") setArtifactFocus(null);
+    if (nextSection === "graph") setGraphFocus(null);
+    setSection(nextSection);
+  }
+
+  function updateInspection(nextDashboard: AgentMemoryDashboard) {
+    setInspection({ status: "ready", dashboard: nextDashboard });
+  }
+
+  function erasePrivacy(nextInspection: AgentProjectInspection) {
+    setInspection(nextInspection);
+    setSection("overview");
+  }
+
+  function eraseSession(nextDashboard: AgentMemoryDashboard) {
+    updateInspection(nextDashboard);
+    setSessionId(null);
+  }
+
+  function reviewLearning(nextDashboard: AgentMemoryDashboard) {
+    updateInspection(nextDashboard);
+    setLearningId(null);
+  }
+
   if (!open) return null;
 
+  return (
+    <AgentMemoryWorkspaceView
+      open={open}
+      vaultMode={vaultMode}
+      vaultName={vaultName}
+      onClose={onClose}
+      projectPath={projectPath}
+      projectLabel={projectLabel}
+      catalog={catalog}
+      catalogBusy={catalogBusy}
+      error={error}
+      busy={busy}
+      inspection={inspection}
+      dashboard={dashboard}
+      sessionId={sessionId}
+      learningId={learningId}
+      section={section}
+      artifactFocus={artifactFocus}
+      graphFocus={graphFocus}
+      onChooseProject={chooseProject}
+      onOpenProject={openProject}
+      onForgetProject={removeProject}
+      onReloadProjects={() => {
+        setCatalog(null);
+        setCatalogBusy(true);
+        setError(null);
+        setCatalogRevision((value) => value + 1);
+      }}
+      onReturnToProjects={returnToProjects}
+      onMakeReady={makeReady}
+      onRefresh={refresh}
+      onSection={changeSection}
+      onMemoryResult={openMemoryResult}
+      onArtifact={openArtifact}
+      onEvidence={openEvidence}
+      onProjectRevision={openProjectRevision}
+      onLearning={setLearningId}
+      onSession={setSessionId}
+      onSessionClose={() => setSessionId(null)}
+      onLearningClose={() => setLearningId(null)}
+      onSessionRenamed={updateInspection}
+      onSessionErased={eraseSession}
+      onLearningSession={(nextSessionId) => {
+        setLearningId(null);
+        setSessionId(nextSessionId);
+      }}
+      onLearningReviewed={reviewLearning}
+      onPrivacyUpdated={updateInspection}
+      onPrivacyErased={erasePrivacy}
+      onPromoteLearning={promoteLearningToBoundVault}
+      onPromoteSession={promoteSessionToBoundVault}
+      onLinkSessionCanvas={linkSessionToBoundCanvas}
+    />
+  );
+}
+
+interface AgentMemoryWorkspaceViewProps {
+  open: boolean;
+  vaultMode: "desktop" | "browser-folder" | "browser-local";
+  vaultName: string;
+  onClose: () => void;
+  projectPath: string | null;
+  projectLabel: string | null;
+  catalog: AgentProjectCatalog | null;
+  catalogBusy: boolean;
+  error: string | null;
+  busy: boolean;
+  inspection: AgentProjectInspection | null;
+  dashboard: AgentMemoryDashboard | null;
+  sessionId: string | null;
+  learningId: string | null;
+  section: Section;
+  artifactFocus: ArtifactFocus | null;
+  graphFocus: GraphFocus | null;
+  onChooseProject: () => Promise<void>;
+  onOpenProject: (
+    projectPath: string,
+    destination?: AgentProjectSearchResult,
+  ) => void;
+  onForgetProject: (projectId: string) => Promise<void>;
+  onReloadProjects: () => void;
+  onReturnToProjects: () => void;
+  onMakeReady: (kind: "initialize" | "connect" | "capture") => Promise<void>;
+  onRefresh: () => Promise<void>;
+  onSection: (section: Section) => void;
+  onMemoryResult: (result: ProjectMemorySearchResult) => void;
+  onArtifact: (path: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
+  onProjectRevision: (graphSnapshotId: string) => void;
+  onLearning: (id: string) => void;
+  onSession: (id: string) => void;
+  onSessionClose: () => void;
+  onLearningClose: () => void;
+  onSessionRenamed: (dashboard: AgentMemoryDashboard) => void;
+  onSessionErased: (dashboard: AgentMemoryDashboard) => void;
+  onLearningSession: (sessionId: string) => void;
+  onLearningReviewed: (dashboard: AgentMemoryDashboard) => void;
+  onPrivacyUpdated: (dashboard: AgentMemoryDashboard) => void;
+  onPrivacyErased: (inspection: AgentProjectInspection) => void;
+  onPromoteLearning: (draft: PromotedLearningNoteDraft) => Promise<void>;
+  onPromoteSession: (draft: PromotedSessionNoteDraft) => Promise<void>;
+  onLinkSessionCanvas: (request: SessionCanvasLinkRequest) => Promise<void>;
+}
+
+function AgentMemoryWorkspaceView({
+  open,
+  vaultMode,
+  vaultName,
+  onClose,
+  projectPath,
+  projectLabel,
+  catalog,
+  catalogBusy,
+  error,
+  busy,
+  inspection,
+  dashboard,
+  sessionId,
+  learningId,
+  section,
+  artifactFocus,
+  graphFocus,
+  onChooseProject,
+  onOpenProject,
+  onForgetProject,
+  onReloadProjects,
+  onReturnToProjects,
+  onMakeReady,
+  onRefresh,
+  onSection,
+  onMemoryResult,
+  onArtifact,
+  onEvidence,
+  onProjectRevision,
+  onLearning,
+  onSession,
+  onSessionClose,
+  onLearningClose,
+  onSessionRenamed,
+  onSessionErased,
+  onLearningSession,
+  onLearningReviewed,
+  onPrivacyUpdated,
+  onPrivacyErased,
+  onPromoteLearning,
+  onPromoteSession,
+  onLinkSessionCanvas,
+}: AgentMemoryWorkspaceViewProps) {
   return (
     <Dialog.Root
       open={open}
@@ -419,243 +594,436 @@ export function AgentMemoryWorkspace({
           className="fixed inset-0 z-[60] flex min-h-0 flex-col overflow-hidden bg-background text-foreground outline-none"
           aria-describedby={undefined}
         >
-          <header className="app-chrome flex h-14 shrink-0 items-center justify-between px-3 sm:px-5">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
-                <BrainCircuit size={17} aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <Dialog.Title className="truncate text-body font-semibold tracking-tight">
-                  {projectPath ? "Agent Memory" : "Projects"}
-                </Dialog.Title>
-                <p className="truncate text-micro text-muted-foreground">
-                  {projectLabel
-                    ? `${projectLabel} · local project memory`
-                    : catalog
-                      ? `${catalog.totalProjects.toLocaleString()} local project ${catalog.totalProjects === 1 ? "memory" : "memories"}`
-                      : "Continuity for your coding agents"}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1.5">
-              {projectPath && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={returnToProjects}
-                  title="Back to Projects"
-                >
-                  <ArrowLeft size={13} />
-                  <span className="hidden sm:inline">Projects</span>
-                </Button>
-              )}
-              {dashboard && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => void refresh()}
-                  title="Capture changed project files and rebuild memory"
-                >
-                  <RefreshCw
-                    size={13}
-                    className={
-                      busy
-                        ? "animate-spin motion-reduce:animate-none"
-                        : undefined
-                    }
-                  />
-                  <span className="hidden sm:inline">Refresh snapshot</span>
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={onClose}
-                aria-label="Close Agent Memory"
-                title="Close Agent Memory"
-              >
-                <X size={16} />
-              </Button>
-            </div>
-          </header>
-
-          {vaultMode !== "desktop" ? (
-            <BrowserBoundary vaultMode={vaultMode} vaultName={vaultName} />
-          ) : !projectPath ? (
-            <ProjectsHub
-              catalog={catalog}
-              loading={catalogBusy}
-              error={error}
-              onAdd={() => void chooseProject()}
-              onOpen={openProject}
-              onForget={(projectId) => void removeProject(projectId)}
-              onReload={() => {
-                setCatalog(null);
-                setCatalogBusy(true);
-                setError(null);
-                setCatalogRevision((value) => value + 1);
-              }}
-            />
-          ) : !inspection || inspection.status !== "ready" ? (
-            <ProjectOnboarding
-              inspection={inspection}
-              projectPath={projectPath}
-              vaultName={vaultName}
-              busy={busy}
-              error={error}
-              onChoose={() => void chooseProject()}
-              onForget={returnToProjects}
-              onInitialize={() => void makeReady("initialize")}
-              onConnect={() => void makeReady("connect")}
-              onCapture={() => void makeReady("capture")}
-            />
-          ) : (
-            <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-              <AgentMemoryNav
-                section={section}
-                dashboard={inspection.dashboard}
-                busy={busy}
-                onSection={(nextSection) => {
-                  if (nextSection === "artifacts") setArtifactFocus(null);
-                  if (nextSection === "graph") setGraphFocus(null);
-                  setSection(nextSection);
-                }}
-                onChangeProject={returnToProjects}
-              />
-              <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
-                <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
-                  {error && <ErrorNotice message={error} />}
-                  {section === "overview" && (
-                    <Overview
-                      dashboard={inspection.dashboard}
-                      onOpenSession={() => setSection("sessions")}
-                      onOpenReview={() => setSection("review")}
-                      onLearning={setLearningId}
-                      onSession={setSessionId}
-                    />
-                  )}
-                  {section === "search" && projectPath && (
-                    <Suspense fallback={<KnowledgeSurfaceFallback />}>
-                      <MemorySearch
-                        projectPath={projectPath}
-                        projectName={inspection.dashboard.overview.projectName}
-                        onOpen={openMemoryResult}
-                      />
-                    </Suspense>
-                  )}
-                  {section === "sessions" && (
-                    <Sessions
-                      sessions={inspection.dashboard.sessions}
-                      onSession={setSessionId}
-                    />
-                  )}
-                  {(section === "decisions" || section === "problems") &&
-                    projectPath && (
-                      <Suspense fallback={<KnowledgeSurfaceFallback />}>
-                        <ProjectActivityExplorer
-                          mode={section}
-                          projectPath={projectPath}
-                          onSession={setSessionId}
-                          onEvidence={openEvidence}
-                        />
-                      </Suspense>
-                    )}
-                  {section === "lessons" && (
-                    <Lessons
-                      dashboard={inspection.dashboard}
-                      onLearning={setLearningId}
-                    />
-                  )}
-                  {section === "artifacts" && projectPath && (
-                    <Suspense fallback={<KnowledgeSurfaceFallback />}>
-                      <ArtifactExplorer
-                        key={`artifacts-${artifactFocus?.requestId ?? "browse"}`}
-                        projectPath={projectPath}
-                        focus={artifactFocus}
-                      />
-                    </Suspense>
-                  )}
-                  {section === "graph" && projectPath && (
-                    <Suspense fallback={<KnowledgeSurfaceFallback />}>
-                      <ProjectKnowledgeGraph
-                        key={`graph-${graphFocus?.requestId ?? "browse"}`}
-                        projectPath={projectPath}
-                        focus={graphFocus}
-                        onOpenArtifact={openArtifact}
-                      />
-                    </Suspense>
-                  )}
-                  {section === "review" && (
-                    <ReviewInbox
-                      dashboard={inspection.dashboard}
-                      onLearning={setLearningId}
-                    />
-                  )}
-                  {section === "privacy" && projectPath && (
-                    <Suspense fallback={<KnowledgeSurfaceFallback />}>
-                      <CapturePrivacyPanel
-                        key={projectPath}
-                        projectPath={projectPath}
-                        dashboard={inspection.dashboard}
-                        onUpdated={(next) =>
-                          setInspection({ status: "ready", dashboard: next })
-                        }
-                        onErased={(next) => {
-                          setInspection(next);
-                          setSection("overview");
-                        }}
-                      />
-                    </Suspense>
-                  )}
-                </div>
-              </main>
-            </div>
-          )}
-
+          <AgentMemoryHeader
+            projectPath={projectPath}
+            projectLabel={projectLabel}
+            catalog={catalog}
+            dashboard={dashboard}
+            busy={busy}
+            onReturnToProjects={onReturnToProjects}
+            onRefresh={onRefresh}
+            onClose={onClose}
+          />
+          <AgentMemoryBody
+            vaultMode={vaultMode}
+            vaultName={vaultName}
+            projectPath={projectPath}
+            catalog={catalog}
+            catalogBusy={catalogBusy}
+            error={error}
+            busy={busy}
+            inspection={inspection}
+            section={section}
+            artifactFocus={artifactFocus}
+            graphFocus={graphFocus}
+            onChooseProject={onChooseProject}
+            onOpenProject={onOpenProject}
+            onForgetProject={onForgetProject}
+            onReloadProjects={onReloadProjects}
+            onReturnToProjects={onReturnToProjects}
+            onMakeReady={onMakeReady}
+            onSection={onSection}
+            onMemoryResult={onMemoryResult}
+            onArtifact={onArtifact}
+            onEvidence={onEvidence}
+            onLearning={onLearning}
+            onSession={onSession}
+            onPrivacyUpdated={onPrivacyUpdated}
+            onPrivacyErased={onPrivacyErased}
+          />
           {dashboard && projectPath && (
             <SessionInspector
               key={`session-${sessionId ?? "closed"}`}
               sessionId={sessionId}
               projectPath={projectPath}
               projectName={dashboard.overview.projectName}
-              onClose={() => setSessionId(null)}
-              onEvidence={openEvidence}
-              onProjectRevision={openProjectRevision}
-              onPromote={promoteSessionToBoundVault}
-              onLinkCanvas={linkSessionToBoundCanvas}
-              onRenamed={(next) =>
-                setInspection({ status: "ready", dashboard: next })
-              }
-              onErased={(next) => {
-                setInspection({ status: "ready", dashboard: next });
-                setSessionId(null);
-              }}
+              onClose={onSessionClose}
+              onEvidence={onEvidence}
+              onProjectRevision={onProjectRevision}
+              onPromote={onPromoteSession}
+              onLinkCanvas={onLinkSessionCanvas}
+              onRenamed={onSessionRenamed}
+              onErased={onSessionErased}
             />
           )}
-
           {dashboard && projectPath && (
             <LearningInspector
               key={`learning-${learningId ?? "closed"}`}
               learningId={learningId}
               projectPath={projectPath}
               projectName={dashboard.overview.projectName}
-              onClose={() => setLearningId(null)}
-              onSession={(nextSessionId) => {
-                setLearningId(null);
-                setSessionId(nextSessionId);
-              }}
-              onArtifact={openArtifact}
-              onPromote={promoteLearningToBoundVault}
-              onReviewed={(next) => {
-                setInspection({ status: "ready", dashboard: next });
-                setLearningId(null);
-              }}
+              onClose={onLearningClose}
+              onSession={onLearningSession}
+              onArtifact={onArtifact}
+              onPromote={onPromoteLearning}
+              onReviewed={onLearningReviewed}
             />
           )}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function AgentMemoryHeader({
+  projectPath,
+  projectLabel,
+  catalog,
+  dashboard,
+  busy,
+  onReturnToProjects,
+  onRefresh,
+  onClose,
+}: {
+  projectPath: string | null;
+  projectLabel: string | null;
+  catalog: AgentProjectCatalog | null;
+  dashboard: AgentMemoryDashboard | null;
+  busy: boolean;
+  onReturnToProjects: () => void;
+  onRefresh: () => Promise<void>;
+  onClose: () => void;
+}) {
+  return (
+    <header className="app-chrome flex h-14 shrink-0 items-center justify-between px-3 sm:px-5">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
+          <BrainCircuit size={17} aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <Dialog.Title className="truncate text-body font-semibold tracking-tight">
+            {projectPath ? "Agent Memory" : "Projects"}
+          </Dialog.Title>
+          <p className="truncate text-micro text-muted-foreground">
+            {projectLabel
+              ? `${projectLabel} · local project memory`
+              : catalog
+                ? `${catalog.totalProjects.toLocaleString()} local project ${catalog.totalProjects === 1 ? "memory" : "memories"}`
+                : "Continuity for your coding agents"}
+          </p>
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5">
+        {projectPath && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onReturnToProjects}
+            title="Back to Projects"
+          >
+            <ArrowLeft size={13} />
+            <span className="hidden sm:inline">Projects</span>
+          </Button>
+        )}
+        {dashboard && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => void onRefresh()}
+            title="Capture changed project files and rebuild memory"
+          >
+            <RefreshCw
+              size={13}
+              className={
+                busy ? "animate-spin motion-reduce:animate-none" : undefined
+              }
+            />
+            <span className="hidden sm:inline">Refresh snapshot</span>
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onClose}
+          aria-label="Close Agent Memory"
+          title="Close Agent Memory"
+        >
+          <X size={16} />
+        </Button>
+      </div>
+    </header>
+  );
+}
+
+function AgentMemoryBody({
+  vaultMode,
+  vaultName,
+  projectPath,
+  catalog,
+  catalogBusy,
+  error,
+  busy,
+  inspection,
+  section,
+  artifactFocus,
+  graphFocus,
+  onChooseProject,
+  onOpenProject,
+  onForgetProject,
+  onReloadProjects,
+  onReturnToProjects,
+  onMakeReady,
+  onSection,
+  onMemoryResult,
+  onArtifact,
+  onEvidence,
+  onLearning,
+  onSession,
+  onPrivacyUpdated,
+  onPrivacyErased,
+}: Pick<
+  AgentMemoryWorkspaceViewProps,
+  | "vaultMode"
+  | "vaultName"
+  | "projectPath"
+  | "catalog"
+  | "catalogBusy"
+  | "error"
+  | "busy"
+  | "inspection"
+  | "section"
+  | "artifactFocus"
+  | "graphFocus"
+  | "onChooseProject"
+  | "onOpenProject"
+  | "onForgetProject"
+  | "onReloadProjects"
+  | "onReturnToProjects"
+  | "onMakeReady"
+  | "onSection"
+  | "onMemoryResult"
+  | "onArtifact"
+  | "onEvidence"
+  | "onLearning"
+  | "onSession"
+  | "onPrivacyUpdated"
+  | "onPrivacyErased"
+>) {
+  if (vaultMode !== "desktop") {
+    return <BrowserBoundary vaultMode={vaultMode} vaultName={vaultName} />;
+  }
+  if (!projectPath) {
+    return (
+      <ProjectsHub
+        catalog={catalog}
+        loading={catalogBusy}
+        error={error}
+        onAdd={() => void onChooseProject()}
+        onOpen={onOpenProject}
+        onForget={(projectId) => void onForgetProject(projectId)}
+        onReload={onReloadProjects}
+      />
+    );
+  }
+  if (!inspection || inspection.status !== "ready") {
+    return (
+      <ProjectOnboarding
+        inspection={inspection}
+        projectPath={projectPath}
+        vaultName={vaultName}
+        busy={busy}
+        error={error}
+        onChoose={() => void onChooseProject()}
+        onForget={onReturnToProjects}
+        onInitialize={() => void onMakeReady("initialize")}
+        onConnect={() => void onMakeReady("connect")}
+        onCapture={() => void onMakeReady("capture")}
+      />
+    );
+  }
+  return (
+    <AgentMemoryReadyContent
+      dashboard={inspection.dashboard}
+      section={section}
+      projectPath={projectPath}
+      error={error}
+      busy={busy}
+      artifactFocus={artifactFocus}
+      graphFocus={graphFocus}
+      onSection={onSection}
+      onChangeProject={onReturnToProjects}
+      onMemoryResult={onMemoryResult}
+      onArtifact={onArtifact}
+      onEvidence={onEvidence}
+      onLearning={onLearning}
+      onSession={onSession}
+      onPrivacyUpdated={onPrivacyUpdated}
+      onPrivacyErased={onPrivacyErased}
+    />
+  );
+}
+
+function AgentMemoryReadyContent({
+  dashboard,
+  section,
+  projectPath,
+  error,
+  busy,
+  artifactFocus,
+  graphFocus,
+  onSection,
+  onChangeProject,
+  onMemoryResult,
+  onArtifact,
+  onEvidence,
+  onLearning,
+  onSession,
+  onPrivacyUpdated,
+  onPrivacyErased,
+}: {
+  dashboard: AgentMemoryDashboard;
+  section: Section;
+  projectPath: string;
+  error: string | null;
+  busy: boolean;
+  artifactFocus: ArtifactFocus | null;
+  graphFocus: GraphFocus | null;
+  onSection: (section: Section) => void;
+  onChangeProject: () => void;
+  onMemoryResult: (result: ProjectMemorySearchResult) => void;
+  onArtifact: (path: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
+  onLearning: (id: string) => void;
+  onSession: (id: string) => void;
+  onPrivacyUpdated: (dashboard: AgentMemoryDashboard) => void;
+  onPrivacyErased: (inspection: AgentProjectInspection) => void;
+}) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      <AgentMemoryNav
+        section={section}
+        dashboard={dashboard}
+        busy={busy}
+        onSection={onSection}
+        onChangeProject={onChangeProject}
+      />
+      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
+          <AgentMemorySectionContent
+            section={section}
+            projectPath={projectPath}
+            dashboard={dashboard}
+            error={error}
+            artifactFocus={artifactFocus}
+            graphFocus={graphFocus}
+            onSection={onSection}
+            onMemoryResult={onMemoryResult}
+            onArtifact={onArtifact}
+            onEvidence={onEvidence}
+            onLearning={onLearning}
+            onSession={onSession}
+            onPrivacyUpdated={onPrivacyUpdated}
+            onPrivacyErased={onPrivacyErased}
+          />
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function AgentMemorySectionContent({
+  section,
+  projectPath,
+  dashboard,
+  error,
+  artifactFocus,
+  graphFocus,
+  onSection,
+  onMemoryResult,
+  onArtifact,
+  onEvidence,
+  onLearning,
+  onSession,
+  onPrivacyUpdated,
+  onPrivacyErased,
+}: {
+  section: Section;
+  projectPath: string;
+  dashboard: AgentMemoryDashboard;
+  error: string | null;
+  artifactFocus: ArtifactFocus | null;
+  graphFocus: GraphFocus | null;
+  onSection: (section: Section) => void;
+  onMemoryResult: (result: ProjectMemorySearchResult) => void;
+  onArtifact: (path: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
+  onLearning: (id: string) => void;
+  onSession: (id: string) => void;
+  onPrivacyUpdated: (dashboard: AgentMemoryDashboard) => void;
+  onPrivacyErased: (inspection: AgentProjectInspection) => void;
+}) {
+  return (
+    <>
+      {error && <ErrorNotice message={error} />}
+      {section === "overview" && (
+        <Overview
+          dashboard={dashboard}
+          onOpenSession={() => onSection("sessions")}
+          onOpenReview={() => onSection("review")}
+          onLearning={onLearning}
+          onSession={onSession}
+        />
+      )}
+      {section === "search" && (
+        <Suspense fallback={<KnowledgeSurfaceFallback />}>
+          <MemorySearch
+            projectPath={projectPath}
+            projectName={dashboard.overview.projectName}
+            onOpen={onMemoryResult}
+          />
+        </Suspense>
+      )}
+      {section === "sessions" && (
+        <Sessions sessions={dashboard.sessions} onSession={onSession} />
+      )}
+      {(section === "decisions" || section === "problems") && (
+        <Suspense fallback={<KnowledgeSurfaceFallback />}>
+          <ProjectActivityExplorer
+            mode={section}
+            projectPath={projectPath}
+            onSession={onSession}
+            onEvidence={onEvidence}
+          />
+        </Suspense>
+      )}
+      {section === "lessons" && (
+        <Lessons dashboard={dashboard} onLearning={onLearning} />
+      )}
+      {section === "artifacts" && (
+        <Suspense fallback={<KnowledgeSurfaceFallback />}>
+          <ArtifactExplorer
+            key={`artifacts-${artifactFocus?.requestId ?? "browse"}`}
+            projectPath={projectPath}
+            focus={artifactFocus}
+          />
+        </Suspense>
+      )}
+      {section === "graph" && (
+        <Suspense fallback={<KnowledgeSurfaceFallback />}>
+          <ProjectKnowledgeGraph
+            key={`graph-${graphFocus?.requestId ?? "browse"}`}
+            projectPath={projectPath}
+            focus={graphFocus}
+            onOpenArtifact={onArtifact}
+          />
+        </Suspense>
+      )}
+      {section === "review" && (
+        <ReviewInbox dashboard={dashboard} onLearning={onLearning} />
+      )}
+      {section === "privacy" && (
+        <Suspense fallback={<KnowledgeSurfaceFallback />}>
+          <CapturePrivacyPanel
+            key={projectPath}
+            projectPath={projectPath}
+            dashboard={dashboard}
+            onUpdated={onPrivacyUpdated}
+            onErased={onPrivacyErased}
+          />
+        </Suspense>
+      )}
+    </>
   );
 }
 
@@ -1180,6 +1548,86 @@ function SessionInspector({
       .finally(() => setTurnsBusy(false));
   }
 
+  function togglePromotion() {
+    if (
+      ((promoting && promotionDirty) ||
+        (renaming && renameDirty) ||
+        (canvasLinking && canvasDirty) ||
+        (erasing && erasureDirty)) &&
+      !window.confirm("Discard your unsaved changes?")
+    ) {
+      return;
+    }
+    setPromotionDirty(false);
+    setRenameDirty(false);
+    setCanvasDirty(false);
+    setErasureDirty(false);
+    setRenaming(false);
+    setCanvasLinking(false);
+    setErasing(false);
+    setPromoting((current) => !current);
+  }
+
+  function toggleCanvasLinking() {
+    if (
+      ((canvasLinking && canvasDirty) ||
+        (renaming && renameDirty) ||
+        (promoting && promotionDirty) ||
+        (erasing && erasureDirty)) &&
+      !window.confirm("Discard your unsaved changes?")
+    ) {
+      return;
+    }
+    setCanvasDirty(false);
+    setRenameDirty(false);
+    setPromotionDirty(false);
+    setErasureDirty(false);
+    setRenaming(false);
+    setPromoting(false);
+    setErasing(false);
+    setCanvasLinking((current) => !current);
+  }
+
+  function toggleRenaming() {
+    if (
+      ((renaming && renameDirty) ||
+        (promoting && promotionDirty) ||
+        (canvasLinking && canvasDirty) ||
+        (erasing && erasureDirty)) &&
+      !window.confirm("Discard your unsaved changes?")
+    ) {
+      return;
+    }
+    setRenameDirty(false);
+    setPromotionDirty(false);
+    setCanvasDirty(false);
+    setErasureDirty(false);
+    setPromoting(false);
+    setCanvasLinking(false);
+    setErasing(false);
+    setRenaming((current) => !current);
+  }
+
+  function toggleErasing() {
+    if (
+      ((erasing && erasureDirty) ||
+        (renaming && renameDirty) ||
+        (promoting && promotionDirty) ||
+        (canvasLinking && canvasDirty)) &&
+      !window.confirm("Discard your unsaved changes?")
+    ) {
+      return;
+    }
+    setErasureDirty(false);
+    setRenameDirty(false);
+    setPromotionDirty(false);
+    setCanvasDirty(false);
+    setRenaming(false);
+    setPromoting(false);
+    setCanvasLinking(false);
+    setErasing((current) => !current);
+  }
+
   return (
     <Dialog.Root
       open={Boolean(sessionId)}
@@ -1202,587 +1650,29 @@ function SessionInspector({
           className="app-modal-surface fixed inset-x-3 bottom-3 top-3 z-[81] mx-auto flex max-w-4xl flex-col overflow-hidden rounded-sm border outline-none sm:inset-x-6 sm:bottom-6 sm:top-6"
           aria-describedby={undefined}
         >
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
-            <div className="min-w-0">
-              <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Session provenance
-              </p>
-              <Dialog.Title className="mt-0.5 truncate text-body font-semibold">
-                {session?.name ?? "Loading session…"}
-              </Dialog.Title>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              {session && (
-                <Button
-                  size="sm"
-                  variant={promoting ? "outline" : "ghost"}
-                  className="h-8"
-                  aria-expanded={promoting}
-                  aria-controls="session-note-link-panel"
-                  aria-label="Link session to notes"
-                  onClick={() => {
-                    if (
-                      ((promoting && promotionDirty) ||
-                        (renaming && renameDirty) ||
-                        (canvasLinking && canvasDirty) ||
-                        (erasing && erasureDirty)) &&
-                      !window.confirm("Discard your unsaved changes?")
-                    ) {
-                      return;
-                    }
-                    setPromotionDirty(false);
-                    setRenameDirty(false);
-                    setCanvasDirty(false);
-                    setErasureDirty(false);
-                    setRenaming(false);
-                    setCanvasLinking(false);
-                    setErasing(false);
-                    setPromoting((current) => !current);
-                  }}
-                >
-                  <FilePlus2 size={13} aria-hidden="true" />
-                  <span className="hidden min-[420px]:inline">To notes</span>
-                </Button>
-              )}
-              {session && (
-                <Button
-                  size="sm"
-                  variant={canvasLinking ? "outline" : "ghost"}
-                  className="h-8"
-                  aria-expanded={canvasLinking}
-                  aria-controls="session-canvas-link-panel"
-                  aria-label="Link session to Canvas"
-                  onClick={() => {
-                    if (
-                      ((canvasLinking && canvasDirty) ||
-                        (renaming && renameDirty) ||
-                        (promoting && promotionDirty) ||
-                        (erasing && erasureDirty)) &&
-                      !window.confirm("Discard your unsaved changes?")
-                    ) {
-                      return;
-                    }
-                    setCanvasDirty(false);
-                    setRenameDirty(false);
-                    setPromotionDirty(false);
-                    setErasureDirty(false);
-                    setRenaming(false);
-                    setPromoting(false);
-                    setErasing(false);
-                    setCanvasLinking((current) => !current);
-                  }}
-                >
-                  <LayoutDashboard size={13} aria-hidden="true" />
-                  <span className="hidden min-[520px]:inline">To Canvas</span>
-                </Button>
-              )}
-              {session && (
-                <Button
-                  size="sm"
-                  variant={renaming ? "outline" : "ghost"}
-                  className="h-8"
-                  aria-expanded={renaming}
-                  onClick={() => {
-                    if (
-                      ((renaming && renameDirty) ||
-                        (promoting && promotionDirty) ||
-                        (canvasLinking && canvasDirty) ||
-                        (erasing && erasureDirty)) &&
-                      !window.confirm("Discard your unsaved changes?")
-                    ) {
-                      return;
-                    }
-                    setRenameDirty(false);
-                    setPromotionDirty(false);
-                    setCanvasDirty(false);
-                    setErasureDirty(false);
-                    setPromoting(false);
-                    setCanvasLinking(false);
-                    setErasing(false);
-                    setRenaming((current) => !current);
-                  }}
-                >
-                  <PencilLine size={13} aria-hidden="true" />
-                  Rename
-                </Button>
-              )}
-              <Dialog.Close
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                aria-label="Close session inspector"
-              >
-                <X size={15} />
-              </Dialog.Close>
-            </div>
-          </div>
+          <SessionInspectorHeader
+            session={session}
+            promoting={promoting}
+            canvasLinking={canvasLinking}
+            renaming={renaming}
+            onTogglePromotion={togglePromotion}
+            onToggleCanvasLinking={toggleCanvasLinking}
+            onToggleRenaming={toggleRenaming}
+          />
 
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
-            {busy && !session ? (
-              <div className="py-20 text-center text-meta text-muted-foreground">
-                Replaying structured session events…
-              </div>
-            ) : error && !session ? (
-              <ErrorNotice message={error} />
-            ) : (
-              session && (
-                <div className="space-y-7">
-                  {error && (
-                    <p
-                      className="rounded-md border border-destructive/25 bg-destructive/8 p-3 text-micro text-destructive"
-                      role="alert"
-                    >
-                      {error}
-                    </p>
-                  )}
-                  <section className="rounded-md border border-border bg-background/35 p-4 sm:p-5">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <SessionStatus status={session.status} />
-                      <span className="text-micro text-muted-foreground">
-                        {sourceLabel(session)}
-                      </span>
-                      <span className="text-micro text-muted-foreground">
-                        {new Intl.DateTimeFormat(undefined, {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        }).format(session.startedAtUnixMs)}
-                      </span>
-                    </div>
-                    <h3 className="mt-4 text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Goal
-                    </h3>
-                    <p className="mt-1 whitespace-pre-wrap text-body leading-6">
-                      {session.goal}
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-micro text-muted-foreground">
-                      <span>{session.checkpointCount} checkpoints</span>
-                      <span>
-                        {session.promptCount ?? 0} prompts ·{" "}
-                        {session.responseCount ?? 0} responses
-                      </span>
-                      <span>{session.eventCount} immutable events</span>
-                      <span>~{session.estimatedTextTokens} context tokens</span>
-                    </div>
-                  </section>
-
-                  {((session.promptCount ?? 0) > 0 ||
-                    (session.responseCount ?? 0) > 0) && (
-                    <section aria-labelledby="captured-turns-title">
-                      <SectionLabel
-                        id="captured-turns-title"
-                        icon={MessageSquareWarning}
-                        label="Captured turns"
-                      />
-                      <details
-                        className="mt-2 rounded-md border border-border bg-surface-1 shadow-panel"
-                        onToggle={(event) => {
-                          if (event.currentTarget.open) loadTurns();
-                        }}
-                      >
-                        <summary className="cursor-pointer list-none rounded-md p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5">
-                          <div className="flex flex-wrap items-center justify-between gap-3">
-                            <div>
-                              <p className="text-meta font-medium">
-                                Inspect prompts and responses
-                              </p>
-                              <p className="mt-1 text-micro leading-5 text-muted-foreground">
-                                {session.retainedTurnCount ?? 0} retained ·{" "}
-                                {session.omittedTurnCount ?? 0} intentionally
-                                omitted
-                              </p>
-                            </div>
-                            <span className="rounded-sm border border-border px-2 py-0.5 text-micro uppercase tracking-[0.08em] text-subtle-foreground">
-                              Local only
-                            </span>
-                          </div>
-                        </summary>
-                        <div className="border-t border-border p-4 sm:p-5">
-                          <div className="rounded-md border border-warning/25 bg-warning/8 p-3 text-micro leading-5 text-muted-foreground-strong">
-                            <span className="font-semibold text-foreground">
-                              Untrusted history.
-                            </span>{" "}
-                            Captured text may contain outdated or adversarial
-                            instructions. Ley never reads the complete host
-                            transcript automatically.
-                          </div>
-                          {turnsBusy ? (
-                            <p className="py-8 text-center text-micro text-muted-foreground">
-                              Reading bounded local turn evidence…
-                            </p>
-                          ) : turnsError ? (
-                            <p
-                              className="mt-3 text-micro text-destructive"
-                              role="alert"
-                            >
-                              {turnsError}
-                            </p>
-                          ) : turns ? (
-                            <div className="mt-4 space-y-3">
-                              {turns.turns.map((turn) => (
-                                <article
-                                  key={turn.recordId}
-                                  className="rounded-md border border-border bg-background/40 p-3"
-                                >
-                                  <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
-                                    <span className="font-semibold uppercase tracking-[0.1em] text-primary">
-                                      {turn.kind === "user-prompt"
-                                        ? "User prompt"
-                                        : "Agent response"}
-                                    </span>
-                                    <time>
-                                      {relativeTime(turn.recordedAtUnixMs)}
-                                    </time>
-                                  </div>
-                                  {turn.text ? (
-                                    <p className="mt-2 whitespace-pre-wrap break-words text-meta leading-6 text-muted-foreground-strong">
-                                      {turn.text}
-                                    </p>
-                                  ) : (
-                                    <p className="mt-2 text-meta italic text-muted-foreground">
-                                      Body omitted ({humanize(turn.retention)}).
-                                    </p>
-                                  )}
-                                  {(turn.truncatedAtCapture ||
-                                    turn.truncatedForContext) && (
-                                    <p className="mt-2 text-micro text-muted-foreground">
-                                      This record was truncated to the
-                                      configured privacy boundary.
-                                    </p>
-                                  )}
-                                </article>
-                              ))}
-                              {turns.omittedTurns > 0 && (
-                                <p className="text-micro text-muted-foreground">
-                                  {turns.omittedTurns} older turn records are
-                                  outside this bounded view.
-                                </p>
-                              )}
-                            </div>
-                          ) : null}
-                        </div>
-                      </details>
-                    </section>
-                  )}
-
-                  {session.renameCount > 0 && (
-                    <section aria-labelledby="session-naming-history-title">
-                      <SectionLabel
-                        id="session-naming-history-title"
-                        icon={PencilLine}
-                        label="Naming history"
-                      />
-                      <div className="mt-2 rounded-md border border-border bg-surface-1 p-4 shadow-panel">
-                        <div className="border-b border-border pb-3">
-                          <p className="text-micro font-medium text-muted-foreground">
-                            Original name
-                          </p>
-                          <p className="mt-1 text-meta font-medium">
-                            {session.originalName}
-                          </p>
-                        </div>
-                        <ol className="mt-3 space-y-3">
-                          {session.renames.map((rename, index) => (
-                            <li
-                              key={`${rename.recordedAtUnixMs}:${index}`}
-                              className="grid gap-1 sm:grid-cols-[minmax(0,1fr)_auto]"
-                            >
-                              <div className="min-w-0">
-                                <p className="break-words text-meta font-medium">
-                                  {rename.name}
-                                </p>
-                                <p className="mt-0.5 whitespace-pre-wrap text-micro leading-5 text-muted-foreground">
-                                  {rename.note}
-                                </p>
-                              </div>
-                              <time className="text-micro text-muted-foreground">
-                                {relativeTime(rename.recordedAtUnixMs)}
-                              </time>
-                            </li>
-                          ))}
-                        </ol>
-                        {session.omittedRenames > 0 && (
-                          <p className="mt-3 border-t border-border pt-3 text-micro text-muted-foreground">
-                            {session.omittedRenames} older renames are preserved
-                            in the session log but omitted from this bounded
-                            view.
-                          </p>
-                        )}
-                      </div>
-                    </section>
-                  )}
-
-                  {session.finish && (
-                    <section aria-labelledby="session-outcome-title">
-                      <SectionLabel
-                        id="session-outcome-title"
-                        icon={CheckCircle2}
-                        label="Outcome & handoff"
-                      />
-                      <div className="mt-2 rounded-md border border-border bg-surface-1 p-4 shadow-panel">
-                        <p className="text-meta leading-5 text-muted-foreground-strong">
-                          {session.finish.summary}
-                        </p>
-                        {session.finish.handoff && (
-                          <p className="mt-3 rounded-md bg-primary/7 px-3 py-2 text-meta leading-5">
-                            <span className="font-medium text-primary">
-                              Handoff:
-                            </span>{" "}
-                            {session.finish.handoff}
-                          </p>
-                        )}
-                        {session.finish.finalResponse && (
-                          <details className="mt-3 border-t border-border pt-3">
-                            <summary className="cursor-pointer rounded text-micro font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                              Final response
-                            </summary>
-                            <p className="mt-2 whitespace-pre-wrap text-micro leading-5 text-muted-foreground-strong">
-                              {session.finish.finalResponse}
-                            </p>
-                          </details>
-                        )}
-                        {session.finish.unresolved.length > 0 && (
-                          <MemoryList
-                            title="Still unresolved"
-                            items={session.finish.unresolved}
-                            tone="warning"
-                          />
-                        )}
-                      </div>
-                    </section>
-                  )}
-
-                  <section aria-labelledby="checkpoint-timeline-title">
-                    <SectionLabel
-                      id="checkpoint-timeline-title"
-                      icon={History}
-                      label="Checkpoint timeline"
-                    />
-                    <div className="mt-3 space-y-4">
-                      {session.checkpoints.length === 0 ? (
-                        <CompactEmpty
-                          icon={History}
-                          title="No checkpoints yet"
-                          body="This session has started but has not recorded structured progress."
-                        />
-                      ) : (
-                        session.checkpoints.map((checkpoint, index) => (
-                          <article
-                            key={checkpoint.checkpointId}
-                            className="relative rounded-md border border-border bg-surface-1 p-4 shadow-panel sm:p-5"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <span className="text-micro font-semibold uppercase tracking-[0.12em] text-primary">
-                                Checkpoint {index + 1}
-                              </span>
-                              <time className="text-micro text-muted-foreground">
-                                {relativeTime(checkpoint.recordedAtUnixMs)}
-                              </time>
-                            </div>
-                            <p className="mt-2 whitespace-pre-wrap text-body leading-6">
-                              {checkpoint.summary}
-                            </p>
-
-                            <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                              {checkpoint.decisions.length > 0 && (
-                                <RecordGroup
-                                  icon={GitBranch}
-                                  title="Decisions"
-                                  count={checkpoint.decisions.length}
-                                >
-                                  {checkpoint.decisions.map((decision) => (
-                                    <RecordItem
-                                      key={decision.id}
-                                      title={decision.title}
-                                      body={decision.decision}
-                                    />
-                                  ))}
-                                </RecordGroup>
-                              )}
-                              {checkpoint.tasks.length > 0 && (
-                                <RecordGroup
-                                  icon={BookCheck}
-                                  title="Tasks"
-                                  count={checkpoint.tasks.length}
-                                >
-                                  {checkpoint.tasks.map((task) => (
-                                    <RecordItem
-                                      key={task.id}
-                                      title={task.title}
-                                      meta={humanize(task.status)}
-                                    />
-                                  ))}
-                                </RecordGroup>
-                              )}
-                              {checkpoint.problems.length > 0 && (
-                                <RecordGroup
-                                  icon={AlertTriangle}
-                                  title="Problems & outcomes"
-                                  count={checkpoint.problems.length}
-                                >
-                                  {checkpoint.problems.map((problem) => (
-                                    <ProblemItem
-                                      key={problem.id}
-                                      problem={problem}
-                                    />
-                                  ))}
-                                </RecordGroup>
-                              )}
-                              {checkpoint.verification.length > 0 && (
-                                <RecordGroup
-                                  icon={ShieldCheck}
-                                  title="Verification"
-                                  count={checkpoint.verification.length}
-                                >
-                                  {checkpoint.verification.map(
-                                    (verification) => (
-                                      <RecordItem
-                                        key={verification.id}
-                                        title={humanize(verification.kind)}
-                                        body={verification.summary}
-                                        meta={humanize(verification.status)}
-                                      />
-                                    ),
-                                  )}
-                                </RecordGroup>
-                              )}
-                            </div>
-
-                            {checkpoint.projectRevision && (
-                              <ProjectRevisionButton
-                                revision={checkpoint.projectRevision}
-                                onOpen={onProjectRevision}
-                              />
-                            )}
-
-                            {checkpoint.touchedArtifacts.length > 0 && (
-                              <div className="mt-4 border-t border-border pt-4">
-                                <p className="text-micro font-medium text-muted-foreground">
-                                  Cited artifacts
-                                </p>
-                                <div className="mt-2 flex flex-wrap gap-1.5">
-                                  {checkpoint.touchedArtifacts.map(
-                                    (artifact) => (
-                                      <button
-                                        type="button"
-                                        key={`${artifact.artifactPath}:${artifact.startLine}`}
-                                        title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
-                                        onClick={() => onEvidence(artifact)}
-                                        className="max-w-full touch-manipulation truncate rounded-sm border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-                                      >
-                                        {artifact.artifactPath}:
-                                        {artifact.startLine}
-                                      </button>
-                                    ),
-                                  )}
-                                </div>
-                              </div>
-                            )}
-
-                            {checkpoint.commands.length > 0 && (
-                              <details className="mt-4 border-t border-border pt-4">
-                                <summary className="cursor-pointer rounded text-micro font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                                  Commands · {checkpoint.commands.length}
-                                </summary>
-                                <div className="mt-2 space-y-2">
-                                  {checkpoint.commands.map((command) => (
-                                    <div
-                                      key={command.id}
-                                      className="overflow-hidden rounded-md border border-border bg-background/45"
-                                    >
-                                      <code className="block overflow-x-auto px-3 py-2 font-mono text-micro text-foreground">
-                                        {command.command}
-                                      </code>
-                                      {(command.summary ||
-                                        command.exitCode !== undefined) && (
-                                        <p className="border-t border-border px-3 py-2 text-micro text-muted-foreground">
-                                          {command.exitCode !== undefined
-                                            ? `Exit ${command.exitCode}`
-                                            : "Exit not recorded"}
-                                          {command.summary
-                                            ? ` · ${command.summary}`
-                                            : ""}
-                                        </p>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              </details>
-                            )}
-
-                            {checkpoint.unresolved.length > 0 && (
-                              <MemoryList
-                                title="Unresolved at this checkpoint"
-                                items={checkpoint.unresolved}
-                                tone="warning"
-                              />
-                            )}
-                          </article>
-                        ))
-                      )}
-                    </div>
-                  </section>
-
-                  {session.omittedCheckpoints > 0 && (
-                    <p className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-micro text-warning">
-                      {session.omittedCheckpoints} older checkpoints were
-                      omitted from this bounded view.
-                    </p>
-                  )}
-                  <p className="rounded-md border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
-                    <MessageSquareWarning
-                      size={13}
-                      className="mr-2 inline text-secondary"
-                    />
-                    {session.instructionWarning}
-                  </p>
-                  <section
-                    aria-labelledby="session-local-data-title"
-                    className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="max-w-2xl">
-                      <h3
-                        id="session-local-data-title"
-                        className="text-meta font-semibold"
-                      >
-                        Local session data
-                      </h3>
-                      <p className="mt-1 text-micro leading-5 text-muted-foreground">
-                        Forget this private session and every lesson derived
-                        from it without removing unrelated project memory.
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="shrink-0 text-destructive hover:border-destructive/35 hover:bg-destructive/8"
-                      aria-expanded={erasing}
-                      aria-controls="session-erasure-panel"
-                      onClick={() => {
-                        if (
-                          ((erasing && erasureDirty) ||
-                            (renaming && renameDirty) ||
-                            (promoting && promotionDirty) ||
-                            (canvasLinking && canvasDirty)) &&
-                          !window.confirm("Discard your unsaved changes?")
-                        ) {
-                          return;
-                        }
-                        setErasureDirty(false);
-                        setRenameDirty(false);
-                        setPromotionDirty(false);
-                        setCanvasDirty(false);
-                        setRenaming(false);
-                        setPromoting(false);
-                        setCanvasLinking(false);
-                        setErasing((current) => !current);
-                      }}
-                    >
-                      <Trash2 size={13} aria-hidden="true" />
-                      Erase session memory…
-                    </Button>
-                  </section>
-                </div>
-              )
-            )}
-          </div>
+          <SessionInspectorBody
+            session={session}
+            busy={busy}
+            error={error}
+            turns={turns}
+            turnsBusy={turnsBusy}
+            turnsError={turnsError}
+            loadTurns={loadTurns}
+            erasing={erasing}
+            onToggleErasing={toggleErasing}
+            onEvidence={onEvidence}
+            onProjectRevision={onProjectRevision}
+          />
           {renaming && session && (
             <div className="shrink-0 border-t border-border bg-surface-1">
               <Suspense fallback={<KnowledgeSurfaceFallback />}>
@@ -1893,6 +1783,641 @@ function SessionInspector({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function SessionInspectorBody({
+  session,
+  busy,
+  error,
+  turns,
+  turnsBusy,
+  turnsError,
+  loadTurns,
+  erasing,
+  onToggleErasing,
+  onEvidence,
+  onProjectRevision,
+}: {
+  session: SessionContext | null;
+  busy: boolean;
+  error: string | null;
+  turns: SessionTurnsContext | null;
+  turnsBusy: boolean;
+  turnsError: string | null;
+  loadTurns: () => void;
+  erasing: boolean;
+  onToggleErasing: () => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
+  onProjectRevision: (graphSnapshotId: string) => void;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
+      {busy && !session ? (
+        <div className="py-20 text-center text-meta text-muted-foreground">
+          Replaying structured session events…
+        </div>
+      ) : error && !session ? (
+        <ErrorNotice message={error} />
+      ) : session ? (
+        <div className="space-y-7">
+          {error && (
+            <p
+              className="rounded-md border border-destructive/25 bg-destructive/8 p-3 text-micro text-destructive"
+              role="alert"
+            >
+              {error}
+            </p>
+          )}
+          <SessionOverview session={session} />
+          <SessionCapturedTurns
+            session={session}
+            turns={turns}
+            turnsBusy={turnsBusy}
+            turnsError={turnsError}
+            loadTurns={loadTurns}
+          />
+          <SessionNamingHistory session={session} />
+          <SessionOutcome session={session} />
+          <SessionCheckpointTimeline
+            session={session}
+            onEvidence={onEvidence}
+            onProjectRevision={onProjectRevision}
+          />
+          {session.omittedCheckpoints > 0 && (
+            <p className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-micro text-warning">
+              {session.omittedCheckpoints} older checkpoints were omitted from
+              this bounded view.
+            </p>
+          )}
+          <p className="rounded-md border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
+            <MessageSquareWarning
+              size={13}
+              className="mr-2 inline text-secondary"
+            />
+            {session.instructionWarning}
+          </p>
+          <SessionLocalData
+            erasing={erasing}
+            onToggleErasing={onToggleErasing}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SessionOverview({ session }: { session: SessionContext }) {
+  return (
+    <section className="rounded-md border border-border bg-background/35 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <SessionStatus status={session.status} />
+        <span className="text-micro text-muted-foreground">
+          {sourceLabel(session)}
+        </span>
+        <span className="text-micro text-muted-foreground">
+          {new Intl.DateTimeFormat(undefined, {
+            dateStyle: "medium",
+            timeStyle: "short",
+          }).format(session.startedAtUnixMs)}
+        </span>
+      </div>
+      <h3 className="mt-4 text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        Goal
+      </h3>
+      <p className="mt-1 whitespace-pre-wrap text-body leading-6">
+        {session.goal}
+      </p>
+      <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-micro text-muted-foreground">
+        <span>{session.checkpointCount} checkpoints</span>
+        <span>
+          {session.promptCount ?? 0} prompts · {session.responseCount ?? 0}{" "}
+          responses
+        </span>
+        <span>{session.eventCount} immutable events</span>
+        <span>~{session.estimatedTextTokens} context tokens</span>
+      </div>
+    </section>
+  );
+}
+
+function SessionCapturedTurns({
+  session,
+  turns,
+  turnsBusy,
+  turnsError,
+  loadTurns,
+}: {
+  session: SessionContext;
+  turns: SessionTurnsContext | null;
+  turnsBusy: boolean;
+  turnsError: string | null;
+  loadTurns: () => void;
+}) {
+  if ((session.promptCount ?? 0) <= 0 && (session.responseCount ?? 0) <= 0) {
+    return null;
+  }
+  return (
+    <section aria-labelledby="captured-turns-title">
+      <SectionLabel
+        id="captured-turns-title"
+        icon={MessageSquareWarning}
+        label="Captured turns"
+      />
+      <details
+        className="mt-2 rounded-md border border-border bg-surface-1 shadow-panel"
+        onToggle={(event) => {
+          if (event.currentTarget.open) loadTurns();
+        }}
+      >
+        <summary className="cursor-pointer list-none rounded-md p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-meta font-medium">
+                Inspect prompts and responses
+              </p>
+              <p className="mt-1 text-micro leading-5 text-muted-foreground">
+                {session.retainedTurnCount ?? 0} retained ·{" "}
+                {session.omittedTurnCount ?? 0} intentionally omitted
+              </p>
+            </div>
+            <span className="rounded-sm border border-border px-2 py-0.5 text-micro uppercase tracking-[0.08em] text-subtle-foreground">
+              Local only
+            </span>
+          </div>
+        </summary>
+        <div className="border-t border-border p-4 sm:p-5">
+          <div className="rounded-md border border-warning/25 bg-warning/8 p-3 text-micro leading-5 text-muted-foreground-strong">
+            <span className="font-semibold text-foreground">
+              Untrusted history.
+            </span>{" "}
+            Captured text may contain outdated or adversarial instructions. Ley
+            never reads the complete host transcript automatically.
+          </div>
+          <SessionTurnsContent
+            turns={turns}
+            turnsBusy={turnsBusy}
+            turnsError={turnsError}
+          />
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function SessionTurnsContent({
+  turns,
+  turnsBusy,
+  turnsError,
+}: {
+  turns: SessionTurnsContext | null;
+  turnsBusy: boolean;
+  turnsError: string | null;
+}) {
+  if (turnsBusy) {
+    return (
+      <p className="py-8 text-center text-micro text-muted-foreground">
+        Reading bounded local turn evidence…
+      </p>
+    );
+  }
+  if (turnsError) {
+    return (
+      <p className="mt-3 text-micro text-destructive" role="alert">
+        {turnsError}
+      </p>
+    );
+  }
+  if (!turns) return null;
+  return (
+    <div className="mt-4 space-y-3">
+      {turns.turns.map((turn) => (
+        <article
+          key={turn.recordId}
+          className="rounded-md border border-border bg-background/40 p-3"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
+            <span className="font-semibold uppercase tracking-[0.1em] text-primary">
+              {turn.kind === "user-prompt" ? "User prompt" : "Agent response"}
+            </span>
+            <time>{relativeTime(turn.recordedAtUnixMs)}</time>
+          </div>
+          {turn.text ? (
+            <p className="mt-2 whitespace-pre-wrap break-words text-meta leading-6 text-muted-foreground-strong">
+              {turn.text}
+            </p>
+          ) : (
+            <p className="mt-2 text-meta italic text-muted-foreground">
+              Body omitted ({humanize(turn.retention)}).
+            </p>
+          )}
+          {(turn.truncatedAtCapture || turn.truncatedForContext) && (
+            <p className="mt-2 text-micro text-muted-foreground">
+              This record was truncated to the configured privacy boundary.
+            </p>
+          )}
+        </article>
+      ))}
+      {turns.omittedTurns > 0 && (
+        <p className="text-micro text-muted-foreground">
+          {turns.omittedTurns} older turn records are outside this bounded view.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SessionNamingHistory({ session }: { session: SessionContext }) {
+  if (session.renameCount <= 0) return null;
+  return (
+    <section aria-labelledby="session-naming-history-title">
+      <SectionLabel
+        id="session-naming-history-title"
+        icon={PencilLine}
+        label="Naming history"
+      />
+      <div className="mt-2 rounded-md border border-border bg-surface-1 p-4 shadow-panel">
+        <div className="border-b border-border pb-3">
+          <p className="text-micro font-medium text-muted-foreground">
+            Original name
+          </p>
+          <p className="mt-1 text-meta font-medium">{session.originalName}</p>
+        </div>
+        <ol className="mt-3 space-y-3">
+          {session.renames.map((rename, index) => (
+            <li
+              key={`${rename.recordedAtUnixMs}:${index}`}
+              className="grid gap-1 sm:grid-cols-[minmax(0,1fr)_auto]"
+            >
+              <div className="min-w-0">
+                <p className="break-words text-meta font-medium">
+                  {rename.name}
+                </p>
+                <p className="mt-0.5 whitespace-pre-wrap text-micro leading-5 text-muted-foreground">
+                  {rename.note}
+                </p>
+              </div>
+              <time className="text-micro text-muted-foreground">
+                {relativeTime(rename.recordedAtUnixMs)}
+              </time>
+            </li>
+          ))}
+        </ol>
+        {session.omittedRenames > 0 && (
+          <p className="mt-3 border-t border-border pt-3 text-micro text-muted-foreground">
+            {session.omittedRenames} older renames are preserved in the session
+            log but omitted from this bounded view.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SessionOutcome({ session }: { session: SessionContext }) {
+  if (!session.finish) return null;
+  return (
+    <section aria-labelledby="session-outcome-title">
+      <SectionLabel
+        id="session-outcome-title"
+        icon={CheckCircle2}
+        label="Outcome & handoff"
+      />
+      <div className="mt-2 rounded-md border border-border bg-surface-1 p-4 shadow-panel">
+        <p className="text-meta leading-5 text-muted-foreground-strong">
+          {session.finish.summary}
+        </p>
+        {session.finish.handoff && (
+          <p className="mt-3 rounded-md bg-primary/7 px-3 py-2 text-meta leading-5">
+            <span className="font-medium text-primary">Handoff:</span>{" "}
+            {session.finish.handoff}
+          </p>
+        )}
+        {session.finish.finalResponse && (
+          <details className="mt-3 border-t border-border pt-3">
+            <summary className="cursor-pointer rounded text-micro font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+              Final response
+            </summary>
+            <p className="mt-2 whitespace-pre-wrap text-micro leading-5 text-muted-foreground-strong">
+              {session.finish.finalResponse}
+            </p>
+          </details>
+        )}
+        {session.finish.unresolved.length > 0 && (
+          <MemoryList
+            title="Still unresolved"
+            items={session.finish.unresolved}
+            tone="warning"
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SessionLocalData({
+  erasing,
+  onToggleErasing,
+}: {
+  erasing: boolean;
+  onToggleErasing: () => void;
+}) {
+  return (
+    <section
+      aria-labelledby="session-local-data-title"
+      className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="max-w-2xl">
+        <h3 id="session-local-data-title" className="text-meta font-semibold">
+          Local session data
+        </h3>
+        <p className="mt-1 text-micro leading-5 text-muted-foreground">
+          Forget this private session and every lesson derived from it without
+          removing unrelated project memory.
+        </p>
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        className="shrink-0 text-destructive hover:border-destructive/35 hover:bg-destructive/8"
+        aria-expanded={erasing}
+        aria-controls="session-erasure-panel"
+        onClick={onToggleErasing}
+      >
+        <Trash2 size={13} aria-hidden="true" />
+        Erase session memory…
+      </Button>
+    </section>
+  );
+}
+
+function SessionCheckpointTimeline({
+  session,
+  onEvidence,
+  onProjectRevision,
+}: {
+  session: SessionContext;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
+  onProjectRevision: (graphSnapshotId: string) => void;
+}) {
+  return (
+    <section aria-labelledby="checkpoint-timeline-title">
+      <SectionLabel
+        id="checkpoint-timeline-title"
+        icon={History}
+        label="Checkpoint timeline"
+      />
+      <div className="mt-3 space-y-4">
+        {session.checkpoints.length === 0 ? (
+          <CompactEmpty
+            icon={History}
+            title="No checkpoints yet"
+            body="This session has started but has not recorded structured progress."
+          />
+        ) : (
+          session.checkpoints.map((checkpoint, index) => (
+            <SessionCheckpointCard
+              key={checkpoint.checkpointId}
+              checkpoint={checkpoint}
+              index={index}
+              onEvidence={onEvidence}
+              onProjectRevision={onProjectRevision}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SessionCheckpointCard({
+  checkpoint,
+  index,
+  onEvidence,
+  onProjectRevision,
+}: {
+  checkpoint: SessionContext["checkpoints"][number];
+  index: number;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
+  onProjectRevision: (graphSnapshotId: string) => void;
+}) {
+  return (
+    <article className="relative rounded-md border border-border bg-surface-1 p-4 shadow-panel sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-micro font-semibold uppercase tracking-[0.12em] text-primary">
+          Checkpoint {index + 1}
+        </span>
+        <time className="text-micro text-muted-foreground">
+          {relativeTime(checkpoint.recordedAtUnixMs)}
+        </time>
+      </div>
+      <p className="mt-2 whitespace-pre-wrap text-body leading-6">
+        {checkpoint.summary}
+      </p>
+
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        {checkpoint.decisions.length > 0 && (
+          <RecordGroup
+            icon={GitBranch}
+            title="Decisions"
+            count={checkpoint.decisions.length}
+          >
+            {checkpoint.decisions.map((decision) => (
+              <RecordItem
+                key={decision.id}
+                title={decision.title}
+                body={decision.decision}
+              />
+            ))}
+          </RecordGroup>
+        )}
+        {checkpoint.tasks.length > 0 && (
+          <RecordGroup
+            icon={BookCheck}
+            title="Tasks"
+            count={checkpoint.tasks.length}
+          >
+            {checkpoint.tasks.map((task) => (
+              <RecordItem
+                key={task.id}
+                title={task.title}
+                meta={humanize(task.status)}
+              />
+            ))}
+          </RecordGroup>
+        )}
+        {checkpoint.problems.length > 0 && (
+          <RecordGroup
+            icon={AlertTriangle}
+            title="Problems & outcomes"
+            count={checkpoint.problems.length}
+          >
+            {checkpoint.problems.map((problem) => (
+              <ProblemItem key={problem.id} problem={problem} />
+            ))}
+          </RecordGroup>
+        )}
+        {checkpoint.verification.length > 0 && (
+          <RecordGroup
+            icon={ShieldCheck}
+            title="Verification"
+            count={checkpoint.verification.length}
+          >
+            {checkpoint.verification.map((verification) => (
+              <RecordItem
+                key={verification.id}
+                title={humanize(verification.kind)}
+                body={verification.summary}
+                meta={humanize(verification.status)}
+              />
+            ))}
+          </RecordGroup>
+        )}
+      </div>
+
+      {checkpoint.projectRevision && (
+        <ProjectRevisionButton
+          revision={checkpoint.projectRevision}
+          onOpen={onProjectRevision}
+        />
+      )}
+
+      {checkpoint.touchedArtifacts.length > 0 && (
+        <div className="mt-4 border-t border-border pt-4">
+          <p className="text-micro font-medium text-muted-foreground">
+            Cited artifacts
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {checkpoint.touchedArtifacts.map((artifact) => (
+              <button
+                type="button"
+                key={`${artifact.artifactPath}:${artifact.startLine}`}
+                title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
+                onClick={() => onEvidence(artifact)}
+                className="max-w-full touch-manipulation truncate rounded-sm border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {artifact.artifactPath}:{artifact.startLine}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {checkpoint.commands.length > 0 && (
+        <details className="mt-4 border-t border-border pt-4">
+          <summary className="cursor-pointer rounded text-micro font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+            Commands · {checkpoint.commands.length}
+          </summary>
+          <div className="mt-2 space-y-2">
+            {checkpoint.commands.map((command) => (
+              <div
+                key={command.id}
+                className="overflow-hidden rounded-md border border-border bg-background/45"
+              >
+                <code className="block overflow-x-auto px-3 py-2 font-mono text-micro text-foreground">
+                  {command.command}
+                </code>
+                {(command.summary || command.exitCode !== undefined) && (
+                  <p className="border-t border-border px-3 py-2 text-micro text-muted-foreground">
+                    {command.exitCode !== undefined
+                      ? `Exit ${command.exitCode}`
+                      : "Exit not recorded"}
+                    {command.summary ? ` · ${command.summary}` : ""}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {checkpoint.unresolved.length > 0 && (
+        <MemoryList
+          title="Unresolved at this checkpoint"
+          items={checkpoint.unresolved}
+          tone="warning"
+        />
+      )}
+    </article>
+  );
+}
+
+function SessionInspectorHeader({
+  session,
+  promoting,
+  canvasLinking,
+  renaming,
+  onTogglePromotion,
+  onToggleCanvasLinking,
+  onToggleRenaming,
+}: {
+  session: SessionContext | null;
+  promoting: boolean;
+  canvasLinking: boolean;
+  renaming: boolean;
+  onTogglePromotion: () => void;
+  onToggleCanvasLinking: () => void;
+  onToggleRenaming: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-5">
+      <div className="min-w-0">
+        <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Session provenance
+        </p>
+        <Dialog.Title className="mt-0.5 truncate text-body font-semibold">
+          {session?.name ?? "Loading session…"}
+        </Dialog.Title>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        {session && (
+          <Button
+            size="sm"
+            variant={promoting ? "outline" : "ghost"}
+            className="h-8"
+            aria-expanded={promoting}
+            aria-controls="session-note-link-panel"
+            aria-label="Link session to notes"
+            onClick={onTogglePromotion}
+          >
+            <FilePlus2 size={13} aria-hidden="true" />
+            <span className="hidden min-[420px]:inline">To notes</span>
+          </Button>
+        )}
+        {session && (
+          <Button
+            size="sm"
+            variant={canvasLinking ? "outline" : "ghost"}
+            className="h-8"
+            aria-expanded={canvasLinking}
+            aria-controls="session-canvas-link-panel"
+            aria-label="Link session to Canvas"
+            onClick={onToggleCanvasLinking}
+          >
+            <LayoutDashboard size={13} aria-hidden="true" />
+            <span className="hidden min-[520px]:inline">To Canvas</span>
+          </Button>
+        )}
+        {session && (
+          <Button
+            size="sm"
+            variant={renaming ? "outline" : "ghost"}
+            className="h-8"
+            aria-expanded={renaming}
+            onClick={onToggleRenaming}
+          >
+            <PencilLine size={13} aria-hidden="true" />
+            Rename
+          </Button>
+        )}
+        <Dialog.Close
+          className="rounded-md p-1.5 text-muted-foreground hover:bg-surface-3 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          aria-label="Close session inspector"
+        >
+          <X size={15} />
+        </Dialog.Close>
+      </div>
+    </div>
   );
 }
 
@@ -2064,391 +2589,532 @@ function LearningInspector({
               <X size={15} />
             </Dialog.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
-            {busy && !learning ? (
-              <div className="py-20 text-center text-meta text-muted-foreground">
-                Reading cited memory…
-              </div>
-            ) : error && !learning ? (
-              <ErrorNotice message={error} />
-            ) : (
-              learning && (
-                <div className="space-y-6">
-                  <div className="flex flex-wrap gap-2">
-                    <StatusPill
-                      tone={learning.trustedForReuse ? "success" : "warning"}
-                      label={humanize(learning.trustState)}
-                      icon={
-                        learning.trustedForReuse ? CheckCircle2 : AlertTriangle
-                      }
-                    />
-                    <StatusPill
-                      tone="neutral"
-                      label={humanize(learning.provenance)}
-                      icon={BrainCircuit}
-                    />
-                    <StatusPill
-                      tone="neutral"
-                      label={`${learning.confidencePercent}% confidence`}
-                      icon={CircleDot}
-                    />
-                    <StatusPill
-                      tone={
-                        learning.freshness === "current" ? "success" : "warning"
-                      }
-                      label={humanize(learning.freshness)}
-                      icon={RefreshCw}
-                    />
-                  </div>
-                  <section>
-                    <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Guidance
-                    </h3>
-                    <p className="mt-2 whitespace-pre-wrap break-words text-body leading-6 text-foreground">
-                      {learning.guidance}
-                    </p>
-                  </section>
-                  <section>
-                    <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Version timeline
-                    </h3>
-                    <dl className="mt-2 grid gap-2 rounded-md border border-border bg-background/35 p-3 text-meta sm:grid-cols-3">
-                      <div>
-                        <dt className="text-micro text-muted-foreground">
-                          Created
-                        </dt>
-                        <dd className="mt-0.5 font-medium">
-                          <time
-                            dateTime={isoTime(learning.createdAtUnixMs)}
-                            title={absoluteTime(learning.createdAtUnixMs)}
-                          >
-                            {relativeTime(learning.createdAtUnixMs)}
-                          </time>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-micro text-muted-foreground">
-                          Current version
-                        </dt>
-                        <dd className="mt-0.5 font-medium">
-                          <time
-                            dateTime={isoTime(learning.validFromUnixMs)}
-                            title={absoluteTime(learning.validFromUnixMs)}
-                          >
-                            {relativeTime(learning.validFromUnixMs)}
-                          </time>
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-micro text-muted-foreground">
-                          Ledger
-                        </dt>
-                        <dd className="mt-0.5 font-medium">
-                          {learning.eventCount} immutable{" "}
-                          {learning.eventCount === 1 ? "event" : "events"}
-                        </dd>
-                      </div>
-                    </dl>
-                    {learning.validUntilUnixMs !== undefined && (
-                      <p className="mt-2 text-micro text-muted-foreground">
-                        This version stopped being valid{" "}
-                        <time
-                          dateTime={isoTime(learning.validUntilUnixMs)}
-                          title={absoluteTime(learning.validUntilUnixMs)}
-                        >
-                          {relativeTime(learning.validUntilUnixMs)}
-                        </time>
-                        .
-                      </p>
-                    )}
-                  </section>
-                  <section>
-                    <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                      Evidence · {learning.evidenceCount}
-                    </h3>
-                    <div className="mt-2 space-y-2">
-                      {learning.evidence.length === 0 ? (
-                        <p className="text-meta text-muted-foreground">
-                          No evidence is available.
-                        </p>
-                      ) : (
-                        learning.evidence.map((evidence) => (
-                          <div
-                            key={`${evidence.sessionId}:${evidence.recordId}`}
-                            className="rounded-md border border-border bg-background/35 p-3"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="rounded bg-surface-3 px-1.5 py-0.5 font-medium text-muted-foreground-strong">
-                                  {humanize(evidence.recordType)}
-                                </span>
-                                <span>
-                                  {relativeTime(
-                                    evidence.sessionUpdatedAtUnixMs,
-                                  )}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => onSession(evidence.sessionId)}
-                                className="touch-manipulation rounded font-semibold text-primary outline-none transition-transform hover:underline active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-                              >
-                                Open session
-                              </button>
-                            </div>
-                            {evidence.note && (
-                              <p className="mt-2 text-meta leading-5 text-muted-foreground-strong">
-                                {evidence.note}
-                              </p>
-                            )}
-                            {evidence.artifacts.length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {evidence.artifacts.map((artifact) => (
-                                  <button
-                                    type="button"
-                                    key={`${artifact.artifactPath}:${artifact.startLine}`}
-                                    title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
-                                    onClick={() =>
-                                      onArtifact(artifact.artifactPath)
-                                    }
-                                    className="max-w-full touch-manipulation truncate rounded-sm border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-                                  >
-                                    {artifact.artifactPath}:{artifact.startLine}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    {learning.omittedEvidence > 0 && (
-                      <p className="mt-2 text-micro text-muted-foreground">
-                        {learning.omittedEvidence} older evidence{" "}
-                        {learning.omittedEvidence === 1
-                          ? "reference is"
-                          : "references are"}{" "}
-                        omitted from this bounded inspector.
-                      </p>
-                    )}
-                  </section>
-                  {learning.history.length > 0 && (
-                    <section>
-                      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                        Review history
-                      </h3>
-                      <ol className="mt-2 space-y-2">
-                        {learning.history.map((entry) => (
-                          <li
-                            key={entry.eventId}
-                            className="flex gap-3 text-meta"
-                          >
-                            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-border-strong" />
-                            <span className="min-w-0 break-words">
-                              <span className="font-medium">
-                                {humanize(entry.action)}
-                              </span>{" "}
-                              by {humanize(entry.actor)} ·{" "}
-                              <time
-                                dateTime={isoTime(entry.recordedAtUnixMs)}
-                                title={absoluteTime(entry.recordedAtUnixMs)}
-                              >
-                                {relativeTime(entry.recordedAtUnixMs)}
-                              </time>
-                              {entry.note ? ` — ${entry.note}` : ""}
-                            </span>
-                          </li>
-                        ))}
-                      </ol>
-                      {learning.omittedHistory > 0 && (
-                        <p className="mt-2 text-micro text-muted-foreground">
-                          Showing {learning.history.length} of{" "}
-                          {learning.historyCount} immutable history events.
-                        </p>
-                      )}
-                    </section>
-                  )}
-                  {learning.claimTruncated && (
-                    <p className="rounded-md border border-warning/25 bg-warning/8 p-3 text-micro text-muted-foreground">
-                      The title or guidance was truncated to keep this inspector
-                      bounded. Use the CLI for the complete claim before
-                      correcting or reviewing it.
-                    </p>
-                  )}
-                  <p className="rounded-md border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
-                    <MessageSquareWarning
-                      size={13}
-                      className="mr-2 inline text-secondary"
-                    />
-                    {learning.instructionWarning}
-                  </p>
-                </div>
-              )
-            )}
-          </div>
-          {learning && (
-            <div className="shrink-0 border-t border-border bg-surface-1 p-4 sm:p-5">
-              {learning.claimTruncated ? (
-                <p className="text-meta text-muted-foreground">
-                  This bounded view omits part of the claim. Inspect the
-                  complete CLI projection before correcting or reviewing it.
-                </p>
-              ) : terminal ? (
-                <p className="text-meta text-muted-foreground">
-                  This {humanize(learning.state)} learning is preserved as
-                  terminal history. Create a new learning rather than rewriting
-                  it.
-                </p>
-              ) : correcting ? (
-                <Suspense
-                  fallback={
-                    <p className="py-4 text-center text-meta text-muted-foreground">
-                      Loading correction editor…
-                    </p>
-                  }
-                >
-                  <LearningCorrectionEditor
-                    projectPath={projectPath}
-                    learning={learning}
-                    onCancel={() => {
-                      setCorrecting(false);
-                      setError(null);
-                    }}
-                    onCorrected={onReviewed}
-                  />
-                </Suspense>
-              ) : promoting ? (
-                <Suspense
-                  fallback={
-                    <p className="py-4 text-center text-meta text-muted-foreground">
-                      Loading note preview…
-                    </p>
-                  }
-                >
-                  <LearningPromotionEditor
-                    projectName={projectName}
-                    learning={learning}
-                    onCancel={() => {
-                      setPromoting(false);
-                      setError(null);
-                    }}
-                    onPromote={async (draft) => {
-                      await onPromote(draft);
-                      onClose();
-                    }}
-                  />
-                </Suspense>
-              ) : !action ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="mr-auto text-meta font-medium">
-                    Your decision
-                  </span>
-                  {learning.trustedForReuse && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={beginPromotion}
-                    >
-                      <FilePlus2 size={13} aria-hidden="true" />
-                      Promote to note
-                    </Button>
-                  )}
-                  <Button size="sm" variant="outline" onClick={beginCorrection}>
-                    <PencilLine size={13} />
-                    Correct
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setAction("mark-stale")}
-                  >
-                    <RotateCcw size={13} />
-                    Mark stale
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setAction("contest")}
-                  >
-                    <AlertTriangle size={13} />
-                    Contest
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => setAction("reject")}
-                  >
-                    <XCircle size={13} />
-                    Reject
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() => setAction("confirm")}
-                  >
-                    <Check size={13} />
-                    Confirm
-                  </Button>
-                </div>
-              ) : (
-                <div>
-                  <label
-                    htmlFor="learning-review-note"
-                    className="block text-meta font-medium"
-                  >
-                    {actionLabel(action)}
-                    <span className="ml-1 font-normal text-muted-foreground">
-                      {noteRequired ? "· note required" : "· note optional"}
-                    </span>
-                  </label>
-                  <textarea
-                    id="learning-review-note"
-                    name="learning-review-note"
-                    autoComplete="off"
-                    value={note}
-                    onChange={(event) => setNote(event.target.value)}
-                    placeholder={reviewPlaceholder(action)}
-                    rows={2}
-                    className="mt-2 w-full resize-none rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary"
-                  />
-                  {error && (
-                    <p
-                      className="mt-2 text-micro text-destructive"
-                      role="alert"
-                    >
-                      {error}
-                    </p>
-                  )}
-                  <div className="mt-3 flex justify-end gap-2">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => {
-                        setAction(null);
-                        setNote("");
-                        setError(null);
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={action === "reject" ? "destructive" : "primary"}
-                      disabled={busy || !canSubmit}
-                      onClick={() => void submitReview()}
-                    >
-                      {busy ? "Saving…" : actionLabel(action)}
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+          <LearningInspectorBody
+            learning={learning}
+            busy={busy}
+            error={error}
+            onSession={onSession}
+            onArtifact={onArtifact}
+          />
+          <LearningInspectorFooter
+            learning={learning}
+            terminal={terminal}
+            correcting={correcting}
+            promoting={promoting}
+            action={action}
+            note={note}
+            noteRequired={noteRequired}
+            canSubmit={Boolean(canSubmit)}
+            busy={busy}
+            error={error}
+            projectPath={projectPath}
+            projectName={projectName}
+            onClose={onClose}
+            onPromote={onPromote}
+            onReviewed={onReviewed}
+            onBeginCorrection={beginCorrection}
+            onBeginPromotion={beginPromotion}
+            onSetAction={setAction}
+            onSetNote={setNote}
+            onSetError={setError}
+            onSetCorrecting={setCorrecting}
+            onSetPromoting={setPromoting}
+            onSubmitReview={submitReview}
+          />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+function LearningInspectorBody({
+  learning,
+  busy,
+  error,
+  onSession,
+  onArtifact,
+}: {
+  learning: LearningContext | null;
+  busy: boolean;
+  error: string | null;
+  onSession: (sessionId: string) => void;
+  onArtifact: (path: string) => void;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      {busy && !learning ? (
+        <div className="py-20 text-center text-meta text-muted-foreground">
+          Reading cited memory…
+        </div>
+      ) : error && !learning ? (
+        <ErrorNotice message={error} />
+      ) : learning ? (
+        <div className="space-y-6">
+          <LearningOverview learning={learning} />
+          <LearningEvidence
+            learning={learning}
+            onSession={onSession}
+            onArtifact={onArtifact}
+          />
+          <LearningHistory learning={learning} />
+          {learning.claimTruncated && (
+            <p className="rounded-md border border-warning/25 bg-warning/8 p-3 text-micro text-muted-foreground">
+              The title or guidance was truncated to keep this inspector
+              bounded. Use the CLI for the complete claim before correcting or
+              reviewing it.
+            </p>
+          )}
+          <p className="rounded-md border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
+            <MessageSquareWarning
+              size={13}
+              className="mr-2 inline text-secondary"
+            />
+            {learning.instructionWarning}
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LearningOverview({ learning }: { learning: LearningContext }) {
+  return (
+    <>
+      <div className="flex flex-wrap gap-2">
+        <StatusPill
+          tone={learning.trustedForReuse ? "success" : "warning"}
+          label={humanize(learning.trustState)}
+          icon={learning.trustedForReuse ? CheckCircle2 : AlertTriangle}
+        />
+        <StatusPill
+          tone="neutral"
+          label={humanize(learning.provenance)}
+          icon={BrainCircuit}
+        />
+        <StatusPill
+          tone="neutral"
+          label={`${learning.confidencePercent}% confidence`}
+          icon={CircleDot}
+        />
+        <StatusPill
+          tone={learning.freshness === "current" ? "success" : "warning"}
+          label={humanize(learning.freshness)}
+          icon={RefreshCw}
+        />
+      </div>
+      <section>
+        <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Guidance
+        </h3>
+        <p className="mt-2 whitespace-pre-wrap break-words text-body leading-6 text-foreground">
+          {learning.guidance}
+        </p>
+      </section>
+      <section>
+        <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Version timeline
+        </h3>
+        <dl className="mt-2 grid gap-2 rounded-md border border-border bg-background/35 p-3 text-meta sm:grid-cols-3">
+          <div>
+            <dt className="text-micro text-muted-foreground">Created</dt>
+            <dd className="mt-0.5 font-medium">
+              <time
+                dateTime={isoTime(learning.createdAtUnixMs)}
+                title={absoluteTime(learning.createdAtUnixMs)}
+              >
+                {relativeTime(learning.createdAtUnixMs)}
+              </time>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-micro text-muted-foreground">
+              Current version
+            </dt>
+            <dd className="mt-0.5 font-medium">
+              <time
+                dateTime={isoTime(learning.validFromUnixMs)}
+                title={absoluteTime(learning.validFromUnixMs)}
+              >
+                {relativeTime(learning.validFromUnixMs)}
+              </time>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-micro text-muted-foreground">Ledger</dt>
+            <dd className="mt-0.5 font-medium">
+              {learning.eventCount} immutable{" "}
+              {learning.eventCount === 1 ? "event" : "events"}
+            </dd>
+          </div>
+        </dl>
+        {learning.validUntilUnixMs !== undefined && (
+          <p className="mt-2 text-micro text-muted-foreground">
+            This version stopped being valid{" "}
+            <time
+              dateTime={isoTime(learning.validUntilUnixMs)}
+              title={absoluteTime(learning.validUntilUnixMs)}
+            >
+              {relativeTime(learning.validUntilUnixMs)}
+            </time>
+            .
+          </p>
+        )}
+      </section>
+    </>
+  );
+}
+
+function LearningEvidence({
+  learning,
+  onSession,
+  onArtifact,
+}: {
+  learning: LearningContext;
+  onSession: (sessionId: string) => void;
+  onArtifact: (path: string) => void;
+}) {
+  return (
+    <section>
+      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        Evidence · {learning.evidenceCount}
+      </h3>
+      <div className="mt-2 space-y-2">
+        {learning.evidence.length === 0 ? (
+          <p className="text-meta text-muted-foreground">
+            No evidence is available.
+          </p>
+        ) : (
+          learning.evidence.map((evidence) => (
+            <div
+              key={`${evidence.sessionId}:${evidence.recordId}`}
+              className="rounded-md border border-border bg-background/35 p-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded bg-surface-3 px-1.5 py-0.5 font-medium text-muted-foreground-strong">
+                    {humanize(evidence.recordType)}
+                  </span>
+                  <span>{relativeTime(evidence.sessionUpdatedAtUnixMs)}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onSession(evidence.sessionId)}
+                  className="touch-manipulation rounded font-semibold text-primary outline-none transition-transform hover:underline active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                >
+                  Open session
+                </button>
+              </div>
+              {evidence.note && (
+                <p className="mt-2 text-meta leading-5 text-muted-foreground-strong">
+                  {evidence.note}
+                </p>
+              )}
+              {evidence.artifacts.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {evidence.artifacts.map((artifact) => (
+                    <button
+                      type="button"
+                      key={`${artifact.artifactPath}:${artifact.startLine}`}
+                      title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
+                      onClick={() => onArtifact(artifact.artifactPath)}
+                      className="max-w-full touch-manipulation truncate rounded-sm border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      {artifact.artifactPath}:{artifact.startLine}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+      {learning.omittedEvidence > 0 && (
+        <p className="mt-2 text-micro text-muted-foreground">
+          {learning.omittedEvidence} older evidence{" "}
+          {learning.omittedEvidence === 1 ? "reference is" : "references are"}{" "}
+          omitted from this bounded inspector.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function LearningHistory({ learning }: { learning: LearningContext }) {
+  if (learning.history.length === 0) return null;
+  return (
+    <section>
+      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        Review history
+      </h3>
+      <ol className="mt-2 space-y-2">
+        {learning.history.map((entry) => (
+          <li key={entry.eventId} className="flex gap-3 text-meta">
+            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-border-strong" />
+            <span className="min-w-0 break-words">
+              <span className="font-medium">{humanize(entry.action)}</span> by{" "}
+              {humanize(entry.actor)} ·{" "}
+              <time
+                dateTime={isoTime(entry.recordedAtUnixMs)}
+                title={absoluteTime(entry.recordedAtUnixMs)}
+              >
+                {relativeTime(entry.recordedAtUnixMs)}
+              </time>
+              {entry.note ? ` — ${entry.note}` : ""}
+            </span>
+          </li>
+        ))}
+      </ol>
+      {learning.omittedHistory > 0 && (
+        <p className="mt-2 text-micro text-muted-foreground">
+          Showing {learning.history.length} of {learning.historyCount} immutable
+          history events.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function LearningInspectorFooter({
+  learning,
+  terminal,
+  correcting,
+  promoting,
+  action,
+  note,
+  noteRequired,
+  canSubmit,
+  busy,
+  error,
+  projectPath,
+  projectName,
+  onClose,
+  onPromote,
+  onReviewed,
+  onBeginCorrection,
+  onBeginPromotion,
+  onSetAction,
+  onSetNote,
+  onSetError,
+  onSetCorrecting,
+  onSetPromoting,
+  onSubmitReview,
+}: {
+  learning: LearningContext | null;
+  terminal: boolean;
+  correcting: boolean;
+  promoting: boolean;
+  action: LearningAction | null;
+  note: string;
+  noteRequired: boolean;
+  canSubmit: boolean;
+  busy: boolean;
+  error: string | null;
+  projectPath: string;
+  projectName: string;
+  onClose: () => void;
+  onPromote: (draft: PromotedLearningNoteDraft) => Promise<void>;
+  onReviewed: (dashboard: AgentMemoryDashboard) => void;
+  onBeginCorrection: () => void;
+  onBeginPromotion: () => void;
+  onSetAction: (action: LearningAction | null) => void;
+  onSetNote: (note: string) => void;
+  onSetError: (error: string | null) => void;
+  onSetCorrecting: (correcting: boolean) => void;
+  onSetPromoting: (promoting: boolean) => void;
+  onSubmitReview: () => Promise<void>;
+}) {
+  if (!learning) return null;
+  return (
+    <div className="shrink-0 border-t border-border bg-surface-1 p-4 sm:p-5">
+      {learning.claimTruncated ? (
+        <p className="text-meta text-muted-foreground">
+          This bounded view omits part of the claim. Inspect the complete CLI
+          projection before correcting or reviewing it.
+        </p>
+      ) : terminal ? (
+        <p className="text-meta text-muted-foreground">
+          This {humanize(learning.state)} learning is preserved as terminal
+          history. Create a new learning rather than rewriting it.
+        </p>
+      ) : correcting ? (
+        <Suspense
+          fallback={
+            <p className="py-4 text-center text-meta text-muted-foreground">
+              Loading correction editor…
+            </p>
+          }
+        >
+          <LearningCorrectionEditor
+            projectPath={projectPath}
+            learning={learning}
+            onCancel={() => {
+              onSetCorrecting(false);
+              onSetError(null);
+            }}
+            onCorrected={onReviewed}
+          />
+        </Suspense>
+      ) : promoting ? (
+        <Suspense
+          fallback={
+            <p className="py-4 text-center text-meta text-muted-foreground">
+              Loading note preview…
+            </p>
+          }
+        >
+          <LearningPromotionEditor
+            projectName={projectName}
+            learning={learning}
+            onCancel={() => {
+              onSetPromoting(false);
+              onSetError(null);
+            }}
+            onPromote={async (draft) => {
+              await onPromote(draft);
+              onClose();
+            }}
+          />
+        </Suspense>
+      ) : !action ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-auto text-meta font-medium">Your decision</span>
+          {learning.trustedForReuse && (
+            <Button size="sm" variant="outline" onClick={onBeginPromotion}>
+              <FilePlus2 size={13} aria-hidden="true" />
+              Promote to note
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={onBeginCorrection}>
+            <PencilLine size={13} />
+            Correct
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onSetAction("mark-stale")}
+          >
+            <RotateCcw size={13} />
+            Mark stale
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onSetAction("contest")}
+          >
+            <AlertTriangle size={13} />
+            Contest
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => onSetAction("reject")}
+          >
+            <XCircle size={13} />
+            Reject
+          </Button>
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => onSetAction("confirm")}
+          >
+            <Check size={13} />
+            Confirm
+          </Button>
+        </div>
+      ) : (
+        <div>
+          <label
+            htmlFor="learning-review-note"
+            className="block text-meta font-medium"
+          >
+            {actionLabel(action)}
+            <span className="ml-1 font-normal text-muted-foreground">
+              {noteRequired ? "· note required" : "· note optional"}
+            </span>
+          </label>
+          <textarea
+            id="learning-review-note"
+            name="learning-review-note"
+            autoComplete="off"
+            value={note}
+            onChange={(event) => onSetNote(event.target.value)}
+            placeholder={reviewPlaceholder(action)}
+            rows={2}
+            className="mt-2 w-full resize-none rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none placeholder:text-subtle-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary"
+          />
+          {error && (
+            <p className="mt-2 text-micro text-destructive" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="mt-3 flex justify-end gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => {
+                onSetAction(null);
+                onSetNote("");
+                onSetError(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              variant={action === "reject" ? "destructive" : "primary"}
+              disabled={busy || !canSubmit}
+              onClick={() => void onSubmitReview()}
+            >
+              {busy ? "Saving…" : actionLabel(action)}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function onboardingCopy(
+  inspection: AgentProjectInspection | null,
+  projectPath: string | null,
+  vaultName: string,
+): { title: string; body: string } {
+  if (!inspection) {
+    return projectPath
+      ? {
+          title: "Opening local project",
+          body: "Ley is validating this project’s local identity, private vault binding, and captured memory.",
+        }
+      : {
+          title: "Choose a project",
+          body: "Ley only reads a project after you choose its folder. It never scans neighboring folders or discovers projects silently.",
+        };
+  }
+  switch (inspection.status) {
+    case "uninitialized":
+      return {
+        title: "Initialize Agent Memory",
+        body: `Ley will add a small .ley folder to “${inspection.suggestedName}”, use Structured capture, bind durable memory to “${vaultName}”, and create the first redacted snapshot.`,
+      };
+    case "unbound":
+      return {
+        title: "Connect this project",
+        body: `“${inspection.projectName}” is initialized but has no private vault binding. Connect it to “${vaultName}” and capture its approved files.`,
+      };
+    case "vault-unavailable":
+      return {
+        title: "Reconnect this project",
+        body: `“${inspection.projectName}” was connected to “${inspection.previousVaultName}”, which moved or is unavailable. Reconnect it to the open vault, “${vaultName}”, and rebuild its local snapshot.`,
+      };
+    case "needs-capture":
+      return {
+        title: "Create the first snapshot",
+        body: `“${inspection.projectName}” is connected to “${inspection.binding.vaultName}” but has not been captured yet.`,
+      };
+    case "ready":
+      return { title: "Project ready", body: "This project is ready." };
+  }
 }
 
 function ProjectOnboarding({
@@ -2474,30 +3140,7 @@ function ProjectOnboarding({
   onConnect: () => void;
   onCapture: () => void;
 }) {
-  const title = !inspection
-    ? projectPath
-      ? "Opening local project"
-      : "Choose a project"
-    : inspection.status === "uninitialized"
-      ? "Initialize Agent Memory"
-      : inspection.status === "unbound"
-        ? "Connect this project"
-        : inspection.status === "vault-unavailable"
-          ? "Reconnect this project"
-          : "Create the first snapshot";
-  const body = !inspection
-    ? projectPath
-      ? "Ley is validating this project’s local identity, private vault binding, and captured memory."
-      : "Ley only reads a project after you choose its folder. It never scans neighboring folders or discovers projects silently."
-    : inspection.status === "uninitialized"
-      ? `Ley will add a small .ley folder to “${inspection.suggestedName}”, use Structured capture, bind durable memory to “${vaultName}”, and create the first redacted snapshot.`
-      : inspection.status === "unbound"
-        ? `“${inspection.projectName}” is initialized but has no private vault binding. Connect it to “${vaultName}” and capture its approved files.`
-        : inspection.status === "vault-unavailable"
-          ? `“${inspection.projectName}” was connected to “${inspection.previousVaultName}”, which moved or is unavailable. Reconnect it to the open vault, “${vaultName}”, and rebuild its local snapshot.`
-          : inspection.status === "needs-capture"
-            ? `“${inspection.projectName}” is connected to “${inspection.binding.vaultName}” but has not been captured yet.`
-            : "This project is ready.";
+  const copy = onboardingCopy(inspection, projectPath, vaultName);
   return (
     <main className="min-h-0 flex-1 overflow-y-auto px-4 py-10 sm:px-6">
       <div className="mx-auto flex min-h-full max-w-xl items-center justify-center">
@@ -2506,10 +3149,10 @@ function ProjectOnboarding({
             {inspection ? <BrainCircuit size={21} /> : <FolderOpen size={21} />}
           </div>
           <h2 className="mt-5 text-2xl font-semibold tracking-[-0.035em]">
-            {title}
+            {copy.title}
           </h2>
           <p className="mt-2 text-body leading-6 text-muted-foreground-strong">
-            {body}
+            {copy.body}
           </p>
           {projectPath && (
             <p
@@ -2633,8 +3276,7 @@ function BrowserBoundary({
             <p className="mt-1 text-micro leading-5 text-muted-foreground">
               Open the same filesystem vault in Ley Desktop to initialize
               projects, capture structured sessions, review lessons, and connect
-              Codex, Claude Code, or another compatible local MCP
-              client.
+              Codex, Claude Code, or another compatible local MCP client.
             </p>
           </div>
         </div>
@@ -3001,10 +3643,8 @@ function StatusPill({
     <span
       className={cn(
         "inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-micro font-medium",
-        tone === "success" &&
-          "border-success/20 bg-success/10 text-success",
-        tone === "warning" &&
-          "border-warning/20 bg-warning/10 text-warning",
+        tone === "success" && "border-success/20 bg-success/10 text-success",
+        tone === "warning" && "border-warning/20 bg-warning/10 text-warning",
         tone === "neutral" &&
           "border-border bg-surface-2 text-muted-foreground-strong",
       )}

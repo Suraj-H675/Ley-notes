@@ -178,6 +178,73 @@ export function CapturePrivacyPanel({
     !fullConsent;
 
   return (
+    <CapturePrivacyContent
+      settings={settings}
+      dashboard={dashboard}
+      selected={selected}
+      setSelected={setSelected}
+      fullConsent={fullConsent}
+      setFullConsent={setFullConsent}
+      saving={saving}
+      error={error}
+      changed={changed}
+      fullNeedsConsent={fullNeedsConsent}
+      applyMode={applyMode}
+      eraseArmed={eraseArmed}
+      onPrepareErase={() => {
+        setEraseArmed((current) => !current);
+        setEraseConfirmation("");
+        setEraseError(null);
+      }}
+      eraseConfirmation={eraseConfirmation}
+      setEraseConfirmation={setEraseConfirmation}
+      erasing={erasing}
+      eraseError={eraseError}
+      eraseMemory={eraseMemory}
+    />
+  );
+}
+
+function CapturePrivacyContent({
+  settings,
+  dashboard,
+  selected,
+  setSelected,
+  fullConsent,
+  setFullConsent,
+  saving,
+  error,
+  changed,
+  fullNeedsConsent,
+  applyMode,
+  eraseArmed,
+  onPrepareErase,
+  eraseConfirmation,
+  setEraseConfirmation,
+  erasing,
+  eraseError,
+  eraseMemory,
+}: {
+  settings: AgentCaptureSettings;
+  dashboard: AgentMemoryDashboard;
+  selected: CaptureMode;
+  setSelected: (mode: CaptureMode) => void;
+  fullConsent: boolean;
+  setFullConsent: (consent: boolean) => void;
+  saving: boolean;
+  error: string | null;
+  changed: boolean;
+  fullNeedsConsent: boolean;
+  applyMode: () => Promise<void>;
+  eraseArmed: boolean;
+  onPrepareErase: () => void;
+  eraseConfirmation: string;
+  setEraseConfirmation: (value: string) => void;
+  erasing: boolean;
+  eraseError: string | null;
+  eraseMemory: () => Promise<void>;
+}) {
+  return (
     <div className="space-y-7">
       <section className="relative overflow-hidden rounded-sm border border-border bg-surface-1 p-5 shadow-panel sm:p-7">
         <div className="relative max-w-3xl">
@@ -448,11 +515,7 @@ export function CapturePrivacyPanel({
             <Button
               variant={eraseArmed ? "destructive" : "outline"}
               disabled={saving || erasing}
-              onClick={() => {
-                setEraseArmed((current) => !current);
-                setEraseConfirmation("");
-                setEraseError(null);
-              }}
+              onClick={onPrepareErase}
             >
               <Trash2 size={14} aria-hidden="true" />
               {eraseArmed ? "Cancel erasure" : "Erase memory…"}
@@ -466,9 +529,9 @@ export function CapturePrivacyPanel({
                   This cannot be undone by Ley
                 </p>
                 <p className="mt-1 text-meta leading-5 text-muted-foreground">
-                  Stop connected Codex and Claude Code sessions first.
-                  Existing backups, filesystem snapshots, or copies outside this
-                  vault are not securely wiped.
+                  Stop connected Codex and Claude Code sessions first. Existing
+                  backups, filesystem snapshots, or copies outside this vault
+                  are not securely wiped.
                 </p>
                 <label className="mt-4 block">
                   <span className="text-micro font-semibold text-muted-foreground-strong">

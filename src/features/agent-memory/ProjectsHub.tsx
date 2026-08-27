@@ -86,7 +86,64 @@ export function ProjectsHub({
   }
 
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+    <ProjectsHubContent
+      catalog={catalog}
+      loading={loading}
+      error={error}
+      onAdd={onAdd}
+      onOpen={onOpen}
+      onForget={onForget}
+      onReload={onReload}
+      filterQuery={filterQuery}
+      setFilterQuery={setFilterQuery}
+      memoryQuery={memoryQuery}
+      setMemoryQuery={setMemoryQuery}
+      search={search}
+      searching={searching}
+      searchError={searchError}
+      onSearch={searchMemory}
+      projects={projects}
+    />
+  );
+}
+
+function ProjectsHubContent({
+  catalog,
+  loading,
+  error,
+  onAdd,
+  onOpen,
+  onForget,
+  onReload,
+  filterQuery,
+  setFilterQuery,
+  memoryQuery,
+  setMemoryQuery,
+  search,
+  searching,
+  searchError,
+  onSearch,
+  projects,
+}: {
+  catalog: AgentProjectCatalog | null;
+  loading: boolean;
+  error: string | null;
+  onAdd: () => void;
+  onOpen: (projectPath: string, destination?: AgentProjectSearchResult) => void;
+  onForget: (projectId: string) => void;
+  onReload: () => void;
+  filterQuery: string;
+  setFilterQuery: (value: string) => void;
+  memoryQuery: string;
+  setMemoryQuery: (value: string) => void;
+  search: AgentProjectSearch | null;
+  searching: boolean;
+  searchError: string | null;
+  onSearch: () => Promise<void>;
+  projects: AgentProjectCatalogItem[];
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
         <section className="relative overflow-hidden rounded-sm border border-border bg-surface-1 p-5 shadow-panel sm:p-7">
           <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
@@ -110,77 +167,15 @@ export function ProjectsHub({
           </div>
         </section>
 
-        <section aria-labelledby="memory-search-title" className="mt-5 overflow-hidden rounded-sm border border-border bg-surface-1 shadow-panel">
-          <div className="border-b border-border/70 p-4 sm:p-5">
-            <div className="flex items-start gap-3">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
-                <Search size={16} aria-hidden="true" />
-              </span>
-              <div className="min-w-0">
-                <h2
-                  id="memory-search-title"
-                  className="text-body font-semibold tracking-tight"
-                >
-                  Search every project memory
-                </h2>
-                <p className="mt-0.5 text-meta text-muted-foreground">
-                  Sessions, decisions, problems, lessons, files, and symbols ·
-                  local captured snapshots only
-                </p>
-              </div>
-            </div>
-            <form
-              className="mt-4 flex flex-col gap-2 sm:flex-row"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void searchMemory();
-              }}
-            >
-              <label className="relative min-w-0 flex-1">
-                <span className="sr-only">Search across project memory</span>
-                <Search
-                  size={15}
-                  aria-hidden="true"
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                />
-                <input
-                  type="search"
-                  value={memoryQuery}
-                  maxLength={256}
-                  onChange={(event) => setMemoryQuery(event.target.value)}
-                  placeholder="What did we decide about offline sync?"
-                  className="h-11 w-full rounded-md border border-border bg-background/55 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
-                />
-              </label>
-              <Button
-                type="submit"
-                variant="primary"
-                disabled={!memoryQuery.trim() || searching}
-              >
-                {searching ? (
-                  <RefreshCw
-                    size={14}
-                    className="animate-spin motion-reduce:animate-none"
-                  />
-                ) : (
-                  <Search size={14} />
-                )}
-                {searching ? "Searching locally" : "Search memory"}
-              </Button>
-            </form>
-            {searchError && (
-              <p className="mt-2 text-meta text-destructive" role="alert">
-                {searchError}
-              </p>
-            )}
-          </div>
-          {search && (
-            <SearchResults
-              search={search}
-              onOpen={(result) => onOpen(result.projectPath, result)}
-            />
-          )}
-        </section>
+        <CrossProjectSearch
+          memoryQuery={memoryQuery}
+          setMemoryQuery={setMemoryQuery}
+          searching={searching}
+          searchError={searchError}
+          onSearch={onSearch}
+          search={search}
+          onOpen={onOpen}
+        />
 
         <section
           className="mt-5 grid gap-3 sm:grid-cols-3"
@@ -326,7 +321,102 @@ export function ProjectsHub({
           </span>
         </div>
       </div>
-    </main>
+    </div>
+  );
+}
+
+function CrossProjectSearch({
+  memoryQuery,
+  setMemoryQuery,
+  searching,
+  searchError,
+  onSearch,
+  search,
+  onOpen,
+}: {
+  memoryQuery: string;
+  setMemoryQuery: (value: string) => void;
+  searching: boolean;
+  searchError: string | null;
+  onSearch: () => Promise<void>;
+  search: AgentProjectSearch | null;
+  onOpen: (projectPath: string, destination?: AgentProjectSearchResult) => void;
+}) {
+  return (
+    <section
+      aria-labelledby="memory-search-title"
+      className="mt-5 overflow-hidden rounded-sm border border-border bg-surface-1 shadow-panel"
+    >
+      <div className="border-b border-border/70 p-4 sm:p-5">
+        <div className="flex items-start gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
+            <Search size={16} aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <h2
+              id="memory-search-title"
+              className="text-body font-semibold tracking-tight"
+            >
+              Search every project memory
+            </h2>
+            <p className="mt-0.5 text-meta text-muted-foreground">
+              Sessions, decisions, problems, lessons, files, and symbols · local
+              captured snapshots only
+            </p>
+          </div>
+        </div>
+        <form
+          className="mt-4 flex flex-col gap-2 sm:flex-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onSearch();
+          }}
+        >
+          <label className="relative min-w-0 flex-1">
+            <span className="sr-only">Search across project memory</span>
+            <Search
+              size={15}
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
+            <input
+              type="search"
+              value={memoryQuery}
+              maxLength={256}
+              onChange={(event) => setMemoryQuery(event.target.value)}
+              placeholder="What did we decide about offline sync?"
+              className="h-11 w-full rounded-md border border-border bg-background/55 pl-9 pr-3 text-meta outline-none transition focus:border-primary/60 focus:ring-2 focus:ring-primary/20"
+            />
+          </label>
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={!memoryQuery.trim() || searching}
+          >
+            {searching ? (
+              <RefreshCw
+                size={14}
+                className="animate-spin motion-reduce:animate-none"
+              />
+            ) : (
+              <Search size={14} />
+            )}
+            {searching ? "Searching locally" : "Search memory"}
+          </Button>
+        </form>
+        {searchError && (
+          <p className="mt-2 text-meta text-destructive" role="alert">
+            {searchError}
+          </p>
+        )}
+      </div>
+      {search && (
+        <SearchResults
+          search={search}
+          onOpen={(result) => onOpen(result.projectPath, result)}
+        />
+      )}
+    </section>
   );
 }
 

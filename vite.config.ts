@@ -1,14 +1,17 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { fileURLToPath } from 'node:url';
 import { VitePWA } from 'vite-plugin-pwa';
+
+const configDir = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'Ley — Local-first second brain',
         short_name: 'Ley',
@@ -20,8 +23,9 @@ export default defineConfig({
         theme_color: '#0d0f12',
         categories: ['productivity', 'utilities'],
         icons: [
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
           { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-          { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
         ],
       },
       workbox: {
@@ -32,7 +36,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(configDir, './src'),
     },
   },
   server: {
@@ -49,7 +53,7 @@ export default defineConfig({
   build: {
     // Reference projects under ref/ shouldn't be scanned during build either.
     rollupOptions: {
-      input: path.resolve(__dirname, 'index.html'),
+      input: path.resolve(configDir, 'index.html'),
     },
   },
 });

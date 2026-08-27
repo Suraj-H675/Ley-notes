@@ -102,6 +102,51 @@ export function MemorySearch({
   }
 
   return (
+    <MemorySearchContent
+      projectName={projectName}
+      query={query}
+      setQuery={setQuery}
+      search={search}
+      busy={busy}
+      error={error}
+      semanticSetup={semanticSetup}
+      semanticInstalling={semanticInstalling}
+      semanticError={semanticError}
+      onSubmit={submit}
+      onEnableSemanticSearch={enableSemanticSearch}
+      onOpen={onOpen}
+    />
+  );
+}
+
+function MemorySearchContent({
+  projectName,
+  query,
+  setQuery,
+  search,
+  busy,
+  error,
+  semanticSetup,
+  semanticInstalling,
+  semanticError,
+  onSubmit,
+  onEnableSemanticSearch,
+  onOpen,
+}: {
+  projectName: string;
+  query: string;
+  setQuery: (value: string) => void;
+  search: ProjectMemorySearch | null;
+  busy: boolean;
+  error: string | null;
+  semanticSetup: SemanticModelSetup | null;
+  semanticInstalling: boolean;
+  semanticError: string | null;
+  onSubmit: (event: FormEvent) => Promise<void>;
+  onEnableSemanticSearch: () => Promise<void>;
+  onOpen: (result: ProjectMemorySearchResult) => void;
+}) {
+  return (
     <section aria-labelledby="memory-search-title" className="space-y-6">
       <div className="max-w-3xl">
         <div className="mb-3 flex size-9 items-center justify-center rounded-sm border border-primary/30 bg-primary/8 text-primary">
@@ -119,7 +164,7 @@ export function MemorySearch({
         </p>
       </div>
 
-      <form onSubmit={(event) => void submit(event)} className="max-w-3xl">
+      <form onSubmit={(event) => void onSubmit(event)} className="max-w-3xl">
         <div className="group flex min-h-14 items-center gap-3 rounded-sm border border-border bg-surface-1 px-4 transition-colors duration-150 focus-within:border-primary/60 motion-reduce:transition-none">
           <Search
             size={18}
@@ -162,74 +207,12 @@ export function MemorySearch({
         </div>
       </form>
 
-      {semanticSetup && semanticSetup.status.state !== "ready" && (
-        <section
-          aria-labelledby="semantic-search-setup-title"
-          className="max-w-3xl overflow-hidden rounded-sm border border-border bg-surface-1 shadow-sm"
-        >
-          <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-            <div className="flex min-w-0 items-start gap-3.5">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-sm border border-primary/25 bg-primary/7 text-primary">
-                <BrainCircuit size={18} aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <h2
-                  id="semantic-search-setup-title"
-                  className="text-body font-semibold text-foreground"
-                >
-                  {semanticSetup.status.state === "corrupt"
-                    ? "Repair meaning-based search"
-                    : "Find related ideas, even when the words differ"}
-                </h2>
-                <p className="mt-1 text-meta leading-relaxed text-muted-foreground">
-                  Install Ley’s optional pinned local model. The one-time{" "}
-                  {formatBytes(semanticSetup.totalBytes)} download comes from
-                  Hugging Face only after you choose to install it; project text
-                  and queries are never uploaded.
-                </p>
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-muted-foreground">
-                  <span>{shortModelName(semanticSetup.model.modelId)}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>Verified before use</span>
-                  <span aria-hidden="true">·</span>
-                  <span>Inference stays on this device</span>
-                </div>
-              </div>
-            </div>
-            <Button
-              type="button"
-              className="shrink-0 self-start active:scale-[0.97] sm:self-center"
-              disabled={semanticInstalling}
-              onClick={() => void enableSemanticSearch()}
-            >
-              {semanticInstalling ? (
-                <LoaderCircle
-                  size={14}
-                  className="animate-spin motion-reduce:animate-none"
-                />
-              ) : semanticSetup.status.state === "corrupt" ? (
-                <CheckCircle2 size={14} aria-hidden="true" />
-              ) : (
-                <Download size={14} aria-hidden="true" />
-              )}
-              {semanticInstalling
-                ? "Downloading & verifying…"
-                : semanticSetup.status.state === "corrupt"
-                  ? "Repair local model"
-                  : "Enable semantic search"}
-            </Button>
-          </div>
-          {semanticError && (
-            <p
-              role="alert"
-              className="border-t border-destructive/20 bg-destructive/[0.045] px-5 py-3 text-meta text-destructive"
-            >
-              Installation did not complete. Exact local search is still
-              available. {semanticError}
-            </p>
-          )}
-        </section>
-      )}
+      <SemanticSearchSetup
+        setup={semanticSetup}
+        installing={semanticInstalling}
+        error={semanticError}
+        onEnable={onEnableSemanticSearch}
+      />
 
       {error && (
         <div className="max-w-3xl rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta text-destructive">
@@ -257,60 +240,152 @@ export function MemorySearch({
         </div>
       )}
 
-      {search && (
-        <div className="max-w-4xl space-y-4" aria-live="polite">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-meta font-medium text-foreground">
-              {search.results.length === 0
-                ? "No matching captured memory"
-                : `${search.results.length} relevant ${search.results.length === 1 ? "memory" : "memories"}`}
+      <MemorySearchResults search={search} onOpen={onOpen} />
+    </section>
+  );
+}
+
+function SemanticSearchSetup({
+  setup,
+  installing,
+  error,
+  onEnable,
+}: {
+  setup: SemanticModelSetup | null;
+  installing: boolean;
+  error: string | null;
+  onEnable: () => Promise<void>;
+}) {
+  if (!setup || setup.status.state === "ready") return null;
+  return (
+    <section
+      aria-labelledby="semantic-search-setup-title"
+      className="max-w-3xl overflow-hidden rounded-sm border border-border bg-surface-1 shadow-sm"
+    >
+      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="flex min-w-0 items-start gap-3.5">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-sm border border-primary/25 bg-primary/7 text-primary">
+            <BrainCircuit size={18} aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <h2
+              id="semantic-search-setup-title"
+              className="text-body font-semibold text-foreground"
+            >
+              {setup.status.state === "corrupt"
+                ? "Repair meaning-based search"
+                : "Find related ideas, even when the words differ"}
+            </h2>
+            <p className="mt-1 text-meta leading-relaxed text-muted-foreground">
+              Install Ley’s optional pinned local model. The one-time{" "}
+              {formatBytes(setup.totalBytes)} download comes from Hugging Face
+              only after you choose to install it; project text and queries are
+              never uploaded.
             </p>
-            <div className="flex items-center gap-2 text-micro text-muted-foreground">
-              <span className="rounded-sm border border-border bg-surface-1 px-1.5 py-0.5 capitalize">
-                {search.retrieval.mode}
-              </span>
-              <span>captured snapshot</span>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-muted-foreground">
+              <span>{shortModelName(setup.model.modelId)}</span>
+              <span aria-hidden="true">·</span>
+              <span>Verified before use</span>
+              <span aria-hidden="true">·</span>
+              <span>Inference stays on this device</span>
             </div>
           </div>
-
-          {search.conflicts.length > 0 && (
-            <div className="rounded-md border border-warning/25 bg-warning/8 p-4">
-              <div className="flex items-center gap-2 text-meta font-semibold text-foreground">
-                <AlertTriangle size={15} className="text-warning" />
-                Memory needs interpretation
-              </div>
-              {search.conflicts.map((conflict, index) => (
-                <p
-                  key={`${conflict.kind}-${index}`}
-                  className="mt-1.5 text-meta text-muted-foreground"
-                >
-                  {conflict.reason}
-                </p>
-              ))}
-            </div>
-          )}
-
-          <div className="space-y-2">
-            {search.results.map((result) => (
-              <MemoryResult
-                key={`${result.kind}:${result.entityId}`}
-                result={result}
-                onOpen={() => onOpen(result)}
-              />
-            ))}
-          </div>
-
-          {(search.truncated ||
-            search.retrieval.boundedRerankFallbackReason) && (
-            <p className="px-1 text-micro leading-relaxed text-muted-foreground">
-              {search.retrieval.boundedRerankFallbackReason
-                ? `Semantic ranking unavailable: ${search.retrieval.boundedRerankFallbackReason}. Exact local search still ran.`
-                : "Results were bounded to keep agent context focused. Refine the question for a narrower answer."}
-            </p>
-          )}
         </div>
+        <Button
+          type="button"
+          className="shrink-0 self-start active:scale-[0.97] sm:self-center"
+          disabled={installing}
+          onClick={() => void onEnable()}
+        >
+          {installing ? (
+            <LoaderCircle
+              size={14}
+              className="animate-spin motion-reduce:animate-none"
+            />
+          ) : setup.status.state === "corrupt" ? (
+            <CheckCircle2 size={14} aria-hidden="true" />
+          ) : (
+            <Download size={14} aria-hidden="true" />
+          )}
+          {installing
+            ? "Downloading & verifying…"
+            : setup.status.state === "corrupt"
+              ? "Repair local model"
+              : "Enable semantic search"}
+        </Button>
+      </div>
+      {error && (
+        <p
+          role="alert"
+          className="border-t border-destructive/20 bg-destructive/[0.045] px-5 py-3 text-meta text-destructive"
+        >
+          Installation did not complete. Exact local search is still available.{" "}
+          {error}
+        </p>
       )}
     </section>
+  );
+}
+
+function MemorySearchResults({
+  search,
+  onOpen,
+}: {
+  search: ProjectMemorySearch | null;
+  onOpen: (result: ProjectMemorySearchResult) => void;
+}) {
+  if (!search) return null;
+  return (
+    <div className="max-w-4xl space-y-4" aria-live="polite">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-meta font-medium text-foreground">
+          {search.results.length === 0
+            ? "No matching captured memory"
+            : `${search.results.length} relevant ${search.results.length === 1 ? "memory" : "memories"}`}
+        </p>
+        <div className="flex items-center gap-2 text-micro text-muted-foreground">
+          <span className="rounded-sm border border-border bg-surface-1 px-1.5 py-0.5 capitalize">
+            {search.retrieval.mode}
+          </span>
+          <span>captured snapshot</span>
+        </div>
+      </div>
+
+      {search.conflicts.length > 0 && (
+        <div className="rounded-md border border-warning/25 bg-warning/8 p-4">
+          <div className="flex items-center gap-2 text-meta font-semibold text-foreground">
+            <AlertTriangle size={15} className="text-warning" />
+            Memory needs interpretation
+          </div>
+          {search.conflicts.map((conflict, index) => (
+            <p
+              key={`${conflict.kind}-${index}`}
+              className="mt-1.5 text-meta text-muted-foreground"
+            >
+              {conflict.reason}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {search.results.map((result) => (
+          <MemoryResult
+            key={`${result.kind}:${result.entityId}`}
+            result={result}
+            onOpen={() => onOpen(result)}
+          />
+        ))}
+      </div>
+
+      {(search.truncated || search.retrieval.boundedRerankFallbackReason) && (
+        <p className="px-1 text-micro leading-relaxed text-muted-foreground">
+          {search.retrieval.boundedRerankFallbackReason
+            ? `Semantic ranking unavailable: ${search.retrieval.boundedRerankFallbackReason}. Exact local search still ran.`
+            : "Results were bounded to keep agent context focused. Refine the question for a narrower answer."}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -340,7 +415,7 @@ function MemoryResult({
       disabled={!actionable}
       onClick={onOpen}
       className={cn(
-          "group flex w-full items-start gap-3 rounded-sm border border-border bg-surface-1 p-4 transition-[border-color,background-color] duration-150 hover:border-primary/45 hover:bg-surface-2/70 motion-reduce:transition-none",
+        "group flex w-full items-start gap-3 rounded-sm border border-border bg-surface-1 p-4 transition-[border-color,background-color] duration-150 hover:border-primary/45 hover:bg-surface-2/70 motion-reduce:transition-none",
         actionable &&
           "hover:border-primary/25 hover:bg-surface-2 hover:shadow-sm active:scale-[0.995]",
       )}
