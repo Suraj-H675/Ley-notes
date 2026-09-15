@@ -3,8 +3,8 @@
 Ley uses three layers together:
 
 1. lifecycle hooks load a bounded continuity brief and capture bounded turn evidence;
-2. local stdio MCP provides cited retrieval and typed session writes;
-3. a portable agent skill tells the host when and how to preserve meaningful structure.
+2. local stdio MCP provides the task-conditioned `ley_compile_context` entry point, deeper cited retrieval, and typed session writes;
+3. a portable agent skill tells the host to prefer compiled task context, inspect live source when needed, and preserve meaningful structure.
 
 All three run on the user's machine. The host may send deliberately retrieved context to its model provider. Ley itself makes no network request.
 

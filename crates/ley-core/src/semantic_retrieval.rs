@@ -113,13 +113,14 @@ pub(crate) struct SemanticTextCandidate<'a> {
     pub text: &'a str,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SemanticTextRank {
     pub id: String,
     pub rank: u32,
+    pub similarity: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum SemanticTextRankOutcome {
     Available { ranks: Vec<SemanticTextRank> },
     Unavailable { reason: String },
@@ -407,9 +408,10 @@ pub(crate) fn rank_bounded_local_texts(
         ranks: ranks
             .into_iter()
             .enumerate()
-            .map(|(index, (_, id))| SemanticTextRank {
+            .map(|(index, (similarity, id))| SemanticTextRank {
                 id: id.to_owned(),
                 rank: index as u32 + 1,
+                similarity,
             })
             .collect(),
     }

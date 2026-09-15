@@ -1,6 +1,6 @@
 # Agent memory threat model
 
-Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project MCP retrieval, opt-in structured session capture, stable-field Codex and Claude lifecycle adapters, and evidence-backed learning review.
+Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project MCP retrieval, task-conditioned Context Compiler admission, opt-in structured session capture, stable-field Codex and Claude lifecycle adapters, and evidence-backed learning review.
 
 ## Assets
 
@@ -56,6 +56,9 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | “Delete” is mistaken for forensic wipe | UI and docs explicitly exclude backups, filesystem snapshots, SSD remnants, provider-retained context, and external copies | Optional encrypted-vault/cryptographic-erasure guidance |
 | Cross-project memory access | One project/binding is fixed at MCP process start; tools have no project/vault selector; resource URI includes only the stable project ID | Actual-host multi-project adversarial tests |
 | Prompt injection in stored material | Typed results mark content `untrusted-project-evidence`, repeat a non-instruction warning, and never promote retrieved text to server instructions | Injection corpus across every host adapter |
+| Semantic rank launders an unrelated memory into context | Candidate retrieval and context admission are separate. Lexical matches may proceed to trust checks; semantic-only candidates need an inspectable cosine-similarity floor, and relative rank alone is insufficient. `no-useful-evidence` is a valid result. | Calibrated no-gold/adversarial corpora across model revisions and realistic coding tasks |
+| Poisoned or obsolete durable memory is auto-injected | The compiler admits only trusted-current learnings, withholds materially conflicting durable records, labels session/decision/problem material as historical, and reports exclusions instead of treating similarity as authority | High-similarity rejected/contested/stale/superseded learning fixtures plus delayed-prompt-injection scenarios |
+| Context Compiler diagnostics bypass the requested budget | The compiler reserves diagnostic capacity, fits gaps/conflicts/exclusions/follow-ups into the remaining budget, reports omitted counts, and remains subject to the 256 KB MCP hard limit | 500/1500/3000/8000-token adversarial pack fixtures with long IDs, conflicts, and fallback reasons |
 | Stale source presented as current | Every result identifies immutable artifact/graph snapshots and capture time and says `liveSourceChecked: false` | Source-change UX, re-ingestion hooks, and stale-result evals |
 | Oversized MCP context | Queries, result counts, token estimates, snippets, evidence ranges, session checkpoints/text, graph depth, and visited nodes are capped; every serialized tool result has a 256 KB hard limit | Large-graph and long-session latency corpus |
 | MCP argument path traversal | Evidence reads accept only an exact current-manifest artifact path and use no-follow capability reads | Encoded/platform-specific traversal corpus |

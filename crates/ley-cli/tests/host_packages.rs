@@ -80,3 +80,17 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
         assert_portable(path);
     }
 }
+#[test]
+fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
+    let root = repository_root();
+    for path in [
+        root.join("integrations/claude-code/ley-memory/skills/ley-memory/SKILL.md"),
+        root.join("integrations/codex/plugins/ley-memory/skills/ley/SKILL.md"),
+    ] {
+        let skill = fs::read_to_string(&path).expect("packaged Ley skill");
+        assert!(skill.contains("ley_compile_context"), "{}", path.display());
+        assert!(skill.contains("no-useful-evidence"), "{}", path.display());
+        assert!(skill.contains("live source"), "{}", path.display());
+        assert_portable(&path);
+    }
+}

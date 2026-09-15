@@ -85,6 +85,8 @@ pub struct ProjectMemoryRankingSignals {
     pub lexical_rank: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub semantic_rank: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_similarity: Option<f64>,
     /// The rank inherited from `find_project_hybrid_context` before this fixed-project search
     /// performs its bounded cross-kind reranking. It is intentionally separate from lexical and
     /// semantic ranks because the artifact API does not expose its constituent ranks.
@@ -119,6 +121,7 @@ pub struct ProjectMemorySearchResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
     pub trusted_for_reuse: bool,
+    pub content_conflicted: bool,
     pub truncated: bool,
     pub ranking: ProjectMemoryRankingSignals,
 }
@@ -354,7 +357,7 @@ pub fn search_project_memory(
     }
 
     let (candidates, omitted_candidates) = collector.finish();
-    disclose_content_conflicts(&candidates, &mut conflicts);
+    let content_conflicted_entities = disclose_content_conflicts(&candidates, &mut conflicts);
     let (conflicts, conflict_limit_omitted) = conflicts.finish();
 
     // Keep the owned stable IDs alive while the borrowed rank request is evaluated.
@@ -381,6 +384,7 @@ pub fn search_project_memory(
         scored,
         limits,
         RESPONSE_BASE_TOKENS.saturating_add(conflict_tokens),
+        &content_conflicted_entities,
     );
     let estimated_tokens = RESPONSE_BASE_TOKENS
         .saturating_add(conflict_tokens)
@@ -739,7 +743,7 @@ fn conflict_order(
 fn semantic_ranks_and_mode(
     candidates: &[Candidate],
     outcome: SemanticTextRankOutcome,
-) -> (BTreeMap<String, u32>, RetrievalMode, Option<String>) {
+) -> (BTreeMap<String, (u32, f64)>, RetrievalMode, Option<String>) {
     if candidates.is_empty() {
         return (BTreeMap::new(), RetrievalMode::Lexical, None);
     }
@@ -750,7 +754,7 @@ fn semantic_ranks_and_mode(
         SemanticTextRankOutcome::Available { ranks } => {
             let ranks = ranks
                 .into_iter()
-                .map(|rank| (rank.id, rank.rank))
+                .map(|rank| (rank.id, (rank.rank, rank.similarity)))
                 .collect::<BTreeMap<_, _>>();
             let mode = if has_lexical {
                 RetrievalMode::Hybrid
@@ -767,7 +771,7 @@ fn semantic_ranks_and_mode(
 
 fn score_candidates(
     candidates: &[Candidate],
-    semantic_ranks: &BTreeMap<String, u32>,
+    semantic_ranks: &BTreeMap<String, (u32, f64)>,
 ) -> Vec<ScoredCandidate> {
     let mut lexical_order = candidates
         .iter()
@@ -805,7 +809,9 @@ fn score_candidates(
         .filter_map(|candidate| {
             let id = candidate.stable_id();
             let lexical_rank = lexical_ranks.get(&id).copied();
-            let semantic_rank = semantic_ranks.get(&id).copied();
+            let semantic_signal = semantic_ranks.get(&id).copied();
+            let semantic_rank = semantic_signal.map(|(rank, _)| rank);
+            let semantic_similarity = semantic_signal.map(|(_, similarity)| similarity);
             if !semantic_available && lexical_rank.is_none() {
                 return None;
             }
@@ -815,16 +821,18 @@ fn score_candidates(
                 .map(reciprocal_rank_score)
                 .sum::<f64>();
             let temporal_contribution = temporal_contribution(latest, candidate.updated_at_unix_ms);
-            let trust_contribution = candidate
-                .trusted_for_reuse
-                .then_some(TRUSTED_CURRENT_CONTRIBUTION)
-                .unwrap_or(0.0);
+            let trust_contribution = if candidate.trusted_for_reuse {
+                TRUSTED_CURRENT_CONTRIBUTION
+            } else {
+                0.0
+            };
             let final_score = reciprocal_rank_score + temporal_contribution + trust_contribution;
             Some(ScoredCandidate {
                 candidate: candidate.clone(),
                 ranking: ProjectMemoryRankingSignals {
                     lexical_rank,
                     semantic_rank,
+                    semantic_similarity,
                     artifact_hybrid_rank: candidate.artifact_hybrid_rank,
                     reciprocal_rank_score,
                     temporal_contribution,
@@ -855,6 +863,7 @@ fn fit_results(
     scored: Vec<ScoredCandidate>,
     limits: ProjectMemorySearchLimits,
     starting_tokens: usize,
+    content_conflicted_entities: &BTreeSet<String>,
 ) -> (Vec<ProjectMemorySearchResult>, usize, usize, usize) {
     let total_scored = scored.len();
     let mut result_tokens = 0;
@@ -866,7 +875,9 @@ fn fit_results(
         }
         let used = starting_tokens.saturating_add(result_tokens);
         let remaining = limits.max_tokens.saturating_sub(used);
-        let Some((result, cost)) = fit_result(scored_candidate, remaining) else {
+        let Some((result, cost)) =
+            fit_result(scored_candidate, remaining, content_conflicted_entities)
+        else {
             break;
         };
         result_tokens = result_tokens.saturating_add(cost);
@@ -880,6 +891,7 @@ fn fit_results(
 fn fit_result(
     scored: ScoredCandidate,
     remaining_tokens: usize,
+    content_conflicted_entities: &BTreeSet<String>,
 ) -> Option<(ProjectMemorySearchResult, usize)> {
     if remaining_tokens <= RESPONSE_RESULT_OVERHEAD_TOKENS + 8 {
         return None;
@@ -909,6 +921,7 @@ fn fit_result(
     let truncated = scored.candidate.content_truncated
         || title != scored.candidate.title
         || excerpt != scored.candidate.excerpt;
+    let content_conflicted = content_conflicted_entities.contains(&scored.candidate.entity_id);
     (cost <= remaining_tokens).then_some((
         ProjectMemorySearchResult {
             kind: scored.candidate.kind,
@@ -924,6 +937,7 @@ fn fit_result(
             learning_freshness: scored.candidate.learning_freshness,
             trust_signal: scored.candidate.trust_signal,
             trusted_for_reuse: scored.candidate.trusted_for_reuse,
+            content_conflicted,
             truncated,
             ranking: scored.ranking,
         },
@@ -1034,7 +1048,11 @@ fn learning_state_conflict_reason(learning: &LearningSummary) -> Option<&'static
     })
 }
 
-fn disclose_content_conflicts(candidates: &[Candidate], conflicts: &mut ConflictCollector) {
+fn disclose_content_conflicts(
+    candidates: &[Candidate],
+    conflicts: &mut ConflictCollector,
+) -> BTreeSet<String> {
+    let mut conflicted_entities = BTreeSet::new();
     let durable = candidates
         .iter()
         .filter(|candidate| candidate.lexical_score > 0 && candidate.durable_content().is_some())
@@ -1055,6 +1073,7 @@ fn disclose_content_conflicts(candidates: &[Candidate], conflicts: &mut Conflict
                 continue;
             }
             let entity_ids = vec![left.entity_id.clone(), right.entity_id.clone()];
+            conflicted_entities.extend(entity_ids.iter().cloned());
             let learning_ids = [left, right]
                 .into_iter()
                 .filter_map(|candidate| candidate.learning_id.clone())
@@ -1068,6 +1087,7 @@ fn disclose_content_conflicts(candidates: &[Candidate], conflicts: &mut Conflict
             });
         }
     }
+    conflicted_entities
 }
 
 fn materially_different(left: &str, right: &str) -> bool {
@@ -1332,7 +1352,10 @@ mod tests {
                 true,
             ),
         ];
-        let ranks = BTreeMap::from([("decision:a".to_owned(), 1), ("decision:b".to_owned(), 2)]);
+        let ranks = BTreeMap::from([
+            ("decision:a".to_owned(), (1, 0.82)),
+            ("decision:b".to_owned(), (2, 0.74)),
+        ]);
         let first = score_candidates(&candidates, &ranks);
         let second = score_candidates(&candidates, &ranks);
         assert_eq!(
@@ -1368,11 +1391,30 @@ mod tests {
             1_000,
             true,
         );
+        let candidates = vec![learning, decision];
         let mut conflicts = ConflictCollector {
             total_conflicts: 0,
             conflicts: Vec::new(),
         };
-        disclose_content_conflicts(&[learning, decision], &mut conflicts);
+        let conflicted_entities = disclose_content_conflicts(&candidates, &mut conflicts);
+        assert_eq!(
+            conflicted_entities,
+            BTreeSet::from(["dec_one".to_owned(), "lrn_one".to_owned()])
+        );
+        let scored = score_candidates(&candidates, &BTreeMap::new());
+        let (results, _, omitted_results, _) = fit_results(
+            scored,
+            ProjectMemorySearchLimits {
+                max_results: 2,
+                max_tokens: 1_000,
+            },
+            RESPONSE_BASE_TOKENS,
+            &conflicted_entities,
+        );
+        assert_eq!(omitted_results, 0);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| result.content_conflicted));
+
         let (conflicts, omitted) = conflicts.finish();
         assert_eq!(omitted, 0);
         assert_eq!(conflicts.len(), 1);

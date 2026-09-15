@@ -13,22 +13,26 @@ MCP Roots are client-supplied workspace hints, not an authorization boundary, an
 
 `ley mcp [project] [--vault <temporary-vault>]` starts a local stdio MCP server using protocol version `2025-11-25`. Startup resolves exactly one initialized project and its persisted or explicit temporary vault binding. A ready server requires an existing, internally consistent artifact and graph snapshot. ADR 0018 later adds one packaging-safe fallback: outside a ready project, the process can complete MCP initialization with zero capabilities, tools, and resources so a global host integration does not fail startup. That inactive process still never discovers or creates projects, consumes MCP Roots, or accepts a project/vault selector in a tool call.
 
-The server exposes seven tools:
+The default read-only server currently exposes fourteen tools (the original surface plus later ADR extensions):
 
 | Tool | Result boundary |
 | --- | --- |
+| `ley_compile_context` | Task-conditioned fixed-project context admission with authority, conflicts, gaps, budget coverage, and follow-up handles |
 | `ley_project_overview` | Identity, capture mode, artifact/graph snapshots, counts, bounded Git state, freshness, and privacy notice |
 | `ley_search_context` | Exact local lexical search over approved artifacts/symbols/dependencies, capped at 20 results and an 8,000-token estimate |
+| `ley_search_memory` | Bounded fixed-project hybrid search across captured evidence, structured activity, and learnings with separate ranking/trust/conflict signals |
+| `ley_search_activity` | Bounded search over structured session decisions, problems, attempts, outcomes, and resolutions |
 | `ley_read_evidence` | Exact current-manifest artifact, at most 200 lines and 16,000 characters |
 | `ley_graph_neighbors` | Incoming/outgoing/both traversal, depth 1–3 and at most 100 nodes, with optional edge filters |
 | `ley_graph_path` | Bounded shortest path, depth 1–8 and at most 500 inspected nodes, with optional edge filters |
 | `ley_sessions_list` | At most 50 recent session summaries with bounded goal excerpts |
 | `ley_session_get` | One untrusted resume pack, at most 20 recent checkpoints and 32,000 text characters |
+| `ley_session_turns_get` | Explicit bounded prompt/response evidence read; turn bodies never enter startup context automatically |
 | `ley_learnings_list` | Trusted-first bounded learning summaries with explicit review/all scopes |
 | `ley_learning_get` | One bounded learning pack with trust, freshness, provenance, citations, and history |
 | `ley_project_resume` | Active/paused/recent work plus only current trusted lessons in one startup pack |
 
-All ten default tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. The only resource is `ley://project/<project-id>/overview`; unknown resources fail instead of mapping arbitrary URIs to files. The default process has no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout. ADR 0008 defines the explicit startup flag that adds append-only session writes; ADR 0010 separately governs review-required learning proposals; ADR 0011 defines startup selection.
+All fourteen default tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. The only resource is `ley://project/<project-id>/overview`; unknown resources fail instead of mapping arbitrary URIs to files. The default process has no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout. ADR 0008 defines the explicit startup flag that adds append-only session writes; ADR 0010 separately governs review-required learning proposals; ADR 0011 defines startup selection.
 
 Every successful result is structured JSON and repeats stable project or session identity. Project evidence carries a project-relative range, post-redaction content hash, provenance, confidence, trust state, and `untrusted-project-evidence` boundary. Session packs carry an `untrusted-agent-memory` boundary, an instruction warning, omission counts, and truncation state. Project results say `freshness: captured-snapshot` and `liveSourceChecked: false`; Ley does not imply that an old ingestion reflects the current working tree. Tool failures use MCP tool errors with sanitized messages rather than exposing absolute scope paths.
 

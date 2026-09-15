@@ -9,6 +9,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod binding;
+mod context_compiler;
 mod cross_project_search;
 mod graph;
 mod host_adapter;
@@ -28,6 +29,14 @@ mod session_context;
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
+};
+pub use context_compiler::{
+    compile_project_context, CompiledContextItem, CompiledContextPack, ContextAdmissionBasis,
+    ContextAuthority, ContextCompileCoverage, ContextCompileLimits, ContextEvidenceState,
+    ContextExclusion, ContextExclusionReason, ContextExclusionStage, ContextFollowUp,
+    ContextFollowUpKind, ContextGap, ContextGapKind, DEFAULT_CONTEXT_COMPILE_RESULTS,
+    DEFAULT_CONTEXT_COMPILE_TOKENS, MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
+    MIN_CONTEXT_COMPILE_TOKENS, MIN_SEMANTIC_ADMISSION_SIMILARITY,
 };
 pub use cross_project_search::{
     search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,
