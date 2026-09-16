@@ -1,0 +1,34 @@
+# ADR 0029: Deterministic memory transition verification
+
+Status: accepted
+
+## Context
+
+ADR 0028 made missed-checkpoint evidence recoverable without automatically turning prompt/response text into durable structure. The remaining risk is the transition itself: an agent can inspect valid recovery evidence and still omit important records, cite evidence outside the current window, duplicate existing memory, revise an existing subject without noticing, or write fluent unsupported claims.
+
+`LEY.md` section 15.2 requires memory transitions to be verifiable and reversible across coverage, preservation, and faithfulness. A deterministic first verifier can prove some structural properties, but it cannot prove that natural-language candidate claims are semantically true or that the live workspace still matches captured history.
+
+## Decision
+
+Ley adds `verify_memory_transition` and read-only MCP tool `ley_session_memory_verify`.
+
+The caller supplies the stable session ID, the exact `sessionEventCount` previously inspected, bounded candidate claims, and any recovery evidence records intentionally deferred. Each claim has a typed candidate kind, subject, statement, and exact `tev_` evidence record IDs.
+
+Ley reconstructs the current post-checkpoint recovery window directly from immutable session events. Every record in that window must be either cited by at least one candidate claim or explicitly deferred. Unknown/pre-checkpoint IDs, duplicate references, records both cited and deferred, or uncovered current evidence force `needs-revision`. If the inspected event count is no longer current, the result is `stale`.
+Evidence-anchor quality is reported separately. Metadata-only capture cannot support a claim. Truncated/partially retained evidence is disclosed as partial. Retained bounded bodies may make a claim inspectable, but inspectable evidence still does not prove the interpretation.
+
+The verifier also projects existing structured session memory and reports deterministic overlap. Exact duplicates and same-subject/different-content candidates require revision instead of silent append. Existing memory is never modified by verification, so preservation is guaranteed for this read-only step.
+
+A fully accounted candidate reaches only `review-required`. An all-deferred candidate reaches `deferred`. `review-required` means structural coverage and overlap checks passed; it explicitly does **not** mean semantic faithfulness, live-source correctness, user approval, trusted knowledge, or a write authorization. The result carries `semanticFaithfulnessProven: false`, `liveSourceChecked: false`, an untrusted source boundary, and a deterministic candidate fingerprint.
+
+Any later recovery checkpoint still uses the inspected `sessionEventCount` as `expectedEventCount`, preserving the ADR 0028 stale-write guard. Verification does not itself create checkpoints or learnings.
+
+## Consequences
+
+- Memory Compiler recovery now has an explicit immutable-evidence → candidate → verification boundary before durable reconstruction.
+- Coverage is deterministic: evidence cannot disappear from the transition unless it is deliberately deferred.
+- Duplicate/revision pressure is visible before append rather than relying on last-writer behavior.
+- Authority does not escalate: candidate text and turn bodies remain untrusted and review-required.
+- The verifier is advisory rather than a write capability: `expectedEventCount` binds a later checkpoint to the inspected session version, but the checkpoint payload is not yet cryptographically or structurally bound to the candidate fingerprint. Host skills must preserve the reviewed candidate semantics; a candidate-bound recovery-write route remains future hardening before automatic consolidation.
+- Semantic faithfulness remains an explicit gap. Later learned/agent verification may assist, but it must preserve provenance, reversibility, and human-review semantics rather than replacing these deterministic checks.
+- This slice still does not automatically generate candidate claims, consolidate across sessions, resolve semantic conflicts, adjudicate live revision/branch state, or promote reusable learning.

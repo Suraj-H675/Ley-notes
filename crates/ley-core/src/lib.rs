@@ -18,6 +18,7 @@ mod knowledge_view;
 mod learning;
 mod learning_context;
 mod memory_compiler;
+mod memory_transition;
 mod project_activity;
 mod project_catalog;
 mod project_memory_search;
@@ -89,6 +90,17 @@ pub use memory_compiler::{
     MemoryCompilationEvidenceKind, MemoryCompilationState, SessionMemoryCompilationPack,
     DEFAULT_MEMORY_COMPILE_CHARACTERS, DEFAULT_MEMORY_COMPILE_RESULTS,
     MAX_MEMORY_COMPILE_CHARACTERS, MAX_MEMORY_COMPILE_RESULTS, MIN_MEMORY_COMPILE_CHARACTERS,
+};
+pub use memory_transition::{
+    verify_memory_transition, MemoryCandidateClaim, MemoryCandidateKind,
+    MemoryEvidenceAnchorQuality, MemoryTransitionClaimCheck, MemoryTransitionCoverage,
+    MemoryTransitionInput, MemoryTransitionIssue, MemoryTransitionIssueKind,
+    MemoryTransitionOverlap, MemoryTransitionOverlapKind, MemoryTransitionState,
+    MemoryTransitionVerification, MAX_MEMORY_TRANSITION_CLAIMS,
+    MAX_MEMORY_TRANSITION_DEFERRED_EVIDENCE, MAX_MEMORY_TRANSITION_DIAGNOSTIC_IDS,
+    MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM, MAX_MEMORY_TRANSITION_OVERLAPS,
+    MAX_MEMORY_TRANSITION_OVERLAP_STATEMENT_CHARACTERS, MAX_MEMORY_TRANSITION_STATEMENT_CHARACTERS,
+    MAX_MEMORY_TRANSITION_SUBJECT_CHARACTERS,
 };
 pub use project_activity::{
     project_activity_view, ProjectActivityCitation, ProjectActivityView, ProjectDecision,

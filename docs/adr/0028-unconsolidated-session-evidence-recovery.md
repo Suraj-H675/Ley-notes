@@ -36,4 +36,4 @@ Lifecycle startup does not inject the recovery bodies. When the same host sessio
 - Recovery still requires the agent to interpret evidence and deliberately write typed structure; no model-produced structure is silently trusted.
 - Minimal capture remains private by construction: recovery can report that observations exist without reconstructing omitted text.
 - Concurrent host activity cannot be hidden by a stale recovery write when `expectedEventCount` is used.
-- This slice does not yet infer missing decisions/problems/resolutions automatically, verify transition coverage/preservation/faithfulness, consolidate across sessions, or propose reusable learnings. Those remain later Memory Compiler work and require evaluation before automation.
+- ADR 0029 adds deterministic transition coverage/preservation checks and explicit faithfulness disclosure above this recovery pack. Automatic candidate generation, semantic faithfulness proof, cross-session consolidation, and reusable-learning proposals remain later Memory Compiler work and require evaluation before automation.

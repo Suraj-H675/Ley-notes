@@ -95,6 +95,18 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             "{}",
             path.display()
         );
+        assert!(
+            skill.contains("ley_session_memory_verify"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("review-required"), "{}", path.display());
+        assert!(
+            skill.contains("semantic faithfulness"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("does not bind"), "{}", path.display());
         assert!(skill.contains("expectedEventCount"), "{}", path.display());
         assert!(
             skill.contains("Do not infer completion"),

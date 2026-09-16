@@ -13,7 +13,7 @@ MCP Roots are client-supplied workspace hints, not an authorization boundary, an
 
 `ley mcp [project] [--vault <temporary-vault>]` starts a local stdio MCP server using protocol version `2025-11-25`. Startup resolves exactly one initialized project and its persisted or explicit temporary vault binding. A ready server requires an existing, internally consistent artifact and graph snapshot. ADR 0018 later adds one packaging-safe fallback: outside a ready project, the process can complete MCP initialization with zero capabilities, tools, and resources so a global host integration does not fail startup. That inactive process still never discovers or creates projects, consumes MCP Roots, or accepts a project/vault selector in a tool call.
 
-The default read-only server currently exposes fifteen tools (the original surface plus later ADR extensions):
+The default read-only server currently exposes sixteen tools (the original surface plus later ADR extensions):
 
 | Tool | Result boundary |
 | --- | --- |
@@ -28,12 +28,13 @@ The default read-only server currently exposes fifteen tools (the original surfa
 | `ley_sessions_list` | At most 50 recent session summaries with bounded goal excerpts |
 | `ley_session_get` | One untrusted resume pack, at most 20 recent checkpoints and 32,000 text characters |
 | `ley_session_memory_compile` | Read-only bounded post-checkpoint prompt/response recovery pack with partial/metadata-only disclosure and a stable event-count guard for later writes |
+| `ley_session_memory_verify` | Read-only structural verification of a proposed recovery transition against exact evidence IDs, current event count, coverage, and duplicate/revision overlap; never semantic proof |
 | `ley_session_turns_get` | Explicit bounded prompt/response evidence read; turn bodies never enter startup context automatically |
 | `ley_learnings_list` | Trusted-first bounded learning summaries with explicit review/all scopes |
 | `ley_learning_get` | One bounded learning pack with trust, freshness, provenance, citations, and history |
 | `ley_project_resume` | Active/paused/recent work plus only current trusted lessons in one startup pack |
 
-All fifteen default tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. The only resource is `ley://project/<project-id>/overview`; unknown resources fail instead of mapping arbitrary URIs to files. The default process has no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout. ADR 0008 defines the explicit startup flag that adds append-only session writes; ADR 0010 separately governs review-required learning proposals; ADR 0011 defines startup selection.
+All sixteen default tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. The only resource is `ley://project/<project-id>/overview`; unknown resources fail instead of mapping arbitrary URIs to files. The default process has no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout. ADR 0008 defines the explicit startup flag that adds append-only session writes; ADR 0010 separately governs review-required learning proposals; ADR 0011 defines startup selection.
 
 Every successful result is structured JSON and repeats stable project or session identity. Project evidence carries a project-relative range, post-redaction content hash, provenance, confidence, trust state, and `untrusted-project-evidence` boundary. Session packs carry an `untrusted-agent-memory` boundary, an instruction warning, omission counts, and truncation state. Project results say `freshness: captured-snapshot` and `liveSourceChecked: false`; Ley does not imply that an old ingestion reflects the current working tree. Tool failures use MCP tool errors with sanitized messages rather than exposing absolute scope paths.
 
