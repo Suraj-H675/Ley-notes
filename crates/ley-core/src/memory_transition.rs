@@ -434,7 +434,11 @@ fn verify_transition(
         }
     } else if !issues.is_empty() {
         MemoryTransitionState::NeedsRevision
-    } else if input.claims.is_empty() {
+    } else if !valid_deferred.is_empty() {
+        // A checkpoint advances the recovery boundary past every earlier turn.
+        // Any intentionally deferred record must therefore keep the whole
+        // transition non-committable until that evidence is consumed or left
+        // for a later recovery decision.
         MemoryTransitionState::Deferred
     } else {
         MemoryTransitionState::ReviewRequired
@@ -960,6 +964,48 @@ mod tests {
         assert!(verification.coverage.coverage_complete);
         assert_eq!(verification.coverage.deferred_evidence, 2);
         assert_eq!(verification.coverage.used_evidence, 0);
+        assert!(verification.issues.is_empty());
+    }
+
+    #[test]
+    fn mixed_used_and_deferred_evidence_does_not_close_the_recovery_window() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Investigate the retry loop",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-1",
+            "No durable conclusion yet",
+        );
+        let verification = verify_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            MemoryTransitionInput {
+                expected_event_count: 3,
+                claims: vec![claim(
+                    MemoryCandidateKind::Unresolved,
+                    "Retry investigation",
+                    "The retry investigation remains open",
+                    vec![prompt_id],
+                )],
+                deferred_evidence_record_ids: vec![response_id],
+            },
+        )
+        .unwrap();
+        assert_eq!(verification.state, MemoryTransitionState::Deferred);
+        assert!(verification.coverage.coverage_complete);
+        assert_eq!(verification.coverage.used_evidence, 1);
+        assert_eq!(verification.coverage.deferred_evidence, 1);
         assert!(verification.issues.is_empty());
     }
 

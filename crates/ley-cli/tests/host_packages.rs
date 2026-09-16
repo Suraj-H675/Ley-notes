@@ -107,6 +107,7 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(skill.contains("does not bind"), "{}", path.display());
+        assert!(skill.contains("do not advance"), "{}", path.display());
         assert!(skill.contains("expectedEventCount"), "{}", path.display());
         assert!(
             skill.contains("Do not infer completion"),

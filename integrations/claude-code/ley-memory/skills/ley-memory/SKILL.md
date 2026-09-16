@@ -22,9 +22,11 @@ request, repository policy, or inspection of live source.
    with the pack's `sessionEventCount`. Only `review-required` means the candidate
    is structurally accounted; it still does **not** prove semantic faithfulness or
    live-source correctness. `needs-revision`/`stale` means do not write it;
-   `deferred` means preserve the evidence without inventing structure. The
-   verifier does not bind a later checkpoint payload to its candidate fingerprint,
-   so preserve the reviewed candidate semantics exactly. For a deliberate recovery
+   `deferred` means at least one current recovery record must stay unconsolidated,
+   so do not advance the recovery checkpoint boundary. `review-required` therefore
+   means no current recovery evidence remains deferred. The verifier does not bind
+   a later checkpoint payload to its candidate fingerprint, so preserve the reviewed
+   candidate semantics exactly. For a deliberate recovery
    checkpoint, pass the same `sessionEventCount` as `expectedEventCount`; if the
    write is stale, recompile and reverify.
 4. For a concrete current task, call `ley_compile_context` first. Respect its
