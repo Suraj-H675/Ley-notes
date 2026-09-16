@@ -452,6 +452,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         "capture_recovery": None,
         "memory_recovery": None,
         "memory_transition": None,
+        "memory_binding": None,
         "idempotency": None,
         "token_budget": None,
         "secret_exclusion": None,
@@ -619,6 +620,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 prompt_text = str(prompt_record.get("text", ""))
                 prompt_record_id = str(prompt_record.get("recordId", ""))
                 transition_ok = True
+                transition = {}
                 if scenario.get("expected_memory_transition_state"):
                     transition = mcp_call(
                         project,
@@ -652,18 +654,39 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                         failures.append(
                             f"memory transition failed: expected {expected_transition}, got {transition.get('state')}"
                         )
+                recovery_request_id = request_id(f"{scenario['id']}:memory-recovery")
+                commit_args = {
+                    "sessionId": session_id,
+                    "requestId": recovery_request_id,
+                    "expectedEventCount": event_count,
+                    "candidateFingerprint": transition.get("candidateFingerprint", ""),
+                    "subject": "Interrupted request",
+                    "statement": prompt_text or "A request was observed before interruption",
+                    "evidenceRecordIds": [prompt_record_id],
+                }
                 receipt = mcp_call(
                     project,
-                    "ley_session_checkpoint",
-                    {
-                        "sessionId": session_id,
-                        "requestId": request_id(f"{scenario['id']}:memory-recovery"),
-                        "expectedEventCount": event_count,
-                        "summary": "Recovered an interrupted request from retained prompt evidence; no assistant outcome was captured.",
-                        "unresolved": [prompt_text] if prompt_text else [],
-                    },
+                    "ley_session_memory_commit_unresolved",
+                    commit_args,
                     WRITE_FLAGS,
                 )
+                retry = mcp_call(
+                    project,
+                    "ley_session_memory_commit_unresolved",
+                    commit_args,
+                    WRITE_FLAGS,
+                )
+                binding_ok = (
+                    transition_ok
+                    and str(transition.get("candidateFingerprint", "")).startswith("sha256:")
+                    and receipt.get("eventCount") == event_count + 1
+                    and receipt.get("replayed") is False
+                    and retry.get("eventCount") == event_count + 1
+                    and retry.get("replayed") is True
+                )
+                scores["memory_binding"] = binding_ok
+                if not binding_ok:
+                    failures.append("bound recovery commit did not preserve verifier binding/idempotency")
                 after = mcp_call(
                     project,
                     "ley_session_memory_compile",
@@ -672,7 +695,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 recovery_ok = (
                     state_ok
                     and transition_ok
-                    and receipt.get("eventCount") == event_count + 1
+                    and binding_ok
                     and after.get("state") == "no-unconsolidated-evidence"
                     and after.get("totalUnconsolidatedEvidence") == 0
                 )
@@ -713,7 +736,7 @@ def main() -> int:
                 f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
                 flush=True,
             )
-            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "idempotency", "token_budget", "secret_exclusion"):
+            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "idempotency", "token_budget", "secret_exclusion"):
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):

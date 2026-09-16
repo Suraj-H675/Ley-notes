@@ -1,7 +1,10 @@
-use crate::session::read_session_for_memory_compiler;
+use crate::session::{
+    checkpoint_recovered_unresolved_session, read_session_for_memory_compiler,
+    replay_recovered_unresolved_session_if_present, RecoveredUnresolvedCheckpointInput,
+};
 use crate::{
-    AgentSession, LeyCoreError, SessionStatus, SessionTurnEvidence, TurnEvidenceRetention,
-    SESSION_EVENT_LIMIT,
+    AgentSession, LeyCoreError, SessionMutation, SessionStatus, SessionTurnEvidence,
+    TurnEvidenceRetention, SESSION_EVENT_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -74,6 +77,17 @@ pub struct MemoryTransitionInput {
     pub expected_event_count: u64,
     pub claims: Vec<MemoryCandidateClaim>,
     pub deferred_evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitUnresolvedMemoryTransitionInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub subject: String,
+    pub statement: String,
+    pub evidence_record_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -180,6 +194,59 @@ pub fn verify_memory_transition(
         latest_checkpoint_sequence.unwrap_or(0),
         input,
     ))
+}
+
+pub fn commit_unresolved_memory_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: CommitUnresolvedMemoryTransitionInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    let bound_input = RecoveredUnresolvedCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        evidence_record_ids: input.evidence_record_ids.clone(),
+        summary: input.subject.clone(),
+        unresolved: input.statement.clone(),
+    };
+    if let Some(replayed) = replay_recovered_unresolved_session_if_present(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        bound_input.clone(),
+    )? {
+        return Ok(replayed);
+    }
+    let transition = MemoryTransitionInput {
+        expected_event_count: input.expected_event_count,
+        claims: vec![MemoryCandidateClaim {
+            kind: MemoryCandidateKind::Unresolved,
+            subject: input.subject.clone(),
+            statement: input.statement.clone(),
+            evidence_record_ids: input.evidence_record_ids.clone(),
+        }],
+        deferred_evidence_record_ids: Vec::new(),
+    };
+    let verification = verify_memory_transition(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        transition,
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "bound recovery commit requires a current review-required unresolved candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery candidate fingerprint does not match the current verified transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_unresolved_session(project_start, vault, session_id, bound_input)
 }
 
 fn validate_input(input: &MemoryTransitionInput) -> Result<(), LeyCoreError> {
@@ -488,6 +555,28 @@ fn evidence_quality(
     }
     MemoryEvidenceAnchorQuality::Inspectable
 }
+pub(crate) fn unresolved_candidate_fingerprint(
+    session_id: &str,
+    expected_event_count: u64,
+    subject: &str,
+    statement: &str,
+    evidence_record_ids: &[String],
+) -> String {
+    candidate_fingerprint(
+        session_id,
+        &MemoryTransitionInput {
+            expected_event_count,
+            claims: vec![MemoryCandidateClaim {
+                kind: MemoryCandidateKind::Unresolved,
+                subject: subject.to_owned(),
+                statement: statement.to_owned(),
+                evidence_record_ids: evidence_record_ids.to_vec(),
+            }],
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )
+}
+
 fn candidate_fingerprint(session_id: &str, input: &MemoryTransitionInput) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"ley-memory-transition-v1");
@@ -886,6 +975,163 @@ mod tests {
         assert!(!verification.semantic_faithfulness_proven);
         assert!(!verification.live_source_checked);
         assert!(verification.candidate_fingerprint.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn verified_unresolved_candidate_commits_once_and_exact_retry_replays() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Investigate the retry loop",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-1",
+            "No durable conclusion yet",
+        );
+        let transition = MemoryTransitionInput {
+            expected_event_count: 3,
+            claims: vec![claim(
+                MemoryCandidateKind::Unresolved,
+                "Retry investigation",
+                "The retry investigation remains open",
+                vec![prompt_id.clone(), response_id.clone()],
+            )],
+            deferred_evidence_record_ids: Vec::new(),
+        };
+        let verification =
+            verify_memory_transition(&project, &vault, &session_id, transition).unwrap();
+        assert_eq!(verification.state, MemoryTransitionState::ReviewRequired);
+        let input = CommitUnresolvedMemoryTransitionInput {
+            request_id: format!("req_{}", "4".repeat(32)),
+            expected_event_count: 3,
+            candidate_fingerprint: verification.candidate_fingerprint,
+            subject: "Retry investigation".to_owned(),
+            statement: "The retry investigation remains open".to_owned(),
+            evidence_record_ids: vec![prompt_id, response_id],
+        };
+
+        let committed =
+            commit_unresolved_memory_transition(&project, &vault, &session_id, input.clone())
+                .unwrap();
+        assert!(!committed.replayed);
+        assert_eq!(committed.session.event_count, 4);
+        assert_eq!(committed.session.checkpoints.len(), 1);
+        assert_eq!(
+            committed.session.checkpoints[0].unresolved,
+            vec!["The retry investigation remains open"]
+        );
+
+        let replayed =
+            commit_unresolved_memory_transition(&project, &vault, &session_id, input).unwrap();
+        assert!(replayed.replayed);
+        assert_eq!(replayed.event_id, committed.event_id);
+        assert_eq!(replayed.session.event_count, 4);
+    }
+
+    #[test]
+    fn bound_commit_rejects_fingerprint_changes_stale_windows_and_partial_coverage() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Investigate the retry loop",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-1",
+            "No durable conclusion yet",
+        );
+        let verification = verify_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            MemoryTransitionInput {
+                expected_event_count: 3,
+                claims: vec![claim(
+                    MemoryCandidateKind::Unresolved,
+                    "Retry investigation",
+                    "The retry investigation remains open",
+                    vec![prompt_id.clone(), response_id.clone()],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        let base_input = CommitUnresolvedMemoryTransitionInput {
+            request_id: format!("req_{}", "4".repeat(32)),
+            expected_event_count: 3,
+            candidate_fingerprint: verification.candidate_fingerprint,
+            subject: "Retry investigation".to_owned(),
+            statement: "The retry investigation remains open".to_owned(),
+            evidence_record_ids: vec![prompt_id.clone(), response_id.clone()],
+        };
+
+        assert!(matches!(
+            commit_unresolved_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitUnresolvedMemoryTransitionInput {
+                    candidate_fingerprint: format!("sha256:{}", "f".repeat(64)),
+                    ..base_input.clone()
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("fingerprint")
+        ));
+        assert!(matches!(
+            commit_unresolved_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitUnresolvedMemoryTransitionInput {
+                    evidence_record_ids: vec![prompt_id],
+                    ..base_input.clone()
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("review-required")
+        ));
+
+        prompt(
+            &project,
+            &vault,
+            &session_id,
+            '5',
+            "turn-2",
+            "A newer turn arrived",
+        );
+        assert!(matches!(
+            commit_unresolved_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                base_input,
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("review-required")
+        ));
+        assert_eq!(
+            read_session_for_memory_compiler(&project, &vault, &session_id)
+                .unwrap()
+                .0
+                .event_count,
+            4
+        );
     }
 
     #[test]

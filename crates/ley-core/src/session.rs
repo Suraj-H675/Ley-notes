@@ -21,12 +21,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// mutation.
 pub const SESSION_SCHEMA_VERSION: u32 = 2;
 const SESSION_V1_SCHEMA_VERSION: u32 = 1;
+pub const SESSION_RECOVERY_SCHEMA_VERSION: u32 = 3;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
 pub const SESSION_TURN_EVIDENCE_LIMIT_BYTES: usize = 1_048_576;
 pub const SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS: usize = 4_000;
 pub const SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS: usize = 8_000;
+const SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT: usize = 1_000;
 
 const STORE_ROOT: &str = ".ley";
 const AGENT_MEMORY_DIRECTORY: &str = "agent-memory";
@@ -36,6 +38,7 @@ const EVENTS_DIRECTORY: &str = "events";
 const SESSION_LOCK_FILE: &str = "sessions-v1.lock";
 const SESSION_FILE: &str = "session-v1.json";
 const SESSION_V2_FILE: &str = "session-v2.json";
+const SESSION_V3_FILE: &str = "session-v3.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -532,6 +535,22 @@ struct SessionEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoveryCheckpointProvenance {
+    expected_event_count: u64,
+    candidate_fingerprint: String,
+    binding_fingerprint: String,
+    evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoveryCheckpointEvent {
+    checkpoint: Box<SessionCheckpoint>,
+    provenance: RecoveryCheckpointProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     content = "data",
@@ -546,6 +565,7 @@ enum SessionEventPayload {
         artifact_snapshot_id: String,
     },
     CheckpointRecorded(Box<SessionCheckpoint>),
+    RecoveryCheckpointRecorded(RecoveryCheckpointEvent),
     SessionFinished(SessionFinish),
     SessionRenamed(SessionRename),
     UserPromptObserved(SessionTurnEvidence),
@@ -747,6 +767,127 @@ fn checkpoint_session_with_expected_count(
     )
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct RecoveredUnresolvedCheckpointInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub evidence_record_ids: Vec<String>,
+    pub summary: String,
+    pub unresolved: String,
+}
+
+pub(crate) fn replay_recovered_unresolved_session_if_present(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredUnresolvedCheckpointInput,
+) -> Result<Option<SessionMutation>, LeyCoreError> {
+    let (project_id, pending) =
+        recovered_unresolved_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
+    replay_pending_event_if_present(&project_id, session_id, pending, vault)
+}
+
+pub(crate) fn checkpoint_recovered_unresolved_session(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredUnresolvedCheckpointInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    let (project_id, pending) =
+        recovered_unresolved_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
+    mutate_session(&project_id, session_id, pending, vault)
+}
+
+fn recovered_unresolved_pending(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: RecoveredUnresolvedCheckpointInput,
+) -> Result<(String, PendingEvent), LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    if !is_sha256(&input.candidate_fingerprint) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery candidate fingerprint must be sha256".to_owned(),
+        ));
+    }
+    if input.evidence_record_ids.is_empty()
+        || input.evidence_record_ids.len() > SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "recovery binding must cite between 1 and {SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT} evidence records"
+        )));
+    }
+    let mut evidence_record_ids = input.evidence_record_ids;
+    evidence_record_ids.sort();
+    if evidence_record_ids
+        .windows(2)
+        .any(|window| window[0] == window[1])
+        || evidence_record_ids
+            .iter()
+            .any(|record_id| !valid_prefixed_hex(record_id, "tev_", 32))
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery binding evidence IDs must be unique tev_ identifiers".to_owned(),
+        ));
+    }
+
+    let diagnostic = diagnose_project(project_start)?;
+    let memory = load_project_memory(&diagnostic.root, vault)?;
+    let event_id = deterministic_id(
+        "evt",
+        &format!(
+            "{session_id}:{}:recovery-checkpoint-recorded",
+            input.request_id
+        ),
+        64,
+    );
+    let recorded_at = unix_time_ms();
+    let checkpoint_input = CheckpointInput {
+        request_id: input.request_id.clone(),
+        summary: input.summary,
+        plan: Vec::new(),
+        decisions: Vec::new(),
+        tasks: Vec::new(),
+        problems: Vec::new(),
+        touched_artifacts: Vec::new(),
+        commands: Vec::new(),
+        verification: Vec::new(),
+        unresolved: vec![input.unresolved],
+    };
+    let (checkpoint, redactions) =
+        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let binding_fingerprint = recovery_binding_fingerprint(
+        session_id,
+        input.expected_event_count,
+        &input.candidate_fingerprint,
+        &evidence_record_ids,
+        &checkpoint.summary,
+        &checkpoint.unresolved[0],
+    );
+    Ok((
+        diagnostic.identity.project_id,
+        PendingEvent {
+            event_id,
+            request_id: input.request_id,
+            redactions,
+            payload: SessionEventPayload::RecoveryCheckpointRecorded(RecoveryCheckpointEvent {
+                checkpoint: Box::new(checkpoint),
+                provenance: RecoveryCheckpointProvenance {
+                    expected_event_count: input.expected_event_count,
+                    candidate_fingerprint: input.candidate_fingerprint,
+                    binding_fingerprint,
+                    evidence_record_ids,
+                },
+            }),
+            schema_version: SESSION_RECOVERY_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(input.expected_event_count),
+        },
+    ))
+}
+
 pub fn finish_session(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -869,8 +1010,12 @@ pub(crate) fn read_session_for_memory_compiler(
     let session_dir = store.open_session(session_id)?;
     let events = store.read_events(session_id, &session_dir)?;
     let latest_checkpoint_sequence = events.iter().rev().find_map(|event| {
-        matches!(&event.payload, SessionEventPayload::CheckpointRecorded(_))
-            .then_some(event.sequence)
+        matches!(
+            &event.payload,
+            SessionEventPayload::CheckpointRecorded(_)
+                | SessionEventPayload::RecoveryCheckpointRecorded(_)
+        )
+        .then_some(event.sequence)
     });
     let session = replay_events(&events, &diagnostic.identity.project_id, session_id)?;
     if session.checkpoints.is_empty() != latest_checkpoint_sequence.is_none() {
@@ -1505,6 +1650,95 @@ struct PendingEvent {
     expected_event_count: Option<u64>,
 }
 
+fn replay_pending_event_if_present(
+    project_id: &str,
+    session_id: &str,
+    mut pending: PendingEvent,
+    vault: impl AsRef<Path>,
+) -> Result<Option<SessionMutation>, LeyCoreError> {
+    let Some(store) = SessionStore::open(&vault, project_id, false)? else {
+        return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
+    };
+    let _lock = store.lock(false)?;
+    let session_dir = store.open_session(session_id)?;
+    let existing = store.read_events(session_id, &session_dir)?;
+    let Some(event) = existing
+        .iter()
+        .find(|event| event.event_id == pending.event_id)
+    else {
+        if existing
+            .iter()
+            .any(|event| event.request_id == pending.request_id)
+        {
+            return Err(LeyCoreError::SessionIdempotencyConflict(pending.request_id));
+        }
+        return Ok(None);
+    };
+    align_turn_evidence_retry(&mut pending, &event.payload);
+    let request_fingerprint = request_fingerprint(
+        project_id,
+        session_id,
+        &pending.request_id,
+        &pending.payload,
+    )?;
+    if event.request_fingerprint != request_fingerprint
+        || !retry_payload_matches(&event.payload, &pending.payload)
+    {
+        return Err(LeyCoreError::SessionIdempotencyConflict(pending.request_id));
+    }
+    let session = store.rebuild_session_from_dir(session_id, &session_dir)?;
+    store.persist_projection(&session_dir, &session)?;
+    Ok(Some(mutation(session, &pending.event_id, true)))
+}
+
+fn validate_pending_recovery_window(
+    session_id: &str,
+    payload: &SessionEventPayload,
+    existing: &[SessionEvent],
+) -> Result<(), LeyCoreError> {
+    let SessionEventPayload::RecoveryCheckpointRecorded(recovery) = payload else {
+        return Ok(());
+    };
+    if recovery.provenance.expected_event_count != existing.len() as u64 {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery checkpoint event count changed; reverify before saving".to_owned(),
+        ));
+    }
+    let mut recovery_window = Vec::new();
+    for event in existing {
+        match &event.payload {
+            SessionEventPayload::CheckpointRecorded(_)
+            | SessionEventPayload::RecoveryCheckpointRecorded(_) => recovery_window.clear(),
+            SessionEventPayload::UserPromptObserved(evidence)
+            | SessionEventPayload::AssistantResponseObserved(evidence) => {
+                recovery_window.push(evidence.record_id.clone());
+            }
+            _ => {}
+        }
+    }
+    recovery_window.sort();
+    if recovery_window != recovery.provenance.evidence_record_ids {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery evidence window changed; recompile and reverify before saving".to_owned(),
+        ));
+    }
+    let normalized_candidate_fingerprint =
+        crate::memory_transition::unresolved_candidate_fingerprint(
+            session_id,
+            recovery.provenance.expected_event_count,
+            &recovery.checkpoint.summary,
+            &recovery.checkpoint.unresolved[0],
+            &recovery.provenance.evidence_record_ids,
+        );
+    if normalized_candidate_fingerprint != recovery.provenance.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery candidate changed under checkpoint normalization; recompile and reverify the sanitized content"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn mutate_session(
     project_id: &str,
     session_id: &str,
@@ -1568,6 +1802,7 @@ fn mutate_session(
             )));
         }
     }
+    validate_pending_recovery_window(session_id, &pending.payload, &existing)?;
     let sequence = existing.len() as u64 + 1;
     if sequence as usize > SESSION_EVENT_LIMIT {
         return Err(LeyCoreError::InvalidSessionStore(format!(
@@ -1710,6 +1945,11 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
             checkpoint.recorded_at_unix_ms = checkpoint.recorded_at_unix_ms.max(minimum);
             checkpoint.recorded_at_unix_ms
         }
+        SessionEventPayload::RecoveryCheckpointRecorded(recovery) => {
+            recovery.checkpoint.recorded_at_unix_ms =
+                recovery.checkpoint.recorded_at_unix_ms.max(minimum);
+            recovery.checkpoint.recorded_at_unix_ms
+        }
         SessionEventPayload::SessionFinished(finish) => {
             finish.recorded_at_unix_ms = finish.recorded_at_unix_ms.max(minimum);
             finish.recorded_at_unix_ms
@@ -1727,7 +1967,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_RECOVERY_SCHEMA_VERSION {
+        SESSION_V3_FILE
+    } else if session.schema_version >= SESSION_SCHEMA_VERSION {
         SESSION_V2_FILE
     } else {
         SESSION_FILE
@@ -2029,14 +2271,11 @@ fn replay_events(
         ));
     };
     let mut session = AgentSession {
-        schema_version: if events
+        schema_version: events
             .iter()
-            .any(|event| event.schema_version == SESSION_SCHEMA_VERSION)
-        {
-            SESSION_SCHEMA_VERSION
-        } else {
-            SESSION_V1_SCHEMA_VERSION
-        },
+            .map(|event| event.schema_version)
+            .max()
+            .unwrap_or(SESSION_V1_SCHEMA_VERSION),
         project_id: project_id.to_owned(),
         session_id: session_id.to_owned(),
         name: name.clone(),
@@ -2055,6 +2294,7 @@ fn replay_events(
         renames: Vec::new(),
         finish: None,
     };
+    let mut recovery_window = Vec::new();
     for event in &events[1..] {
         if session.status != SessionStatus::Active
             && !matches!(&event.payload, SessionEventPayload::SessionRenamed(_))
@@ -2071,6 +2311,14 @@ fn replay_events(
             }
             SessionEventPayload::CheckpointRecorded(checkpoint) => {
                 session.checkpoints.push(checkpoint.as_ref().clone());
+                recovery_window.clear();
+            }
+            SessionEventPayload::RecoveryCheckpointRecorded(recovery) => {
+                validate_recovery_checkpoint_history(event, recovery, &recovery_window)?;
+                session
+                    .checkpoints
+                    .push(recovery.checkpoint.as_ref().clone());
+                recovery_window.clear();
             }
             SessionEventPayload::SessionFinished(finish) => {
                 session.status = finish.status;
@@ -2082,9 +2330,11 @@ fn replay_events(
                 session.renames.push(rename.clone());
             }
             SessionEventPayload::UserPromptObserved(evidence) => {
+                recovery_window.push(evidence.record_id.clone());
                 session.prompts.push(evidence.clone());
             }
             SessionEventPayload::AssistantResponseObserved(evidence) => {
+                recovery_window.push(evidence.record_id.clone());
                 session.responses.push(evidence.clone());
             }
         }
@@ -2096,6 +2346,37 @@ fn replay_events(
     Ok(session)
 }
 
+fn validate_recovery_checkpoint_history(
+    event: &SessionEvent,
+    recovery: &RecoveryCheckpointEvent,
+    recovery_window: &[String],
+) -> Result<(), LeyCoreError> {
+    if recovery.provenance.expected_event_count != event.sequence.saturating_sub(1) {
+        return invalid_session_store(
+            "recovery checkpoint expected event count does not match its sequence",
+        );
+    }
+    let mut expected_evidence = recovery_window.to_vec();
+    expected_evidence.sort();
+    if expected_evidence != recovery.provenance.evidence_record_ids {
+        return invalid_session_store(
+            "recovery checkpoint evidence does not match the complete post-checkpoint window",
+        );
+    }
+    let expected_binding = recovery_binding_fingerprint(
+        &event.session_id,
+        recovery.provenance.expected_event_count,
+        &recovery.provenance.candidate_fingerprint,
+        &recovery.provenance.evidence_record_ids,
+        &recovery.checkpoint.summary,
+        &recovery.checkpoint.unresolved[0],
+    );
+    if expected_binding != recovery.provenance.binding_fingerprint {
+        return invalid_session_store("recovery checkpoint binding fingerprint is invalid");
+    }
+    Ok(())
+}
+
 fn validate_event(
     event: &SessionEvent,
     project_id: &str,
@@ -2103,7 +2384,7 @@ fn validate_event(
 ) -> Result<(), LeyCoreError> {
     if !matches!(
         event.schema_version,
-        SESSION_V1_SCHEMA_VERSION | SESSION_SCHEMA_VERSION
+        SESSION_V1_SCHEMA_VERSION | SESSION_SCHEMA_VERSION | SESSION_RECOVERY_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -2128,6 +2409,7 @@ fn validate_event(
     let kind = match event.payload {
         SessionEventPayload::SessionStarted { .. } => "session-started",
         SessionEventPayload::CheckpointRecorded(_) => "checkpoint-recorded",
+        SessionEventPayload::RecoveryCheckpointRecorded(_) => "recovery-checkpoint-recorded",
         SessionEventPayload::SessionFinished(_) => "session-finished",
         SessionEventPayload::SessionRenamed(_) => "session-renamed",
         SessionEventPayload::UserPromptObserved(_) => "user-prompt-observed",
@@ -2183,6 +2465,9 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
             validate_stored_text("checkpoint.summary", &checkpoint.summary, 1, 16_000)?;
             validate_checkpoint_records(checkpoint, &event.event_id)?;
         }
+        SessionEventPayload::RecoveryCheckpointRecorded(recovery) => {
+            validate_recovery_checkpoint_event(event, recovery)?;
+        }
         SessionEventPayload::SessionFinished(finish) => {
             if finish.event_id != event.event_id
                 || finish.recorded_at_unix_ms != event.recorded_at_unix_ms
@@ -2216,13 +2501,99 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
         SessionEventPayload::UserPromptObserved(_)
             | SessionEventPayload::AssistantResponseObserved(_)
     );
-    if event.schema_version == SESSION_V1_SCHEMA_VERSION && is_turn_event {
+    let is_recovery_checkpoint = matches!(
+        event.payload,
+        SessionEventPayload::RecoveryCheckpointRecorded(_)
+    );
+    if event.schema_version == SESSION_V1_SCHEMA_VERSION
+        && (is_turn_event || is_recovery_checkpoint)
+    {
         return invalid_session_store(
-            "turn evidence events require session event schema version 2",
+            "schema version 1 cannot store turn evidence or bound recovery checkpoints",
         );
     }
     if event.schema_version == SESSION_SCHEMA_VERSION && !is_turn_event {
-        return invalid_session_store("lifecycle events require session event schema version 1");
+        return invalid_session_store("schema version 2 is reserved for turn evidence");
+    }
+    if event.schema_version == SESSION_RECOVERY_SCHEMA_VERSION && !is_recovery_checkpoint {
+        return invalid_session_store(
+            "schema version 3 is reserved for bound recovery checkpoints",
+        );
+    }
+    Ok(())
+}
+
+fn validate_recovery_checkpoint_event(
+    event: &SessionEvent,
+    recovery: &RecoveryCheckpointEvent,
+) -> Result<(), LeyCoreError> {
+    let checkpoint = recovery.checkpoint.as_ref();
+    if checkpoint.event_id != event.event_id
+        || checkpoint.recorded_at_unix_ms != event.recorded_at_unix_ms
+        || checkpoint.id != child_id("ckp", &event.event_id, 0)
+    {
+        return invalid_session_store("recovery checkpoint identity is invalid");
+    }
+    validate_stored_text("checkpoint.summary", &checkpoint.summary, 1, 16_000)?;
+    validate_checkpoint_records(checkpoint, &event.event_id)?;
+    if !checkpoint.plan.is_empty()
+        || !checkpoint.decisions.is_empty()
+        || !checkpoint.tasks.is_empty()
+        || !checkpoint.problems.is_empty()
+        || !checkpoint.touched_artifacts.is_empty()
+        || !checkpoint.commands.is_empty()
+        || !checkpoint.verification.is_empty()
+        || checkpoint.unresolved.len() != 1
+    {
+        return invalid_session_store(
+            "bound recovery checkpoint must contain exactly one unresolved claim and no other typed records",
+        );
+    }
+    if recovery.provenance.expected_event_count != event.sequence.saturating_sub(1) {
+        return invalid_session_store(
+            "recovery checkpoint expected event count does not match its sequence",
+        );
+    }
+    if !is_sha256(&recovery.provenance.candidate_fingerprint)
+        || !is_sha256(&recovery.provenance.binding_fingerprint)
+    {
+        return invalid_session_store("recovery checkpoint fingerprint is invalid");
+    }
+    let evidence = &recovery.provenance.evidence_record_ids;
+    if evidence.is_empty() || evidence.len() > SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT {
+        return invalid_session_store("recovery checkpoint evidence set is invalid");
+    }
+    if evidence
+        .iter()
+        .any(|record_id| !valid_prefixed_hex(record_id, "tev_", 32))
+        || evidence.windows(2).any(|window| window[0] >= window[1])
+    {
+        return invalid_session_store(
+            "recovery checkpoint evidence IDs must be sorted unique tev_ identifiers",
+        );
+    }
+    let expected_candidate = crate::memory_transition::unresolved_candidate_fingerprint(
+        &event.session_id,
+        recovery.provenance.expected_event_count,
+        &checkpoint.summary,
+        &checkpoint.unresolved[0],
+        evidence,
+    );
+    if recovery.provenance.candidate_fingerprint != expected_candidate {
+        return invalid_session_store(
+            "recovery checkpoint candidate fingerprint does not match its bound unresolved claim",
+        );
+    }
+    let expected_binding = recovery_binding_fingerprint(
+        &event.session_id,
+        recovery.provenance.expected_event_count,
+        &recovery.provenance.candidate_fingerprint,
+        evidence,
+        &checkpoint.summary,
+        &checkpoint.unresolved[0],
+    );
+    if recovery.provenance.binding_fingerprint != expected_binding {
+        return invalid_session_store("recovery checkpoint binding fingerprint is invalid");
     }
     Ok(())
 }
@@ -2602,6 +2973,44 @@ fn child_id(prefix: &str, parent: &str, index: usize) -> String {
     deterministic_id(prefix, &format!("{parent}:{index}"), 32)
 }
 
+fn stabilize_checkpoint_for_fingerprint(checkpoint: &mut SessionCheckpoint) {
+    checkpoint.recorded_at_unix_ms = 0;
+    checkpoint.project_revision = None;
+    for citation in &mut checkpoint.touched_artifacts {
+        citation.artifact_snapshot_id.clear();
+        citation.content_hash.clear();
+        citation.start_line = 0;
+        citation.end_line = 0;
+    }
+}
+
+fn recovery_binding_fingerprint(
+    session_id: &str,
+    expected_event_count: u64,
+    candidate_fingerprint: &str,
+    evidence_record_ids: &[String],
+    summary: &str,
+    unresolved: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ley-recovery-checkpoint-binding-v1");
+    hasher.update([0]);
+    hasher.update(session_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(expected_event_count.to_le_bytes());
+    hasher.update([0]);
+    hasher.update(candidate_fingerprint.as_bytes());
+    hasher.update([0]);
+    hasher.update(summary.as_bytes());
+    hasher.update([0]);
+    hasher.update(unresolved.as_bytes());
+    for record_id in evidence_record_ids {
+        hasher.update([0]);
+        hasher.update(record_id.as_bytes());
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 fn request_fingerprint(
     project_id: &str,
     session_id: &str,
@@ -2619,15 +3028,13 @@ fn request_fingerprint(
         },
         SessionEventPayload::CheckpointRecorded(checkpoint) => {
             let mut checkpoint = checkpoint.clone();
-            checkpoint.recorded_at_unix_ms = 0;
-            checkpoint.project_revision = None;
-            for citation in &mut checkpoint.touched_artifacts {
-                citation.artifact_snapshot_id.clear();
-                citation.content_hash.clear();
-                citation.start_line = 0;
-                citation.end_line = 0;
-            }
+            stabilize_checkpoint_for_fingerprint(&mut checkpoint);
             SessionEventPayload::CheckpointRecorded(checkpoint)
+        }
+        SessionEventPayload::RecoveryCheckpointRecorded(recovery) => {
+            let mut recovery = recovery.clone();
+            stabilize_checkpoint_for_fingerprint(&mut recovery.checkpoint);
+            SessionEventPayload::RecoveryCheckpointRecorded(recovery)
         }
         SessionEventPayload::SessionFinished(finish) => {
             let mut finish = finish.clone();
@@ -3208,6 +3615,24 @@ mod tests {
             host: Some("codex".to_owned()),
             correlation_material: Some("trusted-adapter-correlation".to_owned()),
             text: text.into(),
+        }
+    }
+
+    fn recovered_unresolved_input(
+        request_id: String,
+        expected_event_count: u64,
+        candidate_fingerprint: String,
+        evidence_record_ids: Vec<String>,
+        summary: &str,
+        unresolved: &str,
+    ) -> RecoveredUnresolvedCheckpointInput {
+        RecoveredUnresolvedCheckpointInput {
+            request_id,
+            expected_event_count,
+            candidate_fingerprint,
+            evidence_record_ids,
+            summary: summary.to_owned(),
+            unresolved: unresolved.to_owned(),
         }
     }
 
@@ -3935,6 +4360,339 @@ mod tests {
                 .count(),
             5
         );
+    }
+
+    #[test]
+    fn bound_recovery_checkpoint_is_provenance_preserving_and_idempotent() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('a'))).unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('b'), "Investigate the retry loop"),
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts[0].record_id.clone();
+        let response = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('c'), "No durable conclusion yet"),
+        )
+        .unwrap();
+        let response_id = response.session.responses[0].record_id.clone();
+        let candidate_fingerprint = crate::memory_transition::unresolved_candidate_fingerprint(
+            &started.session.session_id,
+            3,
+            "Retry investigation",
+            "The retry investigation remains open",
+            &[prompt_id.clone(), response_id.clone()],
+        );
+        let recovery_request = request_id('d');
+
+        let committed = checkpoint_recovered_unresolved_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            recovered_unresolved_input(
+                recovery_request.clone(),
+                3,
+                candidate_fingerprint.clone(),
+                vec![response_id.clone(), prompt_id.clone()],
+                "Retry investigation",
+                "The retry investigation remains open",
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            committed.session.schema_version,
+            SESSION_RECOVERY_SCHEMA_VERSION
+        );
+        assert_eq!(committed.session.event_count, 4);
+        assert_eq!(committed.session.checkpoints.len(), 1);
+        assert_eq!(
+            committed.session.checkpoints[0].unresolved,
+            vec!["The retry investigation remains open"]
+        );
+        let directory = session_directory(&project, &vault, &started.session.session_id);
+        assert!(directory.join(SESSION_V3_FILE).exists());
+        assert!(committed.session_path.ends_with(SESSION_V3_FILE));
+
+        let replayed = checkpoint_recovered_unresolved_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            recovered_unresolved_input(
+                recovery_request.clone(),
+                3,
+                candidate_fingerprint.clone(),
+                vec![prompt_id.clone(), response_id.clone()],
+                "Retry investigation",
+                "The retry investigation remains open",
+            ),
+        )
+        .unwrap();
+        assert!(replayed.replayed);
+        assert_eq!(replayed.session.event_count, 4);
+
+        assert!(matches!(
+            checkpoint_recovered_unresolved_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                recovered_unresolved_input(
+                    recovery_request,
+                    3,
+                    format!("sha256:{}", "b".repeat(64)),
+                    vec![prompt_id, response_id],
+                    "Retry investigation",
+                    "The retry investigation remains open",
+                ),
+            ),
+            Err(LeyCoreError::SessionIdempotencyConflict(_))
+        ));
+    }
+
+    #[test]
+    fn bound_recovery_checkpoint_rejects_stale_or_incomplete_window_before_append() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('2'), "Investigate the retry loop"),
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts[0].record_id.clone();
+        let response = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('3'), "No durable conclusion yet"),
+        )
+        .unwrap();
+        let response_id = response.session.responses[0].record_id.clone();
+
+        assert!(matches!(
+            checkpoint_recovered_unresolved_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                recovered_unresolved_input(
+                    request_id('4'),
+                    2,
+                    format!("sha256:{}", "c".repeat(64)),
+                    vec![prompt_id.clone()],
+                    "Retry investigation",
+                    "The retry investigation remains open",
+                ),
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("reload before saving")
+        ));
+        assert!(matches!(
+            checkpoint_recovered_unresolved_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                recovered_unresolved_input(
+                    request_id('5'),
+                    3,
+                    format!("sha256:{}", "d".repeat(64)),
+                    vec![response_id.clone()],
+                    "Retry investigation",
+                    "The retry investigation remains open",
+                ),
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("recovery evidence window changed")
+        ));
+        let secret_statement = "The retry investigation remains open with token=secret-value";
+        let secret_fingerprint = crate::memory_transition::unresolved_candidate_fingerprint(
+            &started.session.session_id,
+            3,
+            "Retry investigation",
+            secret_statement,
+            &[prompt_id.clone(), response_id.clone()],
+        );
+        assert!(matches!(
+            checkpoint_recovered_unresolved_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                recovered_unresolved_input(
+                    request_id('6'),
+                    3,
+                    secret_fingerprint,
+                    vec![prompt_id, response_id],
+                    "Retry investigation",
+                    secret_statement,
+                ),
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("changed under checkpoint normalization")
+        ));
+        assert_eq!(
+            read_session(&project, &vault, &started.session.session_id)
+                .unwrap()
+                .event_count,
+            3
+        );
+        assert_eq!(
+            std::fs::read_dir(
+                session_directory(&project, &vault, &started.session.session_id)
+                    .join(EVENTS_DIRECTORY)
+            )
+            .unwrap()
+            .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn bound_recovery_checkpoint_replay_rejects_incomplete_or_rebound_provenance() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('5'))).unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('6'), "Investigate the retry loop"),
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts[0].record_id.clone();
+        let response = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('7'), "No durable conclusion yet"),
+        )
+        .unwrap();
+        let response_id = response.session.responses[0].record_id.clone();
+        let candidate_fingerprint = crate::memory_transition::unresolved_candidate_fingerprint(
+            &started.session.session_id,
+            3,
+            "Retry investigation",
+            "The retry investigation remains open",
+            &[prompt_id.clone(), response_id.clone()],
+        );
+        let committed = checkpoint_recovered_unresolved_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            recovered_unresolved_input(
+                request_id('8'),
+                3,
+                candidate_fingerprint,
+                vec![prompt_id, response_id],
+                "Retry investigation",
+                "The retry investigation remains open",
+            ),
+        )
+        .unwrap();
+        let event_path = session_directory(&project, &vault, &started.session.session_id)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", committed.event_id));
+        let mut event: SessionEvent =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        let SessionEventPayload::RecoveryCheckpointRecorded(recovery) = &mut event.payload else {
+            panic!("expected recovery checkpoint event");
+        };
+        recovery.provenance.evidence_record_ids.pop();
+        recovery.provenance.candidate_fingerprint =
+            crate::memory_transition::unresolved_candidate_fingerprint(
+                &event.session_id,
+                recovery.provenance.expected_event_count,
+                &recovery.checkpoint.summary,
+                &recovery.checkpoint.unresolved[0],
+                &recovery.provenance.evidence_record_ids,
+            );
+        recovery.provenance.binding_fingerprint = recovery_binding_fingerprint(
+            &event.session_id,
+            recovery.provenance.expected_event_count,
+            &recovery.provenance.candidate_fingerprint,
+            &recovery.provenance.evidence_record_ids,
+            &recovery.checkpoint.summary,
+            &recovery.checkpoint.unresolved[0],
+        );
+        event.request_fingerprint = request_fingerprint(
+            &event.project_id,
+            &event.session_id,
+            &event.request_id,
+            &event.payload,
+        )
+        .unwrap();
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&event).unwrap()).unwrap();
+        assert!(matches!(
+            read_session(&project, &vault, &started.session.session_id),
+            Err(LeyCoreError::InvalidSessionStore(message))
+                if message.contains("complete post-checkpoint window")
+        ));
+
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('9'))).unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('a'), "Investigate the retry loop"),
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts[0].record_id.clone();
+        let candidate_fingerprint = crate::memory_transition::unresolved_candidate_fingerprint(
+            &started.session.session_id,
+            2,
+            "Retry investigation",
+            "The retry investigation remains open",
+            std::slice::from_ref(&prompt_id),
+        );
+        let committed = checkpoint_recovered_unresolved_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            recovered_unresolved_input(
+                request_id('b'),
+                2,
+                candidate_fingerprint,
+                vec![prompt_id],
+                "Retry investigation",
+                "The retry investigation remains open",
+            ),
+        )
+        .unwrap();
+        let event_path = session_directory(&project, &vault, &started.session.session_id)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", committed.event_id));
+        let mut event: SessionEvent =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        let SessionEventPayload::RecoveryCheckpointRecorded(recovery) = &mut event.payload else {
+            panic!("expected recovery checkpoint event");
+        };
+        recovery.checkpoint.unresolved[0] = "A different unresolved claim".to_owned();
+        recovery.provenance.candidate_fingerprint =
+            crate::memory_transition::unresolved_candidate_fingerprint(
+                &event.session_id,
+                recovery.provenance.expected_event_count,
+                &recovery.checkpoint.summary,
+                &recovery.checkpoint.unresolved[0],
+                &recovery.provenance.evidence_record_ids,
+            );
+        event.request_fingerprint = request_fingerprint(
+            &event.project_id,
+            &event.session_id,
+            &event.request_id,
+            &event.payload,
+        )
+        .unwrap();
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&event).unwrap()).unwrap();
+        assert!(matches!(
+            read_session(&project, &vault, &started.session.session_id),
+            Err(LeyCoreError::InvalidSessionStore(message))
+                if message.contains("binding fingerprint")
+        ));
     }
 
     #[test]

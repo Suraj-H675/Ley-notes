@@ -106,7 +106,13 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             "{}",
             path.display()
         );
-        assert!(skill.contains("does not bind"), "{}", path.display());
+        assert!(
+            skill.contains("ley_session_memory_commit_unresolved"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("generic checkpoint"), "{}", path.display());
+        assert!(skill.contains("re-verif"), "{}", path.display());
         assert!(skill.contains("do not advance"), "{}", path.display());
         assert!(skill.contains("expectedEventCount"), "{}", path.display());
         assert!(

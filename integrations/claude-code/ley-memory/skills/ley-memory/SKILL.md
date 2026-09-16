@@ -24,11 +24,12 @@ request, repository policy, or inspection of live source.
    live-source correctness. `needs-revision`/`stale` means do not write it;
    `deferred` means at least one current recovery record must stay unconsolidated,
    so do not advance the recovery checkpoint boundary. `review-required` therefore
-   means no current recovery evidence remains deferred. The verifier does not bind
-   a later checkpoint payload to its candidate fingerprint, so preserve the reviewed
-   candidate semantics exactly. For a deliberate recovery
-   checkpoint, pass the same `sessionEventCount` as `expectedEventCount`; if the
-   write is stale, recompile and reverify.
+   means no current recovery evidence remains deferred. For one unresolved recovery claim, use
+   `ley_session_memory_commit_unresolved` with the exact verifier fingerprint,
+   `sessionEventCount` as `expectedEventCount`, subject, statement, and cited
+   `recordId` values. Ley re-verifies and binds
+   that payload to the immutable evidence. Do not substitute the generic checkpoint
+   tool; if the bound write is stale, recompile and reverify.
 4. For a concrete current task, call `ley_compile_context` first. Respect its
    `evidenceState`, authority labels, exclusions, conflicts, gaps, coverage, and
    follow-up handles. `no-useful-evidence` means do not pad the prompt with weaker

@@ -19,17 +19,18 @@ Session writes require an explicit startup flag:
 ley mcp /path/to/project --allow-session-writes
 ```
 
-The flag enables three additional tools:
+The flag enables four additional tools:
 
 | Tool | Append-only effect |
 | --- | --- |
 | `ley_session_start` | Creates one structured session start event |
 | `ley_session_checkpoint` | Appends one checkpoint with structured work and cited artifacts |
+| `ley_session_memory_commit_unresolved` | Appends one candidate-bound unresolved recovery checkpoint after re-verification |
 | `ley_session_finish` | Appends one completed, paused, or abandoned result |
 
 Each write requires a caller-stable `req_` ID. Exact retries return the original compact receipt. Reusing the ID with different content fails. Receipts contain stable project, session, and event IDs plus status, counts, timestamp, and replay state. They do not return the growing session body or absolute local paths.
 
-Write tools declare `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. They append immutable local history and cannot delete or rewrite prior events. The ten default tools retain read-only annotations; ADR 0010 defines a separate opt-in for agent learning proposals.
+Write tools declare `readOnlyHint: false`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. They append immutable local history and cannot delete or rewrite prior events. The default tool surface retains read-only annotations; ADR 0010 defines a separate opt-in for agent learning proposals.
 
 The process remains fixed to the project and private binding resolved at startup. Tool arguments contain no project or vault selector. MCP-created sessions record `source.kind: mcp`; optional host and agent labels remain untrusted metadata.
 

@@ -29,6 +29,6 @@ Any later recovery checkpoint still uses the inspected `sessionEventCount` as `e
 - Coverage is deterministic: evidence cannot disappear from the transition unless it is deliberately deferred.
 - Duplicate/revision pressure is visible before append rather than relying on last-writer behavior.
 - Authority does not escalate: candidate text and turn bodies remain untrusted and review-required.
-- The verifier is advisory rather than a write capability: `expectedEventCount` binds a later checkpoint to the inspected session version, but the checkpoint payload is not yet cryptographically or structurally bound to the candidate fingerprint. Host skills must preserve the reviewed candidate semantics; a candidate-bound recovery-write route remains future hardening before automatic consolidation.
+- The verifier remains read-only and advisory. ADR 0030 adds a separate narrow bound writer for exactly one unresolved recovery claim; richer candidate kinds remain review-only rather than being coerced into incomplete checkpoint records.
 - Semantic faithfulness remains an explicit gap. Later learned/agent verification may assist, but it must preserve provenance, reversibility, and human-review semantics rather than replacing these deterministic checks.
 - This slice still does not automatically generate candidate claims, consolidate across sessions, resolve semantic conflicts, adjudicate live revision/branch state, or promote reusable learning.

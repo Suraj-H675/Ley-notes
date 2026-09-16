@@ -92,7 +92,8 @@ pub use memory_compiler::{
     MAX_MEMORY_COMPILE_CHARACTERS, MAX_MEMORY_COMPILE_RESULTS, MIN_MEMORY_COMPILE_CHARACTERS,
 };
 pub use memory_transition::{
-    verify_memory_transition, MemoryCandidateClaim, MemoryCandidateKind,
+    commit_unresolved_memory_transition, verify_memory_transition,
+    CommitUnresolvedMemoryTransitionInput, MemoryCandidateClaim, MemoryCandidateKind,
     MemoryEvidenceAnchorQuality, MemoryTransitionClaimCheck, MemoryTransitionCoverage,
     MemoryTransitionInput, MemoryTransitionIssue, MemoryTransitionIssueKind,
     MemoryTransitionOverlap, MemoryTransitionOverlapKind, MemoryTransitionState,
@@ -159,8 +160,8 @@ pub use session::{
     TurnEvidenceInput, TurnEvidenceOrigin, TurnEvidenceRetention, VerificationInput,
     VerificationRecord, VerificationStatus, SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES,
     SESSION_PROJECTION_LIMIT_BYTES, SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS,
-    SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS, SESSION_SCHEMA_VERSION,
-    SESSION_TURN_EVIDENCE_LIMIT_BYTES,
+    SESSION_RECOVERY_SCHEMA_VERSION, SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS,
+    SESSION_SCHEMA_VERSION, SESSION_TURN_EVIDENCE_LIMIT_BYTES,
 };
 pub use session_context::{
     list_session_contexts, read_session_context, read_session_turns_context, SessionContextAttempt,
