@@ -27,6 +27,7 @@ mod retrieval;
 mod semantic_retrieval;
 mod session;
 mod session_context;
+mod specification;
 
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
@@ -174,6 +175,18 @@ pub use session_context::{
     MAX_SESSION_CONTEXT_CHARACTERS, MAX_SESSION_CONTEXT_CHECKPOINTS, MAX_SESSION_CONTEXT_RENAMES,
     MAX_SESSION_LIST_RESULTS, MAX_SESSION_TURN_CHARACTERS, MAX_SESSION_TURN_RESULTS,
     MIN_SESSION_CONTEXT_CHARACTERS, MIN_SESSION_TURN_CHARACTERS,
+};
+pub use specification::{
+    generate_specification_id, project_specifications_context, specification_content_hash,
+    ApprovedSpecificationSource, ProjectSpecificationsContext, SpecificationApproval,
+    SpecificationApprovalState, SpecificationAuthority, SpecificationAuthorityList,
+    SpecificationContextExclusion, SpecificationContextExclusionReason, SpecificationContextItem,
+    SpecificationContextLimits, SpecificationRegistry, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
+    DEFAULT_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_APPROVALS_PER_PROJECT,
+    MAX_SPECIFICATION_BYTES, MAX_SPECIFICATION_CONTEXT_CHARACTERS,
+    MAX_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_PATH_CHARACTERS,
+    MIN_SPECIFICATION_CONTEXT_CHARACTERS, SPECIFICATION_REGISTRY_FILE,
+    SPECIFICATION_REGISTRY_SCHEMA_VERSION,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";
@@ -334,6 +347,17 @@ pub enum LeyCoreError {
     InvalidBindingRegistry(String),
     #[error("invalid Ley project catalog: {0}")]
     InvalidProjectCatalog(String),
+    #[error("invalid Ley specification approval registry: {0}")]
+    InvalidSpecificationRegistry(String),
+    #[error("invalid Ley specification request: {0}")]
+    InvalidSpecificationRequest(String),
+    #[error("Ley Specification is not approved for this project: {0}")]
+    SpecificationNotApproved(String),
+    #[error("approved Ley Specification {specification_id} changed at {path}; review and approve the new revision")]
+    SpecificationApprovalStale {
+        specification_id: String,
+        path: String,
+    },
     #[error(
         "project identity {project_id} is already active at {observed_root}; the selected copy at {requested_root} needs a new .ley identity"
     )]

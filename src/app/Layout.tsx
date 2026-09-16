@@ -491,6 +491,7 @@ export function Layout({
               vaultMode={vaultMode}
               vaultPath={vaultKey}
               vaultName={vaultName}
+              activeNote={activePage}
               onClose={() => setAgentMemoryOpen(false)}
               onPromoteLearning={promoteLearningToNote}
               onPromoteSession={promoteSessionToNote}

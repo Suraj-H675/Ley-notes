@@ -88,6 +88,19 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         root.join("integrations/codex/plugins/ley-memory/skills/ley/SKILL.md"),
     ] {
         let skill = fs::read_to_string(&path).expect("packaged Ley skill");
+        assert!(
+            skill.contains("ley_project_specifications"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("human-intent"), "{}", path.display());
+        assert!(
+            skill.contains("cannot approve")
+                || skill.contains("cannot approve or revoke")
+                || skill.contains("never approve"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("ley_compile_context"), "{}", path.display());
         assert!(skill.contains("no-useful-evidence"), "{}", path.display());
         assert!(

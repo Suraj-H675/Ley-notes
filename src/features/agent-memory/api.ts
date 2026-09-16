@@ -22,6 +22,7 @@ import type {
   SemanticModelSetup,
   SessionContext,
   SessionTurnsContext,
+  SpecificationAuthorityList,
 } from "./types";
 
 export async function chooseAgentProject(): Promise<string | null> {
@@ -105,6 +106,38 @@ export function verifyAgentProjectNoteVault(
   return invoke("verify_agent_project_note_vault", {
     projectPath,
     openVaultPath,
+  });
+}
+
+export function readAgentProjectSpecifications(
+  projectPath: string,
+): Promise<SpecificationAuthorityList> {
+  return invoke("read_agent_project_specifications", { projectPath });
+}
+
+export function approveAgentProjectSpecification(
+  projectPath: string,
+  openVaultPath: string,
+  specificationId: string,
+  relativePath: string,
+): Promise<SpecificationAuthorityList> {
+  return invoke("approve_agent_project_specification", {
+    projectPath,
+    openVaultPath,
+    specificationId,
+    relativePath,
+  });
+}
+
+export function revokeAgentProjectSpecification(
+  projectPath: string,
+  openVaultPath: string,
+  specificationId: string,
+): Promise<SpecificationAuthorityList> {
+  return invoke("revoke_agent_project_specification", {
+    projectPath,
+    openVaultPath,
+    specificationId,
   });
 }
 

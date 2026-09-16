@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleDot,
   Clock3,
+  FileCheck2,
   FileCode2,
   FilePlus2,
   Files,
@@ -34,6 +35,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Button } from "@/shared/components/Button";
+import type { Page } from "@/infrastructure/database/schema";
 import { cn } from "@/shared/lib/classnames";
 import {
   chooseAgentProject,
@@ -77,6 +79,7 @@ type Section =
   | "decisions"
   | "problems"
   | "lessons"
+  | "specifications"
   | "artifacts"
   | "graph"
   | "review"
@@ -112,6 +115,11 @@ const ProjectActivityExplorer = lazy(() =>
 const CapturePrivacyPanel = lazy(() =>
   import("./CapturePrivacyPanel").then((module) => ({
     default: module.CapturePrivacyPanel,
+  })),
+);
+const SpecificationsPanel = lazy(() =>
+  import("./SpecificationsPanel").then((module) => ({
+    default: module.SpecificationsPanel,
   })),
 );
 const SessionRenameEditor = lazy(() =>
@@ -150,6 +158,7 @@ export function AgentMemoryWorkspace({
   vaultMode,
   vaultPath,
   vaultName,
+  activeNote,
   onClose,
   onPromoteLearning,
   onPromoteSession,
@@ -159,6 +168,7 @@ export function AgentMemoryWorkspace({
   vaultMode: "desktop" | "browser-folder" | "browser-local";
   vaultPath: string;
   vaultName: string;
+  activeNote?: Page;
   onClose: () => void;
   onPromoteLearning: (draft: PromotedLearningNoteDraft) => Promise<void>;
   onPromoteSession: (draft: PromotedSessionNoteDraft) => Promise<void>;
@@ -437,6 +447,8 @@ export function AgentMemoryWorkspace({
       open={open}
       vaultMode={vaultMode}
       vaultName={vaultName}
+      vaultPath={vaultPath}
+      activeNote={activeNote}
       onClose={onClose}
       projectPath={projectPath}
       projectLabel={projectLabel}
@@ -492,6 +504,8 @@ interface AgentMemoryWorkspaceViewProps {
   open: boolean;
   vaultMode: "desktop" | "browser-folder" | "browser-local";
   vaultName: string;
+  vaultPath: string;
+  activeNote?: Page;
   onClose: () => void;
   projectPath: string | null;
   projectLabel: string | null;
@@ -540,6 +554,8 @@ function AgentMemoryWorkspaceView({
   open,
   vaultMode,
   vaultName,
+  vaultPath,
+  activeNote,
   onClose,
   projectPath,
   projectLabel,
@@ -607,6 +623,8 @@ function AgentMemoryWorkspaceView({
           <AgentMemoryBody
             vaultMode={vaultMode}
             vaultName={vaultName}
+            vaultPath={vaultPath}
+            activeNote={activeNote}
             projectPath={projectPath}
             catalog={catalog}
             catalogBusy={catalogBusy}
@@ -749,6 +767,8 @@ function AgentMemoryHeader({
 function AgentMemoryBody({
   vaultMode,
   vaultName,
+  vaultPath,
+  activeNote,
   projectPath,
   catalog,
   catalogBusy,
@@ -776,6 +796,8 @@ function AgentMemoryBody({
   AgentMemoryWorkspaceViewProps,
   | "vaultMode"
   | "vaultName"
+  | "vaultPath"
+  | "activeNote"
   | "projectPath"
   | "catalog"
   | "catalogBusy"
@@ -837,6 +859,8 @@ function AgentMemoryBody({
       dashboard={inspection.dashboard}
       section={section}
       projectPath={projectPath}
+      vaultPath={vaultPath}
+      activeNote={activeNote}
       error={error}
       busy={busy}
       artifactFocus={artifactFocus}
@@ -858,6 +882,8 @@ function AgentMemoryReadyContent({
   dashboard,
   section,
   projectPath,
+  vaultPath,
+  activeNote,
   error,
   busy,
   artifactFocus,
@@ -875,6 +901,8 @@ function AgentMemoryReadyContent({
   dashboard: AgentMemoryDashboard;
   section: Section;
   projectPath: string;
+  vaultPath: string;
+  activeNote?: Page;
   error: string | null;
   busy: boolean;
   artifactFocus: ArtifactFocus | null;
@@ -903,6 +931,8 @@ function AgentMemoryReadyContent({
           <AgentMemorySectionContent
             section={section}
             projectPath={projectPath}
+            vaultPath={vaultPath}
+            activeNote={activeNote}
             dashboard={dashboard}
             error={error}
             artifactFocus={artifactFocus}
@@ -925,6 +955,8 @@ function AgentMemoryReadyContent({
 function AgentMemorySectionContent({
   section,
   projectPath,
+  vaultPath,
+  activeNote,
   dashboard,
   error,
   artifactFocus,
@@ -940,6 +972,8 @@ function AgentMemorySectionContent({
 }: {
   section: Section;
   projectPath: string;
+  vaultPath: string;
+  activeNote?: Page;
   dashboard: AgentMemoryDashboard;
   error: string | null;
   artifactFocus: ArtifactFocus | null;
@@ -989,6 +1023,15 @@ function AgentMemorySectionContent({
       )}
       {section === "lessons" && (
         <Lessons dashboard={dashboard} onLearning={onLearning} />
+      )}
+      {section === "specifications" && (
+        <Suspense fallback={<KnowledgeSurfaceFallback />}>
+          <SpecificationsPanel
+            projectPath={projectPath}
+            vaultPath={vaultPath}
+            activeNote={activeNote}
+          />
+        </Suspense>
       )}
       {section === "artifacts" && (
         <Suspense fallback={<KnowledgeSurfaceFallback />}>
@@ -1069,6 +1112,11 @@ function AgentMemoryNav({
       label: "Lessons",
       icon: BookCheck,
       count: dashboard.allLearnings.totalMatching,
+    },
+    {
+      id: "specifications",
+      label: "Specifications",
+      icon: FileCheck2,
     },
     {
       id: "artifacts",

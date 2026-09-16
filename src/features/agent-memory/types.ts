@@ -1,6 +1,31 @@
 export type CaptureMode = "minimal" | "structured" | "full-evidence";
 export type LearningAction = "confirm" | "contest" | "reject" | "mark-stale";
 
+export type SpecificationApprovalState = "current" | "changed" | "missing";
+
+export interface SpecificationApproval {
+  projectId: string;
+  specificationId: string;
+  relativePath: string;
+  contentHash: string;
+  approvedAtUnixMs: number;
+}
+
+export interface SpecificationAuthority {
+  approval: SpecificationApproval;
+  state: SpecificationApprovalState;
+  currentContentHash?: string;
+}
+
+export interface SpecificationAuthorityList {
+  projectId: string;
+  specifications: SpecificationAuthority[];
+  current: number;
+  changed: number;
+  missing: number;
+  privacyNotice: string;
+}
+
 export interface AgentMemoryBinding {
   projectId: string;
   vaultName: string;

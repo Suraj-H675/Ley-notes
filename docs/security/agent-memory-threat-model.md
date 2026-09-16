@@ -1,19 +1,20 @@
 # Agent memory threat model
 
-Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project MCP retrieval, task-conditioned Context Compiler admission, deterministic post-checkpoint Memory Compiler recovery and transition verification, opt-in structured session capture, stable-field Codex and Claude lifecycle adapters, and evidence-backed learning review.
+Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project MCP retrieval, task-conditioned Context Compiler admission, user-approved exact-revision Specification authority, deterministic post-checkpoint Memory Compiler recovery and transition verification, opt-in structured session capture, stable-field Codex and Claude lifecycle adapters, and evidence-backed learning review.
 
 ## Assets
 
 - User notes, attachments, canvases, and agent memories in the selected vault
 - Project source, documentation, local Git state, and session evidence
 - Capture consent and ignore rules
+- User-authored Specification notes and private exact-revision approval pins
 - Memory trust, provenance, corrections, and project isolation
 
 ## Trust boundaries
 
 1. User-selected filesystem vault
 2. Explicitly initialized project root
-3. Private OS-local project-to-vault binding registry
+3. Private OS-local project-to-vault binding and Specification-approval registries
 4. Local CLI/desktop/MCP process
 5. Agent host and its lifecycle adapter
 6. Cloud model provider when the user intentionally retrieves context
@@ -36,6 +37,10 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Repository leaks a vault location | `.ley/` contains no vault path; binding registry is outside the repository and contains no project root/name | Packaging and repository-content regression tests |
 | Binding registry disclosure | Minimal project-ID-to-vault-path data; owner-only Unix creation permissions; OS per-user config directory | Windows ACL and macOS protection verification |
 | Binding corruption or concurrent lost update | Strict schema/size validation; regular non-symlink files; advisory cross-process lock; atomic replacement | Crash/fault injection and multi-process contention tests |
+| Agent or imported Markdown self-authorizes as a Specification | `ley-type` / `ley-spec-id` frontmatter is descriptive only. Human authority exists only after an explicit local desktop approval pins the exact complete source hash for the selected project; MCP has no approve/revoke route | Actual-host prompt-injection attempt that writes convincing Specification YAML, then proves agent retrieval still excludes it |
+| Approved Specification changes after review | Every authority read holds the same private registry lock used by approval/revocation while it reopens the visible vault-relative note with no-follow capability access and re-hashes the complete source. Changed, missing, or revoked revisions contribute no requirement text until explicit reapproval | Edit/rename/delete/recreate races, concurrent editor writes, and stale UI approval attempts |
+| Specification approval crosses into the wrong vault/project | Desktop approval first canonically compares the open notes vault with the project's private binding; registry entries are project-scoped and contain only relative note paths | Multi-vault same-name notes, moved bindings, copied project identity, and case-insensitive path fixtures |
+| Specification context silently drops the end of a requirement | Agent projection returns whole approved notes only. Under result/character pressure it omits the complete Specification and reports `result-limit` / `character-budget`; changed/missing revisions are also explicit exclusions | Boundary-size requirements and acceptance criteria placed at the end of a note under 1k/16k/64k budgets |
 | Stale vault location | Canonical path at bind time; missing target fails with an explicit rebind requirement | Removable-volume and permission-change tests |
 | Ambient or guessed vault selection | Explicit bind/rebind; temporary override is validated and never persisted | Desktop consent UI and host-adapter end-to-end tests |
 | Recursive self-ingestion | Refuse a vault equal to or nested below the project | Overlap fixtures on case-insensitive filesystems |

@@ -14,9 +14,9 @@ use ley_core::{
     ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView, ProjectMemorySearch,
     ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
     RenameSessionInput, ReviewLearningInput, SessionContextPack, SessionMemoryErasure,
-    SessionSummary, SessionTurnsContextPack, DEFAULT_ARTIFACT_RESULTS,
-    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
-    DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    SessionSummary, SessionTurnsContextPack, SpecificationAuthorityList, SpecificationRegistry,
+    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS,
+    DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
     DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
@@ -686,6 +686,98 @@ fn verify_agent_project_note_vault(
     let binding =
         resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
     verify_open_vault_binding(&binding, &open_vault_path)
+}
+
+fn read_project_specifications_with_registry(
+    project_path: &Path,
+    binding: &ProjectVaultBinding,
+    registry: &SpecificationRegistry,
+) -> Result<SpecificationAuthorityList, String> {
+    registry
+        .list(project_path, &binding.vault_path)
+        .map_err(|error| error.to_string())
+}
+
+fn approve_project_specification_with_registry(
+    project_path: &Path,
+    binding: &ProjectVaultBinding,
+    open_vault_path: &str,
+    registry: &SpecificationRegistry,
+    specification_id: &str,
+    relative_path: &str,
+) -> Result<SpecificationAuthorityList, String> {
+    verify_open_vault_binding(binding, open_vault_path)?;
+    registry
+        .approve(
+            project_path,
+            &binding.vault_path,
+            specification_id,
+            relative_path,
+        )
+        .map_err(|error| error.to_string())?;
+    read_project_specifications_with_registry(project_path, binding, registry)
+}
+
+fn revoke_project_specification_with_registry(
+    project_path: &Path,
+    binding: &ProjectVaultBinding,
+    open_vault_path: &str,
+    registry: &SpecificationRegistry,
+    specification_id: &str,
+) -> Result<SpecificationAuthorityList, String> {
+    verify_open_vault_binding(binding, open_vault_path)?;
+    registry
+        .revoke(project_path, specification_id)
+        .map_err(|error| error.to_string())?;
+    read_project_specifications_with_registry(project_path, binding, registry)
+}
+
+#[tauri::command]
+fn read_agent_project_specifications(
+    project_path: String,
+) -> Result<SpecificationAuthorityList, String> {
+    let binding =
+        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
+    let registry = SpecificationRegistry::system_default().map_err(|error| error.to_string())?;
+    read_project_specifications_with_registry(Path::new(&project_path), &binding, &registry)
+}
+
+#[tauri::command]
+fn approve_agent_project_specification(
+    project_path: String,
+    open_vault_path: String,
+    specification_id: String,
+    relative_path: String,
+) -> Result<SpecificationAuthorityList, String> {
+    let binding =
+        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
+    let registry = SpecificationRegistry::system_default().map_err(|error| error.to_string())?;
+    approve_project_specification_with_registry(
+        Path::new(&project_path),
+        &binding,
+        &open_vault_path,
+        &registry,
+        &specification_id,
+        &relative_path,
+    )
+}
+
+#[tauri::command]
+fn revoke_agent_project_specification(
+    project_path: String,
+    open_vault_path: String,
+    specification_id: String,
+) -> Result<SpecificationAuthorityList, String> {
+    let binding =
+        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
+    let registry = SpecificationRegistry::system_default().map_err(|error| error.to_string())?;
+    revoke_project_specification_with_registry(
+        Path::new(&project_path),
+        &binding,
+        &open_vault_path,
+        &registry,
+        &specification_id,
+    )
 }
 
 #[tauri::command]
@@ -1782,6 +1874,9 @@ pub fn run() {
             search_agent_project_memory,
             inspect_agent_project,
             verify_agent_project_note_vault,
+            read_agent_project_specifications,
+            approve_agent_project_specification,
+            revoke_agent_project_specification,
             initialize_agent_project,
             connect_agent_project,
             refresh_agent_project,
@@ -1847,6 +1942,93 @@ mod tests {
         assert!(error.contains("Bound vault"));
         assert!(error.contains("Other vault"));
         assert!(!error.contains(root.to_str().unwrap()));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn specification_authority_requires_bound_vault_and_tracks_exact_revision() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-native-specification-authority-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let project = root.join("project");
+        let vault = root.join("vault");
+        let other_vault = root.join("other-vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::create_dir_all(&other_vault).unwrap();
+        let initialized = initialize_project(
+            &project,
+            Some("Specification project"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        fs::create_dir_all(vault.join("Specs")).unwrap();
+        fs::write(
+            vault.join("Specs/Product.md"),
+            "---\nley-type: specification\n---\n# Product\n\n## Acceptance criteria\n\n- Works offline.\n",
+        )
+        .unwrap();
+        let binding = ProjectVaultBinding {
+            project_id: initialized.identity.project_id.clone(),
+            vault_path: vault.canonicalize().unwrap(),
+            source: BindingSource::Persisted,
+        };
+        let registry = SpecificationRegistry::at(root.join("config/specifications.json"));
+        let specification_id = ley_core::generate_specification_id();
+
+        let wrong_vault = approve_project_specification_with_registry(
+            &project,
+            &binding,
+            other_vault.to_str().unwrap(),
+            &registry,
+            &specification_id,
+            "Specs/Product.md",
+        )
+        .unwrap_err();
+        assert!(wrong_vault.contains("other-vault"));
+        assert!(registry
+            .list(&project, &vault)
+            .unwrap()
+            .specifications
+            .is_empty());
+
+        let approved = approve_project_specification_with_registry(
+            &project,
+            &binding,
+            vault.to_str().unwrap(),
+            &registry,
+            &specification_id,
+            "Specs/Product.md",
+        )
+        .unwrap();
+        assert_eq!(approved.current, 1);
+        assert_eq!(
+            approved.specifications[0].approval.specification_id,
+            specification_id
+        );
+
+        fs::write(
+            vault.join("Specs/Product.md"),
+            "---\nley-type: specification\n---\n# Product\n\n## Acceptance criteria\n\n- Works offline.\n- Syncs later.\n",
+        )
+        .unwrap();
+        let changed =
+            read_project_specifications_with_registry(&project, &binding, &registry).unwrap();
+        assert_eq!(changed.current, 0);
+        assert_eq!(changed.changed, 1);
+
+        let revoked = revoke_project_specification_with_registry(
+            &project,
+            &binding,
+            vault.to_str().unwrap(),
+            &registry,
+            &specification_id,
+        )
+        .unwrap();
+        assert!(revoked.specifications.is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }
