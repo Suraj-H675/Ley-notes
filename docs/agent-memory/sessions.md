@@ -161,6 +161,16 @@ Use **To notes** in the desktop session inspector to review a title and create a
 
 Ley first canonically verifies that the open notes vault is the project’s bound Agent Memory vault. If a project from another vault was opened through the multi-project catalog, the write is refused until that vault is opened. Repeating the action opens the existing linked note by project/session ID even after a rename or move; it never overwrites an unrelated title. The note is a bounded export, discloses omitted or clipped context, and does not silently synchronize later session events. The immutable session remains authoritative. See [ADR 0021](../adr/0021-vault-verified-agent-memory-note-links.md) and [ADR 0022](../adr/0022-checkpoint-project-revision-citations.md).
 
+## Recover a missed checkpoint after an interruption
+
+Bounded prompt/response observations are source evidence, not structured memory. If a host crashes or an agent fails to checkpoint before stopping, a later resume can report a **Recovery signal** for that same Ley session without injecting the retained bodies into startup context.
+
+Use the read-only MCP tool `ley_session_memory_compile` to inspect only observations whose immutable event sequence is later than the latest checkpoint. `reviewable-evidence` means the bounded post-checkpoint turns are paired and retained; `partial-evidence` means a turn is missing, unpaired, or truncated; `metadata-only` means observations exist but capture policy/capacity retained no bodies; `no-unconsolidated-evidence` means there is nothing later to recover.
+
+Do not convert a request into a claimed result. For example, a retained prompt with no paired response proves that the request was observed, not that the requested work happened. Reconstruct only facts the evidence supports and keep unknown work in `unresolved`. The compiler itself writes nothing and creates no trusted learning.
+
+When a recovery checkpoint is appropriate, pass the compiler pack's `sessionEventCount` as `expectedEventCount` to `ley_session_checkpoint`. Ley revalidates the count under the session writer lock. If any newer prompt, response, rename, checkpoint, or finish event arrived after inspection, the recovery write fails and the caller must recompile.
+
 ## Retry a write safely
 
 Supply `--request-id req_01234567890123456789012345678901` when another process may repeat a start, compact checkpoint, turn capture, or finish call. The same ID and retained content replay the original event. The same ID with different retained content fails instead of creating ambiguous history. Body-free Minimal/capacity disclosures deliberately retain no content fingerprint, so they can validate identity and metadata but cannot compare an omitted retry body.

@@ -450,6 +450,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         "cross_project_clean": None,
         "stale_learning": None,
         "capture_recovery": None,
+        "memory_recovery": None,
         "idempotency": None,
         "token_budget": None,
         "secret_exclusion": None,
@@ -588,6 +589,59 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not recovered:
             failures.append("crashed active session did not retain exactly one prompt and no response")
 
+    if scenario.get("expected_memory_compiler_state"):
+        if not session_id:
+            scores["memory_recovery"] = False
+            failures.append("memory compiler fixture created no session")
+        else:
+            compiled = mcp_call(
+                project,
+                "ley_session_memory_compile",
+                {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+            )
+            expected_state = str(scenario["expected_memory_compiler_state"])
+            state_ok = compiled.get("state") == expected_state
+            recovery_ok = state_ok
+            if scenario.get("expected_recovery_checkpoint"):
+                event_count = int(compiled.get("sessionEventCount", 0))
+                evidence = compiled.get("evidence", [])
+                prompt_text = next(
+                    (
+                        str(item.get("text", ""))
+                        for item in evidence
+                        if isinstance(item, dict) and item.get("kind") == "user-prompt" and item.get("text")
+                    ),
+                    "",
+                )
+                receipt = mcp_call(
+                    project,
+                    "ley_session_checkpoint",
+                    {
+                        "sessionId": session_id,
+                        "requestId": request_id(f"{scenario['id']}:memory-recovery"),
+                        "expectedEventCount": event_count,
+                        "summary": "Recovered an interrupted request from retained prompt evidence; no assistant outcome was captured.",
+                        "unresolved": [prompt_text] if prompt_text else [],
+                    },
+                    WRITE_FLAGS,
+                )
+                after = mcp_call(
+                    project,
+                    "ley_session_memory_compile",
+                    {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                )
+                recovery_ok = (
+                    state_ok
+                    and receipt.get("eventCount") == event_count + 1
+                    and after.get("state") == "no-unconsolidated-evidence"
+                    and after.get("totalUnconsolidatedEvidence") == 0
+                )
+            scores["memory_recovery"] = recovery_ok
+            if not recovery_ok:
+                failures.append(
+                    f"memory recovery failed: expected {expected_state}, got {compiled.get('state')}"
+                )
+
     if scenario.get("expected_max_tokens") is not None:
         budget_payload = all_payloads[0] if all_payloads else {}
         max_tokens = budget_payload.get("maxTokens")
@@ -619,7 +673,7 @@ def main() -> int:
                 f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
                 flush=True,
             )
-            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "idempotency", "token_budget", "secret_exclusion"):
+            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "idempotency", "token_budget", "secret_exclusion"):
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):

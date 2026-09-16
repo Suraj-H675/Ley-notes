@@ -690,6 +690,35 @@ pub fn checkpoint_session(
     session_id: &str,
     input: CheckpointInput,
 ) -> Result<SessionMutation, LeyCoreError> {
+    checkpoint_session_with_expected_count(project_start, vault, session_id, input, None)
+}
+
+/// Appends a checkpoint only if the caller compiled/reviewed the current
+/// session event count. Exact retries of an already-written request remain
+/// idempotent even after the session advances.
+pub fn checkpoint_session_if_current(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    expected_event_count: u64,
+    input: CheckpointInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    checkpoint_session_with_expected_count(
+        project_start,
+        vault,
+        session_id,
+        input,
+        Some(expected_event_count),
+    )
+}
+
+fn checkpoint_session_with_expected_count(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: CheckpointInput,
+    expected_event_count: Option<u64>,
+) -> Result<SessionMutation, LeyCoreError> {
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
     let request_id = input.request_id.clone();
@@ -712,7 +741,7 @@ pub fn checkpoint_session(
             payload: SessionEventPayload::CheckpointRecorded(Box::new(checkpoint)),
             schema_version: SESSION_V1_SCHEMA_VERSION,
             allow_create: false,
-            expected_event_count: None,
+            expected_event_count,
         },
         vault,
     )
@@ -823,6 +852,33 @@ pub fn read_session(
     };
     let _lock = store.lock(true)?;
     store.rebuild_session(session_id)
+}
+
+pub(crate) fn read_session_for_memory_compiler(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+) -> Result<(AgentSession, Option<u64>), LeyCoreError> {
+    validate_session_id(session_id)?;
+    let diagnostic = diagnose_project(&project_start)?;
+    project_memory_overview(&diagnostic.root, &vault)?;
+    let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
+        return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
+    };
+    let _lock = store.lock(true)?;
+    let session_dir = store.open_session(session_id)?;
+    let events = store.read_events(session_id, &session_dir)?;
+    let latest_checkpoint_sequence = events.iter().rev().find_map(|event| {
+        matches!(&event.payload, SessionEventPayload::CheckpointRecorded(_))
+            .then_some(event.sequence)
+    });
+    let session = replay_events(&events, &diagnostic.identity.project_id, session_id)?;
+    if session.checkpoints.is_empty() != latest_checkpoint_sequence.is_none() {
+        return Err(LeyCoreError::InvalidSessionStore(
+            "checkpoint event boundary did not match the replayed session".to_owned(),
+        ));
+    }
+    Ok((session, latest_checkpoint_sequence))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

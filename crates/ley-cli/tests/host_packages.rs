@@ -90,6 +90,17 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         let skill = fs::read_to_string(&path).expect("packaged Ley skill");
         assert!(skill.contains("ley_compile_context"), "{}", path.display());
         assert!(skill.contains("no-useful-evidence"), "{}", path.display());
+        assert!(
+            skill.contains("ley_session_memory_compile"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("expectedEventCount"), "{}", path.display());
+        assert!(
+            skill.contains("Do not infer completion"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("live source"), "{}", path.display());
         assert_portable(&path);
     }

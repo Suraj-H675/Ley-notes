@@ -1,6 +1,6 @@
 # Agent memory threat model
 
-Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project MCP retrieval, task-conditioned Context Compiler admission, opt-in structured session capture, stable-field Codex and Claude lifecycle adapters, and evidence-backed learning review.
+Status: project initialization, capture preview, private vault binding, deterministic artifact ingestion, cited project-graph projection, fixed-project MCP retrieval, task-conditioned Context Compiler admission, deterministic post-checkpoint Memory Compiler recovery, opt-in structured session capture, stable-field Codex and Claude lifecycle adapters, and evidence-backed learning review.
 
 ## Assets
 
@@ -64,6 +64,9 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | MCP argument path traversal | Evidence reads accept only an exact current-manifest artifact path and use no-follow capability reads | Encoded/platform-specific traversal corpus |
 | MCP output leaks machine paths | Results contain project-relative citations and stable IDs; tool errors are sanitized; project/vault paths never enter schemas | Cross-platform output snapshot scanning |
 | Duplicate, reordered, or stale session writes | Deterministic event IDs and request fingerprints; exact retries replay; changed reuse fails; project lock; contiguous sequence validation; desktop renames match the inspected event count under the lock | Multi-process hook retry, concurrent rename, and process-kill matrix |
+| Crash/missed checkpoint silently loses recoverable structure | `ley_session_memory_compile` deterministically exposes only bounded prompt/response evidence after the latest checkpoint boundary and reports whether it is reviewable, partial, metadata-only, or empty | Real-host interruption/restart scenarios across capture modes and long sessions |
+| Recovery compiler launders turn text into durable truth | Recovery is read-only; bodies remain untrusted prompt/agent evidence; no checkpoint, learning, resolution, verification, or trust state is inferred automatically; prompt-only evidence cannot prove an outcome | Adversarial turn text that asserts false completion, policy, verification, or tool authority |
+| Stale recovery write hides newer host evidence | Recovery packs expose the inspected session event count; `expectedEventCount` checkpoint writes revalidate it under the existing writer lock and fail closed if another event arrived | Concurrent prompt/response vs recovery checkpoint stress and exact-retry tests |
 | Unstable transcript coupling | First-party adapters ignore `transcript_path`; turn capture uses documented prompt/final-response fields plus Ley-owned correlation state; no transcript parser ships | Host-version multi-turn fixtures and vault scans for transcript paths/content |
 | Hook payload selects another project | CLI command path/default working directory is authoritative; payload `cwd` and transcript paths never select project or vault | Cross-project forged-payload exercise |
 | Global hook mutates unrelated repositories | Missing identity, binding, or available vault returns host-valid `{}` without initialization, scanning, binding, ingestion, or session creation | Real non-Ley-directory hook invocation |

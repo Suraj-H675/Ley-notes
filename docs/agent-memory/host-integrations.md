@@ -3,7 +3,7 @@
 Ley uses three layers together:
 
 1. lifecycle hooks load a bounded continuity brief and capture bounded turn evidence;
-2. local stdio MCP provides the task-conditioned `ley_compile_context` entry point, deeper cited retrieval, and typed session writes;
+2. local stdio MCP provides the task-conditioned `ley_compile_context` entry point, explicit `ley_session_memory_compile` recovery for missed checkpoints, deeper cited retrieval, and typed session writes;
 3. a portable agent skill tells the host to prefer compiled task context, inspect live source when needed, and preserve meaningful structure.
 
 All three run on the user's machine. The host may send deliberately retrieved context to its model provider. Ley itself makes no network request.
@@ -62,7 +62,7 @@ codex plugin add ley-memory@ley
 
 Restart Codex, open `/hooks`, and review the exact Ley hook commands before trusting them. Codex intentionally does not trust newly installed command hooks automatically.
 
-Start a new Codex chat in an initialized project and invoke **@Ley**, or ask Codex to use Ley. `SessionStart` loads the bounded resume pack automatically. In Structured mode, `UserPromptSubmit` stores a bounded, pattern-redacted prompt record and supplies the exact stable Ley session ID; `Stop` stores the paired bounded final response. The local MCP server provides the structured retrieval and checkpoint tools.
+Start a new Codex chat in an initialized project and invoke **@Ley**, or ask Codex to use Ley. `SessionStart` loads the bounded resume pack automatically. If that same host session has prompt/response observations after its latest structured checkpoint, startup adds only a recovery count/state signal; it does not inject those bodies. The agent can explicitly inspect `ley_session_memory_compile` and reconstruct only evidence-supported structure with an `expectedEventCount` guard. In Structured mode, `UserPromptSubmit` stores a bounded, pattern-redacted prompt record and supplies the exact stable Ley session ID; `Stop` stores the paired bounded final response. The local MCP server provides the structured retrieval and checkpoint tools.
 
 ## Claude Code
 
@@ -80,11 +80,7 @@ For local development, load the same self-contained package directly:
 claude --plugin-dir /absolute/path/to/Ley-notes/integrations/claude-code/ley-memory
 ```
 
-Restart Claude Code. `SessionStart` loads the bounded brief,
-`UserPromptSubmit` reasserts the current Ley session and captures the bounded
-prompt according to project policy; `Stop` captures the paired bounded response. The package uses
-Claude Code's documented `${CLAUDE_PROJECT_DIR}` placeholder rather than
-assuming its process working directory.
+Restart Claude Code. `SessionStart` loads the bounded brief and, when the same session has post-checkpoint turn evidence, only signals that recovery is available; it does not inject turn bodies. `UserPromptSubmit` reasserts the current Ley session and captures the bounded prompt according to project policy; `Stop` captures the paired bounded response. The package uses Claude Code's documented `${CLAUDE_PROJECT_DIR}` placeholder rather than assuming its process working directory.
 
 
 ## What automatic capture does
@@ -111,7 +107,7 @@ It does not automatically store:
 - environment variables;
 - arbitrary files outside the approved project capture boundary.
 
-Turn evidence is not a checkpoint and is never promoted into startup context. For substantive work the bundled skill asks the agent to write typed decisions, tasks, problems, attempts, outcomes, solutions, verification, touched artifacts, unresolved items, and handoff through MCP.
+Turn evidence is not a checkpoint and is never promoted into startup context. If a crash or missed checkpoint leaves later turn evidence, Ley can deterministically expose that post-checkpoint window through `ley_session_memory_compile`. The tool is read-only, preserves prompt/response text as untrusted evidence, and distinguishes complete paired evidence from partial or metadata-only capture. Any reconstructed checkpoint must preserve uncertainty and use the compiler pack's `sessionEventCount` as `expectedEventCount` so concurrent newer evidence forces a recompile. For substantive work the bundled skill asks the agent to write typed decisions, tasks, problems, attempts, outcomes, solutions, verification, touched artifacts, unresolved items, and handoff through MCP.
 
 Ley deliberately does not add a global tool logger. Tool calls can contain
 credentials, large outputs, or irrelevant details, and a hook cannot reliably

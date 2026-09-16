@@ -17,6 +17,7 @@ mod ingestion;
 mod knowledge_view;
 mod learning;
 mod learning_context;
+mod memory_compiler;
 mod project_activity;
 mod project_catalog;
 mod project_memory_search;
@@ -83,6 +84,12 @@ pub use learning_context::{
     MAX_LEARNING_CONTEXT_EVIDENCE, MAX_LEARNING_CONTEXT_HISTORY, MAX_LEARNING_LIST_RESULTS,
     MIN_LEARNING_CONTEXT_CHARACTERS,
 };
+pub use memory_compiler::{
+    compile_session_memory, MemoryCompilationBoundary, MemoryCompilationEvidence,
+    MemoryCompilationEvidenceKind, MemoryCompilationState, SessionMemoryCompilationPack,
+    DEFAULT_MEMORY_COMPILE_CHARACTERS, DEFAULT_MEMORY_COMPILE_RESULTS,
+    MAX_MEMORY_COMPILE_CHARACTERS, MAX_MEMORY_COMPILE_RESULTS, MIN_MEMORY_COMPILE_CHARACTERS,
+};
 pub use project_activity::{
     project_activity_view, ProjectActivityCitation, ProjectActivityView, ProjectDecision,
     ProjectProblem, ProjectProblemAttempt, ProjectProblemResolution, ProjectProblemScope,
@@ -127,12 +134,12 @@ pub use semantic_retrieval::{
     SEMANTIC_MODEL_DIMENSION, SEMANTIC_MODEL_ID, SEMANTIC_MODEL_REVISION,
 };
 pub use session::{
-    checkpoint_session, derive_turn_reference, erase_session_memory, finish_session,
-    generate_request_id, list_sessions, project_session_stats, read_session, record_session_prompt,
-    record_session_response, rename_session, start_session, AgentSession, AttemptInput,
-    AttemptOutcome, AttemptRecord, CheckpointInput, CommandInput, CommandRecord, DecisionInput,
-    DecisionRecord, EraseSessionMemoryInput, FinishSessionInput, MemoryRedaction, PlanItem,
-    PlanItemInput, PlanStatus, ProblemInput, ProblemRecord, ProjectSessionStats,
+    checkpoint_session, checkpoint_session_if_current, derive_turn_reference, erase_session_memory,
+    finish_session, generate_request_id, list_sessions, project_session_stats, read_session,
+    record_session_prompt, record_session_response, rename_session, start_session, AgentSession,
+    AttemptInput, AttemptOutcome, AttemptRecord, CheckpointInput, CommandInput, CommandRecord,
+    DecisionInput, DecisionRecord, EraseSessionMemoryInput, FinishSessionInput, MemoryRedaction,
+    PlanItem, PlanItemInput, PlanStatus, ProblemInput, ProblemRecord, ProjectSessionStats,
     RenameSessionInput, ResolutionInput, ResolutionRecord, SessionArtifactCitation,
     SessionCheckpoint, SessionFinish, SessionMemoryErasure, SessionMutation,
     SessionProjectRevision, SessionRename, SessionSource, SessionSourceKind, SessionStatus,
