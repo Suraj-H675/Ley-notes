@@ -89,6 +89,57 @@ def init_project(project: Path, name: str, vault: Path) -> None:
     run(["ingest", str(project), "--json"])
 
 
+def install_specification_approvals(
+    project: Path, vault: Path, specifications: list[dict[str, object]]
+) -> None:
+    if not specifications:
+        return
+    diagnostic = cli_json(["doctor", str(project), "--json"])
+    if not isinstance(diagnostic, dict):
+        raise RuntimeError("doctor returned no project diagnostic for specification fixture")
+    identity = diagnostic.get("identity")
+    if not isinstance(identity, dict) or not isinstance(identity.get("projectId"), str):
+        raise RuntimeError("doctor returned no projectId for specification fixture")
+    project_id = str(identity["projectId"])
+    registry_path = (
+        Path(EVAL_ENV["XDG_CONFIG_HOME"])
+        / "app.leynotes.desktop"
+        / "specifications-v1.json"
+    )
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    if registry_path.exists():
+        document = json.loads(registry_path.read_text(encoding="utf-8"))
+    else:
+        document = {"schemaVersion": 1, "approvals": {}}
+    approvals = document.setdefault("approvals", {}).setdefault(project_id, {})
+    for index, definition in enumerate(specifications):
+        relative_path = str(definition["path"])
+        source = str(definition["source"])
+        specification_id = str(
+            definition.get(
+                "specification_id",
+                "spec_"
+                + hashlib.sha256(
+                    f"{project_id}:{relative_path}:{index}".encode("utf-8")
+                ).hexdigest()[:32],
+            )
+        )
+        destination = vault / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(source, encoding="utf-8")
+        digest = "sha256:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
+        approvals[specification_id] = {
+            "relativePath": relative_path,
+            "contentHash": digest,
+            "approvedAtUnixMs": int(time.time() * 1000) + index,
+        }
+        definition["resolved_specification_id"] = specification_id
+    registry_path.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+    )
+    registry_path.chmod(0o600)
+
+
 def mcp_call(
     project: Path,
     name: str,
@@ -456,6 +507,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         "idempotency": None,
         "token_budget": None,
         "secret_exclusion": None,
+        "specification_admission": None,
     }
 
     project = base_dir / "project"
@@ -478,6 +530,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         ensure_learning_citations(project, [event for event in events if isinstance(event, dict)])
 
     init_project(project, str(scenario["goal"]), vault)
+    specification_definitions = [
+        item
+        for item in scenario.get("specifications", [])
+        if isinstance(item, dict)
+    ]
+    install_specification_approvals(project, vault, specification_definitions)
     session_id, receipts, host_context = capture_events(scenario, project)
     evidence_text: list[object] = list(host_context)
     if session_id:
@@ -489,6 +547,64 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 {"sessionId": session_id, "maxResults": 20, "maxCharacters": 8000},
             )
         )
+
+    specification_expectation = scenario.get("expected_specification_compiler")
+    if isinstance(specification_expectation, dict):
+        query = str(specification_expectation.get("query", ""))
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+        )
+        relevant_index = int(specification_expectation.get("relevant_index", 0))
+        unrelated_index = int(specification_expectation.get("unrelated_index", 1))
+        relevant_id = str(specification_definitions[relevant_index]["resolved_specification_id"])
+        unrelated_id = str(specification_definitions[unrelated_index]["resolved_specification_id"])
+        admitted_ids = {
+            str(item.get("specificationId"))
+            for item in compiled.get("specifications", [])
+            if isinstance(item, dict)
+        }
+        specification_exclusions = [
+            item
+            for item in compiled.get("specificationExclusions", [])
+            if isinstance(item, dict)
+        ]
+        memory_exclusions = [
+            item for item in compiled.get("exclusions", []) if isinstance(item, dict)
+        ]
+        direct_marker = str(specification_expectation.get("direct_evidence_marker", ""))
+        direct_evidence_preserved = any(
+            isinstance(item, dict)
+            and item.get("kind") == "artifact"
+            and direct_marker.lower() in json.dumps(item).lower()
+            for item in compiled.get("items", [])
+        )
+        historical_withheld = any(
+            item.get("reason") == "contradicts-human-intent"
+            and relevant_id in item.get("specificationIds", [])
+            for item in memory_exclusions
+        )
+        unrelated_omitted = any(
+            item.get("specificationId") == unrelated_id
+            and item.get("reason") == "low-relevance"
+            for item in specification_exclusions
+        )
+        specification_ok = (
+            relevant_id in admitted_ids
+            and unrelated_id not in admitted_ids
+            and unrelated_omitted
+            and historical_withheld
+            and direct_evidence_preserved
+            and compiled.get("authorityPrecedence") == "human-intent-over-historical-memory"
+            and compiled.get("sourceBoundary") == "mixed-authority-context"
+        )
+        scores["specification_admission"] = specification_ok
+        evidence_text.append(compiled)
+        if not specification_ok:
+            failures.append(
+                "task-conditioned Specification admission did not preserve authority/budget/conflict semantics"
+            )
 
     if scenario.get("expected_event_count") is not None:
         if not session_id:
@@ -736,7 +852,7 @@ def main() -> int:
                 f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
                 flush=True,
             )
-            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "idempotency", "token_budget", "secret_exclusion"):
+            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "idempotency", "token_budget", "secret_exclusion", "specification_admission"):
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):

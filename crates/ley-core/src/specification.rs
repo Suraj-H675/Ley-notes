@@ -1,3 +1,4 @@
+use crate::project_memory_search::lexical_score;
 use crate::{
     default_binding_registry_path, diagnose_project, validate_project_id, LeyCoreError,
     METADATA_FILE_LIMIT_BYTES,
@@ -72,6 +73,39 @@ pub struct ApprovedSpecificationSource {
     pub source: String,
     pub source_boundary: &'static str,
     pub authority: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TaskSpecificationCandidate {
+    pub source: ApprovedSpecificationSource,
+    pub lexical_score: u32,
+    pub exact_match: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TaskSpecificationExclusionReason {
+    Changed,
+    Missing,
+    LowRelevance,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TaskSpecificationExclusion {
+    pub specification_id: String,
+    pub relative_path: String,
+    pub reason: TaskSpecificationExclusionReason,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TaskSpecificationScan {
+    pub project_id: String,
+    pub candidates: Vec<TaskSpecificationCandidate>,
+    pub exclusions: Vec<TaskSpecificationExclusion>,
+    pub total_approved: usize,
+    pub current_approved: usize,
+    pub changed_approved: usize,
+    pub missing_approved: usize,
+    pub low_relevance_approved: usize,
 }
 
 pub const DEFAULT_SPECIFICATION_CONTEXT_RESULTS: usize = 8;
@@ -436,6 +470,132 @@ impl SpecificationRegistry {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn task_scan(
+        &self,
+        project_start: impl AsRef<Path>,
+        vault: impl AsRef<Path>,
+        task: &str,
+    ) -> Result<TaskSpecificationScan, LeyCoreError> {
+        self.with_task_scan_locked(project_start, vault, task, Ok)
+    }
+
+    pub(crate) fn with_task_scan_locked<T>(
+        &self,
+        project_start: impl AsRef<Path>,
+        vault: impl AsRef<Path>,
+        task: &str,
+        operation: impl FnOnce(TaskSpecificationScan) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let normalized_task = task.trim().to_lowercase();
+        let terms = specification_task_terms(&normalized_task);
+        let diagnostic = diagnose_project(project_start)?;
+        let project_id = diagnostic.identity.project_id;
+        self.with_locked_document(|document| {
+            let approvals = document
+                .approvals
+                .get(&project_id)
+                .cloned()
+                .unwrap_or_default();
+            let total_approved = approvals.len();
+            let mut candidates = Vec::new();
+            let mut exclusions = Vec::new();
+            let mut current_approved = 0;
+            let mut changed_approved = 0;
+            let mut missing_approved = 0;
+            let mut low_relevance_approved = 0;
+
+            for (specification_id, entry) in approvals {
+                let source =
+                    match read_stable_specification_bytes(vault.as_ref(), &entry.relative_path) {
+                        Ok(source) => source,
+                        Err(LeyCoreError::Io { source, .. })
+                            if source.kind() == std::io::ErrorKind::NotFound =>
+                        {
+                            missing_approved += 1;
+                            exclusions.push(TaskSpecificationExclusion {
+                                specification_id,
+                                relative_path: entry.relative_path,
+                                reason: TaskSpecificationExclusionReason::Missing,
+                            });
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    };
+                let content_hash = specification_content_hash(&source);
+                if content_hash != entry.content_hash {
+                    changed_approved += 1;
+                    exclusions.push(TaskSpecificationExclusion {
+                        specification_id,
+                        relative_path: entry.relative_path,
+                        reason: TaskSpecificationExclusionReason::Changed,
+                    });
+                    continue;
+                }
+                current_approved += 1;
+                let source = String::from_utf8(source).map_err(|_| {
+                    LeyCoreError::InvalidSpecificationRequest(
+                        "approved Specification Markdown must be valid UTF-8".to_owned(),
+                    )
+                })?;
+                let searchable = format!("{}\n{}", entry.relative_path, source);
+                let (score, exact_match) = lexical_score(&searchable, &normalized_task, &terms);
+                if score == 0 {
+                    low_relevance_approved += 1;
+                    exclusions.push(TaskSpecificationExclusion {
+                        specification_id,
+                        relative_path: entry.relative_path,
+                        reason: TaskSpecificationExclusionReason::LowRelevance,
+                    });
+                    continue;
+                }
+                candidates.push(TaskSpecificationCandidate {
+                    source: ApprovedSpecificationSource {
+                        project_id: project_id.clone(),
+                        specification_id,
+                        relative_path: entry.relative_path,
+                        content_hash,
+                        approved_at_unix_ms: entry.approved_at_unix_ms,
+                        source,
+                        source_boundary: "user-approved-specification",
+                        authority: "human-intent",
+                    },
+                    lexical_score: score,
+                    exact_match,
+                });
+            }
+
+            candidates.sort_by(|left, right| {
+                right
+                    .exact_match
+                    .cmp(&left.exact_match)
+                    .then_with(|| right.lexical_score.cmp(&left.lexical_score))
+                    .then_with(|| {
+                        right
+                            .source
+                            .approved_at_unix_ms
+                            .cmp(&left.source.approved_at_unix_ms)
+                    })
+                    .then_with(|| {
+                        left.source
+                            .specification_id
+                            .cmp(&right.source.specification_id)
+                    })
+            });
+
+            operation(TaskSpecificationScan {
+                project_id: project_id.clone(),
+                candidates,
+                exclusions,
+                total_approved,
+                current_approved,
+                changed_approved,
+                missing_approved,
+                low_relevance_approved,
+            })
+        })
+    }
+
     pub fn context(
         &self,
         project_start: impl AsRef<Path>,
@@ -737,6 +897,61 @@ fn validate_specification_context_limits(
         )));
     }
     Ok(())
+}
+
+fn specification_task_terms(query: &str) -> Vec<String> {
+    const STOPWORDS: &[&str] = &[
+        "a",
+        "add",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "bug",
+        "by",
+        "can",
+        "change",
+        "code",
+        "create",
+        "do",
+        "does",
+        "feature",
+        "fix",
+        "for",
+        "from",
+        "implement",
+        "in",
+        "into",
+        "is",
+        "issue",
+        "it",
+        "make",
+        "of",
+        "on",
+        "or",
+        "should",
+        "support",
+        "task",
+        "that",
+        "the",
+        "this",
+        "to",
+        "update",
+        "use",
+        "with",
+        "work",
+    ];
+    let mut terms = query
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|term| !term.is_empty() && !STOPWORDS.contains(term))
+        .take(16)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    terms.sort();
+    terms.dedup();
+    terms
 }
 
 pub fn specification_content_hash(source: &[u8]) -> String {
@@ -1127,9 +1342,11 @@ mod tests {
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let reader_registry = registry.clone();
+        let reader_project = project.clone();
+        let reader_vault = vault.clone();
         let reader = std::thread::spawn(move || {
             reader_registry
-                .with_locked_document(|_| {
+                .with_task_scan_locked(reader_project, reader_vault, "requirement", |_scan| {
                     entered_tx.send(()).unwrap();
                     release_rx.recv().unwrap();
                     Ok(())
@@ -1156,6 +1373,35 @@ mod tests {
             registry.read_approved_source(&project, &vault, &specification_id),
             Err(LeyCoreError::SpecificationNotApproved(_))
         ));
+    }
+
+    #[test]
+    fn task_scan_ignores_generic_task_words_and_keeps_meaningful_relevance() {
+        let (_base, project, vault, registry) = setup();
+        fs::write(
+            vault.join("Login.md"),
+            "# Authentication\n\nLogin must work without network access.\n",
+        )
+        .unwrap();
+        fs::write(
+            vault.join("Billing.md"),
+            "# Billing\n\nThe system should support monthly invoices.\n",
+        )
+        .unwrap();
+        let login_id = generate_specification_id();
+        registry
+            .approve(&project, &vault, &login_id, "Login.md")
+            .unwrap();
+        registry
+            .approve(&project, &vault, &generate_specification_id(), "Billing.md")
+            .unwrap();
+
+        let scan = registry
+            .task_scan(&project, &vault, "fix the login bug")
+            .unwrap();
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(scan.candidates[0].source.specification_id, login_id);
+        assert_eq!(scan.low_relevance_approved, 1);
     }
 
     #[test]

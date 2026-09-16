@@ -34,10 +34,12 @@ pub use binding::{
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
 };
 pub use context_compiler::{
-    compile_project_context, CompiledContextItem, CompiledContextPack, ContextAdmissionBasis,
-    ContextAuthority, ContextCompileCoverage, ContextCompileLimits, ContextEvidenceState,
-    ContextExclusion, ContextExclusionReason, ContextExclusionStage, ContextFollowUp,
-    ContextFollowUpKind, ContextGap, ContextGapKind, DEFAULT_CONTEXT_COMPILE_RESULTS,
+    compile_project_context, compile_project_context_with_registry, CompiledContextItem,
+    CompiledContextPack, CompiledSpecificationItem, ContextAdmissionBasis, ContextAuthority,
+    ContextCompileCoverage, ContextCompileLimits, ContextEvidenceState, ContextExclusion,
+    ContextExclusionReason, ContextExclusionStage, ContextFollowUp, ContextFollowUpKind,
+    ContextGap, ContextGapKind, SpecificationCompileCoverage, SpecificationCompileExclusion,
+    SpecificationCompileExclusionReason, DEFAULT_CONTEXT_COMPILE_RESULTS,
     DEFAULT_CONTEXT_COMPILE_TOKENS, MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
     MIN_CONTEXT_COMPILE_TOKENS, MIN_SEMANTIC_ADMISSION_SIMILARITY,
 };

@@ -1103,7 +1103,7 @@ fn materially_different(left: &str, right: &str) -> bool {
     union > 0 && intersection.saturating_mul(5) < union.saturating_mul(4)
 }
 
-fn lexical_score(text: &str, query: &str, terms: &[String]) -> (u32, bool) {
+pub(crate) fn lexical_score(text: &str, query: &str, terms: &[String]) -> (u32, bool) {
     let normalized_text = normalize_for_match(text);
     let exact_matches = normalized_text.matches(query).count() as u32;
     let term_matches = terms

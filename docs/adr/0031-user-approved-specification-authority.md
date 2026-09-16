@@ -29,7 +29,7 @@ The fixed-project MCP server exposes one read-only `ley_project_specifications` 
 - A user may intentionally elevate a note derived from some earlier source, but the elevation is a new explicit human authorization rather than authority inherited through summarization.
 - MCP can consume approved intent but cannot create, renew, or revoke that authority.
 - Specification content is re-read from the user's vault, so `specificationSourceRevisionChecked: true` refers only to the approved note revision; `projectLiveSourceChecked` remains false.
-- This slice does **not** yet merge Specifications into `ley_compile_context`, task-rank requirements, parse acceptance criteria into a proprietary schema, mount Specifications into unrelated/empty workspaces, or enforce per-source egress policy. Those remain separate roadmap work.
+- This ADR established approval authority only. ADR 0032 subsequently integrates exact current approved Specifications into `ley_compile_context` with task-conditioned admission. Parsing acceptance criteria into a proprietary schema, mounting Specifications into unrelated/empty workspaces, and per-source egress policy remain separate roadmap work.
 
 ## Rejected alternatives
 

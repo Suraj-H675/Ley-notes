@@ -94,6 +94,8 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(skill.contains("human-intent"), "{}", path.display());
+        assert!(skill.contains("shared budget"), "{}", path.display());
+        assert!(skill.contains("authorityPrecedence"), "{}", path.display());
         assert!(
             skill.contains("cannot approve")
                 || skill.contains("cannot approve or revoke")
