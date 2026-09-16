@@ -6,12 +6,12 @@ use ley_core::{
     read_session_context, read_session_turns_context, record_session_prompt,
     record_session_response, rename_session, review_learning, search_project_memory,
     semantic_model_status, start_session, supported_semantic_model, AgentHost, BindingRegistry,
-    CaptureMode, CheckpointInput, CommandInput, CorrectLearningInput, EraseSessionMemoryInput,
-    FinishSessionInput, GraphNodeKind, LearningActor, LearningEvidenceInput,
-    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
-    LeyCoreError, ProjectMemorySearchLimits, ProposeLearningInput, RenameSessionInput,
-    ReviewLearningInput, SemanticModelStatus, SessionSource, SessionSourceKind, SessionStatus,
-    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
+    CaptureMode, CheckpointInput, CommandInput, ContextMountRegistry, CorrectLearningInput,
+    EraseSessionMemoryInput, FinishSessionInput, GraphNodeKind, LearningActor,
+    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
+    LearningTrustState, LeyCoreError, ProjectMemorySearchLimits, ProposeLearningInput,
+    RenameSessionInput, ReviewLearningInput, SemanticModelStatus, SessionSource, SessionSourceKind,
+    SessionStatus, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
     VerificationStatus, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
     DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
     DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
@@ -46,6 +46,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "graph" => graph(&arguments[1..]),
         "hook" => hook(&arguments[1..]),
         "mcp" => mcp(&arguments[1..]),
+        "mount" => mount(&arguments[1..]),
         "session" => session(&arguments[1..]),
         "learning" => learning(&arguments[1..]),
         "resume" => resume(&arguments[1..]),
@@ -160,6 +161,128 @@ fn semantic_install(json: bool) -> Result<(), CliError> {
         println!("No project content or query was uploaded.");
     }
     Ok(())
+}
+
+fn mount(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "mount requires add, list, or remove".to_owned(),
+        ));
+    };
+    let registry = ContextMountRegistry::system_default()?;
+    match command {
+        "add" => {
+            let mut reference = None;
+            let mut active = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if reference.is_none() => reference = Some(PathBuf::from(value)),
+                    value if active.is_none() => active = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let reference = reference.ok_or_else(|| {
+                CliError::Usage("mount add requires REFERENCE_PROJECT".to_owned())
+            })?;
+            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.mount_project(active, reference)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).expect("mount result is serializable")
+                );
+            } else {
+                let name = result
+                    .mount
+                    .source_project_name
+                    .as_deref()
+                    .unwrap_or(&result.mount.source_project_id);
+                println!("Mounted reference: {name} ({})", result.mount.mount_id);
+                println!("Permission: read-only");
+                println!("Status: {:?}", result.mount.status);
+                if !result.created {
+                    println!("Existing mount reused.");
+                }
+            }
+            Ok(())
+        }
+        "list" => {
+            let mut active = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if active.is_none() => active = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.list(active)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).expect("mount list is serializable")
+                );
+            } else if result.mounts.is_empty() {
+                println!("No Context Mounts.");
+            } else {
+                println!("Context Mounts: {}", result.mounts.len());
+                for mount in &result.mounts {
+                    let name = mount
+                        .source_project_name
+                        .as_deref()
+                        .unwrap_or(&mount.source_project_id);
+                    println!(
+                        "  {}  {}  {:?}  read-only",
+                        mount.mount_id, name, mount.status
+                    );
+                }
+            }
+            Ok(())
+        }
+        "remove" => {
+            let mut mount_id = None;
+            let mut active = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if mount_id.is_none() => mount_id = Some(value.to_owned()),
+                    value if active.is_none() => active = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let mount_id = mount_id
+                .ok_or_else(|| CliError::Usage("mount remove requires MOUNT_ID".to_owned()))?;
+            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let removed = registry.unmount(active, &mount_id)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&removed).expect("mount removal is serializable")
+                );
+            } else if removed.is_some() {
+                println!("Unmounted Context Mount: {mount_id}");
+            } else {
+                println!("Context Mount not found: {mount_id}");
+            }
+            Ok(())
+        }
+        other => Err(CliError::Usage(format!(
+            "unknown mount command '{other}'; use add, list, or remove"
+        ))),
+    }
 }
 
 fn search(arguments: &[String]) -> Result<(), CliError> {
@@ -2165,6 +2288,9 @@ fn print_help() {
     println!("  ley hook [path] --host codex|claude [--vault TEMPORARY_VAULT]");
     println!("  ley mcp [path] [--vault TEMPORARY_VAULT] [--allow-session-writes]");
     println!("      [--allow-learning-proposals]");
+    println!("  ley mount add REFERENCE_PROJECT [ACTIVE_PROJECT] [--json]");
+    println!("  ley mount list [ACTIVE_PROJECT] [--json]");
+    println!("  ley mount remove MOUNT_ID [ACTIVE_PROJECT] [--json]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
     println!("  ley session prompt SESSION [path] --stdin [--request-id REQUEST] [--json]");
     println!("  ley session response SESSION [path] --stdin [--request-id REQUEST] [--json]");

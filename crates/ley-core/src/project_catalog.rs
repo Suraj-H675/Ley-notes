@@ -120,6 +120,19 @@ impl ProjectCatalog {
         self.observe_diagnostic_at(&diagnostic, unix_time_ms())
     }
 
+    pub(crate) fn get(&self, project_id: &str) -> Result<Option<ObservedProject>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let document = self.read_locked()?;
+        Ok(document
+            .projects
+            .get(project_id)
+            .map(|observation| ObservedProject {
+                project_id: project_id.to_owned(),
+                root_path: PathBuf::from(&observation.root_path),
+                last_opened_at_unix_ms: observation.last_opened_at_unix_ms,
+            }))
+    }
+
     pub fn list(&self, max_results: usize) -> Result<ObservedProjectList, LeyCoreError> {
         if max_results == 0 || max_results > MAX_PROJECT_CATALOG_RESULTS {
             return Err(LeyCoreError::InvalidProjectCatalog(format!(

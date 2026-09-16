@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 mod binding;
 mod context_compiler;
+mod context_mount;
 mod cross_project_search;
 mod graph;
 mod host_adapter;
@@ -42,6 +43,11 @@ pub use context_compiler::{
     SpecificationCompileExclusionReason, DEFAULT_CONTEXT_COMPILE_RESULTS,
     DEFAULT_CONTEXT_COMPILE_TOKENS, MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
     MIN_CONTEXT_COMPILE_TOKENS, MIN_SEMANTIC_ADMISSION_SIMILARITY,
+};
+pub use context_mount::{
+    ContextMount, ContextMountList, ContextMountMutation, ContextMountPermission,
+    ContextMountRegistry, ContextMountStatus, CONTEXT_MOUNT_REGISTRY_FILE,
+    CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION, MAX_CONTEXT_MOUNTS_PER_PROJECT,
 };
 pub use cross_project_search::{
     search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,
@@ -349,6 +355,10 @@ pub enum LeyCoreError {
     InvalidBindingRegistry(String),
     #[error("invalid Ley project catalog: {0}")]
     InvalidProjectCatalog(String),
+    #[error("invalid Ley Context Mount registry: {0}")]
+    InvalidContextMountRegistry(String),
+    #[error("invalid Ley Context Mount request: {0}")]
+    InvalidContextMountRequest(String),
     #[error("invalid Ley specification approval registry: {0}")]
     InvalidSpecificationRegistry(String),
     #[error("invalid Ley specification request: {0}")]
