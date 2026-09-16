@@ -13,9 +13,12 @@ Ley needs one normal task-conditioned operation that can combine human intent an
 
 `ley_compile_context` resolves exact current approved Specifications before historical memory. Specification relevance uses the same deterministic lexical scoring shape as fixed-project memory search, but filters common grammatical and generic coding-task words before nomination. Exact task phrases still count. Changed and missing approved revisions never contribute requirement text; because Ley no longer retains their approved body, it does not claim that those unavailable revisions are relevant to the current task. Current exact approvals with no meaningful task match are reported as low-relevance rather than loaded merely because budget is available.
 
+The compiler holds the Specification registry's authority lock across task scanning and context assembly. Approval, reapproval, and revocation therefore serialize against an in-flight compile; a revoke that completes first cannot be followed by a later compile returning the revoked text.
+
 Relevant Specifications are returned whole in a distinct `specifications` section with `authority: human-intent`, exact approval hash/path/ID, and relevance signals. They consume the same result/token budget before historical memory. The pack reports `authorityPrecedence: human-intent-over-historical-memory` plus separate Specification coverage and exclusions.
 
 The compiler still treats direct captured source evidence differently from historical guidance. A Specification expresses desired behavior; direct evidence may legitimately show that the implementation does not satisfy it. Therefore Specification intent never suppresses captured artifact/symbol/dependency evidence.
+
 Historical sessions/decisions/problems and trusted learnings are checked against admitted Specification text using a deliberately conservative deterministic conflict rule. Ley only auto-withholds memory when a high-overlap clause differs by explicit negation. The exclusion records the exact Specification IDs and emits a human-intent conflict gap. This is a safety floor, not a general natural-language contradiction classifier.
 
 The compiler retains `evidenceState` for project evidence. A pack may therefore contain useful human intent while reporting `no-useful-evidence` for historical memory. That state must not be interpreted as “ignore the admitted Specification.” `liveSourceChecked: false` still refers to the project working tree; exact Specification revision checking is separate.
