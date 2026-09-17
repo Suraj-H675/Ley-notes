@@ -128,6 +128,20 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(skill.contains("ley_compile_context"), "{}", path.display());
+        assert!(skill.contains("premiseAdjudication"), "{}", path.display());
+        assert!(skill.contains("obsolete-assumption"), "{}", path.display());
+        assert!(skill.contains("conflicting-state"), "{}", path.display());
+        assert!(skill.contains("uncertain-state"), "{}", path.display());
+        assert!(
+            skill.contains("replacementLearningId"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("not proof") && normalized_skill.contains("live source"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("no-useful-evidence"), "{}", path.display());
         assert!(
             skill.contains("ley_session_memory_compile"),

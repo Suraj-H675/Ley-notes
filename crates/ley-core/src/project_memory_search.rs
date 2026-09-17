@@ -123,6 +123,8 @@ pub struct ProjectMemorySearchResult {
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub learning_origin_summary: Option<LearningOriginSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learning_superseded_by: Option<String>,
     pub trusted_for_reuse: bool,
     pub content_conflicted: bool,
     pub truncated: bool,
@@ -209,6 +211,7 @@ struct Candidate {
     learning_freshness: Option<LearningFreshness>,
     trust_signal: Option<ProjectMemoryTrustSignal>,
     learning_origin_summary: Option<LearningOriginSummary>,
+    learning_superseded_by: Option<String>,
     trusted_for_reuse: bool,
     lexical_score: u32,
     exact_match: bool,
@@ -619,6 +622,7 @@ fn learning_candidate(learning: &LearningSummary, query: &str, terms: &[String])
         terms,
     );
     candidate.learning_origin_summary = Some(learning.origin_lineage_summary.clone());
+    candidate.learning_superseded_by = learning.superseded_by.clone();
     candidate
 }
 
@@ -706,6 +710,7 @@ fn new_candidate(
         learning_freshness,
         trust_signal,
         learning_origin_summary: None,
+        learning_superseded_by: None,
         trusted_for_reuse,
         lexical_score,
         exact_match,
@@ -951,6 +956,7 @@ fn fit_result(
             learning_freshness: scored.candidate.learning_freshness,
             trust_signal: scored.candidate.trust_signal,
             learning_origin_summary: scored.candidate.learning_origin_summary,
+            learning_superseded_by: scored.candidate.learning_superseded_by,
             trusted_for_reuse: scored.candidate.trusted_for_reuse,
             content_conflicted,
             truncated,
@@ -1271,6 +1277,7 @@ mod tests {
             learning_freshness: None,
             trust_signal: None,
             learning_origin_summary: None,
+            learning_superseded_by: None,
             trusted_for_reuse: false,
             lexical_score,
             exact_match,
@@ -1306,6 +1313,7 @@ mod tests {
             freshness: LearningFreshness::Current,
             corroborating_sessions: 1,
             updated_at_unix_ms: 10,
+            superseded_by: None,
         };
         let candidate = learning_candidate(
             &learning,

@@ -510,6 +510,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         "secret_exclusion": None,
         "specification_admission": None,
         "mounted_reference": None,
+        "premise_adjudication": None,
     }
 
     project = base_dir / "project"
@@ -549,6 +550,109 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 {"sessionId": session_id, "maxResults": 20, "maxCharacters": 8000},
             )
         )
+
+    premise_expectation = scenario.get("expected_premise_adjudication")
+    if isinstance(premise_expectation, dict):
+        learning_receipts = [
+            receipt
+            for receipt in receipts
+            if isinstance(receipt, dict) and isinstance(receipt.get("learningId"), str)
+        ]
+        obsolete_index = int(premise_expectation.get("obsolete_learning_index", 0))
+        replacement_index = int(premise_expectation.get("replacement_learning_index", 1))
+        if max(obsolete_index, replacement_index) >= len(learning_receipts):
+            raise RuntimeError("premise fixture did not create the expected learning proposals")
+        obsolete_id = str(learning_receipts[obsolete_index]["learningId"])
+        replacement_id = str(learning_receipts[replacement_index]["learningId"])
+        cli_json(
+            [
+                "learning",
+                "review",
+                replacement_id,
+                str(project),
+                "--actor",
+                "user",
+                "--action",
+                "confirm",
+                "--note",
+                "Reviewed current replacement for premise evaluation.",
+                "--request-id",
+                request_id(f"{scenario['id']}:premise:confirm"),
+                "--json",
+            ]
+        )
+        cli_json(
+            [
+                "learning",
+                "review",
+                obsolete_id,
+                str(project),
+                "--actor",
+                "user",
+                "--action",
+                "supersede",
+                "--replacement",
+                replacement_id,
+                "--note",
+                "Reviewed replacement supersedes the obsolete state.",
+                "--request-id",
+                request_id(f"{scenario['id']}:premise:supersede"),
+                "--json",
+            ]
+        )
+        query = str(premise_expectation.get("query", ""))
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+        )
+        adjudication = compiled.get("premiseAdjudication", {})
+        warnings = (
+            adjudication.get("warnings", []) if isinstance(adjudication, dict) else []
+        )
+        expected_state = str(premise_expectation.get("state", "obsolete-assumption"))
+        expected_warning = str(
+            premise_expectation.get("warning_kind", "superseded-learning")
+        )
+        warning_ok = any(
+            isinstance(warning, dict)
+            and warning.get("kind") == expected_warning
+            and obsolete_id in warning.get("learningIds", [])
+            and warning.get("replacementLearningId") == replacement_id
+            for warning in warnings
+        )
+        follow_up_ok = any(
+            isinstance(item, dict)
+            and item.get("kind") == "learning"
+            and item.get("id") == replacement_id
+            for item in compiled.get("followUps", [])
+        )
+        replacement_admitted = any(
+            isinstance(item, dict)
+            and item.get("learningId") == replacement_id
+            and item.get("trustSignal") == "trusted-current"
+            for item in compiled.get("items", [])
+        )
+        obsolete_withheld = not any(
+            isinstance(item, dict) and item.get("learningId") == obsolete_id
+            for item in compiled.get("items", [])
+        )
+        premise_ok = (
+            isinstance(adjudication, dict)
+            and adjudication.get("state") == expected_state
+            and warning_ok
+            and follow_up_ok
+            and replacement_admitted
+            and obsolete_withheld
+            and compiled.get("liveSourceChecked") is False
+            and int(compiled.get("estimatedTokens", 0)) <= int(compiled.get("maxTokens", 0))
+        )
+        scores["premise_adjudication"] = premise_ok
+        evidence_text.append(compiled)
+        if not premise_ok:
+            failures.append(
+                "premise adjudication did not resist an explicitly superseded task assumption"
+            )
 
     specification_expectation = scenario.get("expected_specification_compiler")
     if isinstance(specification_expectation, dict):
@@ -1005,7 +1109,7 @@ def main() -> int:
                 f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
                 flush=True,
             )
-            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "origin_lineage", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference"):
+            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "origin_lineage", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference", "premise_adjudication"):
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):

@@ -31,6 +31,7 @@ const MOUNTED_REFERENCE_CANDIDATE_TOKENS: usize = 1_500;
 const DIAGNOSTIC_TOKEN_RESERVE: usize = 160;
 const DIAGNOSTIC_ENTRY_OVERHEAD_TOKENS: usize = 12;
 const MAX_EXCLUSIONS: usize = 20;
+const MAX_PREMISE_WARNINGS: usize = 12;
 
 const SOURCE_BOUNDARY: &str = "mixed-authority-context";
 const AUTHORITY_PRECEDENCE: &str = "human-intent-over-historical-memory";
@@ -64,6 +65,44 @@ pub enum ContextEvidenceState {
     ConflictingEvidence,
     StaleEvidence,
     NoUsefulEvidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContextPremiseState {
+    NoDetectedMismatch,
+    ObsoleteAssumption,
+    ConflictingState,
+    UncertainState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContextPremiseWarningKind {
+    SupersededLearning,
+    RejectedLearning,
+    StaleLearning,
+    ContestedLearning,
+    ConflictingMemory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextPremiseWarning {
+    pub kind: ContextPremiseWarningKind,
+    pub entity_ids: Vec<String>,
+    pub learning_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replacement_learning_id: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextPremiseAdjudication {
+    pub state: ContextPremiseState,
+    pub warnings: Vec<ContextPremiseWarning>,
+    pub omitted_warnings: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -358,6 +397,7 @@ pub struct CompiledContextPack {
     pub freshness: &'static str,
     pub task: String,
     pub evidence_state: ContextEvidenceState,
+    pub premise_adjudication: ContextPremiseAdjudication,
     pub max_tokens: usize,
     pub estimated_tokens: usize,
     pub specifications: Vec<CompiledSpecificationItem>,
@@ -399,6 +439,7 @@ struct MountedAdmittedCandidate {
 
 #[derive(Debug)]
 struct FittedDiagnostics {
+    premise_warnings: Vec<ContextPremiseWarning>,
     conflicts: Vec<ProjectMemoryConflict>,
     specification_exclusions: Vec<SpecificationCompileExclusion>,
     exclusions: Vec<ContextExclusion>,
@@ -516,6 +557,7 @@ fn compile_search_result_with_specifications(
     specification_scan: TaskSpecificationScan,
     limits: ContextCompileLimits,
 ) -> CompiledContextPack {
+    let (premise_state, premise_warnings) = adjudicate_premise(&search);
     let conflicting_entities = search
         .conflicts
         .iter()
@@ -638,7 +680,8 @@ fn compile_search_result_with_specifications(
         item_tokens,
         limits.max_tokens,
     );
-    let follow_ups = follow_ups(&items);
+    let follow_ups = follow_ups(&items, &premise_warnings);
+    let raw_premise_warnings = premise_warnings.len();
     let raw_conflicts = search.conflicts.len();
     let raw_specification_exclusions = specification_exclusions.len();
     let raw_exclusions = exclusions.len();
@@ -648,6 +691,7 @@ fn compile_search_result_with_specifications(
     let source_truncated = search.coverage.source_truncated;
     let freshness = search.freshness;
     let diagnostics = fit_diagnostics(
+        premise_warnings,
         std::mem::take(&mut search.conflicts),
         specification_exclusions,
         exclusions,
@@ -695,6 +739,12 @@ fn compile_search_result_with_specifications(
         freshness,
         task: search.query,
         evidence_state,
+        premise_adjudication: ContextPremiseAdjudication {
+            state: premise_state,
+            omitted_warnings: raw_premise_warnings
+                .saturating_sub(diagnostics.premise_warnings.len()),
+            warnings: diagnostics.premise_warnings,
+        },
         max_tokens: limits.max_tokens,
         estimated_tokens,
         specifications,
@@ -1308,6 +1358,7 @@ fn clause_signatures_conflict(left: &ClauseSignature, right: &ClauseSignature) -
 }
 
 fn fit_diagnostics(
+    premise_warnings: Vec<ContextPremiseWarning>,
     conflicts: Vec<ProjectMemoryConflict>,
     specification_exclusions: Vec<SpecificationCompileExclusion>,
     exclusions: Vec<ContextExclusion>,
@@ -1316,15 +1367,28 @@ fn fit_diagnostics(
     budget: usize,
 ) -> FittedDiagnostics {
     let mut used = 0usize;
+    let mut fitted_premise_warnings = Vec::new();
     let mut fitted_gaps = Vec::new();
     let mut fitted_conflicts = Vec::new();
     let mut fitted_specification_exclusions = Vec::new();
     let mut fitted_exclusions = Vec::new();
     let mut fitted_follow_ups = Vec::new();
 
-    // Conflicts are the highest-value diagnostic: they explain why otherwise relevant memory
-    // was withheld. Generic gaps can follow because `evidenceState` and `liveSourceChecked`
-    // remain present even when an extremely small diagnostic budget clips their messages.
+    // Premise warnings are the highest-value diagnostic because they tell the caller that the
+    // task itself may be based on obsolete or disputed state. Conflicts follow because they
+    // explain why otherwise relevant memory was withheld. Generic gaps can follow because
+    // `evidenceState` and `liveSourceChecked` remain present even when a tiny diagnostic budget
+    // clips their messages.
+    for warning in premise_warnings {
+        if fitted_premise_warnings.len() >= MAX_PREMISE_WARNINGS {
+            continue;
+        }
+        let cost = estimate_premise_warning_tokens(&warning);
+        if used.saturating_add(cost) <= budget {
+            used = used.saturating_add(cost);
+            fitted_premise_warnings.push(warning);
+        }
+    }
     for conflict in conflicts {
         let cost = estimate_conflict_tokens(&conflict);
         if used.saturating_add(cost) <= budget {
@@ -1372,6 +1436,7 @@ fn fit_diagnostics(
     }
 
     FittedDiagnostics {
+        premise_warnings: fitted_premise_warnings,
         conflicts: fitted_conflicts,
         specification_exclusions: fitted_specification_exclusions,
         exclusions: fitted_exclusions,
@@ -1379,6 +1444,155 @@ fn fit_diagnostics(
         follow_ups: fitted_follow_ups,
         estimated_tokens: used,
     }
+}
+
+fn adjudicate_premise(
+    search: &ProjectMemorySearch,
+) -> (ContextPremiseState, Vec<ContextPremiseWarning>) {
+    let mut warnings = Vec::new();
+
+    for item in &search.results {
+        if relevance_basis(item).is_none() || item.kind != ProjectMemoryResultKind::Learning {
+            continue;
+        }
+        let Some(signal) = item.trust_signal else {
+            continue;
+        };
+        let (kind, message) = match signal {
+            ProjectMemoryTrustSignal::Superseded => (
+                ContextPremiseWarningKind::SupersededLearning,
+                "The task overlaps a learning that was explicitly superseded. Treat the matching older claim as historical; inspect the designated replacement and live source before proceeding.",
+            ),
+            ProjectMemoryTrustSignal::Rejected => (
+                ContextPremiseWarningKind::RejectedLearning,
+                "The task overlaps a learning that was explicitly rejected. Do not treat that historical claim as current project state.",
+            ),
+            ProjectMemoryTrustSignal::Stale => (
+                ContextPremiseWarningKind::StaleLearning,
+                "The task overlaps a learning whose retained state or cited source is stale. Current project state is uncertain until live source is checked.",
+            ),
+            ProjectMemoryTrustSignal::Contested => (
+                ContextPremiseWarningKind::ContestedLearning,
+                "The task overlaps a contested learning. The stored state is disputed and must not be selected as current without review and live-source verification.",
+            ),
+            ProjectMemoryTrustSignal::DirectEvidence
+            | ProjectMemoryTrustSignal::TrustedCurrent
+            | ProjectMemoryTrustSignal::Unverified => continue,
+        };
+        warnings.push(ContextPremiseWarning {
+            kind,
+            entity_ids: vec![item.entity_id.clone()],
+            learning_ids: item.learning_id.iter().cloned().collect(),
+            replacement_learning_id: item.learning_superseded_by.clone(),
+            message: message.to_owned(),
+        });
+    }
+
+    let described_conflict_entities = search
+        .conflicts
+        .iter()
+        .filter(|conflict| conflict.kind == ProjectMemoryConflictKind::ContentDisagreement)
+        .flat_map(|conflict| conflict.entity_ids.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    for item in &search.results {
+        if relevance_basis(item).is_none()
+            || !item.content_conflicted
+            || described_conflict_entities.contains(&item.entity_id)
+        {
+            continue;
+        }
+        warnings.push(ContextPremiseWarning {
+            kind: ContextPremiseWarningKind::ConflictingMemory,
+            entity_ids: vec![item.entity_id.clone()],
+            learning_ids: item.learning_id.iter().cloned().collect(),
+            replacement_learning_id: None,
+            message: "Task-relevant durable memory is marked as materially conflicting even though the bounded descriptive conflict record was omitted. Ley cannot safely choose a current state from the captured memory alone.".to_owned(),
+        });
+    }
+
+    for conflict in &search.conflicts {
+        if conflict.kind != ProjectMemoryConflictKind::ContentDisagreement {
+            continue;
+        }
+        warnings.push(ContextPremiseWarning {
+            kind: ContextPremiseWarningKind::ConflictingMemory,
+            entity_ids: conflict.entity_ids.clone(),
+            learning_ids: conflict.learning_ids.clone(),
+            replacement_learning_id: None,
+            message: "Task-relevant durable records materially disagree. Ley cannot safely choose a current state from the captured memory alone.".to_owned(),
+        });
+    }
+
+    warnings.sort_by(|left, right| {
+        premise_warning_priority(left.kind)
+            .cmp(&premise_warning_priority(right.kind))
+            .then_with(|| left.entity_ids.cmp(&right.entity_ids))
+            .then_with(|| left.learning_ids.cmp(&right.learning_ids))
+    });
+    warnings.dedup_by(|left, right| {
+        left.kind == right.kind
+            && left.entity_ids == right.entity_ids
+            && left.learning_ids == right.learning_ids
+            && left.replacement_learning_id == right.replacement_learning_id
+    });
+
+    let state = if warnings.iter().any(|warning| {
+        matches!(
+            warning.kind,
+            ContextPremiseWarningKind::ConflictingMemory
+                | ContextPremiseWarningKind::ContestedLearning
+        )
+    }) {
+        ContextPremiseState::ConflictingState
+    } else if warnings.iter().any(|warning| {
+        matches!(
+            warning.kind,
+            ContextPremiseWarningKind::SupersededLearning
+                | ContextPremiseWarningKind::RejectedLearning
+        )
+    }) {
+        ContextPremiseState::ObsoleteAssumption
+    } else if warnings
+        .iter()
+        .any(|warning| warning.kind == ContextPremiseWarningKind::StaleLearning)
+    {
+        ContextPremiseState::UncertainState
+    } else {
+        ContextPremiseState::NoDetectedMismatch
+    };
+    (state, warnings)
+}
+
+fn premise_warning_priority(kind: ContextPremiseWarningKind) -> u8 {
+    match kind {
+        ContextPremiseWarningKind::ConflictingMemory => 0,
+        ContextPremiseWarningKind::ContestedLearning => 1,
+        ContextPremiseWarningKind::SupersededLearning => 2,
+        ContextPremiseWarningKind::RejectedLearning => 3,
+        ContextPremiseWarningKind::StaleLearning => 4,
+    }
+}
+
+fn estimate_premise_warning_tokens(warning: &ContextPremiseWarning) -> usize {
+    let characters = warning
+        .message
+        .chars()
+        .count()
+        .saturating_add(warning.entity_ids.iter().map(|id| id.chars().count()).sum())
+        .saturating_add(
+            warning
+                .learning_ids
+                .iter()
+                .map(|id| id.chars().count())
+                .sum(),
+        )
+        .saturating_add(
+            warning
+                .replacement_learning_id
+                .as_ref()
+                .map_or(0, |id| id.chars().count()),
+        );
+    DIAGNOSTIC_ENTRY_OVERHEAD_TOKENS.saturating_add(characters.div_ceil(4))
 }
 
 fn estimate_gap_tokens(gap: &ContextGap) -> usize {
@@ -1640,9 +1854,31 @@ fn context_gaps(
     gaps
 }
 
-fn follow_ups(items: &[CompiledContextItem]) -> Vec<ContextFollowUp> {
+fn follow_ups(
+    items: &[CompiledContextItem],
+    premise_warnings: &[ContextPremiseWarning],
+) -> Vec<ContextFollowUp> {
     let mut seen = BTreeSet::new();
     let mut output = Vec::new();
+    for warning in premise_warnings {
+        let Some(replacement_learning_id) = &warning.replacement_learning_id else {
+            continue;
+        };
+        let key = format!(
+            "{:?}:{replacement_learning_id}",
+            ContextFollowUpKind::Learning
+        );
+        if seen.insert(key) {
+            output.push(ContextFollowUp {
+                kind: ContextFollowUpKind::Learning,
+                id: replacement_learning_id.clone(),
+                reason: "Inspect the explicitly designated replacement for the superseded task-relevant learning before relying on historical state.".to_owned(),
+            });
+        }
+        if output.len() >= 6 {
+            return output;
+        }
+    }
     'items: for item in items {
         let candidates = [
             item.citation.as_ref().map(|citation| {
@@ -1707,8 +1943,10 @@ fn validate_limits(task: &str, limits: ContextCompileLimits) -> Result<(), LeyCo
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, ingest_project, initialize_project, start_session, BindingRegistry,
-        CaptureMode, CheckpointInput, DecisionInput, ProjectMemorySearchCoverage, RetrievalMode,
+        checkpoint_session, ingest_project, initialize_project, propose_learning, review_learning,
+        start_session, BindingRegistry, CaptureMode, CheckpointInput, DecisionInput, LearningActor,
+        LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance,
+        ProjectMemorySearchCoverage, ProposeLearningInput, RetrievalMode, ReviewLearningInput,
         StartSessionInput, BINDING_REGISTRY_FILE, CONTEXT_MOUNT_REGISTRY_FILE,
     };
     use std::fs;
@@ -1748,6 +1986,7 @@ mod tests {
             learning_freshness: None,
             trust_signal,
             learning_origin_summary: None,
+            learning_superseded_by: None,
             trusted_for_reuse: trust_signal == Some(ProjectMemoryTrustSignal::TrustedCurrent),
             content_conflicted: false,
             truncated: false,
@@ -1866,6 +2105,88 @@ mod tests {
     }
 
     #[test]
+    fn superseded_task_relevant_learning_is_an_obsolete_premise_with_replacement_follow_up() {
+        let replacement_id = format!("lrn_{}", "2".repeat(32));
+        let mut superseded = result(
+            ProjectMemoryResultKind::Learning,
+            &format!("lrn_{}", "1".repeat(32)),
+            Some(1),
+            None,
+            Some(ProjectMemoryTrustSignal::Superseded),
+        );
+        superseded.learning_superseded_by = Some(replacement_id.clone());
+
+        let pack = compile_search_result(
+            search_result(vec![superseded], Vec::new()),
+            ContextCompileLimits::default(),
+        );
+        assert_eq!(
+            pack.premise_adjudication.state,
+            ContextPremiseState::ObsoleteAssumption
+        );
+        assert_eq!(pack.premise_adjudication.omitted_warnings, 0);
+        assert_eq!(pack.premise_adjudication.warnings.len(), 1);
+        assert_eq!(
+            pack.premise_adjudication.warnings[0].kind,
+            ContextPremiseWarningKind::SupersededLearning
+        );
+        assert_eq!(
+            pack.premise_adjudication.warnings[0]
+                .replacement_learning_id
+                .as_deref(),
+            Some(replacement_id.as_str())
+        );
+        assert!(pack.items.is_empty());
+        assert!(pack.follow_ups.iter().any(|follow_up| {
+            follow_up.kind == ContextFollowUpKind::Learning && follow_up.id == replacement_id
+        }));
+    }
+
+    #[test]
+    fn weak_semantic_superseded_candidate_does_not_create_a_premise_warning() {
+        let mut superseded = result(
+            ProjectMemoryResultKind::Learning,
+            &format!("lrn_{}", "3".repeat(32)),
+            None,
+            Some(0.12),
+            Some(ProjectMemoryTrustSignal::Superseded),
+        );
+        superseded.learning_superseded_by = Some(format!("lrn_{}", "4".repeat(32)));
+        let pack = compile_search_result(
+            search_result(vec![superseded], Vec::new()),
+            ContextCompileLimits::default(),
+        );
+        assert_eq!(
+            pack.premise_adjudication.state,
+            ContextPremiseState::NoDetectedMismatch
+        );
+        assert!(pack.premise_adjudication.warnings.is_empty());
+    }
+
+    #[test]
+    fn task_relevant_content_disagreement_sets_conflicting_premise_state() {
+        let conflict = ProjectMemoryConflict {
+            kind: ProjectMemoryConflictKind::ContentDisagreement,
+            entity_ids: vec!["decision-a".to_owned(), "decision-b".to_owned()],
+            learning_ids: Vec::new(),
+            reason: "same normalized title has materially different stored content; no winner is implied"
+                .to_owned(),
+        };
+        let pack = compile_search_result(
+            search_result(Vec::new(), vec![conflict]),
+            ContextCompileLimits::default(),
+        );
+        assert_eq!(
+            pack.premise_adjudication.state,
+            ContextPremiseState::ConflictingState
+        );
+        assert_eq!(
+            pack.premise_adjudication.warnings[0].kind,
+            ContextPremiseWarningKind::ConflictingMemory
+        );
+    }
+
+    #[test]
     fn conflicting_candidates_are_not_auto_injected() {
         let candidate = result(
             ProjectMemoryResultKind::Decision,
@@ -1901,6 +2222,14 @@ mod tests {
             pack.evidence_state,
             ContextEvidenceState::ConflictingEvidence
         );
+        assert_eq!(
+            pack.premise_adjudication.state,
+            ContextPremiseState::ConflictingState
+        );
+        assert!(pack.premise_adjudication.warnings.iter().any(|warning| {
+            warning.kind == ContextPremiseWarningKind::ConflictingMemory
+                && warning.entity_ids == vec!["conflicted_without_description".to_owned()]
+        }));
         assert!(pack.items.is_empty());
         assert!(pack.exclusions.iter().any(|exclusion| {
             exclusion.entity_id == "conflicted_without_description"
@@ -2371,6 +2700,150 @@ mod tests {
         assert_eq!(pack.specification_coverage.total_approved, 2);
         assert_eq!(pack.specification_coverage.low_relevance_approved, 1);
         assert_eq!(pack.source_boundary, "mixed-authority-context");
+        assert!(pack.estimated_tokens <= pack.max_tokens);
+    }
+
+    #[test]
+    fn end_to_end_compiler_resists_an_explicitly_superseded_user_premise() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        initialize_project(
+            &project,
+            Some("Premise adjudication"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        fs::write(
+            project.join("README.md"),
+            "State management migration notes.\n",
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "State migration".to_owned(),
+                goal: "Record the state manager migration".to_owned(),
+                source: Default::default(),
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "Recorded the state manager migration".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["README.md".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let record_id = checkpoint.session.checkpoints[0].id.clone();
+        let evidence = vec![LearningEvidenceInput {
+            session_id: started.session.session_id.clone(),
+            record_id,
+            note: "State migration evidence".to_owned(),
+        }];
+        let old = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Convention,
+                title: "Redux state manager".to_owned(),
+                guidance: "Use Redux for application state.".to_owned(),
+                confidence_percent: 90,
+                provenance: LearningProvenance::Inferred,
+                evidence: evidence.clone(),
+            },
+        )
+        .unwrap();
+        let replacement = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Convention,
+                title: "Zustand state manager".to_owned(),
+                guidance: "Use Zustand for application state.".to_owned(),
+                confidence_percent: 90,
+                provenance: LearningProvenance::Inferred,
+                evidence,
+            },
+        )
+        .unwrap();
+        review_learning(
+            &project,
+            &vault,
+            &replacement.learning.learning_id,
+            ReviewLearningInput {
+                request_id: format!("req_{}", "5".repeat(32)),
+                expected_event_count: Some(replacement.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Zustand is the reviewed replacement.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        review_learning(
+            &project,
+            &vault,
+            &old.learning.learning_id,
+            ReviewLearningInput {
+                request_id: format!("req_{}", "6".repeat(32)),
+                expected_event_count: Some(old.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Supersede,
+                note: "The project migrated away from Redux.".to_owned(),
+                replacement_learning_id: Some(replacement.learning.learning_id.clone()),
+            },
+        )
+        .unwrap();
+
+        let registry = SpecificationRegistry::at(root.path().join("specifications.json"));
+        let pack = compile_project_context_with_registry(
+            &project,
+            &vault,
+            "Continue Redux",
+            ContextCompileLimits::default(),
+            &registry,
+        )
+        .unwrap();
+        assert_eq!(
+            pack.premise_adjudication.state,
+            ContextPremiseState::ObsoleteAssumption
+        );
+        assert!(pack.premise_adjudication.warnings.iter().any(|warning| {
+            warning.kind == ContextPremiseWarningKind::SupersededLearning
+                && warning.learning_ids == vec![old.learning.learning_id.clone()]
+                && warning.replacement_learning_id.as_deref()
+                    == Some(replacement.learning.learning_id.as_str())
+        }));
+        assert!(pack.follow_ups.iter().any(|follow_up| {
+            follow_up.kind == ContextFollowUpKind::Learning
+                && follow_up.id == replacement.learning.learning_id
+        }));
+        assert!(!pack.items.iter().any(|item| {
+            item.learning_id.as_deref() == Some(old.learning.learning_id.as_str())
+        }));
+        assert!(!pack.live_source_checked);
         assert!(pack.estimated_tokens <= pack.max_tokens);
     }
 

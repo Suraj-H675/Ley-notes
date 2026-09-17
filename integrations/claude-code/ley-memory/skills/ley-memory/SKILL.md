@@ -30,8 +30,15 @@ request, repository policy, or inspection of live source.
    `recordId` values. Ley re-verifies and binds
    that payload to the immutable evidence. Do not substitute the generic checkpoint
    tool; if the bound write is stale, recompile and reverify.
-4. For a concrete current task, call `ley_compile_context`. It task-ranks exact
-   current approved Specifications first as `human-intent`, then active-project
+4. For a concrete current task, call `ley_compile_context`. Inspect
+   `premiseAdjudication` before acting on historical state: `obsolete-assumption`
+   means relevant memory was explicitly superseded/rejected, `conflicting-state`
+   means relevant durable state is disputed/materially inconsistent, and
+   `uncertain-state` means relevant state is stale. A supplied
+   `replacementLearningId` is a stable follow-up target, not proof that live source
+   implements it; inspect the replacement and live source before proceeding.
+   `no-detected-mismatch` is not proof that the task premise is true. The compiler
+   task-ranks exact current approved Specifications first as `human-intent`, then active-project
    context, then only explicitly agent-enabled mounted project references with the
    remaining shared budget. Respect `specifications`, `specificationExclusions`,
    `authorityPrecedence`, `referencePrecedence`, `mountedReferenceScopes`,

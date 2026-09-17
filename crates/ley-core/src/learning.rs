@@ -308,6 +308,8 @@ pub struct LearningSummary {
     pub freshness: LearningFreshness,
     pub corroborating_sessions: usize,
     pub updated_at_unix_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -632,6 +634,7 @@ impl From<&LearningRecord> for LearningSummary {
             freshness: learning.freshness,
             corroborating_sessions: learning.corroborating_sessions,
             updated_at_unix_ms: learning.updated_at_unix_ms,
+            superseded_by: learning.superseded_by.clone(),
         }
     }
 }
