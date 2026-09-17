@@ -4,11 +4,11 @@ use crate::specification::{
 };
 use crate::{
     search_project_memory, ContextMountRegistry, ContextMountStatus, GraphCitation,
-    LearningFreshness, LearningState, LearningTrustState, LeyCoreError, ProjectMemoryConflict,
-    ProjectMemoryConflictKind, ProjectMemoryRankingSignals, ProjectMemoryResultKind,
-    ProjectMemorySearch, ProjectMemorySearchLimits, ProjectMemorySearchResult,
-    ProjectMemorySearchRetrieval, ProjectMemoryTrustSignal, SpecificationRegistry,
-    MAX_PROJECT_MEMORY_SEARCH_RESULTS, MAX_PROJECT_MEMORY_SEARCH_TOKENS,
+    LearningFreshness, LearningOriginSummary, LearningState, LearningTrustState, LeyCoreError,
+    ProjectMemoryConflict, ProjectMemoryConflictKind, ProjectMemoryRankingSignals,
+    ProjectMemoryResultKind, ProjectMemorySearch, ProjectMemorySearchLimits,
+    ProjectMemorySearchResult, ProjectMemorySearchRetrieval, ProjectMemoryTrustSignal,
+    SpecificationRegistry, MAX_PROJECT_MEMORY_SEARCH_RESULTS, MAX_PROJECT_MEMORY_SEARCH_TOKENS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -23,6 +23,7 @@ pub const MIN_SEMANTIC_ADMISSION_SIMILARITY: f64 = 0.30;
 
 const BASE_CONTEXT_TOKENS: usize = 96;
 const ITEM_OVERHEAD_TOKENS: usize = 52;
+const LEARNING_ORIGIN_SUMMARY_TOKENS: usize = 48;
 const SPECIFICATION_ITEM_OVERHEAD_TOKENS: usize = 44;
 const MOUNTED_REFERENCE_OVERHEAD_TOKENS: usize = 28;
 const MOUNTED_REFERENCE_CANDIDATE_RESULTS: usize = 8;
@@ -214,6 +215,8 @@ pub struct CompiledMountedReferenceItem {
     pub learning_freshness: Option<LearningFreshness>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learning_origin_summary: Option<LearningOriginSummary>,
     pub source_authority: ContextAuthority,
     pub admission_basis: ContextAdmissionBasis,
     pub trusted_for_reuse: bool,
@@ -265,6 +268,8 @@ pub struct CompiledContextItem {
     pub learning_freshness: Option<LearningFreshness>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learning_origin_summary: Option<LearningOriginSummary>,
     pub authority: ContextAuthority,
     pub admission_basis: ContextAdmissionBasis,
     pub trusted_for_reuse: bool,
@@ -614,6 +619,7 @@ fn compile_search_result_with_specifications(
             learning_trust_state: candidate.item.learning_trust_state,
             learning_freshness: candidate.item.learning_freshness,
             trust_signal: candidate.item.trust_signal,
+            learning_origin_summary: candidate.item.learning_origin_summary,
             authority: candidate.authority,
             admission_basis: candidate.admission_basis,
             trusted_for_reuse: candidate.item.trusted_for_reuse,
@@ -912,6 +918,7 @@ fn append_mounted_references(
             learning_trust_state: item.learning_trust_state,
             learning_freshness: item.learning_freshness,
             trust_signal: item.trust_signal,
+            learning_origin_summary: item.learning_origin_summary,
             source_authority: mounted.candidate.authority,
             admission_basis: mounted.candidate.admission_basis,
             trusted_for_reuse: item.trusted_for_reuse,
@@ -1179,13 +1186,19 @@ fn relevance_basis(item: &ProjectMemorySearchResult) -> Option<ContextAdmissionB
 }
 
 fn estimate_item_tokens(item: &ProjectMemorySearchResult) -> usize {
-    ITEM_OVERHEAD_TOKENS.saturating_add(
-        item.title
-            .chars()
-            .count()
-            .saturating_add(item.excerpt.chars().count())
-            .div_ceil(4),
-    )
+    ITEM_OVERHEAD_TOKENS
+        .saturating_add(
+            item.title
+                .chars()
+                .count()
+                .saturating_add(item.excerpt.chars().count())
+                .div_ceil(4),
+        )
+        .saturating_add(
+            item.learning_origin_summary
+                .as_ref()
+                .map_or(0, |_| LEARNING_ORIGIN_SUMMARY_TOKENS),
+        )
 }
 
 fn estimate_specification_tokens(candidate: &TaskSpecificationCandidate) -> usize {
@@ -1734,6 +1747,7 @@ mod tests {
             learning_trust_state: None,
             learning_freshness: None,
             trust_signal,
+            learning_origin_summary: None,
             trusted_for_reuse: trust_signal == Some(ProjectMemoryTrustSignal::TrustedCurrent),
             content_conflicted: false,
             truncated: false,
@@ -1995,6 +2009,18 @@ mod tests {
         learning.learning_state = Some(LearningState::Verified);
         learning.learning_trust_state = Some(LearningTrustState::Trusted);
         learning.learning_freshness = Some(LearningFreshness::Current);
+        let origin = LearningOriginSummary {
+            mechanically_resolved: true,
+            causal_completeness_proven: false,
+            omitted_sources: 0,
+            automatic_authority_ceiling: LearningTrustState::ReviewRequired,
+            recorded_sources: 4,
+            session_records: 1,
+            captured_artifacts: 1,
+            turn_evidence: 1,
+            recovery_candidates: 1,
+        };
+        learning.learning_origin_summary = Some(origin.clone());
         learning.citation = Some(GraphCitation {
             artifact_path: "docs/runbook.md".to_owned(),
             start_line: 3,
@@ -2017,6 +2043,7 @@ mod tests {
             item.trust_signal,
             Some(ProjectMemoryTrustSignal::TrustedCurrent)
         );
+        assert_eq!(item.learning_origin_summary, Some(origin));
         assert!(pack.follow_ups.iter().any(|follow_up| {
             follow_up.kind == ContextFollowUpKind::ReadEvidence && follow_up.id == "docs/runbook.md"
         }));

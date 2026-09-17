@@ -2879,7 +2879,7 @@ mod tests {
 
     #[tokio::test]
     async fn learning_proposals_are_opt_in_review_required_and_bounded() {
-        let (_temporary, project, vault, read_only_server) = fixture();
+        let (temporary, project, vault, read_only_server) = fixture();
         assert!(!read_only_server
             .tool_router
             .list_all()
@@ -2895,9 +2895,44 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
-        let server =
+        let checkpointed = checkpoint_session(
+            &project,
+            &vault,
+            &session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "8".repeat(32)),
+                summary: "Verified bounded memory continuity".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "Continuity evidence checkpoint".to_owned(),
+                    decision: "Read cited memory before continuing.".to_owned(),
+                    rationale: "The captured source supports continuity.".to_owned(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["lib.rs".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let evidence_record_id = checkpointed.session.checkpoints[0].decisions[0].id.clone();
+        let mut server =
             LeyMcpServer::new_with_learning_proposals(project.clone(), vault.clone()).unwrap();
-        let proposal = || ProposeLearningParams {
+        server.specification_registry = Arc::new(SpecificationRegistry::at(
+            temporary
+                .path()
+                .join("learning-test-specifications-v1.json"),
+        ));
+        server.context_mount_registry = Arc::new(ContextMountRegistry::at(
+            temporary
+                .path()
+                .join("learning-test-context-mounts-v1.json"),
+        ));
+        let proposal = || {
+            ProposeLearningParams {
             request_id: format!("req_{}", "9".repeat(32)),
             kind: McpLearningKind::Procedure,
             title: "Resume from bounded memory".to_owned(),
@@ -2906,9 +2941,10 @@ mod tests {
             provenance: McpLearningProvenance::Inferred,
             evidence: vec![McpLearningEvidence {
                 session_id: session_id.clone(),
-                record_id: session_id.clone(),
-                note: "The session established the continuity requirement.".to_owned(),
+                record_id: evidence_record_id.clone(),
+                note: "The cited decision and captured artifact established the continuity requirement.".to_owned(),
             }],
+        }
         };
         let proposed = server
             .learning_propose(Parameters(proposal()))
@@ -2954,7 +2990,7 @@ mod tests {
 
         let context = server
             .learning_get(Parameters(LearningContextParams {
-                learning_id,
+                learning_id: learning_id.clone(),
                 max_evidence: None,
                 max_history: None,
                 max_artifacts_per_evidence: None,
@@ -2967,6 +3003,21 @@ mod tests {
         assert_eq!(context["trustedForReuse"], false);
         assert_eq!(context["liveSourceChecked"], false);
         assert_eq!(context["sourceBoundary"], "untrusted-agent-learning");
+        assert_eq!(context["originLineage"]["mechanicallyResolved"], true);
+        assert_eq!(context["originLineage"]["causalCompletenessProven"], false);
+        assert_eq!(
+            context["originLineage"]["automaticAuthorityCeiling"],
+            "review-required"
+        );
+        let origin_sources = context["originLineage"]["sources"].as_array().unwrap();
+        assert!(origin_sources.iter().any(|source| {
+            source["kind"] == "session-record"
+                && source["sessionId"] == session_id
+                && source["recordId"] == evidence_record_id
+        }));
+        assert!(origin_sources.iter().any(|source| {
+            source["kind"] == "captured-artifact" && source["artifactPath"] == "lib.rs"
+        }));
         assert!(context["instructionWarning"]
             .as_str()
             .unwrap()
@@ -2974,6 +3025,88 @@ mod tests {
         let serialized = context.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));
+
+        let confirmed = ley_core::review_learning(
+            &project,
+            &vault,
+            &learning_id,
+            ley_core::ReviewLearningInput {
+                request_id: format!("req_{}", "a".repeat(32)),
+                expected_event_count: None,
+                actor: ley_core::LearningActor::User,
+                action: ley_core::LearningFeedbackAction::Confirm,
+                note: "Verified for compiler provenance test.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            confirmed.learning.trust_state,
+            ley_core::LearningTrustState::Trusted
+        );
+        assert_eq!(
+            confirmed.learning.freshness,
+            ley_core::LearningFreshness::Current
+        );
+        let searched = search_project_memory(
+            &project,
+            &vault,
+            "Resume from bounded memory",
+            ProjectMemorySearchLimits {
+                max_results: 8,
+                max_tokens: 4_000,
+            },
+        )
+        .unwrap();
+        let searched_learning = searched
+            .results
+            .iter()
+            .find(|item| item.learning_id.as_deref() == Some(learning_id.as_str()))
+            .expect("trusted learning should be returned by fixed-project search");
+        assert_eq!(
+            searched_learning.trust_signal,
+            Some(ley_core::ProjectMemoryTrustSignal::TrustedCurrent)
+        );
+        assert!(searched_learning.learning_origin_summary.is_some());
+        let compiled = server
+            .compile_context(Parameters(CompileContextParams {
+                task: "Resume from bounded memory".to_owned(),
+                max_results: Some(4),
+                max_tokens: Some(1_500),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let compiled_learning = compiled["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["learningId"] == learning_id)
+            .expect("trusted learning should be admitted");
+        assert_eq!(
+            compiled_learning["learningOriginSummary"]["mechanicallyResolved"],
+            true
+        );
+        assert_eq!(
+            compiled_learning["learningOriginSummary"]["causalCompletenessProven"],
+            false
+        );
+        assert_eq!(
+            compiled_learning["learningOriginSummary"]["automaticAuthorityCeiling"],
+            "review-required"
+        );
+        assert_eq!(
+            compiled_learning["learningOriginSummary"]["recordedSources"],
+            2
+        );
+        assert_eq!(
+            compiled_learning["learningOriginSummary"]["capturedArtifacts"],
+            1
+        );
+        let compiled_serialized = compiled.to_string();
+        assert!(!compiled_serialized.contains(project.to_str().unwrap()));
+        assert!(!compiled_serialized.contains(vault.to_str().unwrap()));
     }
 
     #[tokio::test]

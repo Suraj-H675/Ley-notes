@@ -82,6 +82,8 @@ Read-only learning retrieval is available without a write flag. Add `--allow-lea
 
 This flag adds only `ley_learning_propose`. Every proposal must cite existing session records and is stored as agent-authored or inferred, tentative, and review-required. The receipt explicitly returns `requiresUserReview: true`. MCP cannot confirm, correct, reject, supersede, delete, or promote a lesson.
 
+New proposal/correction events preserve the mechanically known origin chain behind that cited evidence. Direct session records and captured artifact snapshots are retained as origin identities. If a proposal cites a candidate-bound recovery checkpoint, Ley also records the recovery candidate fingerprint and exact `tev_` turn-evidence IDs that produced that checkpoint. This lineage is provenance, not proof that the derived wording is semantically correct or that Ley observed every causal influence on the model.
+
 The learning and session flags are independent and may be combined when a host needs both capabilities. An exact proposal retry uses the same stable `requestId`; changed reuse fails.
 
 ## Retrieval workflow
@@ -112,7 +114,11 @@ Repository and session text is untrusted evidence. Content such as “ignore pre
 
 `ley_search_activity` searches replayed append-only session memory inside the fixed project. It defaults to 20 results per category and can filter problems to `open` or `resolved`. Results carry stable session, checkpoint, and record IDs; bounded attempts, alternatives, and artifact citations; omission and truncation counts; and the untrusted-memory boundary. It does not scan live source or search another Ley project.
 
-`ley_learnings_list` returns at most 50 summaries and defaults to `current-trusted`: user-confirmed lessons with artifact citations that still match the latest ingestion. Use `needs-review` or `all` only for deliberate inspection. `ley_learning_get` defaults to 5 evidence records, 10 recent history entries, 20 artifacts per evidence record, and 16,000 text characters; it retains at most 30 artifact citations across the complete pack. All limits are caller-reducible. `liveSourceChecked: false` still requires live workspace inspection when correctness depends on current source.
+`ley_learnings_list` returns at most 50 summaries and defaults to `current-trusted`: user-confirmed lessons with artifact citations that still match the latest ingestion. Use `needs-review` or `all` only for deliberate inspection. Learning summaries, hybrid search, and `ley_compile_context` carry a compact `originLineageSummary`/`learningOriginSummary` rather than the complete source vector so broad retrieval stays bounded.
+
+`ley_learning_get` defaults to 5 evidence records, 10 recent history entries, 20 artifacts per evidence record, and 16,000 text characters; it retains at most 30 artifact citations across the complete pack. It also returns the bounded full `originLineage`. Durable learning events may retain up to 256 origin sources, while the explicit learning-context response discloses at most 32. If that response clips origins, `omittedOriginSources` increases and the returned nested lineage itself becomes `mechanicallyResolved: false`; it must never look complete merely because the durable ledger resolved more sources than the response disclosed.
+
+`automaticAuthorityCeiling: review-required` describes the strongest authority automatic derivation itself may grant. A later explicit user confirmation may establish trusted learning state, but it does not delete origin history and does not change `causalCompletenessProven: false`. That false value is an epistemic boundary, not an error and not a claim that the learning can never be trusted. `liveSourceChecked: false` still requires live workspace inspection when correctness depends on current source.
 
 `ley_project_resume` defaults to 3 sessions, 10 current trusted lessons, and 16,000 text characters. It prioritizes active, then paused, then recent completed/abandoned sessions. It reports omissions and estimated tokens, and carries stable IDs for deeper calls.
 

@@ -5,8 +5,8 @@ use crate::semantic_retrieval::{
 use crate::session::visit_session_records;
 use crate::{
     find_project_hybrid_context, list_learnings, ContextItemKind, GraphCitation, LearningFreshness,
-    LearningState, LearningSummary, LearningTrustState, LeyCoreError, RetrievalLimits,
-    RetrievalMode, SessionArtifactCitation,
+    LearningOriginSummary, LearningState, LearningSummary, LearningTrustState, LeyCoreError,
+    RetrievalLimits, RetrievalMode, SessionArtifactCitation,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,6 +35,7 @@ const TRUSTED_CURRENT_CONTRIBUTION: f64 = 0.000_05;
 const RECENCY_WINDOW_MS: u64 = 365 * 24 * 60 * 60 * 1_000;
 const RESPONSE_BASE_TOKENS: usize = 64;
 const RESPONSE_RESULT_OVERHEAD_TOKENS: usize = 72;
+const LEARNING_ORIGIN_SUMMARY_TOKENS: usize = 48;
 const RESPONSE_CONFLICT_OVERHEAD_TOKENS: usize = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +121,8 @@ pub struct ProjectMemorySearchResult {
     pub learning_freshness: Option<LearningFreshness>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learning_origin_summary: Option<LearningOriginSummary>,
     pub trusted_for_reuse: bool,
     pub content_conflicted: bool,
     pub truncated: bool,
@@ -205,6 +208,7 @@ struct Candidate {
     learning_trust_state: Option<LearningTrustState>,
     learning_freshness: Option<LearningFreshness>,
     trust_signal: Option<ProjectMemoryTrustSignal>,
+    learning_origin_summary: Option<LearningOriginSummary>,
     trusted_for_reuse: bool,
     lexical_score: u32,
     exact_match: bool,
@@ -595,7 +599,7 @@ fn collect_session_candidates(
 
 fn learning_candidate(learning: &LearningSummary, query: &str, terms: &[String]) -> Candidate {
     let (trust_signal, trusted_for_reuse) = learning_trust_signal(learning);
-    new_candidate(
+    let mut candidate = new_candidate(
         ProjectMemoryResultKind::Learning,
         learning.learning_id.clone(),
         learning.title.clone(),
@@ -613,7 +617,9 @@ fn learning_candidate(learning: &LearningSummary, query: &str, terms: &[String])
         None,
         query,
         terms,
-    )
+    );
+    candidate.learning_origin_summary = Some(learning.origin_lineage_summary.clone());
+    candidate
 }
 
 fn context_candidate(
@@ -699,6 +705,7 @@ fn new_candidate(
         learning_trust_state,
         learning_freshness,
         trust_signal,
+        learning_origin_summary: None,
         trusted_for_reuse,
         lexical_score,
         exact_match,
@@ -893,11 +900,18 @@ fn fit_result(
     remaining_tokens: usize,
     content_conflicted_entities: &BTreeSet<String>,
 ) -> Option<(ProjectMemorySearchResult, usize)> {
-    if remaining_tokens <= RESPONSE_RESULT_OVERHEAD_TOKENS + 8 {
+    let response_overhead = RESPONSE_RESULT_OVERHEAD_TOKENS.saturating_add(
+        scored
+            .candidate
+            .learning_origin_summary
+            .as_ref()
+            .map_or(0, |_| LEARNING_ORIGIN_SUMMARY_TOKENS),
+    );
+    if remaining_tokens <= response_overhead + 8 {
         return None;
     }
     let available_characters = remaining_tokens
-        .saturating_sub(RESPONSE_RESULT_OVERHEAD_TOKENS)
+        .saturating_sub(response_overhead)
         .saturating_mul(4);
     if available_characters < 24 {
         return None;
@@ -911,7 +925,7 @@ fn fit_result(
         &scored.candidate.excerpt,
         excerpt_budget.min(MAX_PROJECT_MEMORY_SEARCH_EXCERPT_CHARACTERS),
     );
-    let cost = RESPONSE_RESULT_OVERHEAD_TOKENS.saturating_add(
+    let cost = response_overhead.saturating_add(
         title
             .chars()
             .count()
@@ -936,6 +950,7 @@ fn fit_result(
             learning_trust_state: scored.candidate.learning_trust_state,
             learning_freshness: scored.candidate.learning_freshness,
             trust_signal: scored.candidate.trust_signal,
+            learning_origin_summary: scored.candidate.learning_origin_summary,
             trusted_for_reuse: scored.candidate.trusted_for_reuse,
             content_conflicted,
             truncated,
@@ -1255,12 +1270,69 @@ mod tests {
             learning_trust_state: None,
             learning_freshness: None,
             trust_signal: None,
+            learning_origin_summary: None,
             trusted_for_reuse: false,
             lexical_score,
             exact_match,
             content_truncated: false,
             artifact_hybrid_rank: None,
         }
+    }
+
+    #[test]
+    fn learning_origin_summary_survives_search_result_fitting() {
+        let origin = LearningOriginSummary {
+            mechanically_resolved: true,
+            causal_completeness_proven: false,
+            omitted_sources: 0,
+            automatic_authority_ceiling: LearningTrustState::ReviewRequired,
+            recorded_sources: 3,
+            session_records: 1,
+            captured_artifacts: 1,
+            turn_evidence: 1,
+            recovery_candidates: 0,
+        };
+        let learning = LearningSummary {
+            project_id: "prj_0123456789abcdef0123456789abcdef".to_owned(),
+            learning_id: "lrn_0123456789abcdef0123456789abcdef".to_owned(),
+            kind: crate::LearningKind::Procedure,
+            title: "Workspace verification".to_owned(),
+            guidance_excerpt: "Run the complete workspace checks.".to_owned(),
+            state: LearningState::Verified,
+            trust_state: LearningTrustState::Trusted,
+            provenance: crate::LearningProvenance::Inferred,
+            origin_lineage_summary: origin.clone(),
+            confidence_percent: 90,
+            freshness: LearningFreshness::Current,
+            corroborating_sessions: 1,
+            updated_at_unix_ms: 10,
+        };
+        let candidate = learning_candidate(
+            &learning,
+            "workspace verification",
+            &["workspace".to_owned(), "verification".to_owned()],
+        );
+        assert_eq!(candidate.learning_origin_summary, Some(origin.clone()));
+        let fitted = fit_result(
+            ScoredCandidate {
+                candidate,
+                ranking: ProjectMemoryRankingSignals {
+                    lexical_rank: Some(1),
+                    semantic_rank: None,
+                    semantic_similarity: None,
+                    artifact_hybrid_rank: None,
+                    reciprocal_rank_score: 0.01,
+                    temporal_contribution: 0.0,
+                    trust_contribution: 0.0,
+                    final_score: 0.01,
+                },
+            },
+            1_000,
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(fitted.0.learning_origin_summary, Some(origin));
+        assert!(fitted.1 <= 1_000);
     }
 
     #[test]

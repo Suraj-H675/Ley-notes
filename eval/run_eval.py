@@ -504,6 +504,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         "memory_recovery": None,
         "memory_transition": None,
         "memory_binding": None,
+        "origin_lineage": None,
         "idempotency": None,
         "token_budget": None,
         "secret_exclusion": None,
@@ -899,10 +900,71 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "ley_session_memory_compile",
                     {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
                 )
+                lineage_ok = True
+                if scenario.get("expected_origin_lineage"):
+                    shown_after = cli_json(["session", "show", str(session_id), str(project), "--json"])
+                    checkpoints = shown_after.get("checkpoints", []) if isinstance(shown_after, dict) else []
+                    checkpoint_id = str(checkpoints[-1].get("checkpointId", "")) if checkpoints else ""
+                    proposed_learning = mcp_call(
+                        project,
+                        "ley_learning_propose",
+                        {
+                            "requestId": request_id(f"{scenario['id']}:origin-lineage"),
+                            "kind": "fact",
+                            "title": "Interrupted request remained unresolved",
+                            "guidance": prompt_text or "A request was observed before interruption",
+                            "confidencePercent": 50,
+                            "provenance": "inferred",
+                            "evidence": [
+                                {
+                                    "sessionId": session_id,
+                                    "recordId": checkpoint_id,
+                                    "note": "Derived only from the bound recovery checkpoint.",
+                                }
+                            ],
+                        },
+                        WRITE_FLAGS,
+                    )
+                    learning_id = str(proposed_learning.get("learningId", ""))
+                    learning_context = mcp_call(
+                        project,
+                        "ley_learning_get",
+                        {"learningId": learning_id, "maxCharacters": 4_000},
+                    )
+                    lineage = learning_context.get("originLineage", {})
+                    sources = lineage.get("sources", []) if isinstance(lineage, dict) else []
+                    lineage_ok = (
+                        bool(checkpoint_id)
+                        and lineage.get("mechanicallyResolved") is True
+                        and lineage.get("causalCompletenessProven") is False
+                        and lineage.get("automaticAuthorityCeiling") == "review-required"
+                        and any(
+                            isinstance(source, dict)
+                            and source.get("kind") == "session-record"
+                            and source.get("recordId") == checkpoint_id
+                            for source in sources
+                        )
+                        and any(
+                            isinstance(source, dict)
+                            and source.get("kind") == "recovery-candidate"
+                            and source.get("candidateFingerprint") == transition.get("candidateFingerprint")
+                            for source in sources
+                        )
+                        and any(
+                            isinstance(source, dict)
+                            and source.get("kind") == "turn-evidence"
+                            and source.get("recordId") == prompt_record_id
+                            for source in sources
+                        )
+                    )
+                    scores["origin_lineage"] = lineage_ok
+                    if not lineage_ok:
+                        failures.append("derived learning did not preserve the bound recovery origin chain")
                 recovery_ok = (
                     state_ok
                     and transition_ok
                     and binding_ok
+                    and lineage_ok
                     and after.get("state") == "no-unconsolidated-evidence"
                     and after.get("totalUnconsolidatedEvidence") == 0
                 )
@@ -943,7 +1005,7 @@ def main() -> int:
                 f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
                 flush=True,
             )
-            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference"):
+            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "origin_lineage", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference"):
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):

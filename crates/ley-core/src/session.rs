@@ -995,6 +995,50 @@ pub fn read_session(
     store.rebuild_session(session_id)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionRecoveryDerivationOrigin {
+    pub candidate_fingerprint: String,
+    pub evidence_record_ids: Vec<String>,
+}
+
+pub(crate) fn read_recovery_derivation_origin(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    checkpoint_event_id: &str,
+) -> Result<Option<SessionRecoveryDerivationOrigin>, LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_event_id(checkpoint_event_id)?;
+    let diagnostic = diagnose_project(&project_start)?;
+    project_memory_overview(&diagnostic.root, &vault)?;
+    let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
+        return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
+    };
+    let _lock = store.lock(true)?;
+    let session_dir = store.open_session(session_id)?;
+    let events = store.read_events(session_id, &session_dir)?;
+    let event = events
+        .iter()
+        .find(|event| event.event_id == checkpoint_event_id)
+        .ok_or_else(|| {
+            LeyCoreError::InvalidSessionStore(
+                "learning evidence checkpoint event is missing from its session ledger".to_owned(),
+            )
+        })?;
+    match &event.payload {
+        SessionEventPayload::CheckpointRecorded(_) => Ok(None),
+        SessionEventPayload::RecoveryCheckpointRecorded(recovery) => {
+            Ok(Some(SessionRecoveryDerivationOrigin {
+                candidate_fingerprint: recovery.provenance.candidate_fingerprint.clone(),
+                evidence_record_ids: recovery.provenance.evidence_record_ids.clone(),
+            }))
+        }
+        _ => Err(LeyCoreError::InvalidSessionStore(
+            "learning evidence checkpoint ID resolved to a non-checkpoint event".to_owned(),
+        )),
+    }
+}
+
 pub(crate) fn read_session_for_memory_compiler(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,

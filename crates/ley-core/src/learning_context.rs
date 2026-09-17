@@ -1,7 +1,7 @@
 use crate::{
     list_learnings, read_learning, LearningEvidence, LearningFreshness, LearningKind,
-    LearningProvenance, LearningReviewEntry, LearningState, LearningSummary, LearningTrustState,
-    LeyCoreError,
+    LearningOriginLineage, LearningProvenance, LearningReviewEntry, LearningState, LearningSummary,
+    LearningTrustState, LeyCoreError,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -14,6 +14,7 @@ pub const DEFAULT_LEARNING_CONTEXT_HISTORY: usize = 10;
 pub const MAX_LEARNING_CONTEXT_HISTORY: usize = 50;
 pub const DEFAULT_LEARNING_CONTEXT_ARTIFACTS: usize = 20;
 pub const MAX_LEARNING_CONTEXT_ARTIFACTS: usize = 30;
+pub const MAX_LEARNING_CONTEXT_ORIGIN_SOURCES: usize = 32;
 pub const DEFAULT_LEARNING_CONTEXT_CHARACTERS: usize = 16_000;
 pub const MIN_LEARNING_CONTEXT_CHARACTERS: usize = 1_000;
 pub const MAX_LEARNING_CONTEXT_CHARACTERS: usize = 32_000;
@@ -59,6 +60,9 @@ pub struct LearningContextPack {
     pub trust_state: LearningTrustState,
     pub trusted_for_reuse: bool,
     pub provenance: LearningProvenance,
+    pub origin_lineage: LearningOriginLineage,
+    pub origin_source_count: usize,
+    pub omitted_origin_sources: usize,
     pub confidence_percent: u8,
     pub freshness: LearningFreshness,
     pub freshness_basis: &'static str,
@@ -134,6 +138,8 @@ pub fn read_learning_context(
         max_text_characters,
     )?;
     let learning = read_learning(project_start, vault, learning_id)?;
+    let (origin_lineage, origin_source_count, omitted_origin_sources) =
+        bounded_origin_lineage(learning.origin_lineage.clone());
     let mut budget = TextBudget::new(max_text_characters);
     let title = budget.take(&learning.title, 256);
     let guidance = budget.take(&learning.guidance, (max_text_characters / 2).min(16_000));
@@ -175,8 +181,11 @@ pub fn read_learning_context(
         history.push(item);
     }
     let omitted_history = history_count.saturating_sub(history.len());
-    let truncated =
-        budget.truncated || omitted_evidence > 0 || omitted_artifacts > 0 || omitted_history > 0;
+    let truncated = budget.truncated
+        || omitted_evidence > 0
+        || omitted_artifacts > 0
+        || omitted_history > 0
+        || omitted_origin_sources > 0;
     let text_characters = budget.used;
 
     Ok(LearningContextPack {
@@ -192,6 +201,9 @@ pub fn read_learning_context(
             && learning.trust_state == LearningTrustState::Trusted
             && learning.freshness == LearningFreshness::Current,
         provenance: learning.provenance,
+        origin_lineage,
+        origin_source_count,
+        omitted_origin_sources,
         confidence_percent: learning.confidence_percent,
         freshness: learning.freshness,
         freshness_basis: FRESHNESS_BASIS,
@@ -217,6 +229,23 @@ pub fn read_learning_context(
         source_boundary: SOURCE_BOUNDARY,
         instruction_warning: INSTRUCTION_WARNING,
     })
+}
+
+fn bounded_origin_lineage(
+    mut lineage: LearningOriginLineage,
+) -> (LearningOriginLineage, usize, usize) {
+    let retained_source_count = lineage.sources.len();
+    let origin_source_count = retained_source_count.saturating_add(lineage.omitted_sources);
+    lineage
+        .sources
+        .truncate(MAX_LEARNING_CONTEXT_ORIGIN_SOURCES);
+    let response_omissions = retained_source_count.saturating_sub(lineage.sources.len());
+    let omitted_origin_sources = lineage.omitted_sources.saturating_add(response_omissions);
+    lineage.omitted_sources = omitted_origin_sources;
+    if omitted_origin_sources > 0 {
+        lineage.mechanically_resolved = false;
+    }
+    (lineage, origin_source_count, omitted_origin_sources)
 }
 
 fn matches_scope(learning: &LearningSummary, scope: LearningListScope) -> bool {
@@ -316,13 +345,37 @@ mod tests {
     use crate::{
         checkpoint_session, ingest_project, initialize_project, propose_learning, review_learning,
         start_session, CaptureMode, CheckpointInput, LearningActor, LearningEvidenceInput,
-        LearningFeedbackAction, ProposeLearningInput, ReviewLearningInput, SessionSource,
-        StartSessionInput,
+        LearningFeedbackAction, LearningOriginLineage, LearningOriginSource, LearningTrustState,
+        ProposeLearningInput, ReviewLearningInput, SessionSource, StartSessionInput,
     };
     use tempfile::tempdir;
 
     fn request_id(digit: char) -> String {
         format!("req_{}", digit.to_string().repeat(32))
+    }
+
+    #[test]
+    fn origin_lineage_context_is_separately_bounded_and_discloses_omission() {
+        let lineage = LearningOriginLineage {
+            mechanically_resolved: true,
+            causal_completeness_proven: false,
+            omitted_sources: 3,
+            automatic_authority_ceiling: LearningTrustState::ReviewRequired,
+            sources: (0..(MAX_LEARNING_CONTEXT_ORIGIN_SOURCES + 8))
+                .map(|index| LearningOriginSource::SessionRecord {
+                    session_id: format!("ses_{:032x}", index + 1),
+                    record_id: format!("dec_{:032x}", index + 1),
+                    record_type: "decision".to_owned(),
+                })
+                .collect(),
+        };
+        let (bounded, total, omitted) = bounded_origin_lineage(lineage);
+        assert_eq!(total, MAX_LEARNING_CONTEXT_ORIGIN_SOURCES + 11);
+        assert_eq!(bounded.sources.len(), MAX_LEARNING_CONTEXT_ORIGIN_SOURCES);
+        assert_eq!(omitted, 11);
+        assert_eq!(bounded.omitted_sources, 11);
+        assert!(!bounded.mechanically_resolved);
+        assert!(!bounded.causal_completeness_proven);
     }
 
     #[test]

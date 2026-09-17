@@ -84,17 +84,19 @@ pub use learning::{
     correct_learning, generate_learning_request_id, learning_review_inbox, list_learnings,
     propose_learning, read_learning, review_learning, CorrectLearningInput, LearningActor,
     LearningEvidence, LearningEvidenceInput, LearningFeedbackAction, LearningFreshness,
-    LearningIndex, LearningKind, LearningMutation, LearningProvenance, LearningRecord,
-    LearningRedaction, LearningReviewEntry, LearningState, LearningSummary, LearningTrustState,
-    ProposeLearningInput, ReviewLearningInput, LEARNING_EVENT_LIMIT, LEARNING_EVENT_LIMIT_BYTES,
-    LEARNING_INDEX_LIMIT_BYTES, LEARNING_SCHEMA_VERSION,
+    LearningIndex, LearningKind, LearningMutation, LearningOriginLineage, LearningOriginSource,
+    LearningOriginSummary, LearningProvenance, LearningRecord, LearningRedaction,
+    LearningReviewEntry, LearningState, LearningSummary, LearningTrustState, ProposeLearningInput,
+    ReviewLearningInput, LEARNING_EVENT_LIMIT, LEARNING_EVENT_LIMIT_BYTES,
+    LEARNING_INDEX_LIMIT_BYTES, LEARNING_SCHEMA_VERSION, MAX_LEARNING_ORIGIN_SOURCES,
 };
 pub use learning_context::{
     list_learning_contexts, read_learning_context, LearningContextPack, LearningList,
     LearningListScope, DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
     DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
     DEFAULT_LEARNING_LIST_RESULTS, MAX_LEARNING_CONTEXT_ARTIFACTS, MAX_LEARNING_CONTEXT_CHARACTERS,
-    MAX_LEARNING_CONTEXT_EVIDENCE, MAX_LEARNING_CONTEXT_HISTORY, MAX_LEARNING_LIST_RESULTS,
+    MAX_LEARNING_CONTEXT_EVIDENCE, MAX_LEARNING_CONTEXT_HISTORY,
+    MAX_LEARNING_CONTEXT_ORIGIN_SOURCES, MAX_LEARNING_LIST_RESULTS,
     MIN_LEARNING_CONTEXT_CHARACTERS,
 };
 pub use memory_compiler::{

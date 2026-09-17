@@ -101,7 +101,7 @@ Valid task statuses are `pending`, `in-progress`, `completed`, `blocked`, and `c
 
 ## Learnings
 
-Propose a learning only after a repeated pattern or verified reusable resolution exists. Cite existing Ley session records. Proposals remain tentative until human review; never claim that an agent approved, confirmed, corrected, rejected, or promoted one.
+Propose a learning only after a repeated pattern or verified reusable resolution exists. Cite existing Ley session records. Proposals remain tentative and `review-required` until human review; never claim that an agent approved, confirmed, corrected, rejected, or promoted one. Ley preserves the mechanically known origin lineage behind new derived learnings, including captured artifact origins and, for a bound recovery checkpoint, its recovery candidate plus exact turn evidence. Treat that lineage as provenance, not proof of complete causal ancestry or semantic truth. Automatic derivation cannot grant authority above `review-required`; explicit user confirmation may establish trust later, but it does not erase origin history or make causal completeness proven.
 
 ## Before responding
 

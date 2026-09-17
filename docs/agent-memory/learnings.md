@@ -19,6 +19,8 @@ ley learning propose /path/to/project \
 
 Valid actor/provenance pairs are `user` with `user-authored`, or `agent` with `agent-authored`/`inferred`. One proposal can cite up to twenty distinct session records. It cannot cite arbitrary files or invent a record ID.
 
+For every new proposal, Ley preserves a bounded origin lineage in the immutable learning event. The mechanically known origins include the cited session record and any captured artifact snapshots attached to that record. If the cited record is a candidate-bound recovery checkpoint, lineage also reaches the exact recovery candidate fingerprint and `tev_` prompt/response evidence that produced the checkpoint. These recorded origins do not prove that Ley knows every causal influence on an agent-authored claim.
+
 ## Inspect and review
 
 ```bash
@@ -48,6 +50,8 @@ ley learning correct lrn_01234567890123456789012345678901 \
 
 Ley Desktop exposes the same behavior under **Agent Memory → Lessons → Provenance inspector**. **Correct** edits the current title, guidance, and confidence, requires a reason, preserves the complete cited evidence set, and appends a new immutable version. It does not rewrite the old claim. The corrected version returns to review and must be confirmed separately.
 
+Corrections also preserve origin history: newly resolved origins are unioned with the prior lineage rather than replacing it. `automaticAuthorityCeiling: review-required` means the automatic derivation step cannot self-promote its output. Explicit user confirmation can establish trusted learning state, but it does not rewrite the origin chain or turn `causalCompletenessProven: false` into a stronger claim.
+
 Every desktop correction and review decision is tied to the ledger event count visible when the inspector opened. If another agent or window changes the learning first, Ley refuses the stale action and asks the user to reload rather than applying a decision to unseen text. If the bounded inspector had to truncate the claim, review controls remain unavailable until the complete projection is inspected through the CLI. Rejected and superseded learnings remain inspectable terminal history without non-working action buttons.
 
 Once a learning is verified, trusted, current, and fully visible, **Promote to note** creates an ordinary Markdown note under `Agent Memory/Lessons`. The note contains the exact reviewed guidance, portable YAML provenance, confidence and validity at promotion, and bounded source identifiers. Supporting evidence notes are not copied. The learning ledger remains unchanged, while the new note becomes user-owned and participates in normal search, links, tags, graph, revisions, moves, and deletion.
@@ -70,6 +74,8 @@ Immutable events live at:
 <vault>/.ley/agent-memory/projects/<project-id>/learnings/events/
 ```
 
-`learnings-v1.json` and `review.md` are derived views. Do not edit them as the source of truth. Ley can rebuild them from the events. The event engine bounds text and collections, redacts recognized credentials, rejects malformed or symlinked entries, verifies contiguous history, and serializes concurrent writers.
+`learnings-v1.json` and `review.md` are derived views. Do not edit them as the source of truth. Ley can rebuild them from the events. Current learning events use schema v2 and persist bounded `originLineage`; legacy v1 events remain readable but reconstructed lineage is explicitly not mechanically complete. Lineage is included in the immutable request fingerprint, so changing it without the matching event fingerprint fails validation. The event engine bounds text and collections, redacts recognized credentials, rejects malformed or symlinked entries, verifies contiguous history, and serializes concurrent writers.
+
+The durable ledger retains at most 256 origin identities per learning derivation chain. Explicit learning inspection returns at most 32 of those sources and discloses any additional omissions by marking the returned lineage unresolved. Broad lists/search/context carry only compact origin counts/flags. Full source text is not copied into lineage merely because the source was cited.
 
 Ley stores this data locally and sends nothing by itself. A cloud agent receives a lesson only when an integration intentionally retrieves it.

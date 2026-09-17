@@ -1,6 +1,7 @@
 use crate::ingestion::{
     load_project_memory, lock_project_memory_lifecycle, redact_secrets, ProjectMemoryLifecycleLock,
 };
+use crate::session::read_recovery_derivation_origin;
 use crate::{
     diagnose_project, project_memory_overview, read_session, LeyCoreError, RedactionFinding,
     SessionArtifactCitation, SessionStatus,
@@ -16,7 +17,9 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const LEARNING_SCHEMA_VERSION: u32 = 1;
+pub const LEARNING_SCHEMA_VERSION: u32 = 2;
+const LEGACY_LEARNING_SCHEMA_VERSION: u32 = 1;
+pub const MAX_LEARNING_ORIGIN_SOURCES: usize = 256;
 pub const LEARNING_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const LEARNING_INDEX_LIMIT_BYTES: u64 = 67_108_864;
 pub const LEARNING_EVENT_LIMIT: usize = 10_000;
@@ -166,6 +169,82 @@ pub struct LearningEvidence {
     pub artifacts: Vec<SessionArtifactCitation>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum LearningOriginSource {
+    SessionRecord {
+        session_id: String,
+        record_id: String,
+        record_type: String,
+    },
+    CapturedArtifact {
+        artifact_snapshot_id: String,
+        artifact_path: String,
+        content_hash: String,
+    },
+    TurnEvidence {
+        session_id: String,
+        record_id: String,
+    },
+    RecoveryCandidate {
+        session_id: String,
+        candidate_fingerprint: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LearningOriginLineage {
+    pub mechanically_resolved: bool,
+    pub causal_completeness_proven: bool,
+    pub omitted_sources: usize,
+    pub automatic_authority_ceiling: LearningTrustState,
+    pub sources: Vec<LearningOriginSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LearningOriginSummary {
+    pub mechanically_resolved: bool,
+    pub causal_completeness_proven: bool,
+    pub omitted_sources: usize,
+    pub automatic_authority_ceiling: LearningTrustState,
+    pub recorded_sources: usize,
+    pub session_records: usize,
+    pub captured_artifacts: usize,
+    pub turn_evidence: usize,
+    pub recovery_candidates: usize,
+}
+
+impl From<&LearningOriginLineage> for LearningOriginSummary {
+    fn from(lineage: &LearningOriginLineage) -> Self {
+        let mut summary = Self {
+            mechanically_resolved: lineage.mechanically_resolved,
+            causal_completeness_proven: lineage.causal_completeness_proven,
+            omitted_sources: lineage.omitted_sources,
+            automatic_authority_ceiling: lineage.automatic_authority_ceiling,
+            recorded_sources: lineage.sources.len(),
+            session_records: 0,
+            captured_artifacts: 0,
+            turn_evidence: 0,
+            recovery_candidates: 0,
+        };
+        for source in &lineage.sources {
+            match source {
+                LearningOriginSource::SessionRecord { .. } => summary.session_records += 1,
+                LearningOriginSource::CapturedArtifact { .. } => summary.captured_artifacts += 1,
+                LearningOriginSource::TurnEvidence { .. } => summary.turn_evidence += 1,
+                LearningOriginSource::RecoveryCandidate { .. } => summary.recovery_candidates += 1,
+            }
+        }
+        summary
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LearningReviewEntry {
@@ -188,6 +267,7 @@ pub struct LearningRecord {
     pub state: LearningState,
     pub trust_state: LearningTrustState,
     pub provenance: LearningProvenance,
+    pub origin_lineage: LearningOriginLineage,
     pub confidence_percent: u8,
     pub freshness: LearningFreshness,
     pub corroborating_sessions: usize,
@@ -223,6 +303,7 @@ pub struct LearningSummary {
     pub state: LearningState,
     pub trust_state: LearningTrustState,
     pub provenance: LearningProvenance,
+    pub origin_lineage_summary: LearningOriginSummary,
     pub confidence_percent: u8,
     pub freshness: LearningFreshness,
     pub corroborating_sessions: usize,
@@ -271,6 +352,8 @@ enum LearningEventPayload {
         confidence_percent: u8,
         provenance: LearningProvenance,
         evidence: Vec<LearningEvidence>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin_lineage: Option<LearningOriginLineage>,
     },
     Corrected {
         actor: LearningActor,
@@ -279,6 +362,8 @@ enum LearningEventPayload {
         confidence_percent: u8,
         evidence: Vec<LearningEvidence>,
         note: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin_lineage: Option<LearningOriginLineage>,
     },
     Reviewed {
         actor: LearningActor,
@@ -314,6 +399,12 @@ pub fn propose_learning(
         64,
     );
     let mut redactions = Vec::new();
+    let (evidence, origin_lineage) = resolve_evidence(
+        &diagnostic.root,
+        vault.as_ref(),
+        input.evidence,
+        &mut redactions,
+    )?;
     let payload = LearningEventPayload::Proposed {
         actor: input.actor,
         kind: input.kind,
@@ -321,12 +412,8 @@ pub fn propose_learning(
         guidance: sanitize_text("guidance", &input.guidance, 1, 16_000, &mut redactions)?,
         confidence_percent: input.confidence_percent,
         provenance: input.provenance,
-        evidence: resolve_evidence(
-            &diagnostic.root,
-            vault.as_ref(),
-            input.evidence,
-            &mut redactions,
-        )?,
+        evidence,
+        origin_lineage: Some(origin_lineage),
     };
     mutate_learning(
         &diagnostic.identity.project_id,
@@ -361,18 +448,20 @@ pub fn correct_learning(
         64,
     );
     let mut redactions = Vec::new();
+    let (evidence, origin_lineage) = resolve_evidence(
+        &diagnostic.root,
+        vault.as_ref(),
+        input.evidence,
+        &mut redactions,
+    )?;
     let payload = LearningEventPayload::Corrected {
         actor: input.actor,
         title: sanitize_text("title", &input.title, 1, 256, &mut redactions)?,
         guidance: sanitize_text("guidance", &input.guidance, 1, 16_000, &mut redactions)?,
         confidence_percent: input.confidence_percent,
-        evidence: resolve_evidence(
-            &diagnostic.root,
-            vault.as_ref(),
-            input.evidence,
-            &mut redactions,
-        )?,
+        evidence,
         note: sanitize_text("note", &input.note, 0, 4_000, &mut redactions)?,
+        origin_lineage: Some(origin_lineage),
     };
     mutate_learning(
         &diagnostic.identity.project_id,
@@ -538,6 +627,7 @@ impl From<&LearningRecord> for LearningSummary {
             state: learning.state,
             trust_state: learning.trust_state,
             provenance: learning.provenance,
+            origin_lineage_summary: LearningOriginSummary::from(&learning.origin_lineage),
             confidence_percent: learning.confidence_percent,
             freshness: learning.freshness,
             corroborating_sessions: learning.corroborating_sessions,
@@ -595,12 +685,50 @@ fn validate_provenance_authority(
     Ok(())
 }
 
+struct LearningOriginBuilder {
+    seen: BTreeSet<LearningOriginSource>,
+    sources: Vec<LearningOriginSource>,
+    omitted_sources: usize,
+}
+
+impl LearningOriginBuilder {
+    fn new() -> Self {
+        Self {
+            seen: BTreeSet::new(),
+            sources: Vec::new(),
+            omitted_sources: 0,
+        }
+    }
+
+    fn push(&mut self, source: LearningOriginSource) {
+        if !self.seen.insert(source.clone()) {
+            return;
+        }
+        if self.sources.len() < MAX_LEARNING_ORIGIN_SOURCES {
+            self.sources.push(source);
+        } else {
+            self.omitted_sources = self.omitted_sources.saturating_add(1);
+        }
+    }
+
+    fn finish(mut self, source_mechanically_resolved: bool) -> LearningOriginLineage {
+        self.sources.sort();
+        LearningOriginLineage {
+            mechanically_resolved: source_mechanically_resolved && self.omitted_sources == 0,
+            causal_completeness_proven: false,
+            omitted_sources: self.omitted_sources,
+            automatic_authority_ceiling: LearningTrustState::ReviewRequired,
+            sources: self.sources,
+        }
+    }
+}
+
 fn resolve_evidence(
     project: &Path,
     vault: &Path,
     inputs: Vec<LearningEvidenceInput>,
     redactions: &mut Vec<LearningRedaction>,
-) -> Result<Vec<LearningEvidence>, LeyCoreError> {
+) -> Result<(Vec<LearningEvidence>, LearningOriginLineage), LeyCoreError> {
     if inputs.is_empty() || inputs.len() > 20 {
         return Err(LeyCoreError::InvalidLearningRequest(
             "learning evidence must contain 1 to 20 session references".to_owned(),
@@ -608,6 +736,7 @@ fn resolve_evidence(
     }
     let mut unique = BTreeSet::new();
     let mut evidence = Vec::new();
+    let mut lineage = LearningOriginBuilder::new();
     for (index, input) in inputs.into_iter().enumerate() {
         if !unique.insert((input.session_id.clone(), input.record_id.clone())) {
             return Err(LeyCoreError::InvalidLearningRequest(
@@ -615,7 +744,39 @@ fn resolve_evidence(
             ));
         }
         let session = read_session(project, vault, &input.session_id)?;
-        let (record_type, artifacts) = locate_session_record(&session, &input.record_id)?;
+        let (record_type, artifacts, checkpoint_event_id) =
+            locate_session_record(&session, &input.record_id)?;
+        lineage.push(LearningOriginSource::SessionRecord {
+            session_id: session.session_id.clone(),
+            record_id: input.record_id.clone(),
+            record_type: record_type.clone(),
+        });
+        for artifact in &artifacts {
+            lineage.push(LearningOriginSource::CapturedArtifact {
+                artifact_snapshot_id: artifact.artifact_snapshot_id.clone(),
+                artifact_path: artifact.artifact_path.clone(),
+                content_hash: artifact.content_hash.clone(),
+            });
+        }
+        if let Some(checkpoint_event_id) = checkpoint_event_id {
+            if let Some(recovery) = read_recovery_derivation_origin(
+                project,
+                vault,
+                &session.session_id,
+                &checkpoint_event_id,
+            )? {
+                lineage.push(LearningOriginSource::RecoveryCandidate {
+                    session_id: session.session_id.clone(),
+                    candidate_fingerprint: recovery.candidate_fingerprint,
+                });
+                for record_id in recovery.evidence_record_ids {
+                    lineage.push(LearningOriginSource::TurnEvidence {
+                        session_id: session.session_id.clone(),
+                        record_id,
+                    });
+                }
+            }
+        }
         evidence.push(LearningEvidence {
             session_id: session.session_id,
             record_id: input.record_id,
@@ -637,22 +798,22 @@ fn resolve_evidence(
             .cmp(&right.session_id)
             .then_with(|| left.record_id.cmp(&right.record_id))
     });
-    Ok(evidence)
+    Ok((evidence, lineage.finish(true)))
 }
 
 fn locate_session_record(
     session: &crate::AgentSession,
     record_id: &str,
-) -> Result<(String, Vec<SessionArtifactCitation>), LeyCoreError> {
+) -> Result<(String, Vec<SessionArtifactCitation>, Option<String>), LeyCoreError> {
     if record_id == session.session_id {
-        return Ok(("session".to_owned(), Vec::new()));
+        return Ok(("session".to_owned(), Vec::new(), None));
     }
     if session
         .finish
         .as_ref()
         .is_some_and(|finish| finish.event_id == record_id)
     {
-        return Ok(("session-finish".to_owned(), Vec::new()));
+        return Ok(("session-finish".to_owned(), Vec::new(), None));
     }
     for checkpoint in &session.checkpoints {
         let record_type = if checkpoint.id == record_id {
@@ -701,7 +862,11 @@ fn locate_session_record(
             })
         };
         if let Some(record_type) = record_type {
-            return Ok((record_type.to_owned(), checkpoint.touched_artifacts.clone()));
+            return Ok((
+                record_type.to_owned(),
+                checkpoint.touched_artifacts.clone(),
+                Some(checkpoint.event_id.clone()),
+            ));
         }
     }
     Err(LeyCoreError::InvalidLearningRequest(format!(
@@ -952,6 +1117,51 @@ fn replay_one(
     replay_learning_events(&events, project_id, learning_id)
 }
 
+fn legacy_origin_lineage(evidence: &[LearningEvidence]) -> LearningOriginLineage {
+    let mut builder = LearningOriginBuilder::new();
+    for item in evidence {
+        builder.push(LearningOriginSource::SessionRecord {
+            session_id: item.session_id.clone(),
+            record_id: item.record_id.clone(),
+            record_type: item.record_type.clone(),
+        });
+        for artifact in &item.artifacts {
+            builder.push(LearningOriginSource::CapturedArtifact {
+                artifact_snapshot_id: artifact.artifact_snapshot_id.clone(),
+                artifact_path: artifact.artifact_path.clone(),
+                content_hash: artifact.content_hash.clone(),
+            });
+        }
+    }
+    builder.finish(false)
+}
+
+fn event_origin_lineage(
+    origin_lineage: &Option<LearningOriginLineage>,
+    evidence: &[LearningEvidence],
+) -> LearningOriginLineage {
+    origin_lineage
+        .clone()
+        .unwrap_or_else(|| legacy_origin_lineage(evidence))
+}
+
+fn merge_origin_lineage(
+    current: &LearningOriginLineage,
+    next: LearningOriginLineage,
+) -> LearningOriginLineage {
+    let mut builder = LearningOriginBuilder::new();
+    for source in current.sources.iter().chain(next.sources.iter()) {
+        builder.push(source.clone());
+    }
+    let inherited_omissions = current.omitted_sources.saturating_add(next.omitted_sources);
+    let mut merged = builder.finish(current.mechanically_resolved && next.mechanically_resolved);
+    merged.omitted_sources = merged.omitted_sources.saturating_add(inherited_omissions);
+    if merged.omitted_sources > 0 {
+        merged.mechanically_resolved = false;
+    }
+    merged
+}
+
 fn replay_learning_events(
     events: &[LearningEvent],
     project_id: &str,
@@ -980,6 +1190,7 @@ fn replay_learning_events(
         confidence_percent,
         provenance,
         evidence,
+        origin_lineage,
     } = &first.payload
     else {
         return Err(LeyCoreError::InvalidLearningStore(
@@ -996,6 +1207,7 @@ fn replay_learning_events(
         state: LearningState::Tentative,
         trust_state: LearningTrustState::ReviewRequired,
         provenance: *provenance,
+        origin_lineage: event_origin_lineage(origin_lineage, evidence),
         confidence_percent: *confidence_percent,
         freshness: LearningFreshness::Uncited,
         corroborating_sessions: corroboration_count(evidence),
@@ -1028,12 +1240,17 @@ fn replay_learning_events(
                 confidence_percent,
                 evidence,
                 note,
+                origin_lineage,
             } => {
                 learning.title = title.clone();
                 learning.guidance = guidance.clone();
                 learning.confidence_percent = *confidence_percent;
                 learning.evidence = evidence.clone();
                 learning.corroborating_sessions = corroboration_count(evidence);
+                learning.origin_lineage = merge_origin_lineage(
+                    &learning.origin_lineage,
+                    event_origin_lineage(origin_lineage, evidence),
+                );
                 learning.state = LearningState::Tentative;
                 learning.trust_state = LearningTrustState::ReviewRequired;
                 learning.valid_from_unix_ms = event.recorded_at_unix_ms;
@@ -1534,8 +1751,10 @@ fn render_review_markdown(index: &LearningIndex) -> String {
 }
 
 fn validate_event(event: &LearningEvent, project_id: &str) -> Result<(), LeyCoreError> {
-    if event.schema_version != LEARNING_SCHEMA_VERSION
-        || event.project_id != project_id
+    if !matches!(
+        event.schema_version,
+        LEGACY_LEARNING_SCHEMA_VERSION | LEARNING_SCHEMA_VERSION
+    ) || event.project_id != project_id
         || event.sequence == 0
         || event.recorded_at_unix_ms == 0
     {
@@ -1589,7 +1808,7 @@ fn validate_event(event: &LearningEvent, project_id: &str) -> Result<(), LeyCore
             "learning redaction metadata is invalid".to_owned(),
         ));
     }
-    validate_event_payload(&event.payload)?;
+    validate_event_payload(event.schema_version, &event.payload)?;
     Ok(())
 }
 
@@ -1625,7 +1844,10 @@ fn normalize_evidence_for_fingerprint(evidence: &mut [LearningEvidence]) {
     }
 }
 
-fn validate_event_payload(payload: &LearningEventPayload) -> Result<(), LeyCoreError> {
+fn validate_event_payload(
+    schema_version: u32,
+    payload: &LearningEventPayload,
+) -> Result<(), LeyCoreError> {
     match payload {
         LearningEventPayload::Proposed {
             actor,
@@ -1634,6 +1856,7 @@ fn validate_event_payload(payload: &LearningEventPayload) -> Result<(), LeyCoreE
             confidence_percent,
             provenance,
             evidence,
+            origin_lineage,
             ..
         } => {
             let valid_authority = matches!(
@@ -1653,6 +1876,7 @@ fn validate_event_payload(payload: &LearningEventPayload) -> Result<(), LeyCoreE
             validate_stored_text("guidance", guidance, 1, 16_000)?;
             validate_stored_confidence(*confidence_percent)?;
             validate_stored_evidence(evidence)?;
+            validate_stored_origin_lineage(schema_version, origin_lineage)?;
         }
         LearningEventPayload::Corrected {
             title,
@@ -1660,6 +1884,7 @@ fn validate_event_payload(payload: &LearningEventPayload) -> Result<(), LeyCoreE
             confidence_percent,
             evidence,
             note,
+            origin_lineage,
             ..
         } => {
             validate_stored_text("title", title, 1, 256)?;
@@ -1667,6 +1892,7 @@ fn validate_event_payload(payload: &LearningEventPayload) -> Result<(), LeyCoreE
             validate_stored_text("note", note, 0, 4_000)?;
             validate_stored_confidence(*confidence_percent)?;
             validate_stored_evidence(evidence)?;
+            validate_stored_origin_lineage(schema_version, origin_lineage)?;
         }
         LearningEventPayload::Reviewed {
             actor,
@@ -1697,6 +1923,110 @@ fn validate_event_payload(payload: &LearningEventPayload) -> Result<(), LeyCoreE
             } else if replacement_learning_id.is_some() {
                 return Err(LeyCoreError::InvalidLearningStore(
                     "non-supersede event contains a replacement learning".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_stored_origin_lineage(
+    schema_version: u32,
+    lineage: &Option<LearningOriginLineage>,
+) -> Result<(), LeyCoreError> {
+    if schema_version == LEGACY_LEARNING_SCHEMA_VERSION {
+        if lineage.is_some() {
+            return Err(LeyCoreError::InvalidLearningStore(
+                "legacy learning events cannot contain origin lineage".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
+    let lineage = lineage.as_ref().ok_or_else(|| {
+        LeyCoreError::InvalidLearningStore(
+            "current learning proposal/correction is missing origin lineage".to_owned(),
+        )
+    })?;
+    if lineage.sources.is_empty()
+        || lineage.sources.len() > MAX_LEARNING_ORIGIN_SOURCES
+        || lineage.automatic_authority_ceiling != LearningTrustState::ReviewRequired
+        || lineage.causal_completeness_proven
+        || (lineage.mechanically_resolved && lineage.omitted_sources != 0)
+    {
+        return Err(LeyCoreError::InvalidLearningStore(
+            "learning origin lineage metadata is invalid".to_owned(),
+        ));
+    }
+    let mut previous: Option<&LearningOriginSource> = None;
+    for source in &lineage.sources {
+        if previous.is_some_and(|previous| previous >= source) {
+            return Err(LeyCoreError::InvalidLearningStore(
+                "learning origin lineage must be sorted and unique".to_owned(),
+            ));
+        }
+        validate_origin_source(source)?;
+        previous = Some(source);
+    }
+    Ok(())
+}
+
+fn validate_origin_source(source: &LearningOriginSource) -> Result<(), LeyCoreError> {
+    match source {
+        LearningOriginSource::SessionRecord {
+            session_id,
+            record_id,
+            record_type,
+        } => {
+            if !valid_prefixed_hex(session_id, "ses_", 32) || !valid_record_id(record_id) {
+                return Err(LeyCoreError::InvalidLearningStore(
+                    "session-record origin identity is invalid".to_owned(),
+                ));
+            }
+            validate_stored_text("origin.recordType", record_type, 1, 64)?;
+        }
+        LearningOriginSource::CapturedArtifact {
+            artifact_snapshot_id,
+            artifact_path,
+            content_hash,
+        } => {
+            let path = Path::new(artifact_path);
+            if artifact_path.is_empty()
+                || path.is_absolute()
+                || path.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::ParentDir
+                            | std::path::Component::RootDir
+                            | std::path::Component::Prefix(_)
+                    )
+                })
+                || !valid_prefixed_hex(artifact_snapshot_id, "snp_", 64)
+                || !is_sha256(content_hash)
+            {
+                return Err(LeyCoreError::InvalidLearningStore(
+                    "captured-artifact origin metadata is invalid".to_owned(),
+                ));
+            }
+        }
+        LearningOriginSource::TurnEvidence {
+            session_id,
+            record_id,
+        } => {
+            if !valid_prefixed_hex(session_id, "ses_", 32)
+                || !valid_prefixed_hex(record_id, "tev_", 32)
+            {
+                return Err(LeyCoreError::InvalidLearningStore(
+                    "turn-evidence origin identity is invalid".to_owned(),
+                ));
+            }
+        }
+        LearningOriginSource::RecoveryCandidate {
+            session_id,
+            candidate_fingerprint,
+        } => {
+            if !valid_prefixed_hex(session_id, "ses_", 32) || !is_sha256(candidate_fingerprint) {
+                return Err(LeyCoreError::InvalidLearningStore(
+                    "recovery-candidate origin identity is invalid".to_owned(),
                 ));
             }
         }
@@ -2164,10 +2494,12 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, erase_session_memory, ingest_project, initialize_project,
-        project_memory_overview, read_session, start_session, AttemptInput, AttemptOutcome,
-        CaptureMode, CheckpointInput, EraseSessionMemoryInput, ProblemInput, ResolutionInput,
-        SessionSource, SessionSourceKind, StartSessionInput,
+        checkpoint_session, commit_unresolved_memory_transition, erase_session_memory,
+        ingest_project, initialize_project, project_memory_overview, read_session,
+        record_session_prompt, record_session_response, start_session, AttemptInput,
+        AttemptOutcome, CaptureMode, CheckpointInput, CommitUnresolvedMemoryTransitionInput,
+        EraseSessionMemoryInput, ProblemInput, ResolutionInput, SessionSource, SessionSourceKind,
+        StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
     };
     use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
@@ -2362,6 +2694,32 @@ mod tests {
         assert_eq!(proposed.learning.freshness, LearningFreshness::Current);
         assert_eq!(proposed.learning.corroborating_sessions, 1);
         assert_eq!(proposed.learning.evidence[0].record_id, record_id);
+        assert!(proposed.learning.origin_lineage.mechanically_resolved);
+        assert_eq!(proposed.learning.origin_lineage.omitted_sources, 0);
+        assert_eq!(
+            proposed.learning.origin_lineage.automatic_authority_ceiling,
+            LearningTrustState::ReviewRequired
+        );
+        assert!(proposed
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| {
+                matches!(
+                    source,
+                    LearningOriginSource::SessionRecord {
+                        session_id: origin_session_id,
+                        record_id: origin_record_id,
+                        record_type,
+                    } if origin_session_id == &session_id
+                        && origin_record_id == &record_id
+                        && record_type == "resolution"
+                )
+            }));
+        assert!(proposed.learning.origin_lineage.sources.iter().any(|source| {
+            matches!(source, LearningOriginSource::CapturedArtifact { artifact_path, .. } if artifact_path == "README.md")
+        }));
 
         std::fs::write(
             project.join("README.md"),
@@ -2389,6 +2747,249 @@ mod tests {
     }
 
     #[test]
+    fn bound_recovery_lineage_reaches_candidate_and_exact_turn_evidence() {
+        let (_base, project, vault, _session_id, _record_id) = setup_learning();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('a'),
+                name: "Interrupted derivation".to_owned(),
+                goal: "Preserve recovery provenance".to_owned(),
+                source: SessionSource {
+                    kind: SessionSourceKind::HostHook,
+                    host: Some("codex".to_owned()),
+                    agent: Some("gpt-5".to_owned()),
+                },
+            },
+        )
+        .unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('b'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("turn-1".to_owned()),
+                text: "Investigate the retry loop".to_owned(),
+            },
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts.last().unwrap().record_id.clone();
+        let response = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('c'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("turn-1".to_owned()),
+                text: "The retry investigation remains unresolved".to_owned(),
+            },
+        )
+        .unwrap();
+        let response_id = response.session.responses.last().unwrap().record_id.clone();
+        let fingerprint = crate::memory_transition::unresolved_candidate_fingerprint(
+            &started.session.session_id,
+            3,
+            "Retry investigation",
+            "The retry investigation remains unresolved",
+            &[prompt_id.clone(), response_id.clone()],
+        );
+        let committed = commit_unresolved_memory_transition(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CommitUnresolvedMemoryTransitionInput {
+                request_id: request_id('d'),
+                expected_event_count: 3,
+                candidate_fingerprint: fingerprint.clone(),
+                subject: "Retry investigation".to_owned(),
+                statement: "The retry investigation remains unresolved".to_owned(),
+                evidence_record_ids: vec![prompt_id.clone(), response_id.clone()],
+            },
+        )
+        .unwrap();
+        let checkpoint_id = committed.session.checkpoints.last().unwrap().id.clone();
+        let mut input = proposal(request_id('e'), &started.session.session_id, &checkpoint_id);
+        input.title = "Retry investigation is unresolved".to_owned();
+        input.guidance = "Do not assume the retry investigation was completed.".to_owned();
+        let proposed = propose_learning(&project, &vault, input).unwrap();
+
+        assert!(proposed.learning.origin_lineage.mechanically_resolved);
+        assert!(proposed.learning.origin_lineage.sources.iter().any(|source| {
+            matches!(
+                source,
+                LearningOriginSource::RecoveryCandidate {
+                    session_id,
+                    candidate_fingerprint,
+                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
+            )
+        }));
+        for evidence_id in [&prompt_id, &response_id] {
+            assert!(proposed
+                .learning
+                .origin_lineage
+                .sources
+                .iter()
+                .any(|source| {
+                    matches!(
+                        source,
+                        LearningOriginSource::TurnEvidence { session_id, record_id }
+                            if session_id == &started.session.session_id && record_id == evidence_id
+                    )
+                }));
+        }
+    }
+
+    #[test]
+    fn corrections_union_origin_lineage_instead_of_replacing_history() {
+        let (_base, project, vault, first_session_id, first_record_id) = setup_learning();
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('3'), &first_session_id, &first_record_id),
+        )
+        .unwrap();
+        let (second_session_id, second_record_id) = add_learning_session(
+            &project,
+            &vault,
+            request_id('4'),
+            request_id('5'),
+            "Independent confirmation",
+        );
+        let corrected = correct_learning(
+            &project,
+            &vault,
+            &proposed.learning.learning_id,
+            CorrectLearningInput {
+                request_id: request_id('6'),
+                expected_event_count: Some(proposed.learning.event_count),
+                actor: LearningActor::User,
+                title: "Check both workflows".to_owned(),
+                guidance: "Run both verified workspace workflows before delivery.".to_owned(),
+                confidence_percent: 90,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: second_session_id.clone(),
+                    record_id: second_record_id,
+                    note: "Independent confirmation.".to_owned(),
+                }],
+                note: "Broadened after a second verified session.".to_owned(),
+            },
+        )
+        .unwrap();
+        for expected_session in [&first_session_id, &second_session_id] {
+            assert!(corrected
+                .learning
+                .origin_lineage
+                .sources
+                .iter()
+                .any(|source| {
+                    matches!(
+                        source,
+                        LearningOriginSource::SessionRecord { session_id, .. }
+                            if session_id == expected_session
+                    )
+                }));
+        }
+        assert!(corrected.learning.origin_lineage.mechanically_resolved);
+        assert!(!corrected.learning.origin_lineage.causal_completeness_proven);
+        assert_eq!(
+            corrected
+                .learning
+                .origin_lineage
+                .automatic_authority_ceiling,
+            LearningTrustState::ReviewRequired
+        );
+    }
+
+    #[test]
+    fn legacy_lineage_is_explicitly_incomplete_and_lineage_tampering_fails_closed() {
+        let (_base, project, vault, session_id, record_id) = setup_learning();
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('3'), &session_id, &record_id),
+        )
+        .unwrap();
+        let event_path = learning_directory(&project, &vault)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", proposed.event_id));
+        let mut event: LearningEvent =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        event.schema_version = LEGACY_LEARNING_SCHEMA_VERSION;
+        if let LearningEventPayload::Proposed { origin_lineage, .. } = &mut event.payload {
+            *origin_lineage = None;
+        } else {
+            panic!("expected proposed event");
+        }
+        event.request_fingerprint = request_fingerprint(
+            &event.project_id,
+            &event.learning_id,
+            &event.request_id,
+            &event.payload,
+        )
+        .unwrap();
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&event).unwrap()).unwrap();
+        let legacy = read_learning(&project, &vault, &proposed.learning.learning_id).unwrap();
+        assert!(!legacy.origin_lineage.mechanically_resolved);
+        assert!(!legacy.origin_lineage.causal_completeness_proven);
+        assert_eq!(
+            legacy.origin_lineage.automatic_authority_ceiling,
+            LearningTrustState::ReviewRequired
+        );
+
+        let reproposed = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('4'), &session_id, &record_id),
+        )
+        .unwrap();
+        let tamper_path = learning_directory(&project, &vault)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", reproposed.event_id));
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&tamper_path).unwrap()).unwrap();
+        let sources = value["data"]["originLineage"]["sources"]
+            .as_array_mut()
+            .unwrap();
+        let session_source = sources
+            .iter_mut()
+            .find(|source| source["kind"] == "session-record")
+            .unwrap();
+        session_source["recordType"] = serde_json::json!("tampered-origin");
+        std::fs::write(&tamper_path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+        assert!(matches!(
+            read_learning(&project, &vault, &reproposed.learning.learning_id),
+            Err(LeyCoreError::InvalidLearningStore(_))
+        ));
+    }
+
+    #[test]
+    fn origin_lineage_is_bounded_and_discloses_omitted_sources() {
+        let mut builder = LearningOriginBuilder::new();
+        for index in 0..(MAX_LEARNING_ORIGIN_SOURCES + 5) {
+            builder.push(LearningOriginSource::SessionRecord {
+                session_id: format!("ses_{:032x}", index + 1),
+                record_id: format!("dec_{:032x}", index + 1),
+                record_type: "decision".to_owned(),
+            });
+        }
+        let lineage = builder.finish(true);
+        assert_eq!(lineage.sources.len(), MAX_LEARNING_ORIGIN_SOURCES);
+        assert_eq!(lineage.omitted_sources, 5);
+        assert!(!lineage.mechanically_resolved);
+        assert!(!lineage.causal_completeness_proven);
+        assert_eq!(
+            lineage.automatic_authority_ceiling,
+            LearningTrustState::ReviewRequired
+        );
+    }
+
+    #[test]
     fn only_user_authority_can_trust_or_terminally_review_a_learning() {
         let (_base, project, vault, session_id, record_id) = setup_learning();
         let proposed = propose_learning(
@@ -2413,6 +3014,7 @@ mod tests {
             ),
             Err(LeyCoreError::InvalidLearningRequest(_))
         ));
+        let proposed_lineage = proposed.learning.origin_lineage.clone();
         let confirmed = review_learning(
             &project,
             &vault,
@@ -2429,6 +3031,8 @@ mod tests {
         .unwrap();
         assert_eq!(confirmed.learning.state, LearningState::Verified);
         assert_eq!(confirmed.learning.trust_state, LearningTrustState::Trusted);
+        assert_eq!(confirmed.learning.origin_lineage, proposed_lineage);
+        assert!(!confirmed.learning.origin_lineage.causal_completeness_proven);
 
         assert!(matches!(
             correct_learning(

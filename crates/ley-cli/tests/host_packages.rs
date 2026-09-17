@@ -88,6 +88,7 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         root.join("integrations/codex/plugins/ley-memory/skills/ley/SKILL.md"),
     ] {
         let skill = fs::read_to_string(&path).expect("packaged Ley skill");
+        let normalized_skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
             skill.contains("ley_project_specifications"),
             "{}",
@@ -155,6 +156,27 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         assert!(skill.contains("expectedEventCount"), "{}", path.display());
         assert!(
             skill.contains("Do not infer completion"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("mechanically known origin lineage"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("complete causal ancestry"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill
+                .contains("Automatic derivation cannot grant authority above `review-required`"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("does not erase origin history"),
             "{}",
             path.display()
         );
