@@ -75,6 +75,7 @@ fn cli_mounts_and_unmounts_one_explicit_reference_without_path_leakage() {
     ));
     assert_eq!(created["created"], true);
     assert_eq!(created["mount"]["permission"], "read-only");
+    assert_eq!(created["mount"]["agentContextEnabled"], true);
     assert_eq!(created["mount"]["status"], "ready");
     assert_eq!(created["mount"]["sourceProjectName"], "Reference project");
     let mount_id = created["mount"]["mountId"].as_str().unwrap().to_owned();
@@ -97,6 +98,7 @@ fn cli_mounts_and_unmounts_one_explicit_reference_without_path_leakage() {
     ));
     assert_eq!(listed["ready"], 1);
     assert_eq!(listed["unavailable"], 0);
+    assert_eq!(listed["agentContextEnabled"], 1);
     assert_eq!(listed["mounts"].as_array().unwrap().len(), 1);
     assert_eq!(listed["mounts"][0]["mountId"], mount_id);
     assert_eq!(

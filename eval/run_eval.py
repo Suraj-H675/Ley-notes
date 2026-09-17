@@ -508,6 +508,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         "token_budget": None,
         "secret_exclusion": None,
         "specification_admission": None,
+        "mounted_reference": None,
     }
 
     project = base_dir / "project"
@@ -604,6 +605,96 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not specification_ok:
             failures.append(
                 "task-conditioned Specification admission did not preserve authority/budget/conflict semantics"
+            )
+
+    mounted_definitions = [
+        item for item in scenario.get("mounted_projects", []) if isinstance(item, dict)
+    ]
+    mounted_expectation = scenario.get("expected_mounted_reference_compiler")
+    if isinstance(mounted_expectation, dict):
+        mounted_projects: list[tuple[Path, Path]] = []
+        for index, definition in enumerate(mounted_definitions):
+            mounted_project = base_dir / f"mounted-project-{index}"
+            mounted_vault = base_dir / f"mounted-vault-{index}"
+            mounted_project.mkdir()
+            mounted_vault.mkdir()
+            write_project_files(mounted_project, definition.get("files", {}))
+            init_project(mounted_project, str(definition["name"]), mounted_vault)
+            mounted_projects.append((mounted_project, mounted_vault))
+
+        query = str(mounted_expectation.get("query", ""))
+        before = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 2_000},
+        )
+        mount_index = int(mounted_expectation.get("mount_index", 0))
+        unmounted_index = int(mounted_expectation.get("unmounted_index", 1))
+        mounted_project, _ = mounted_projects[mount_index]
+        mount_receipt = cli_json(
+            ["mount", "add", str(mounted_project), str(project), "--json"]
+        )
+        if not isinstance(mount_receipt, dict) or not isinstance(
+            mount_receipt.get("mount"), dict
+        ):
+            raise RuntimeError("mount add returned no mount receipt")
+        mount = mount_receipt["mount"]
+        mount_id = str(mount.get("mountId", ""))
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 2_000},
+        )
+        references = [
+            item for item in compiled.get("mountedReferences", []) if isinstance(item, dict)
+        ]
+        scopes = [
+            item for item in compiled.get("mountedReferenceScopes", []) if isinstance(item, dict)
+        ]
+        mounted_marker = str(mounted_expectation.get("mounted_marker", ""))
+        unmounted_marker = str(mounted_expectation.get("unmounted_marker", ""))
+        serialized_compiled = json.dumps(compiled, sort_keys=True)
+        mounted_visible = any(
+            item.get("mountId") == mount_id
+            and item.get("authority") == "mounted-reference"
+            and item.get("sourceBoundary") == "untrusted-mounted-project-memory"
+            and mounted_marker.lower() in json.dumps(item).lower()
+            for item in references
+        )
+        scope_visible = any(
+            item.get("mountId") == mount_id and item.get("state") == "ready"
+            for item in scopes
+        )
+        no_paths = all(
+            str(path) not in serialized_compiled
+            for pair in mounted_projects
+            for path in pair
+        ) and str(project) not in serialized_compiled and str(vault) not in serialized_compiled
+        unrelated_hidden = not unmounted_marker or unmounted_marker.lower() not in serialized_compiled.lower()
+        before_clean = not before.get("mountedReferenceScopes") and not before.get("mountedReferences")
+        run(["mount", "remove", mount_id, str(project), "--json"])
+        after = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 2_000},
+        )
+        after_clean = not after.get("mountedReferenceScopes") and not after.get("mountedReferences")
+        mounted_ok = (
+            before_clean
+            and mount.get("agentContextEnabled") is True
+            and mounted_visible
+            and scope_visible
+            and unrelated_hidden
+            and no_paths
+            and compiled.get("referencePrecedence") == "active-project-over-mounted-reference"
+            and int(compiled.get("estimatedTokens", 0)) <= int(compiled.get("maxTokens", 0))
+            and after_clean
+        )
+        scores["mounted_reference"] = mounted_ok
+        evidence_text.extend([before, compiled, after])
+        if not mounted_ok:
+            failures.append(
+                "explicit Context Mount did not preserve authorization/isolation/budget/unmount semantics"
             )
 
     if scenario.get("expected_event_count") is not None:
@@ -852,7 +943,7 @@ def main() -> int:
                 f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
                 flush=True,
             )
-            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "idempotency", "token_budget", "secret_exclusion", "specification_admission"):
+            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference"):
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):

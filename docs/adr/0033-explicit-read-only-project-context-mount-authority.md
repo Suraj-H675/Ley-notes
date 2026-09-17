@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-16
+- Extended by: ADR 0034 (task-conditioned mounted project reference admission)
 
 ## Context
 

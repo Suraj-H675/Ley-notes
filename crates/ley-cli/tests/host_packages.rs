@@ -96,6 +96,29 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         assert!(skill.contains("human-intent"), "{}", path.display());
         assert!(skill.contains("shared budget"), "{}", path.display());
         assert!(skill.contains("authorityPrecedence"), "{}", path.display());
+        assert!(skill.contains("referencePrecedence"), "{}", path.display());
+        assert!(
+            skill.contains("mountedReferenceScopes"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("mountedReferences"), "{}", path.display());
+        assert!(
+            skill.contains("mountedReferenceExclusions"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("lower-precedence read-only"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("mountId"), "{}", path.display());
+        assert!(
+            skill.contains("create/remove Context Mounts"),
+            "{}",
+            path.display()
+        );
         assert!(
             skill.contains("cannot approve")
                 || skill.contains("cannot approve or revoke")

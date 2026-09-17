@@ -13,10 +13,11 @@ use uuid::Uuid;
 
 pub const CONTEXT_MOUNT_REGISTRY_FILE: &str = "context-mounts-v1.json";
 const CONTEXT_MOUNT_REGISTRY_LOCK_FILE: &str = "context-mounts-v1.lock";
-pub const CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION: u32 = 1;
+pub const CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION: u32 = 2;
+const LEGACY_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION: u32 = 1;
 pub const MAX_CONTEXT_MOUNTS_PER_PROJECT: usize = 16;
 
-const PRIVACY_NOTICE: &str = "Context Mount authority stores only active/source project identities, a stable mount ID, and creation time. Project and vault paths remain owned by Ley's private project catalog and binding registry.";
+const PRIVACY_NOTICE: &str = "Context Mount authority stores only active/source project identities, a stable mount ID, creation time, and whether the user explicitly enabled bounded agent context. Project and vault paths remain owned by Ley's private project catalog and binding registry. Legacy v1 mounts remain agent-disabled until explicitly re-added.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -42,6 +43,7 @@ pub struct ContextMount {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_project_name: Option<String>,
     pub permission: ContextMountPermission,
+    pub agent_context_enabled: bool,
     pub status: ContextMountStatus,
     pub created_at_unix_ms: u64,
 }
@@ -60,6 +62,7 @@ pub struct ContextMountList {
     pub mounts: Vec<ContextMount>,
     pub ready: usize,
     pub unavailable: usize,
+    pub agent_context_enabled: usize,
     pub privacy_notice: &'static str,
 }
 
@@ -68,6 +71,8 @@ pub struct ContextMountList {
 struct ContextMountEntry {
     source_project_id: String,
     created_at_unix_ms: u64,
+    #[serde(default)]
+    agent_context_enabled: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -86,7 +91,9 @@ impl ContextMountRegistryDocument {
     }
 
     fn validate(&self) -> Result<(), LeyCoreError> {
-        if self.schema_version != CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION {
+        if self.schema_version != LEGACY_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
+            && self.schema_version != CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
+        {
             return Err(LeyCoreError::InvalidContextMountRegistry(format!(
                 "unsupported schema version {}",
                 self.schema_version
@@ -121,6 +128,13 @@ impl ContextMountRegistryDocument {
                         "Context Mount creation time must be non-zero".to_owned(),
                     ));
                 }
+                if self.schema_version == LEGACY_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
+                    && entry.agent_context_enabled
+                {
+                    return Err(LeyCoreError::InvalidContextMountRegistry(
+                        "legacy Context Mount documents cannot grant agent context".to_owned(),
+                    ));
+                }
                 if !sources.insert(entry.source_project_id.as_str()) {
                     return Err(LeyCoreError::InvalidContextMountRegistry(format!(
                         "project {active_project_id} contains duplicate source project mounts"
@@ -130,6 +144,22 @@ impl ContextMountRegistryDocument {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedProjectContextMount {
+    pub mount_id: String,
+    pub source_project_id: String,
+    pub source_project_name: String,
+    pub project_root: PathBuf,
+    pub vault_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedProjectContextMounts {
+    pub active_project_id: String,
+    pub ready: Vec<ResolvedProjectContextMount>,
+    pub unavailable: Vec<ContextMount>,
 }
 
 #[derive(Debug, Clone)]
@@ -188,9 +218,10 @@ impl ContextMountRegistry {
                 .entry(active_project_id.clone())
                 .or_default();
             if let Some((mount_id, entry)) = mounts
-                .iter()
+                .iter_mut()
                 .find(|(_, entry)| entry.source_project_id == source_project_id)
             {
+                entry.agent_context_enabled = true;
                 return Ok((mount_id.clone(), false, entry.created_at_unix_ms));
             }
             if mounts.len() >= MAX_CONTEXT_MOUNTS_PER_PROJECT {
@@ -204,6 +235,7 @@ impl ContextMountRegistry {
                 ContextMountEntry {
                     source_project_id: source_project_id.clone(),
                     created_at_unix_ms,
+                    agent_context_enabled: true,
                 },
             );
             Ok((mount_id, true, created_at_unix_ms))
@@ -216,6 +248,7 @@ impl ContextMountRegistry {
                 source_project_id,
                 source_project_name: Some(source_project_name),
                 permission: ContextMountPermission::ReadOnly,
+                agent_context_enabled: true,
                 status: ContextMountStatus::Ready,
                 created_at_unix_ms: stored_at,
             },
@@ -246,12 +279,88 @@ impl ContextMountRegistry {
             .iter()
             .filter(|mount| mount.status == ContextMountStatus::Ready)
             .count();
+        let agent_context_enabled = mounts
+            .iter()
+            .filter(|mount| mount.agent_context_enabled)
+            .count();
         Ok(ContextMountList {
             active_project_id,
             unavailable: mounts.len().saturating_sub(ready),
             mounts,
             ready,
+            agent_context_enabled,
             privacy_notice: PRIVACY_NOTICE,
+        })
+    }
+
+    pub(crate) fn with_resolved_project_mounts_locked<T>(
+        &self,
+        active_project: impl AsRef<Path>,
+        operation: impl FnOnce(ResolvedProjectContextMounts) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let active = diagnose_project(active_project)?;
+        let active_project_id = active.identity.project_id;
+        self.with_locked_document(|document| {
+            let entries = document
+                .mounts
+                .get(&active_project_id)
+                .cloned()
+                .unwrap_or_default();
+            let mut ready = Vec::new();
+            let mut unavailable = Vec::new();
+            for (mount_id, entry) in entries {
+                if !entry.agent_context_enabled {
+                    continue;
+                }
+                let mut public_mount =
+                    self.resolve_mount(&active_project_id, mount_id.clone(), entry.clone())?;
+                if public_mount.status != ContextMountStatus::Ready {
+                    unavailable.push(public_mount);
+                    continue;
+                }
+                let Some(observed) = self.project_catalog.get(&entry.source_project_id)? else {
+                    public_mount.status = ContextMountStatus::SourceProjectUnavailable;
+                    unavailable.push(public_mount);
+                    continue;
+                };
+                let diagnostic = match diagnose_project(&observed.root_path) {
+                    Ok(diagnostic) if diagnostic.identity.project_id == entry.source_project_id => {
+                        diagnostic
+                    }
+                    Ok(_) => {
+                        public_mount.status = ContextMountStatus::SourceIdentityChanged;
+                        unavailable.push(public_mount);
+                        continue;
+                    }
+                    Err(_) => {
+                        public_mount.status = ContextMountStatus::SourceProjectUnavailable;
+                        unavailable.push(public_mount);
+                        continue;
+                    }
+                };
+                let binding = match self.binding_registry.resolve_observed(&diagnostic) {
+                    Ok(binding) => binding,
+                    Err(_) => {
+                        public_mount.status = ContextMountStatus::SourceVaultUnavailable;
+                        unavailable.push(public_mount);
+                        continue;
+                    }
+                };
+                ready.push(ResolvedProjectContextMount {
+                    mount_id,
+                    source_project_id: entry.source_project_id,
+                    source_project_name: diagnostic.identity.name,
+                    project_root: diagnostic.root,
+                    vault_path: binding.vault_path,
+                });
+            }
+            ready.sort_by(|left, right| left.mount_id.cmp(&right.mount_id));
+            unavailable.sort_by(|left, right| left.mount_id.cmp(&right.mount_id));
+            operation(ResolvedProjectContextMounts {
+                active_project_id: active_project_id.clone(),
+                ready,
+                unavailable,
+            })
         })
     }
 
@@ -306,9 +415,30 @@ impl ContextMountRegistry {
             source_project_id: entry.source_project_id,
             source_project_name,
             permission: ContextMountPermission::ReadOnly,
+            agent_context_enabled: entry.agent_context_enabled,
             status,
             created_at_unix_ms: entry.created_at_unix_ms,
         })
+    }
+
+    fn with_locked_document<T>(
+        &self,
+        operation: impl FnOnce(&ContextMountRegistryDocument) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let lock = self.acquire_lock()?;
+        let result = (|| {
+            let document = self.read_document()?;
+            operation(&document)
+        })();
+        let unlock_result = File::unlock(&lock);
+        match (result, unlock_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(source)) => Err(LeyCoreError::Io {
+                path: self.lock_path(),
+                source,
+            }),
+        }
     }
 
     fn read_locked(&self) -> Result<ContextMountRegistryDocument, LeyCoreError> {
@@ -333,6 +463,7 @@ impl ContextMountRegistry {
         let result = (|| {
             let mut document = self.read_document()?;
             let value = operation(&mut document)?;
+            document.schema_version = CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION;
             document.validate()?;
             self.write_document(&document)?;
             Ok(value)
@@ -747,6 +878,53 @@ mod tests {
     }
 
     #[test]
+    fn mounted_reference_reads_serialize_with_unmount() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let fixture = setup();
+        let mounted = fixture
+            .registry
+            .mount_project(&fixture.active, &fixture.source)
+            .unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let reader_registry = fixture.registry.clone();
+        let reader_active = fixture.active.clone();
+        let reader = std::thread::spawn(move || {
+            reader_registry
+                .with_resolved_project_mounts_locked(reader_active, |resolved| {
+                    assert_eq!(resolved.ready.len(), 1);
+                    entered_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(())
+                })
+                .unwrap();
+        });
+        entered_rx.recv().unwrap();
+
+        let (removed_tx, removed_rx) = mpsc::channel();
+        let writer_registry = fixture.registry.clone();
+        let writer_active = fixture.active.clone();
+        let mount_id = mounted.mount.mount_id.clone();
+        let writer = std::thread::spawn(move || {
+            writer_registry.unmount(writer_active, &mount_id).unwrap();
+            removed_tx.send(()).unwrap();
+        });
+        assert!(removed_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        release_tx.send(()).unwrap();
+        reader.join().unwrap();
+        removed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        writer.join().unwrap();
+        assert!(fixture
+            .registry
+            .list(&fixture.active)
+            .unwrap()
+            .mounts
+            .is_empty());
+    }
+
+    #[test]
     fn mount_limit_and_corrupt_registry_fail_closed() {
         let fixture = setup();
         for index in 0..MAX_CONTEXT_MOUNTS_PER_PROJECT {
@@ -798,6 +976,75 @@ mod tests {
             fixture.registry.list(&fixture.active),
             Err(LeyCoreError::InvalidContextMountRegistry(_))
         ));
+    }
+
+    #[test]
+    fn legacy_mounts_remain_agent_disabled_until_explicitly_readded() {
+        let fixture = setup();
+        let active_id = diagnose_project(&fixture.active)
+            .unwrap()
+            .identity
+            .project_id;
+        let source_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        let mount_id = generate_mount_id();
+        let document = serde_json::json!({
+            "schemaVersion": LEGACY_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
+            "mounts": {
+                active_id.clone(): {
+                    mount_id.clone(): {
+                        "sourceProjectId": source_id,
+                        "createdAtUnixMs": 1
+                    }
+                }
+            }
+        });
+        fs::write(
+            fixture.registry.path(),
+            format!("{}\n", serde_json::to_string_pretty(&document).unwrap()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(fixture.registry.path(), fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+
+        let before = fixture.registry.list(&fixture.active).unwrap();
+        assert_eq!(before.mounts.len(), 1);
+        assert!(!before.mounts[0].agent_context_enabled);
+        assert_eq!(before.agent_context_enabled, 0);
+        fixture
+            .registry
+            .with_resolved_project_mounts_locked(&fixture.active, |resolved| {
+                assert!(resolved.ready.is_empty());
+                assert!(resolved.unavailable.is_empty());
+                Ok(())
+            })
+            .unwrap();
+
+        let readded = fixture
+            .registry
+            .mount_project(&fixture.active, &fixture.source)
+            .unwrap();
+        assert!(!readded.created);
+        assert_eq!(readded.mount.mount_id, mount_id);
+        assert!(readded.mount.agent_context_enabled);
+        let after = fixture.registry.list(&fixture.active).unwrap();
+        assert_eq!(after.agent_context_enabled, 1);
+        let persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(fixture.registry.path()).unwrap()).unwrap();
+        assert_eq!(
+            persisted["schemaVersion"],
+            CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
+        );
+        assert_eq!(
+            persisted["mounts"][active_id][&mount_id]["agentContextEnabled"],
+            true
+        );
     }
 
     #[test]

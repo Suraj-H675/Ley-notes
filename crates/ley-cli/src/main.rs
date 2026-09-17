@@ -204,9 +204,13 @@ fn mount(arguments: &[String]) -> Result<(), CliError> {
                     .unwrap_or(&result.mount.source_project_id);
                 println!("Mounted reference: {name} ({})", result.mount.mount_id);
                 println!("Permission: read-only");
+                println!(
+                    "Agent context: enabled for bounded ley_compile_context reference retrieval"
+                );
                 println!("Status: {:?}", result.mount.status);
+                println!("Privacy: returned reference text may be sent to the connected agent/model provider; live source and reference-project writes remain unavailable.");
                 if !result.created {
-                    println!("Existing mount reused.");
+                    println!("Existing mount reused and agent context enabled.");
                 }
             }
             Ok(())
@@ -241,8 +245,15 @@ fn mount(arguments: &[String]) -> Result<(), CliError> {
                         .as_deref()
                         .unwrap_or(&mount.source_project_id);
                     println!(
-                        "  {}  {}  {:?}  read-only",
-                        mount.mount_id, name, mount.status
+                        "  {}  {}  {:?}  read-only  agent-context:{}",
+                        mount.mount_id,
+                        name,
+                        mount.status,
+                        if mount.agent_context_enabled {
+                            "enabled"
+                        } else {
+                            "disabled"
+                        }
                     );
                 }
             }
