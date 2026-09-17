@@ -65,6 +65,41 @@ def run(args: list[str], cwd: Path | None = None, stdin: str | None = None) -> s
     return result.stdout
 
 
+def git_run(project: Path, args: list[str]) -> str:
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    result = subprocess.run(
+        ["git", "-C", str(project), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(f"git {' '.join(args)} failed: {detail}")
+    return result.stdout.strip()
+
+
+def git_commit_all(project: Path, message: str) -> str:
+    # Ley's repository-local identity/policy is lifecycle metadata, not fixture source. Keep it
+    # out of synthetic Git history so branch switches cannot make an initialized Ley project
+    # disappear merely because one test branch happened to capture `.ley`.
+    git_run(project, ["add", "-A", "--", ".", ":(exclude).ley", ":(exclude).ley/**"])
+    git_run(
+        project,
+        [
+            "-c",
+            "user.name=Ley Eval",
+            "-c",
+            "user.email=ley-eval@example.invalid",
+            "commit",
+            "-m",
+            message,
+        ],
+    )
+    return git_run(project, ["rev-parse", "HEAD"])
+
+
 def cli_json(args: list[str]) -> object:
     output = run(args)
     try:
@@ -511,6 +546,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         "specification_admission": None,
         "mounted_reference": None,
         "premise_adjudication": None,
+        "revision_adjudication": None,
     }
 
     project = base_dir / "project"
@@ -520,6 +556,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     files = scenario.get("project_files", {})
     if isinstance(files, dict):
         write_project_files(project, files)
+    revision_flow = scenario.get("git_revision_flow")
+    if isinstance(revision_flow, dict):
+        git_run(project, ["init", "-b", "main"])
+        git_commit_all(project, "base")
     large = scenario.get("large_project")
     if isinstance(large, dict):
         count = int(large.get("num_files", 0))
@@ -539,6 +579,14 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if isinstance(item, dict)
     ]
     install_specification_approvals(project, vault, specification_definitions)
+    if isinstance(revision_flow, dict):
+        branch = str(revision_flow.get("branch", "experiment"))
+        git_run(project, ["checkout", "-b", branch])
+        experiment_files = revision_flow.get("experiment_files", {})
+        if isinstance(experiment_files, dict):
+            write_project_files(project, experiment_files)
+        git_commit_all(project, "experiment")
+        run(["ingest", str(project), "--json"])
     session_id, receipts, host_context = capture_events(scenario, project)
     evidence_text: list[object] = list(host_context)
     if session_id:
@@ -652,6 +700,106 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not premise_ok:
             failures.append(
                 "premise adjudication did not resist an explicitly superseded task assumption"
+            )
+
+    revision_expectation = scenario.get("expected_revision_adjudication")
+    if isinstance(revision_expectation, dict):
+        if not isinstance(revision_flow, dict):
+            raise RuntimeError("revision expectation requires git_revision_flow")
+        branch = str(revision_flow.get("branch", "experiment"))
+        git_run(project, ["checkout", "main"])
+        main_files = revision_flow.get("main_files", {})
+        if isinstance(main_files, dict):
+            write_project_files(project, main_files)
+        git_commit_all(project, "mainline")
+        query = str(revision_expectation.get("query", ""))
+        divergent = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+        )
+        divergent_adjudication = divergent.get("premiseAdjudication", {})
+        divergent_warning = (
+            any(
+                isinstance(item, dict) and item.get("kind") == "divergent-revision"
+                for item in divergent_adjudication.get("warnings", [])
+            )
+            if isinstance(divergent_adjudication, dict)
+            else False
+        )
+        divergent_exclusion = any(
+            isinstance(item, dict) and item.get("reason") == "divergent-revision"
+            for item in divergent.get("exclusions", [])
+        )
+        divergent_decision_withheld = not any(
+            isinstance(item, dict)
+            and item.get("kind") == "decision"
+            and query.lower() in json.dumps(item).lower()
+            for item in divergent.get("items", [])
+        )
+        divergent_gap = any(
+            isinstance(item, dict) and item.get("kind") == "revision-drift"
+            for item in divergent.get("gaps", [])
+        )
+        divergent_ok = (
+            divergent.get("revisionFreshness", {}).get("liveGitChecked") is True
+            and divergent.get("revisionFreshness", {}).get("captureCompatibility")
+            == "divergent"
+            and isinstance(divergent_adjudication, dict)
+            and divergent_adjudication.get("state") == "uncertain-state"
+            and divergent_warning
+            and divergent_exclusion
+            and divergent_decision_withheld
+            and divergent_gap
+            and divergent.get("liveSourceChecked") is False
+        )
+
+        git_run(
+            project,
+            [
+                "-c",
+                "user.name=Ley Eval",
+                "-c",
+                "user.email=ley-eval@example.invalid",
+                "merge",
+                "--no-ff",
+                branch,
+                "-m",
+                "merge experiment",
+            ],
+        )
+        merged = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+        )
+        merged_decision = next(
+            (
+                item
+                for item in merged.get("items", [])
+                if isinstance(item, dict)
+                and item.get("kind") == "decision"
+                and query.lower() in json.dumps(item).lower()
+            ),
+            None,
+        )
+        merged_ok = (
+            merged.get("revisionFreshness", {}).get("captureCompatibility") == "merged"
+            and isinstance(merged_decision, dict)
+            and merged_decision.get("revisionApplicability", {}).get("compatibility")
+            == "merged"
+            and not any(
+                isinstance(item, dict) and item.get("reason") == "divergent-revision"
+                for item in merged.get("exclusions", [])
+            )
+            and merged.get("liveSourceChecked") is False
+        )
+        revision_ok = divergent_ok and merged_ok
+        scores["revision_adjudication"] = revision_ok
+        evidence_text.extend([divergent, merged])
+        if not revision_ok:
+            failures.append(
+                "revision adjudication did not withhold divergent state and re-admit proven merged history"
             )
 
     specification_expectation = scenario.get("expected_specification_compiler")
@@ -1109,7 +1257,7 @@ def main() -> int:
                 f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
                 flush=True,
             )
-            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "origin_lineage", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference", "premise_adjudication"):
+            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "origin_lineage", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference", "premise_adjudication", "revision_adjudication"):
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):

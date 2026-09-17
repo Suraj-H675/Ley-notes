@@ -5,11 +5,12 @@ use crate::ingestion::{
     load_project_graph_history, load_project_memory, load_project_memory_at_graph_snapshot,
     ArtifactRecord, LoadedProjectMemory,
 };
+use crate::revision::RevisionResolver;
 use crate::semantic_retrieval::{
     reciprocal_rank_fusion, semantic_ranked_project_context, SemanticIndexState,
     SemanticSearchOutcome,
 };
-use crate::{CaptureMode, LeyCoreError};
+use crate::{CaptureMode, LeyCoreError, ProjectRevisionFreshness};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
@@ -63,6 +64,7 @@ pub struct MemoryOverview {
     pub graph_diagnostics: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<GitState>,
+    pub revision_freshness: ProjectRevisionFreshness,
     pub source_boundary: &'static str,
     pub freshness: &'static str,
     pub live_source_checked: bool,
@@ -214,8 +216,33 @@ pub fn project_memory_overview(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<MemoryOverview, LeyCoreError> {
+    let project_start = project_start.as_ref();
     let memory = load_project_memory(project_start, vault)?;
-    Ok(overview(&memory))
+    let resolver = RevisionResolver::new(project_start, memory.graph.git.as_ref())?;
+    Ok(overview(&memory, resolver.freshness().clone()))
+}
+
+pub(crate) fn project_captured_git_state(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<Option<GitState>, LeyCoreError> {
+    Ok(load_project_memory(project_start, vault)?.graph.git)
+}
+
+pub(crate) fn validate_project_memory(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<(), LeyCoreError> {
+    load_project_memory(project_start, vault).map(|_| ())
+}
+
+pub(crate) fn project_artifact_snapshot_id(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<String, LeyCoreError> {
+    Ok(load_project_memory(project_start, vault)?
+        .manifest
+        .snapshot_id)
 }
 
 pub fn find_project_context(
@@ -516,7 +543,10 @@ pub fn find_project_graph_path(
     ))
 }
 
-fn overview(memory: &LoadedProjectMemory) -> MemoryOverview {
+fn overview(
+    memory: &LoadedProjectMemory,
+    revision_freshness: ProjectRevisionFreshness,
+) -> MemoryOverview {
     MemoryOverview {
         project_id: memory.manifest.project_id.clone(),
         project_name: memory.manifest.project_name.clone(),
@@ -537,6 +567,7 @@ fn overview(memory: &LoadedProjectMemory) -> MemoryOverview {
         graph_edges: memory.graph.edges.len(),
         graph_diagnostics: memory.graph.diagnostics.len(),
         git: memory.graph.git.clone(),
+        revision_freshness,
         source_boundary: SOURCE_BOUNDARY,
         freshness: SNAPSHOT_FRESHNESS,
         live_source_checked: false,

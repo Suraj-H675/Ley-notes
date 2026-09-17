@@ -25,6 +25,7 @@ mod project_catalog;
 mod project_memory_search;
 mod resume_context;
 mod retrieval;
+mod revision;
 mod semantic_retrieval;
 mod session;
 mod session_context;
@@ -153,6 +154,7 @@ pub use retrieval::{
     HybridContextPack, HybridRetrievalMetadata, MemoryOverview, RetrievalLimits, RetrievalMode,
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
 };
+pub use revision::{ProjectRevisionFreshness, RevisionApplicability, RevisionCompatibility};
 pub use semantic_retrieval::{
     default_semantic_model_cache_path, install_semantic_model_from_staging,
     install_semantic_model_from_staging_at, semantic_model_status, semantic_model_status_at,

@@ -1325,7 +1325,7 @@ fn line_citation(source: &GraphSource, snapshot: &str, needle: &str) -> GraphCit
     }
 }
 
-fn capture_git_state(project_root: &Path) -> Result<Option<GitState>, LeyCoreError> {
+pub(crate) fn capture_git_state(project_root: &Path) -> Result<Option<GitState>, LeyCoreError> {
     let mut command = Command::new("git");
     command
         .arg("-c")
@@ -1344,6 +1344,7 @@ fn capture_git_state(project_root: &Path) -> Result<Option<GitState>, LeyCoreErr
             ".",
         ])
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

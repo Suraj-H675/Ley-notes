@@ -2,7 +2,8 @@ use crate::ingestion::{
     load_project_memory, lock_project_memory_lifecycle, redact_secrets, ProjectMemoryLifecycleLock,
 };
 use crate::learning::erase_learnings_citing_session_under_lifecycle;
-use crate::{diagnose_project, project_memory_overview, LeyCoreError, RedactionFinding};
+use crate::retrieval::{project_artifact_snapshot_id, validate_project_memory};
+use crate::{diagnose_project, LeyCoreError, RedactionFinding};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
@@ -617,7 +618,7 @@ fn record_session_turn(
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let kind = if is_prompt {
         "user-prompt-observed"
     } else {
@@ -667,7 +668,7 @@ pub fn start_session(
 ) -> Result<SessionMutation, LeyCoreError> {
     validate_request_id(&input.request_id)?;
     let diagnostic = diagnose_project(&project_start)?;
-    let memory = project_memory_overview(&diagnostic.root, &vault)?;
+    let artifact_snapshot_id = project_artifact_snapshot_id(&diagnostic.root, &vault)?;
     let mut redactions = Vec::new();
     let name = sanitize_text("name", &input.name, 1, 128, &mut redactions)?;
     let goal = sanitize_text("goal", &input.goal, 1, 16_000, &mut redactions)?;
@@ -686,7 +687,7 @@ pub fn start_session(
         name,
         goal,
         source,
-        artifact_snapshot_id: memory.artifact_snapshot_id,
+        artifact_snapshot_id,
     };
     mutate_session(
         &diagnostic.identity.project_id,
@@ -902,7 +903,7 @@ pub fn finish_session(
         ));
     }
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let event_id = deterministic_id(
         "evt",
         &format!("{session_id}:{}:session-finished", input.request_id),
@@ -950,7 +951,7 @@ pub fn rename_session(
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let event_id = deterministic_id(
         "evt",
         &format!("{session_id}:{}:session-renamed", input.request_id),
@@ -987,7 +988,7 @@ pub fn read_session(
 ) -> Result<AgentSession, LeyCoreError> {
     validate_session_id(session_id)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
         return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
     };
@@ -1010,7 +1011,7 @@ pub(crate) fn read_recovery_derivation_origin(
     validate_session_id(session_id)?;
     validate_event_id(checkpoint_event_id)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
         return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
     };
@@ -1046,7 +1047,7 @@ pub(crate) fn read_session_for_memory_compiler(
 ) -> Result<(AgentSession, Option<u64>), LeyCoreError> {
     validate_session_id(session_id)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
         return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
     };
@@ -1090,7 +1091,7 @@ pub fn erase_session_memory(
 ) -> Result<SessionMemoryErasure, LeyCoreError> {
     validate_session_id(session_id)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let vault_path = vault
         .as_ref()
         .canonicalize()
@@ -1203,7 +1204,7 @@ pub(crate) fn visit_session_records(
     mut visitor: impl FnMut(AgentSession),
 ) -> Result<usize, LeyCoreError> {
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
         return Ok(0);
     };

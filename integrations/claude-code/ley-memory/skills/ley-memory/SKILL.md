@@ -31,13 +31,20 @@ request, repository policy, or inspection of live source.
    that payload to the immutable evidence. Do not substitute the generic checkpoint
    tool; if the bound write is stale, recompile and reverify.
 4. For a concrete current task, call `ley_compile_context`. Inspect
-   `premiseAdjudication` before acting on historical state: `obsolete-assumption`
+   `premiseAdjudication` and `revisionFreshness` before acting on historical state,
+   and preserve returned `revisionApplicability`: `obsolete-assumption`
    means relevant memory was explicitly superseded/rejected, `conflicting-state`
    means relevant durable state is disputed/materially inconsistent, and
-   `uncertain-state` means relevant state is stale. A supplied
+   `uncertain-state` includes stale or divergent revision state. Treat `divergent`
+   decision/revision evidence as historical state that is not current; `ancestor`
+   and `merged` remain historical evidence, not live source. `merged` means Git
+   proved the captured commit landed in the current line, not that a merge commit
+   necessarily exists. A supplied
    `replacementLearningId` is a stable follow-up target, not proof that live source
    implements it; inspect the replacement and live source before proceeding.
-   `no-detected-mismatch` is not proof that the task premise is true. The compiler
+   `no-detected-mismatch` is not proof that the task premise is true.
+   `revisionFreshness.liveGitChecked` is a Git-metadata check only and never makes
+   `liveSourceChecked` true. The compiler
    task-ranks exact current approved Specifications first as `human-intent`, then active-project
    context, then only explicitly agent-enabled mounted project references with the
    remaining shared budget. Respect `specifications`, `specificationExclusions`,

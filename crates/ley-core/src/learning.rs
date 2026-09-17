@@ -1,10 +1,11 @@
 use crate::ingestion::{
     load_project_memory, lock_project_memory_lifecycle, redact_secrets, ProjectMemoryLifecycleLock,
 };
+use crate::retrieval::validate_project_memory;
 use crate::session::read_recovery_derivation_origin;
 use crate::{
-    diagnose_project, project_memory_overview, read_session, LeyCoreError, RedactionFinding,
-    SessionArtifactCitation, SessionStatus,
+    diagnose_project, read_session, LeyCoreError, RedactionFinding, SessionArtifactCitation,
+    SessionStatus,
 };
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
@@ -389,7 +390,7 @@ pub fn propose_learning(
     validate_confidence(input.confidence_percent)?;
     validate_provenance_authority(input.actor, input.provenance)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let learning_id = deterministic_id(
         "lrn",
         &format!("{}:{}", diagnostic.identity.project_id, input.request_id),
@@ -443,7 +444,7 @@ pub fn correct_learning(
     validate_request_id(&input.request_id)?;
     validate_confidence(input.confidence_percent)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let event_id = deterministic_id(
         "lev",
         &format!("{learning_id}:{}:corrected", input.request_id),
@@ -491,7 +492,7 @@ pub fn review_learning(
     validate_request_id(&input.request_id)?;
     validate_review_authority(input.actor, input.action)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     match input.action {
         LearningFeedbackAction::Supersede => {
             let replacement = input.replacement_learning_id.as_deref().ok_or_else(|| {
@@ -553,7 +554,7 @@ pub fn read_learning(
 ) -> Result<LearningRecord, LeyCoreError> {
     validate_learning_id(learning_id)?;
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let Some(store) = LearningStore::open(&vault, &diagnostic.identity.project_id, false)? else {
         return Err(LeyCoreError::LearningNotFound(learning_id.to_owned()));
     };
@@ -569,7 +570,7 @@ pub fn list_learnings(
     vault: impl AsRef<Path>,
 ) -> Result<Vec<LearningSummary>, LeyCoreError> {
     let diagnostic = diagnose_project(&project_start)?;
-    project_memory_overview(&diagnostic.root, &vault)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
     let Some(store) = LearningStore::open(&vault, &diagnostic.identity.project_id, false)? else {
         return Ok(Vec::new());
     };

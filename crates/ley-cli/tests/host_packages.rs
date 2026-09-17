@@ -130,6 +130,15 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         assert!(skill.contains("ley_compile_context"), "{}", path.display());
         assert!(skill.contains("premiseAdjudication"), "{}", path.display());
         assert!(skill.contains("obsolete-assumption"), "{}", path.display());
+        assert!(skill.contains("revisionFreshness"), "{}", path.display());
+        assert!(
+            skill.contains("revisionApplicability"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("divergent"), "{}", path.display());
+        assert!(skill.contains("merged"), "{}", path.display());
+        assert!(skill.contains("liveGitChecked"), "{}", path.display());
         assert!(skill.contains("conflicting-state"), "{}", path.display());
         assert!(skill.contains("uncertain-state"), "{}", path.display());
         assert!(
