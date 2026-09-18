@@ -22,6 +22,7 @@ mod knowledge_view;
 mod learning;
 mod learning_context;
 mod memory_compiler;
+mod memory_health;
 mod memory_transition;
 mod project_activity;
 mod project_catalog;
@@ -132,6 +133,14 @@ pub use memory_compiler::{
     MemoryCompilationEvidenceKind, MemoryCompilationState, SessionMemoryCompilationPack,
     DEFAULT_MEMORY_COMPILE_CHARACTERS, DEFAULT_MEMORY_COMPILE_RESULTS,
     MAX_MEMORY_COMPILE_CHARACTERS, MAX_MEMORY_COMPILE_RESULTS, MIN_MEMORY_COMPILE_CHARACTERS,
+};
+pub use memory_health::{
+    memory_health_report, MemoryHealthCoverage, MemoryHealthLimits, MemoryHealthReport,
+    MemoryHealthSeverity, MemoryHealthSeverityCounts, MemoryHealthSignal, MemoryHealthSignalKind,
+    UnsupportedMemoryHealthSignal, DEFAULT_MEMORY_HEALTH_CHARACTERS,
+    DEFAULT_MEMORY_HEALTH_SESSIONS, DEFAULT_MEMORY_HEALTH_SIGNALS, MAX_MEMORY_HEALTH_CHARACTERS,
+    MAX_MEMORY_HEALTH_SESSIONS, MAX_MEMORY_HEALTH_SIGNALS, MEMORY_HEALTH_SCHEMA_VERSION,
+    MIN_MEMORY_HEALTH_CHARACTERS,
 };
 pub use memory_transition::{
     commit_unresolved_memory_transition, verify_memory_transition,

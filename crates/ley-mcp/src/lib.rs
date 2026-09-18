@@ -3,16 +3,17 @@ use ley_core::{
     compile_project_context_for_agent_with_registries, compile_session_memory,
     compile_topic_dossier, current_project_state, diagnose_project, evaluate_agent_egress,
     find_project_context, find_project_graph_path, finish_session, inspect_context_pack,
-    list_learning_contexts, project_activity_view, project_memory_overview, project_resume_context,
-    propose_learning, read_learning_context, read_project_evidence, read_session_context,
-    read_session_turns_context, search_project_memory, start_session, traverse_project_graph,
-    verify_memory_transition, AgentContextAuthorities, AgentEgressTarget, AttemptInput,
-    AttemptOutcome, CheckpointInput, CommandInput, CommitUnresolvedMemoryTransitionInput,
-    ContextCompileLimits, ContextMountRegistry, CurrentProjectStateLimits, DecisionInput,
-    EgressPolicyRegistry, FinishSessionInput, GraphDirection, GraphEdgeKind, LearningActor,
-    LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
-    LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind, MemoryTransitionInput, PlanItemInput,
-    PlanStatus, ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
+    list_learning_contexts, memory_health_report, project_activity_view, project_memory_overview,
+    project_resume_context, propose_learning, read_learning_context, read_project_evidence,
+    read_session_context, read_session_turns_context, search_project_memory, start_session,
+    traverse_project_graph, verify_memory_transition, AgentContextAuthorities, AgentEgressTarget,
+    AttemptInput, AttemptOutcome, CheckpointInput, CommandInput,
+    CommitUnresolvedMemoryTransitionInput, ContextCompileLimits, ContextMountRegistry,
+    CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, FinishSessionInput,
+    GraphDirection, GraphEdgeKind, LearningActor, LearningEvidenceInput, LearningKind,
+    LearningListScope, LearningMutation, LearningProvenance, LeyCoreError, MemoryCandidateClaim,
+    MemoryCandidateKind, MemoryHealthLimits, MemoryTransitionInput, PlanItemInput, PlanStatus,
+    ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
     ResolutionInput, RetrievalLimits, SessionMutation, SessionSource, SessionSourceKind,
     SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
     TaskStatus, TopicDossierLimits, VerificationInput, VerificationStatus,
@@ -22,13 +23,14 @@ use ley_core::{
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
     DEFAULT_MEMORY_COMPILE_CHARACTERS, DEFAULT_MEMORY_COMPILE_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
-    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
-    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
-    DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS,
-    DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS, DEFAULT_SPECIFICATION_CONTEXT_RESULTS,
-    DEFAULT_TOPIC_DOSSIER_RESULTS, DEFAULT_TOPIC_DOSSIER_SUPPORTING_SESSIONS,
-    DEFAULT_TOPIC_DOSSIER_TOKENS,
+    DEFAULT_MEMORY_HEALTH_CHARACTERS, DEFAULT_MEMORY_HEALTH_SESSIONS,
+    DEFAULT_MEMORY_HEALTH_SIGNALS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
+    DEFAULT_SESSION_TURN_RESULTS, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
+    DEFAULT_SPECIFICATION_CONTEXT_RESULTS, DEFAULT_TOPIC_DOSSIER_RESULTS,
+    DEFAULT_TOPIC_DOSSIER_SUPPORTING_SESSIONS, DEFAULT_TOPIC_DOSSIER_TOKENS,
 };
 use ley_core::{list_session_contexts, DEFAULT_SESSION_LIST_RESULTS};
 use rmcp::{
@@ -67,6 +69,9 @@ the older pack cannot be reconstructed exactly. The Inspector omits included con
 no authority. Use \
 `ley_project_state` for explicit project-status questions: only active/paused latest checkpoints are \
 working state, and `recentDecisions` remain historical with `currentStateProven: false`. Use \
+`ley_memory_health` only for deliberate maintenance review: its signals are advisory triage, \
+`destructiveActionsTaken` remains false, and `unsupportedSignals` are evidence gaps rather than \
+permission to guess or auto-clean memory. Use \
 `ley_project_resume` for broad continuity when the task itself is not yet specific, and use the \
 `ley_topic_dossier` tool for a bounded map of a repeatedly revisited project area before following \
 its stable evidence/session handles. A dossier is a rebuildable derived view, not authority or a \
@@ -236,6 +241,23 @@ pub struct CurrentProjectStateParams {
     #[schemars(range(min = 1, max = 50))]
     pub max_knowledge: Option<usize>,
     /// Strict aggregate text budget for returned state material. Defaults to 16000 characters; range 2000–32000.
+    #[serde(default)]
+    #[schemars(range(min = 2_000, max = 32_000))]
+    pub max_characters: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MemoryHealthParams {
+    /// Maximum returned health signals. Defaults to 100; range 1–200.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 200))]
+    pub max_signals: Option<usize>,
+    /// Maximum recent/working sessions inspected. Defaults to 20; range 1–50.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 50))]
+    pub max_sessions: Option<usize>,
+    /// Aggregate text budget for signal titles/details. Defaults to 16000; range 2000–32000.
     #[serde(default)]
     #[schemars(range(min = 2_000, max = 32_000))]
     pub max_characters: Option<usize>,
@@ -1285,6 +1307,38 @@ impl LeyMcpServer {
                     max_characters: params
                         .max_characters
                         .unwrap_or(DEFAULT_CURRENT_STATE_CHARACTERS),
+                },
+            )
+        }))
+    }
+
+    /// Inspect non-destructive Memory Health/Hygiene signals for this fixed project.
+    #[tool(
+        name = "ley_memory_health",
+        annotations(
+            title = "Inspect Ley memory health",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn memory_health(
+        &self,
+        Parameters(params): Parameters<MemoryHealthParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_historical_tool_result(|| {
+            memory_health_report(
+                self.project.as_path(),
+                self.vault.as_path(),
+                MemoryHealthLimits {
+                    max_signals: params.max_signals.unwrap_or(DEFAULT_MEMORY_HEALTH_SIGNALS),
+                    max_sessions: params
+                        .max_sessions
+                        .unwrap_or(DEFAULT_MEMORY_HEALTH_SESSIONS),
+                    max_characters: params
+                        .max_characters
+                        .unwrap_or(DEFAULT_MEMORY_HEALTH_CHARACTERS),
                 },
             )
         }))
@@ -2353,6 +2407,7 @@ mod tests {
                 "ley_graph_path",
                 "ley_learning_get",
                 "ley_learnings_list",
+                "ley_memory_health",
                 "ley_project_overview",
                 "ley_project_resume",
                 "ley_project_specifications",
@@ -2474,6 +2529,25 @@ mod tests {
             state_schema["properties"]["maxCharacters"]["maximum"],
             32_000
         );
+        let health_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_memory_health")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(health_schema["properties"]["maxSignals"]["minimum"], 1);
+        assert_eq!(health_schema["properties"]["maxSignals"]["maximum"], 200);
+        assert_eq!(health_schema["properties"]["maxSessions"]["maximum"], 50);
+        assert_eq!(
+            health_schema["properties"]["maxCharacters"]["minimum"],
+            2_000
+        );
+        assert_eq!(
+            health_schema["properties"]["maxCharacters"]["maximum"],
+            32_000
+        );
         let specifications_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -2553,6 +2627,7 @@ mod tests {
                 "ley_graph_path",
                 "ley_learning_get",
                 "ley_learnings_list",
+                "ley_memory_health",
                 "ley_project_overview",
                 "ley_project_resume",
                 "ley_project_specifications",
@@ -3200,6 +3275,77 @@ mod tests {
 
         server.egress_target = AgentEgressTarget::Local;
         let local = server.project_state(Parameters(params)).await.unwrap();
+        assert_eq!(local.is_error, Some(false));
+        assert!(local
+            .structured_content
+            .unwrap()
+            .to_string()
+            .contains("Remember MCP context"));
+    }
+
+    #[tokio::test]
+    async fn memory_health_is_advisory_non_destructive_and_respects_historical_egress() {
+        let (_temporary, project, _vault, mut server) = fixture();
+        let params = MemoryHealthParams {
+            max_signals: Some(50),
+            max_sessions: Some(10),
+            max_characters: Some(8_000),
+        };
+        let allowed = server
+            .memory_health(Parameters(MemoryHealthParams {
+                max_signals: params.max_signals,
+                max_sessions: params.max_sessions,
+                max_characters: params.max_characters,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(allowed.is_error, Some(false));
+        let allowed = allowed.structured_content.unwrap();
+        assert_eq!(
+            allowed["schemaVersion"],
+            ley_core::MEMORY_HEALTH_SCHEMA_VERSION
+        );
+        assert_eq!(allowed["projection"], "on-demand-memory-health");
+        assert_eq!(allowed["persisted"], false);
+        assert_eq!(allowed["destructiveActionsTaken"], false);
+        assert_eq!(allowed["liveSourceChecked"], false);
+        assert!(allowed["healthFingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert!(allowed["signals"]
+            .as_array()
+            .is_some_and(|signals| !signals.is_empty()));
+        assert_eq!(allowed["unsupportedSignals"].as_array().unwrap().len(), 3);
+        assert!(allowed.to_string().contains("Remember MCP context"));
+
+        let retained_specification_id = ley_core::generate_specification_id();
+        server
+            .egress_policy_registry
+            .set_specification_policy(
+                &project,
+                &retained_specification_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+        let blocked = server
+            .memory_health(Parameters(MemoryHealthParams {
+                max_signals: params.max_signals,
+                max_sessions: params.max_sessions,
+                max_characters: params.max_characters,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(blocked.is_error, Some(true));
+        let blocked = blocked.structured_content.unwrap();
+        assert!(blocked["error"]
+            .as_str()
+            .unwrap()
+            .contains("historical Ley memory is withheld"));
+        assert!(!blocked.to_string().contains("Remember MCP context"));
+
+        server.egress_target = AgentEgressTarget::Local;
+        let local = server.memory_health(Parameters(params)).await.unwrap();
         assert_eq!(local.is_error, Some(false));
         assert!(local
             .structured_content
@@ -4360,7 +4506,7 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 20);
+        assert_eq!(tools.len(), 21);
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await

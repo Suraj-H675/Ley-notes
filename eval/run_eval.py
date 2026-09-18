@@ -54,6 +54,7 @@ METRIC_NAMES = (
     "topic_dossier",
     "current_project_state",
     "context_pack_inspector",
+    "memory_health",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -283,6 +284,28 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "context-pack-inspector-attribution",
             "context_pack_inspector",
+            "truthy",
+        ),
+    },
+    "memory-health": {
+        "adversarial": (
+            "session-erasure-derived-residue",
+            "forgetting_residue_rate",
+            "zero",
+        ),
+        "downstream": (
+            "memory-health-hygiene",
+            "memory_health",
+            "truthy",
+        ),
+        "privacy": (
+            "memory-health-hygiene",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "memory-health-hygiene",
+            "memory_health",
             "truthy",
         ),
     },
@@ -1789,6 +1812,95 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "Context Pack Inspector did not preserve pack identity, attribution, body omission, mismatch honesty, or privacy"
             )
 
+    health_expectation = scenario.get("expected_memory_health")
+    if isinstance(health_expectation, dict):
+        if not session_id:
+            raise RuntimeError("memory health fixture created no structured session")
+        hidden_turn_marker = str(
+            health_expectation.get("hidden_turn_marker", "memory_health_hidden_turn")
+        )
+        run(
+            [
+                "session",
+                "prompt",
+                session_id,
+                str(project),
+                "--stdin",
+                "--request-id",
+                request_id(f"{scenario['id']}:health:prompt"),
+                "--json",
+            ],
+            stdin=f"{hidden_turn_marker} prompt body",
+        )
+        run(
+            [
+                "session",
+                "response",
+                session_id,
+                str(project),
+                "--stdin",
+                "--request-id",
+                request_id(f"{scenario['id']}:health:response"),
+                "--json",
+            ],
+            stdin=f"{hidden_turn_marker} response body",
+        )
+        arguments = {
+            "maxSignals": int(health_expectation.get("max_signals", 100)),
+            "maxSessions": int(health_expectation.get("max_sessions", 20)),
+            "maxCharacters": int(health_expectation.get("max_characters", 16_000)),
+        }
+        health = mcp_call(project, "ley_memory_health", arguments)
+        rebuilt = mcp_call(project, "ley_memory_health", arguments)
+        health_text = json.dumps(health, sort_keys=True)
+        signal_kinds = {
+            str(signal.get("kind"))
+            for signal in health.get("signals", [])
+            if isinstance(signal, dict)
+        }
+        expected_kinds = {
+            str(value) for value in health_expectation.get("signal_kinds", [])
+        }
+        unsupported = {
+            str(item.get("signal"))
+            for item in health.get("unsupportedSignals", [])
+            if isinstance(item, dict)
+        }
+        expected_unsupported = {
+            "old-procedure-never-successfully-reverified",
+            "failed-consolidations",
+            "chronically-retrieved-but-unhelpful-memory",
+        }
+        health_ok = (
+            health.get("schemaVersion") == 1
+            and health.get("projection") == "on-demand-memory-health"
+            and health.get("persisted") is False
+            and health.get("destructiveActionsTaken") is False
+            and health.get("hasActionableSignals") is True
+            and str(health.get("healthFingerprint", "")).startswith("sha256:")
+            and health.get("healthFingerprint") == rebuilt.get("healthFingerprint")
+            and expected_kinds.issubset(signal_kinds)
+            and expected_unsupported.issubset(unsupported)
+            and health.get("liveSourceChecked") is False
+            and int(health.get("coverage", {}).get("textCharacters", 0))
+            <= arguments["maxCharacters"]
+            and hidden_turn_marker not in health_text
+            and str(project) not in health_text
+            and str(vault) not in health_text
+        )
+        scores["memory_health"] = health_ok
+        privacy_canaries = [str(project), str(vault)]
+        if hidden_turn_marker:
+            privacy_canaries.append(hidden_turn_marker)
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            privacy_canaries, [health]
+        )
+        evidence_text.extend([health, rebuilt])
+        if not health_ok:
+            failures.append(
+                "Memory Health did not preserve advisory/non-destructive semantics, typed signal coverage, private turn-body omission, or unsupported-signal honesty"
+            )
+
     abstention_expectation = scenario.get("expected_selective_abstention")
     if isinstance(abstention_expectation, dict):
         query = str(abstention_expectation.get("query", ""))
@@ -1997,6 +2109,15 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 {
                     "maxSessions": 10,
                     "maxKnowledge": 20,
+                    "maxCharacters": 8_000,
+                },
+            ),
+            mcp_call(
+                project,
+                "ley_memory_health",
+                {
+                    "maxSignals": 100,
+                    "maxSessions": 20,
                     "maxCharacters": 8_000,
                 },
             ),

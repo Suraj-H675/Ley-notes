@@ -140,6 +140,13 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(skill.contains("ley_project_state"), "{}", path.display());
+        assert!(skill.contains("ley_memory_health"), "{}", path.display());
+        assert!(skill.contains("unsupportedSignals"), "{}", path.display());
+        assert!(
+            skill.contains("destructiveActionsTaken"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("ley_topic_dossier"), "{}", path.display());
         assert!(skill.contains("currentStateProven"), "{}", path.display());
         assert!(skill.contains("premiseAdjudication"), "{}", path.display());
