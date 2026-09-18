@@ -55,6 +55,7 @@ METRIC_NAMES = (
     "current_project_state",
     "context_pack_inspector",
     "memory_health",
+    "agent_legibility",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -306,6 +307,28 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "memory-health-hygiene",
             "memory_health",
+            "truthy",
+        ),
+    },
+    "agent-legibility-map": {
+        "adversarial": (
+            "session-erasure-derived-residue",
+            "forgetting_residue_rate",
+            "zero",
+        ),
+        "downstream": (
+            "agent-legibility-project-map",
+            "agent_legibility",
+            "truthy",
+        ),
+        "privacy": (
+            "agent-legibility-project-map",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "agent-legibility-project-map",
+            "agent_legibility",
             "truthy",
         ),
     },
@@ -698,6 +721,7 @@ def ensure_learning_citations(project: Path, events: list[dict[str, object]]) ->
 
 def checkpoint_from_events(events: list[dict[str, object]], artifact_paths: list[str]) -> dict[str, object]:
     summaries: list[str] = []
+    plan: list[dict[str, object]] = []
     decisions: list[dict[str, object]] = []
     problems: list[dict[str, object]] = []
     tasks: list[dict[str, object]] = []
@@ -710,6 +734,13 @@ def checkpoint_from_events(events: list[dict[str, object]], artifact_paths: list
             summary = str(event.get("summary", "")).strip()
             if summary:
                 summaries.append(summary)
+        elif kind == "plan":
+            plan.append(
+                {
+                    "text": str(event.get("text", "")),
+                    "status": str(event.get("status", "pending")),
+                }
+            )
         elif kind == "decision":
             title = str(event.get("title", "Decision"))
             decision = str(event.get("decision", ""))
@@ -773,6 +804,7 @@ def checkpoint_from_events(events: list[dict[str, object]], artifact_paths: list
 
     checkpoint: dict[str, object] = {
         "summary": ("; ".join(summaries) or "Captured structured project progress.")[:16000],
+        "plan": plan,
         "decisions": decisions,
         "problems": problems,
         "tasks": tasks,
@@ -843,6 +875,7 @@ def capture_events(
             "attempt",
             "resolution",
             "learning",
+            "plan",
             "task",
             "verification",
             "unresolved",
@@ -1901,6 +1934,132 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "Memory Health did not preserve advisory/non-destructive semantics, typed signal coverage, private turn-body omission, or unsupported-signal honesty"
             )
 
+    legibility_expectation = scenario.get("expected_agent_legibility")
+    if isinstance(legibility_expectation, dict):
+        arguments = {
+            "maxEntriesPerSection": int(
+                legibility_expectation.get("max_entries_per_section", 12)
+            ),
+            "maxSessions": int(legibility_expectation.get("max_sessions", 8)),
+            "maxCharacters": int(
+                legibility_expectation.get("max_characters", 12_000)
+            ),
+        }
+        legibility = mcp_call(project, "ley_agent_legibility", arguments)
+        rebuilt = mcp_call(project, "ley_agent_legibility", arguments)
+        legibility_text = json.dumps(legibility, sort_keys=True)
+        hidden_spec_marker = str(
+            legibility_expectation.get("hidden_spec_marker", "")
+        )
+        architecture_path = str(
+            legibility_expectation.get("architecture_path", "")
+        )
+        directory_path = str(legibility_expectation.get("directory_path", ""))
+        policy_path = str(legibility_expectation.get("policy_path", ""))
+        schema_path = str(legibility_expectation.get("schema_path", ""))
+        observability_path = str(
+            legibility_expectation.get("observability_path", "")
+        )
+        api_path = str(legibility_expectation.get("api_path", ""))
+        declared_command = str(
+            legibility_expectation.get("declared_command", "")
+        )
+        observed_command = str(
+            legibility_expectation.get("observed_command", "")
+        )
+        plan_marker = str(legibility_expectation.get("plan_marker", ""))
+        specification_path = str(
+            legibility_expectation.get("specification_path", "")
+        )
+        legibility_ok = (
+            legibility.get("schemaVersion") == 1
+            and legibility.get("projection") == "on-demand-agent-legibility-map"
+            and legibility.get("persisted") is False
+            and legibility.get("tableOfContentsNotScore") is True
+            and "score" not in legibility
+            and str(legibility.get("mapFingerprint", "")).startswith("sha256:")
+            and legibility.get("mapFingerprint") == rebuilt.get("mapFingerprint")
+            and legibility.get("liveSourceChecked") is False
+            and legibility.get("egressTarget") == "cloud"
+            and (
+                not architecture_path
+                or architecture_path
+                in json.dumps(legibility.get("architectureDocs", []), sort_keys=True)
+            )
+            and (
+                not directory_path
+                or directory_path
+                in json.dumps(
+                    legibility.get("importantDirectories", []), sort_keys=True
+                )
+            )
+            and (
+                not policy_path
+                or policy_path
+                in json.dumps(legibility.get("projectPolicies", []), sort_keys=True)
+            )
+            and (
+                not schema_path
+                or schema_path
+                in json.dumps(legibility.get("schemaMigrations", []), sort_keys=True)
+            )
+            and (
+                not observability_path
+                or observability_path
+                in json.dumps(
+                    legibility.get("observabilityReferences", []), sort_keys=True
+                )
+            )
+            and (
+                not api_path
+                or api_path
+                in json.dumps(
+                    legibility.get("primaryApiCandidates", []), sort_keys=True
+                )
+            )
+            and (
+                not declared_command
+                or declared_command
+                in json.dumps(legibility.get("declaredCommands", []), sort_keys=True)
+            )
+            and (
+                not observed_command
+                or observed_command
+                in json.dumps(legibility.get("observedCommands", []), sort_keys=True)
+            )
+            and (
+                not plan_marker
+                or plan_marker
+                in json.dumps(legibility.get("currentPlans", []), sort_keys=True)
+            )
+            and (
+                not specification_path
+                or specification_path
+                in json.dumps(
+                    legibility.get("importantSpecifications", []), sort_keys=True
+                )
+            )
+            and (
+                not hidden_spec_marker or hidden_spec_marker not in legibility_text
+            )
+            and int(legibility.get("coverage", {}).get("textCharacters", 0))
+            <= arguments["maxCharacters"]
+            and str(project) not in legibility_text
+            and str(vault) not in legibility_text
+        )
+        scores["agent_legibility"] = legibility_ok
+        privacy_canaries = [str(project), str(vault)]
+        if hidden_spec_marker:
+            privacy_canaries.append(hidden_spec_marker)
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            privacy_canaries, [legibility]
+        )
+        evidence_text.extend([legibility, rebuilt])
+        if not legibility_ok:
+            failures.append(
+                "Agent Legibility Map did not preserve TOC-only semantics, source binding, section coverage, Specification-body omission, or privacy"
+            )
+
     abstention_expectation = scenario.get("expected_selective_abstention")
     if isinstance(abstention_expectation, dict):
         query = str(abstention_expectation.get("query", ""))
@@ -2118,6 +2277,15 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 {
                     "maxSignals": 100,
                     "maxSessions": 20,
+                    "maxCharacters": 8_000,
+                },
+            ),
+            mcp_call(
+                project,
+                "ley_agent_legibility",
+                {
+                    "maxEntriesPerSection": 12,
+                    "maxSessions": 8,
                     "maxCharacters": 8_000,
                 },
             ),

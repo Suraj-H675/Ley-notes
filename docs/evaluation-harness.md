@@ -58,7 +58,7 @@ not every representative scenario was executed.
 ## P1 capability coverage
 
 Implemented P1 capabilities get a separate matrix rather than weakening the completed P0 contract. The
-current entries are **Topic Dossiers**, **Current Project State**, **Context Pack Inspector**, and **Memory Health / Hygiene**. Their matrices require:
+current entries are **Topic Dossiers**, **Current Project State**, **Context Pack Inspector**, **Memory Health / Hygiene**, and **Agent Legibility Map**. Their matrices require:
 
 - adversarial deletion/forgetting evidence from the session-erasure scenario;
 - downstream/regression success from the real authentication dossier journey;
@@ -68,6 +68,7 @@ current entries are **Topic Dossiers**, **Current Project State**, **Context Pac
 - zero privacy-canary leakage from the returned project-state projection.
 - Context Pack Inspector exact-ID reproduction, hidden-body omission, forged-ID mismatch honesty, and zero path leakage through the real MCP path.
 - Memory Health advisory/non-destructive semantics, review/uncited/duplicate/session/unresolved/recovery signals, explicit unsupported-metric disclosure, private recovery-body omission, deletion fidelity, and zero path leakage through the real MCP path.
+- Agent Legibility coverage for captured architecture, important directory, declared command, observed command, policy, schema/migration, API candidate, observability reference, current plan, and approved Specification metadata; deterministic source binding; explicit no-score semantics; private Specification-body omission; deletion fidelity; and zero local-path leakage through the real MCP path.
 
 As later P1 capabilities land, each should add its own adversarial, downstream, privacy, and regression
 representatives before the slice is considered complete.

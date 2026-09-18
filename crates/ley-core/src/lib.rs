@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod agent_legibility;
 mod binding;
 mod context_compiler;
 mod context_mount;
@@ -36,6 +37,16 @@ mod session_context;
 mod specification;
 mod topic_dossier;
 
+pub use agent_legibility::{
+    compile_agent_legibility_map, AgentLegibilityCoverage, AgentLegibilityLimits,
+    AgentLegibilityMap, LegibilityApiCandidate, LegibilityArtifactRef, LegibilityCommand,
+    LegibilityCommandCategory, LegibilityCommandSource, LegibilityDirectory, LegibilityGap,
+    LegibilityPlanItem, LegibilitySpecification, AGENT_LEGIBILITY_SCHEMA_VERSION,
+    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
+    DEFAULT_AGENT_LEGIBILITY_SESSIONS, MAX_AGENT_LEGIBILITY_CHARACTERS,
+    MAX_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, MAX_AGENT_LEGIBILITY_SESSIONS,
+    MIN_AGENT_LEGIBILITY_CHARACTERS,
+};
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,

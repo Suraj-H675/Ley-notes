@@ -1,22 +1,24 @@
 use ley_core::{
     checkpoint_session, checkpoint_session_if_current, commit_unresolved_memory_transition,
-    compile_project_context_for_agent_with_registries, compile_session_memory,
-    compile_topic_dossier, current_project_state, diagnose_project, evaluate_agent_egress,
-    find_project_context, find_project_graph_path, finish_session, inspect_context_pack,
-    list_learning_contexts, memory_health_report, project_activity_view, project_memory_overview,
-    project_resume_context, propose_learning, read_learning_context, read_project_evidence,
-    read_session_context, read_session_turns_context, search_project_memory, start_session,
-    traverse_project_graph, verify_memory_transition, AgentContextAuthorities, AgentEgressTarget,
-    AttemptInput, AttemptOutcome, CheckpointInput, CommandInput,
-    CommitUnresolvedMemoryTransitionInput, ContextCompileLimits, ContextMountRegistry,
-    CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, FinishSessionInput,
-    GraphDirection, GraphEdgeKind, LearningActor, LearningEvidenceInput, LearningKind,
-    LearningListScope, LearningMutation, LearningProvenance, LeyCoreError, MemoryCandidateClaim,
-    MemoryCandidateKind, MemoryHealthLimits, MemoryTransitionInput, PlanItemInput, PlanStatus,
-    ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
-    ResolutionInput, RetrievalLimits, SessionMutation, SessionSource, SessionSourceKind,
-    SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
-    TaskStatus, TopicDossierLimits, VerificationInput, VerificationStatus,
+    compile_agent_legibility_map, compile_project_context_for_agent_with_registries,
+    compile_session_memory, compile_topic_dossier, current_project_state, diagnose_project,
+    evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
+    inspect_context_pack, list_learning_contexts, memory_health_report, project_activity_view,
+    project_memory_overview, project_resume_context, propose_learning, read_learning_context,
+    read_project_evidence, read_session_context, read_session_turns_context, search_project_memory,
+    start_session, traverse_project_graph, verify_memory_transition, AgentContextAuthorities,
+    AgentEgressTarget, AgentLegibilityLimits, AttemptInput, AttemptOutcome, CheckpointInput,
+    CommandInput, CommitUnresolvedMemoryTransitionInput, ContextCompileLimits,
+    ContextMountRegistry, CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry,
+    FinishSessionInput, GraphDirection, GraphEdgeKind, LearningActor, LearningEvidenceInput,
+    LearningKind, LearningListScope, LearningMutation, LearningProvenance, LeyCoreError,
+    MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits, MemoryTransitionInput,
+    PlanItemInput, PlanStatus, ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope,
+    ProposeLearningInput, ResolutionInput, RetrievalLimits, SessionMutation, SessionSource,
+    SessionSourceKind, SessionStatus, SpecificationContextLimits, SpecificationRegistry,
+    StartSessionInput, TaskInput, TaskStatus, TopicDossierLimits, VerificationInput,
+    VerificationStatus, DEFAULT_AGENT_LEGIBILITY_CHARACTERS,
+    DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, DEFAULT_AGENT_LEGIBILITY_SESSIONS,
     DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS,
     DEFAULT_CONTEXT_TOKENS, DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
     DEFAULT_CURRENT_STATE_SESSIONS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
@@ -71,7 +73,11 @@ no authority. Use \
 working state, and `recentDecisions` remain historical with `currentStateProven: false`. Use \
 `ley_memory_health` only for deliberate maintenance review: its signals are advisory triage, \
 `destructiveActionsTaken` remains false, and `unsupportedSignals` are evidence gaps rather than \
-permission to guess or auto-clean memory. Use \
+permission to guess or auto-clean memory. Use `ley_agent_legibility` for compact project orientation: \
+it is a source-bound table of contents, not a score. Respect `tableOfContentsNotScore` and \
+`selectionBasis`, keep `declaredCommands` separate from historical `observedCommands`, and do not \
+treat observed commands as canonical project instructions. The map is navigation, not authority or a \
+live-source check, and remains behind the historical-memory egress gate. Use \
 `ley_project_resume` for broad continuity when the task itself is not yet specific, and use the \
 `ley_topic_dossier` tool for a bounded map of a repeatedly revisited project area before following \
 its stable evidence/session handles. A dossier is a rebuildable derived view, not authority or a \
@@ -258,6 +264,23 @@ pub struct MemoryHealthParams {
     #[schemars(range(min = 1, max = 50))]
     pub max_sessions: Option<usize>,
     /// Aggregate text budget for signal titles/details. Defaults to 16000; range 2000–32000.
+    #[serde(default)]
+    #[schemars(range(min = 2_000, max = 32_000))]
+    pub max_characters: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentLegibilityParams {
+    /// Maximum returned entries per map section. Defaults to 12; range 1–30.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 30))]
+    pub max_entries_per_section: Option<usize>,
+    /// Maximum recent/working sessions inspected for observed commands and current plans. Defaults to 8; range 1–20.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 20))]
+    pub max_sessions: Option<usize>,
+    /// Aggregate copied command/plan text budget. Defaults to 12000; range 2000–32000.
     #[serde(default)]
     #[schemars(range(min = 2_000, max = 32_000))]
     pub max_characters: Option<usize>,
@@ -1344,6 +1367,42 @@ impl LeyMcpServer {
         }))
     }
 
+    /// Read a compact captured-project table of contents for understanding and operating this project.
+    #[tool(
+        name = "ley_agent_legibility",
+        annotations(
+            title = "Read Ley agent legibility map",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn agent_legibility(
+        &self,
+        Parameters(params): Parameters<AgentLegibilityParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_historical_tool_result(|| {
+            compile_agent_legibility_map(
+                self.project.as_path(),
+                self.vault.as_path(),
+                AgentLegibilityLimits {
+                    max_entries_per_section: params
+                        .max_entries_per_section
+                        .unwrap_or(DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION),
+                    max_sessions: params
+                        .max_sessions
+                        .unwrap_or(DEFAULT_AGENT_LEGIBILITY_SESSIONS),
+                    max_characters: params
+                        .max_characters
+                        .unwrap_or(DEFAULT_AGENT_LEGIBILITY_CHARACTERS),
+                },
+                self.specification_registry.as_ref(),
+                self.egress_target,
+            )
+        }))
+    }
+
     /// Read identity, snapshot, capture, graph, Git, freshness, and privacy metadata.
     #[tool(
         name = "ley_project_overview",
@@ -2401,6 +2460,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "ley_agent_legibility",
                 "ley_compile_context",
                 "ley_context_pack_inspect",
                 "ley_graph_neighbors",
@@ -2548,6 +2608,34 @@ mod tests {
             health_schema["properties"]["maxCharacters"]["maximum"],
             32_000
         );
+        let legibility_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_agent_legibility")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            legibility_schema["properties"]["maxEntriesPerSection"]["minimum"],
+            1
+        );
+        assert_eq!(
+            legibility_schema["properties"]["maxEntriesPerSection"]["maximum"],
+            30
+        );
+        assert_eq!(
+            legibility_schema["properties"]["maxSessions"]["maximum"],
+            20
+        );
+        assert_eq!(
+            legibility_schema["properties"]["maxCharacters"]["minimum"],
+            2_000
+        );
+        assert_eq!(
+            legibility_schema["properties"]["maxCharacters"]["maximum"],
+            32_000
+        );
         let specifications_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -2621,6 +2709,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "ley_agent_legibility",
                 "ley_compile_context",
                 "ley_context_pack_inspect",
                 "ley_graph_neighbors",
@@ -3352,6 +3441,74 @@ mod tests {
             .unwrap()
             .to_string()
             .contains("Remember MCP context"));
+    }
+
+    #[tokio::test]
+    async fn agent_legibility_is_a_path_safe_toc_and_respects_historical_egress() {
+        let (_temporary, project, vault, mut server) = fixture();
+        let params = AgentLegibilityParams {
+            max_entries_per_section: Some(12),
+            max_sessions: Some(8),
+            max_characters: Some(8_000),
+        };
+        let allowed = server
+            .agent_legibility(Parameters(AgentLegibilityParams {
+                max_entries_per_section: params.max_entries_per_section,
+                max_sessions: params.max_sessions,
+                max_characters: params.max_characters,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(allowed.is_error, Some(false));
+        let allowed = allowed.structured_content.unwrap();
+        assert_eq!(
+            allowed["schemaVersion"],
+            ley_core::AGENT_LEGIBILITY_SCHEMA_VERSION
+        );
+        assert_eq!(allowed["projection"], "on-demand-agent-legibility-map");
+        assert_eq!(allowed["persisted"], false);
+        assert_eq!(allowed["tableOfContentsNotScore"], true);
+        assert_eq!(allowed["liveSourceChecked"], false);
+        assert_eq!(allowed["egressTarget"], "cloud");
+        assert!(allowed["mapFingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert!(allowed["gaps"]
+            .as_array()
+            .is_some_and(|gaps| !gaps.is_empty()));
+        assert!(allowed.get("score").is_none());
+        let serialized = allowed.to_string();
+        assert!(!serialized.contains(project.to_str().unwrap()));
+        assert!(!serialized.contains(vault.to_str().unwrap()));
+
+        let retained_specification_id = ley_core::generate_specification_id();
+        server
+            .egress_policy_registry
+            .set_specification_policy(
+                &project,
+                &retained_specification_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+        let blocked = server
+            .agent_legibility(Parameters(AgentLegibilityParams {
+                max_entries_per_section: params.max_entries_per_section,
+                max_sessions: params.max_sessions,
+                max_characters: params.max_characters,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(blocked.is_error, Some(true));
+        assert!(blocked.structured_content.unwrap()["error"]
+            .as_str()
+            .unwrap()
+            .contains("historical Ley memory is withheld"));
+
+        server.egress_target = AgentEgressTarget::Local;
+        let local = server.agent_legibility(Parameters(params)).await.unwrap();
+        assert_eq!(local.is_error, Some(false));
+        assert_eq!(local.structured_content.unwrap()["egressTarget"], "local");
     }
 
     #[tokio::test]
@@ -4506,7 +4663,7 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 21);
+        assert_eq!(tools.len(), 22);
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await

@@ -147,6 +147,15 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             "{}",
             path.display()
         );
+        assert!(skill.contains("ley_agent_legibility"), "{}", path.display());
+        assert!(
+            skill.contains("tableOfContentsNotScore"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("selectionBasis"), "{}", path.display());
+        assert!(skill.contains("declaredCommands"), "{}", path.display());
+        assert!(skill.contains("observedCommands"), "{}", path.display());
         assert!(skill.contains("ley_topic_dossier"), "{}", path.display());
         assert!(skill.contains("currentStateProven"), "{}", path.display());
         assert!(skill.contains("premiseAdjudication"), "{}", path.display());
