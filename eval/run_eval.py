@@ -53,6 +53,7 @@ METRIC_NAMES = (
     "privacy_violation_rate",
     "topic_dossier",
     "current_project_state",
+    "context_pack_inspector",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -260,6 +261,28 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "current-project-state-storage",
             "current_project_state",
+            "truthy",
+        ),
+    },
+    "context-pack-inspector": {
+        "adversarial": (
+            "context-pack-inspector-attribution",
+            "context_pack_inspector",
+            "truthy",
+        ),
+        "downstream": (
+            "context-pack-inspector-attribution",
+            "context_pack_inspector",
+            "truthy",
+        ),
+        "privacy": (
+            "context-pack-inspector-attribution",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "context-pack-inspector-attribution",
+            "context_pack_inspector",
             "truthy",
         ),
     },
@@ -1687,6 +1710,83 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not state_ok:
             failures.append(
                 "Current Project State did not preserve working-state boundaries, historical decision semantics, privacy, or source binding"
+            )
+
+    inspector_expectation = scenario.get("expected_context_pack_inspector")
+    if isinstance(inspector_expectation, dict):
+        task = str(inspector_expectation.get("task", ""))
+        max_results = int(inspector_expectation.get("max_results", 8))
+        max_tokens = int(inspector_expectation.get("max_tokens", 1_500))
+        hidden_marker = str(inspector_expectation.get("hidden_marker", ""))
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {
+                "task": task,
+                "maxResults": max_results,
+                "maxTokens": max_tokens,
+            },
+        )
+        pack_id = str(compiled.get("contextPackId", ""))
+        inspection = mcp_call(
+            project,
+            "ley_context_pack_inspect",
+            {
+                "task": task,
+                "maxResults": max_results,
+                "maxTokens": max_tokens,
+                "expectedContextPackId": pack_id,
+            },
+        )
+        mismatch = mcp_call(
+            project,
+            "ley_context_pack_inspect",
+            {
+                "task": task,
+                "maxResults": max_results,
+                "maxTokens": max_tokens,
+                "expectedContextPackId": "cpk_" + ("0" * 64),
+            },
+        )
+        compiled_text = json.dumps(compiled, sort_keys=True)
+        inspection_text = json.dumps(inspection, sort_keys=True)
+        inspector_ok = (
+            pack_id.startswith("cpk_")
+            and len(pack_id) == 68
+            and int(compiled.get("createdAtUnixMs", 0)) > 0
+            and compiled.get("liveSourceChecked") is False
+            and inspection.get("schemaVersion") == 1
+            and inspection.get("persisted") is False
+            and inspection.get("inspectionBasis")
+            == "current-recompiled-context-pack-manifest"
+            and inspection.get("contextPackId") == pack_id
+            and inspection.get("matchesExpectedContextPack") is True
+            and not inspection.get("mismatchWarning")
+            and bool(inspection.get("includedRecords"))
+            and inspection.get("budget", {}).get("maxTokens") == max_tokens
+            and inspection.get("budget", {}).get("estimatedTokens")
+            == compiled.get("estimatedTokens")
+            and inspection.get("liveSourceChecked") is False
+            and (
+                not hidden_marker
+                or (
+                    hidden_marker in compiled_text
+                    and hidden_marker not in inspection_text
+                )
+            )
+            and mismatch.get("matchesExpectedContextPack") is False
+            and "does not match" in str(mismatch.get("mismatchWarning", ""))
+            and str(project) not in inspection_text
+            and str(vault) not in inspection_text
+        )
+        scores["context_pack_inspector"] = inspector_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)], [inspection, mismatch]
+        )
+        evidence_text.extend([compiled, inspection, mismatch])
+        if not inspector_ok:
+            failures.append(
+                "Context Pack Inspector did not preserve pack identity, attribution, body omission, mismatch honesty, or privacy"
             )
 
     abstention_expectation = scenario.get("expected_selective_abstention")

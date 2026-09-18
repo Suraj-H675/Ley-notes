@@ -16,6 +16,7 @@ use crate::{
     MAX_PROJECT_MEMORY_SEARCH_TOKENS,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -441,6 +442,8 @@ pub struct ContextCompileCoverage {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompiledContextPack {
+    pub context_pack_id: String,
+    pub created_at_unix_ms: u64,
     pub project_id: String,
     pub project_name: String,
     pub artifact_snapshot_id: String,
@@ -572,7 +575,7 @@ pub fn compile_project_context_with_registries(
         }
         let pack = compile_search_result_with_specifications(search, specification_scan, limits);
         mount_registry.with_resolved_project_mounts_locked(project_start, |mounts| {
-            append_mounted_references(pack, mounts, task, limits)
+            append_mounted_references(pack, mounts, task, limits).map(finalize_context_pack)
         })
     })
 }
@@ -746,7 +749,7 @@ pub fn compile_project_context_for_agent_with_registries(
                         omitted_exclusions: omitted_egress,
                     });
                     pack.egress_exclusions = fitted_egress;
-                    Ok(pack)
+                    Ok(finalize_context_pack(pack))
                 })
             },
         )
@@ -994,7 +997,9 @@ fn compile_search_result_with_specifications(
         omitted_exclusions: raw_specification_exclusions
             .saturating_sub(diagnostics.specification_exclusions.len()),
     };
-    CompiledContextPack {
+    finalize_context_pack(CompiledContextPack {
+        context_pack_id: String::new(),
+        created_at_unix_ms: 0,
         project_id: search.project_id,
         project_name: search.project_name,
         artifact_snapshot_id: search.artifact_snapshot_id,
@@ -1035,7 +1040,19 @@ fn compile_search_result_with_specifications(
         source_boundary: SOURCE_BOUNDARY,
         instruction_warning: INSTRUCTION_WARNING,
         privacy_notice: PRIVACY_NOTICE,
+    })
+}
+
+fn finalize_context_pack(mut pack: CompiledContextPack) -> CompiledContextPack {
+    if pack.created_at_unix_ms == 0 {
+        pack.created_at_unix_ms = crate::unix_time_ms();
     }
+    let mut identity = pack.clone();
+    identity.context_pack_id.clear();
+    identity.created_at_unix_ms = 0;
+    let bytes = serde_json::to_vec(&identity).expect("compiled context pack is serializable");
+    pack.context_pack_id = format!("cpk_{:x}", Sha256::digest(bytes));
+    pack
 }
 
 fn filter_mounts_for_egress(

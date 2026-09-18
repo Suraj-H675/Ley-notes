@@ -11,6 +11,7 @@ use uuid::Uuid;
 mod binding;
 mod context_compiler;
 mod context_mount;
+mod context_pack_inspector;
 mod cross_project_search;
 mod current_project_state;
 mod egress_policy;
@@ -59,6 +60,10 @@ pub use context_mount::{
     ContextMountMutation, ContextMountPermission, ContextMountRegistry, ContextMountStatus,
     CONTEXT_MOUNT_REGISTRY_FILE, CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
     MAX_CONTEXT_MOUNTS_PER_PROJECT, MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT,
+};
+pub use context_pack_inspector::{
+    inspect_context_pack, ContextPackBudgetBreakdown, ContextPackIncludedRecord,
+    ContextPackInspection, ContextPackRecordSource, CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION,
 };
 pub use cross_project_search::{
     search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,
