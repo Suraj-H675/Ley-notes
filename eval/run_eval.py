@@ -56,6 +56,7 @@ METRIC_NAMES = (
     "context_pack_inspector",
     "memory_health",
     "agent_legibility",
+    "reviewed_runbook",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -329,6 +330,28 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "agent-legibility-project-map",
             "agent_legibility",
+            "truthy",
+        ),
+    },
+    "reviewed-runbook-skill-export": {
+        "adversarial": (
+            "reviewed-runbook-skill-export",
+            "reviewed_runbook",
+            "truthy",
+        ),
+        "downstream": (
+            "reviewed-runbook-skill-export",
+            "reviewed_runbook",
+            "truthy",
+        ),
+        "privacy": (
+            "reviewed-runbook-skill-export",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "reviewed-runbook-skill-export",
+            "reviewed_runbook",
             "truthy",
         ),
     },
@@ -1196,6 +1219,139 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             failures.append(
                 "premise adjudication did not resist an explicitly superseded task assumption"
             )
+
+    runbook_expectation = scenario.get("expected_reviewed_runbook")
+    if isinstance(runbook_expectation, dict):
+        learning_receipts = [
+            receipt
+            for receipt in receipts
+            if isinstance(receipt, dict) and isinstance(receipt.get("learningId"), str)
+        ]
+        if not learning_receipts:
+            raise RuntimeError("reviewed runbook fixture created no learning proposals")
+        learning_ids = [str(receipt["learningId"]) for receipt in learning_receipts]
+        for index, learning_id in enumerate(learning_ids):
+            cli_json(
+                [
+                    "learning",
+                    "review",
+                    learning_id,
+                    str(project),
+                    "--actor",
+                    "user",
+                    "--action",
+                    "confirm",
+                    "--note",
+                    "Reviewed for explicit runbook evaluation.",
+                    "--request-id",
+                    request_id(f"{scenario['id']}:runbook:confirm:{index}"),
+                    "--json",
+                ]
+            )
+
+        title = str(runbook_expectation.get("title", "Reviewed project runbook"))
+        compile_args = ["runbook", "compile", str(project), "--title", title]
+        for learning_id in learning_ids:
+            compile_args.extend(["--learning", learning_id])
+        compile_args.append("--json")
+        compiled_runbook = cli_json(compile_args)
+        rebuilt_runbook = cli_json(compile_args)
+        if not isinstance(compiled_runbook, dict) or not isinstance(rebuilt_runbook, dict):
+            raise RuntimeError("runbook compile returned a non-object payload")
+        runbook_id = str(compiled_runbook.get("runbookId", ""))
+        markers = [str(value) for value in runbook_expectation.get("markers", [])]
+        hidden_marker = str(runbook_expectation.get("hidden_marker", ""))
+        serialized_runbook = json.dumps(compiled_runbook, sort_keys=True)
+        runbook_ok = (
+            compiled_runbook.get("schemaVersion") == 1
+            and compiled_runbook.get("projection") == "on-demand-reviewed-runbook"
+            and compiled_runbook.get("persisted") is False
+            and compiled_runbook.get("authorityIncreasedThroughProjection") is False
+            and compiled_runbook.get("requiresExplicitSkillExport") is True
+            and compiled_runbook.get("liveSourceChecked") is False
+            and runbook_id.startswith("rbk_")
+            and compiled_runbook.get("runbookId") == rebuilt_runbook.get("runbookId")
+            and compiled_runbook.get("sourceFingerprint")
+            == rebuilt_runbook.get("sourceFingerprint")
+            and all(marker in serialized_runbook for marker in markers)
+            and (not hidden_marker or hidden_marker not in serialized_runbook)
+        )
+
+        export_args = [
+            "runbook",
+            "export-skill",
+            str(project),
+            "--title",
+            title,
+        ]
+        for learning_id in learning_ids:
+            export_args.extend(["--learning", learning_id])
+        export_args.extend(
+            [
+                "--expected-runbook",
+                runbook_id,
+                "--host",
+                str(runbook_expectation.get("host", "codex")),
+                "--egress-target",
+                "cloud",
+                "--json",
+            ]
+        )
+        exported_skill = cli_json(export_args)
+        if not isinstance(exported_skill, dict):
+            raise RuntimeError("runbook Skill export returned a non-object payload")
+        skill_content = str(exported_skill.get("content", ""))
+        export_ok = (
+            exported_skill.get("runbookId") == runbook_id
+            and exported_skill.get("persisted") is False
+            and exported_skill.get("installed") is False
+            and exported_skill.get("explicitUserActionRequired") is True
+            and exported_skill.get("liveSourceChecked") is False
+            and all(marker in skill_content for marker in markers)
+            and (not hidden_marker or hidden_marker not in skill_content)
+        )
+
+        stale_id = "rbk_" + ("0" * 64)
+        stale_blocked = False
+        try:
+            stale_args = list(export_args)
+            stale_args[stale_args.index(runbook_id)] = stale_id
+            run(stale_args)
+        except RuntimeError as error:
+            stale_blocked = "reviewed runbook changed" in str(error)
+
+        run(["egress", "project", "local-model-only", str(project), "--json"])
+        cloud_blocked = False
+        try:
+            run(export_args)
+        except RuntimeError as error:
+            cloud_blocked = (
+                "egress policy 'local-model-only' does not allow target 'cloud'" in str(error)
+            )
+        finally:
+            run(["egress", "project", "agent-ok", str(project), "--json"])
+
+        config_root = Path(EVAL_ENV["XDG_CONFIG_HOME"])
+        installed_skill = any(
+            path.name == "SKILL.md"
+            for root in (project, vault, config_root)
+            for path in root.rglob("SKILL.md")
+        )
+        path_leakage = privacy_violation_rate(
+            [str(project), str(vault), str(config_root)],
+            [compiled_runbook, exported_skill],
+        )
+        scores["reviewed_runbook"] = (
+            runbook_ok and export_ok and stale_blocked and cloud_blocked and not installed_skill
+        )
+        scores["privacy_violation_rate"] = path_leakage
+        evidence_text.extend([compiled_runbook, exported_skill])
+        if not scores["reviewed_runbook"]:
+            failures.append(
+                "reviewed runbook/Skill export did not preserve source binding, explicit export, egress, or non-installation semantics"
+            )
+        if path_leakage != 0.0:
+            failures.append("reviewed runbook or Skill export leaked a local path")
 
     revision_expectation = scenario.get("expected_revision_adjudication")
     if isinstance(revision_expectation, dict):

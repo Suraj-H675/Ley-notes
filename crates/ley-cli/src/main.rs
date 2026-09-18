@@ -1,5 +1,6 @@
 use ley_core::{
-    checkpoint_session, correct_learning, diagnose_project, erase_session_memory, finish_session,
+    checkpoint_session, compile_reviewed_runbook, correct_learning, diagnose_project,
+    erase_session_memory, export_reviewed_runbook_skill, finish_session,
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
     learning_review_inbox, list_learnings, list_sessions, preview_capture,
     process_host_hook_for_agent_with_registries, project_resume_context, propose_learning,
@@ -11,9 +12,10 @@ use ley_core::{
     EgressPolicyRegistry, EraseSessionMemoryInput, FinishSessionInput, GraphNodeKind,
     LearningActor, LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance,
     LearningState, LearningTrustState, LeyCoreError, ProjectMemorySearchLimits,
-    ProposeLearningInput, RenameSessionInput, ReviewLearningInput, SemanticModelStatus,
-    SessionSource, SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput,
-    TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput, VerificationStatus,
+    ProposeLearningInput, RenameSessionInput, ReviewLearningInput, ReviewedRunbookInput,
+    RunbookSkillExportInput, RunbookSkillHost, SemanticModelStatus, SessionSource,
+    SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
+    TurnEvidenceOrigin, VerificationInput, VerificationStatus,
     DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
     DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
     DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
@@ -51,6 +53,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "mount" => mount(&arguments[1..]),
         "session" => session(&arguments[1..]),
         "learning" => learning(&arguments[1..]),
+        "runbook" => runbook(&arguments[1..]),
         "resume" => resume(&arguments[1..]),
         "search" => search(&arguments[1..]),
         "semantic" => semantic(&arguments[1..]),
@@ -1109,6 +1112,184 @@ fn learning_show(arguments: &[String]) -> Result<(), CliError> {
         println!("Events: {}", learning.event_count);
     }
     Ok(())
+}
+
+fn runbook(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "runbook requires compile or export-skill".to_owned(),
+        ));
+    };
+    match command {
+        "compile" => runbook_compile(&arguments[1..]),
+        "export-skill" => runbook_export_skill(&arguments[1..]),
+        other => Err(CliError::Usage(format!(
+            "unknown runbook command '{other}'; use compile or export-skill"
+        ))),
+    }
+}
+
+fn runbook_compile(arguments: &[String]) -> Result<(), CliError> {
+    let common = parse_runbook_arguments(arguments, "runbook compile")?;
+    let binding = resolve_runbook_binding(&common)?;
+    let runbook = compile_reviewed_runbook(
+        common.project_path()?,
+        &binding.vault_path,
+        ReviewedRunbookInput {
+            title: common
+                .title
+                .clone()
+                .ok_or_else(|| CliError::Usage("runbook compile requires --title".to_owned()))?,
+            learning_ids: common.learning_ids.clone(),
+        },
+    )?;
+    if common.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&runbook).expect("reviewed runbook is serializable")
+        );
+    } else {
+        println!("Runbook ID: {}", runbook.runbook_id);
+        println!("Source fingerprint: {}", runbook.source_fingerprint);
+        println!();
+        print!("{}", runbook.markdown);
+    }
+    Ok(())
+}
+
+fn runbook_export_skill(arguments: &[String]) -> Result<(), CliError> {
+    let mut expected_runbook_id = None;
+    let mut host = None;
+    let mut egress_target = None;
+    let mut retained = Vec::with_capacity(arguments.len());
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--expected-runbook" => {
+                index += 1;
+                expected_runbook_id =
+                    Some(required_value(arguments, index, "--expected-runbook")?.to_owned());
+            }
+            "--host" => {
+                index += 1;
+                host = Some(RunbookSkillHost::parse(required_value(
+                    arguments, index, "--host",
+                )?)?);
+            }
+            "--egress-target" => {
+                index += 1;
+                egress_target = Some(AgentEgressTarget::parse(required_value(
+                    arguments,
+                    index,
+                    "--egress-target",
+                )?)?);
+            }
+            value => retained.push(value.to_owned()),
+        }
+        index += 1;
+    }
+    let common = parse_runbook_arguments(&retained, "runbook export-skill")?;
+    let binding = resolve_runbook_binding(&common)?;
+    let egress_registry = EgressPolicyRegistry::system_default()?;
+    let mount_registry = ContextMountRegistry::system_default()?;
+    let exported = export_reviewed_runbook_skill(
+        common.project_path()?,
+        &binding.vault_path,
+        RunbookSkillExportInput {
+            runbook: ReviewedRunbookInput {
+                title: common.title.clone().ok_or_else(|| {
+                    CliError::Usage("runbook export-skill requires --title".to_owned())
+                })?,
+                learning_ids: common.learning_ids.clone(),
+            },
+            expected_runbook_id: expected_runbook_id.ok_or_else(|| {
+                CliError::Usage("runbook export-skill requires --expected-runbook".to_owned())
+            })?,
+            host: host.ok_or_else(|| {
+                CliError::Usage("runbook export-skill requires --host codex|claude-code".to_owned())
+            })?,
+            egress_target: egress_target.ok_or_else(|| {
+                CliError::Usage(
+                    "runbook export-skill requires --egress-target cloud|local".to_owned(),
+                )
+            })?,
+        },
+        &egress_registry,
+        &mount_registry,
+    )?;
+    if common.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&exported).expect("runbook Skill export is serializable")
+        );
+    } else {
+        print!("{}", exported.content);
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct RunbookArguments {
+    project: Option<PathBuf>,
+    vault: Option<PathBuf>,
+    title: Option<String>,
+    learning_ids: Vec<String>,
+    json: bool,
+}
+
+impl RunbookArguments {
+    fn project_path(&self) -> Result<PathBuf, CliError> {
+        self.project
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| env::current_dir().map_err(CliError::CurrentDirectory))
+    }
+}
+
+fn parse_runbook_arguments(
+    arguments: &[String],
+    command: &str,
+) -> Result<RunbookArguments, CliError> {
+    let mut parsed = RunbookArguments::default();
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--vault" => {
+                index += 1;
+                parsed.vault = Some(PathBuf::from(required_value(arguments, index, "--vault")?));
+            }
+            "--title" => {
+                index += 1;
+                parsed.title = Some(required_value(arguments, index, "--title")?.to_owned());
+            }
+            "--learning" => {
+                index += 1;
+                parsed
+                    .learning_ids
+                    .push(required_value(arguments, index, "--learning")?.to_owned());
+            }
+            "--json" => parsed.json = true,
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown option '{value}'")))
+            }
+            value if parsed.project.is_none() => parsed.project = Some(PathBuf::from(value)),
+            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+        }
+        index += 1;
+    }
+    if parsed.learning_ids.is_empty() {
+        return Err(CliError::Usage(format!(
+            "{command} requires at least one --learning LEARNING"
+        )));
+    }
+    Ok(parsed)
+}
+
+fn resolve_runbook_binding(
+    arguments: &RunbookArguments,
+) -> Result<ley_core::ProjectVaultBinding, CliError> {
+    let registry = BindingRegistry::system_default()?;
+    Ok(registry.resolve(arguments.project_path()?, arguments.vault.as_deref())?)
 }
 
 #[derive(Default)]
@@ -2543,6 +2724,9 @@ fn print_help() {
     println!("  ley learning review LEARNING [path] --actor ACTOR --action ACTION [--note TEXT]");
     println!("  ley learning list [path] [--review] [--json]");
     println!("  ley learning show LEARNING [path] [--json]");
+    println!("  ley runbook compile [path] --title TITLE --learning LEARNING... [--json]");
+    println!("  ley runbook export-skill [path] --title TITLE --learning LEARNING...");
+    println!("      --expected-runbook RUNBOOK --host codex|claude-code --egress-target cloud|local [--json]");
     println!("  ley doctor [path] [--json]");
     println!("  ley preview [path] [--json]");
     println!();

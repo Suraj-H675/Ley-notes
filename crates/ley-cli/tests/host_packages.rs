@@ -156,6 +156,15 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         assert!(skill.contains("selectionBasis"), "{}", path.display());
         assert!(skill.contains("declaredCommands"), "{}", path.display());
         assert!(skill.contains("observedCommands"), "{}", path.display());
+        assert!(skill.contains("ley runbook compile"), "{}", path.display());
+        assert!(
+            skill.contains("ley runbook export-skill"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("--expected-runbook"), "{}", path.display());
+        assert!(skill.contains("installed: false"), "{}", path.display());
+        assert!(skill.contains("outside MCP"), "{}", path.display());
         assert!(skill.contains("ley_topic_dossier"), "{}", path.display());
         assert!(skill.contains("currentStateProven"), "{}", path.display());
         assert!(skill.contains("premiseAdjudication"), "{}", path.display());

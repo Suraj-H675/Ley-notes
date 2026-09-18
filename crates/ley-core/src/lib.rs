@@ -31,6 +31,7 @@ mod project_memory_search;
 mod resume_context;
 mod retrieval;
 mod revision;
+mod runbook;
 mod semantic_retrieval;
 mod session;
 mod session_context;
@@ -201,6 +202,11 @@ pub use retrieval::{
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
 };
 pub use revision::{ProjectRevisionFreshness, RevisionApplicability, RevisionCompatibility};
+pub use runbook::{
+    compile_reviewed_runbook, export_reviewed_runbook_skill, ReviewedRunbook, ReviewedRunbookEntry,
+    ReviewedRunbookInput, RunbookSkillExport, RunbookSkillExportInput, RunbookSkillHost,
+    MAX_REVIEWED_RUNBOOK_CHARACTERS, MAX_REVIEWED_RUNBOOK_SOURCES, REVIEWED_RUNBOOK_SCHEMA_VERSION,
+};
 pub use semantic_retrieval::{
     default_semantic_model_cache_path, install_semantic_model_from_staging,
     install_semantic_model_from_staging_at, semantic_model_status, semantic_model_status_at,
@@ -487,6 +493,8 @@ pub enum LeyCoreError {
     LearningNotFound(String),
     #[error("learning request ID was reused with different content: {0}")]
     LearningIdempotencyConflict(String),
+    #[error("invalid Ley reviewed runbook request: {0}")]
+    InvalidRunbookRequest(String),
     #[error("unsafe Ley project layout at {0}")]
     UnsafeProjectLayout(PathBuf),
     #[error("Ley metadata exceeds the {limit_bytes}-byte limit: {path}")]
