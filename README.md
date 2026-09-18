@@ -54,6 +54,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 ```
 
 See [docs/architecture.md](docs/architecture.md) for boundaries and persistence guarantees.
+See [docs/evaluation-harness.md](docs/evaluation-harness.md) for the deterministic end-to-end acceptance corpus, focused-run commands, privacy/deletion metrics, and P0 coverage matrix.
 
 ## Development
 

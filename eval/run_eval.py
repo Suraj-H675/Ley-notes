@@ -6,6 +6,7 @@ response, skipped event kind, invalid fixture identifier, or unmet expectation
 is a failed scenario and makes this command exit non-zero.
 """
 
+import argparse
 import hashlib
 import json
 import os
@@ -22,6 +23,206 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "scenarios.jsonl"
 K = 5
 WRITE_FLAGS = ("--allow-session-writes", "--allow-learning-proposals")
+METRIC_NAMES = (
+    "recall@k",
+    "precision",
+    "untrusted_boundary",
+    "cross_project_clean",
+    "stale_learning",
+    "capture_recovery",
+    "memory_recovery",
+    "memory_transition",
+    "memory_binding",
+    "origin_lineage",
+    "idempotency",
+    "token_budget",
+    "secret_exclusion",
+    "specification_admission",
+    "mounted_reference",
+    "premise_adjudication",
+    "revision_adjudication",
+    "egress_policy",
+    "selective_abstention",
+    "parallel_session_separation",
+    "deletion_fidelity",
+    "forgetting_residue_rate",
+    "inactive_workspace_clean",
+    "host_portability",
+    "downstream_task_contract",
+    "budget_baseline_advantage",
+    "privacy_violation_rate",
+)
+
+P0_CAPABILITY_COVERAGE = {
+    "context-compiler": {
+        "adversarial": ("no-useful-memory-honesty", "selective_abstention", "truthy"),
+        "downstream": (
+            "budgeted-compiler-vs-recent-resume",
+            "downstream_task_contract",
+            "truthy",
+        ),
+        "privacy": (
+            "budgeted-compiler-vs-recent-resume",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": ("strict-token-budgets-500", "token_budget", "truthy"),
+    },
+    "memory-compiler": {
+        "adversarial": (
+            "crash-before-session-end-resume",
+            "memory_transition",
+            "truthy",
+        ),
+        "downstream": (
+            "crash-before-session-end-resume",
+            "memory_recovery",
+            "truthy",
+        ),
+        "privacy": (
+            "crash-before-session-end-resume",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "crash-before-session-end-resume",
+            "memory_binding",
+            "truthy",
+        ),
+    },
+    "specifications": {
+        "adversarial": (
+            "specification-authority-context",
+            "specification_admission",
+            "truthy",
+        ),
+        "downstream": (
+            "specification-authority-context",
+            "specification_admission",
+            "truthy",
+        ),
+        "privacy": (
+            "specification-agent-egress-canary",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "specification-authority-context",
+            "specification_admission",
+            "truthy",
+        ),
+    },
+    "context-mounts": {
+        "adversarial": (
+            "explicit-project-context-mount",
+            "mounted_reference",
+            "truthy",
+        ),
+        "downstream": (
+            "explicit-project-context-mount",
+            "mounted_reference",
+            "truthy",
+        ),
+        "privacy": (
+            "explicit-project-context-mount",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "explicit-project-context-mount",
+            "mounted_reference",
+            "truthy",
+        ),
+    },
+    "origin-lineage": {
+        "adversarial": (
+            "crash-before-session-end-resume",
+            "origin_lineage",
+            "truthy",
+        ),
+        "downstream": (
+            "crash-before-session-end-resume",
+            "origin_lineage",
+            "truthy",
+        ),
+        "privacy": (
+            "session-erasure-derived-residue",
+            "forgetting_residue_rate",
+            "zero",
+        ),
+        "regression": (
+            "crash-before-session-end-resume",
+            "origin_lineage",
+            "truthy",
+        ),
+    },
+    "premise-adjudication": {
+        "adversarial": (
+            "explicit-learning-supersession-premise",
+            "premise_adjudication",
+            "truthy",
+        ),
+        "downstream": (
+            "explicit-learning-supersession-premise",
+            "premise_adjudication",
+            "truthy",
+        ),
+        "privacy": (
+            "explicit-learning-supersession-premise",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "explicit-learning-supersession-premise",
+            "premise_adjudication",
+            "truthy",
+        ),
+    },
+    "revision-awareness": {
+        "adversarial": (
+            "divergent-branch-state-adjudication",
+            "revision_adjudication",
+            "truthy",
+        ),
+        "downstream": (
+            "divergent-branch-state-adjudication",
+            "revision_adjudication",
+            "truthy",
+        ),
+        "privacy": (
+            "divergent-branch-state-adjudication",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "divergent-branch-state-adjudication",
+            "revision_adjudication",
+            "truthy",
+        ),
+    },
+    "egress-policy": {
+        "adversarial": (
+            "specification-agent-egress-canary",
+            "egress_policy",
+            "truthy",
+        ),
+        "downstream": (
+            "specification-agent-egress-canary",
+            "egress_policy",
+            "truthy",
+        ),
+        "privacy": (
+            "specification-agent-egress-canary",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "specification-agent-egress-canary",
+            "egress_policy",
+            "truthy",
+        ),
+    },
+}
 
 
 def find_ley() -> str:
@@ -306,6 +507,82 @@ def mcp_call(
     return payload
 
 
+def mcp_tools_list(project: Path, flags: tuple[str, ...] = ()) -> list[dict[str, object]]:
+    """Initialize a real stdio MCP server and return its advertised tools."""
+    proc = subprocess.Popen(
+        [LEY, "mcp", str(project), *flags],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={**os.environ, **EVAL_ENV},
+    )
+
+    def send(request: dict[str, object]) -> None:
+        if proc.stdin is None:
+            raise RuntimeError("MCP stdin was not available")
+        proc.stdin.write(json.dumps(request) + "\n")
+        proc.stdin.flush()
+
+    def read_until(expected_id: int) -> dict[str, object]:
+        deadline = time.monotonic() + 30
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(f"MCP tools/list timed out waiting for id {expected_id}")
+            if proc.stdout is None:
+                raise RuntimeError("MCP stdout was not available")
+            ready, _, _ = select.select([proc.stdout], [], [], remaining)
+            if not ready:
+                raise RuntimeError(f"MCP tools/list timed out waiting for id {expected_id}")
+            line = proc.stdout.readline()
+            if not line:
+                raise RuntimeError("MCP tools/list returned no response before stdout closed")
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if isinstance(value, dict) and value.get("id") == expected_id:
+                return value
+
+    try:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "ley-eval", "version": "1.0"},
+                },
+            }
+        )
+        initialized = read_until(1)
+        if "error" in initialized:
+            raise RuntimeError(f"MCP initialize returned an error: {initialized}")
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        response = read_until(2)
+        if proc.stdin is not None:
+            proc.stdin.close()
+        proc.wait(timeout=30)
+        stderr = proc.stderr.read() if proc.stderr is not None else ""
+    except Exception:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        raise
+    if proc.returncode != 0:
+        raise RuntimeError(f"MCP tools/list failed: {stderr.strip()}")
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("MCP tools/list returned no result object")
+    tools = result.get("tools")
+    if not isinstance(tools, list):
+        raise RuntimeError("MCP tools/list returned no tools array")
+    return [tool for tool in tools if isinstance(tool, dict)]
+
+
 def hook_call(
     project: Path,
     host: str,
@@ -508,6 +785,79 @@ def serialized(values: list[object]) -> str:
     return json.dumps(values, sort_keys=True)
 
 
+def context_contract_text(payload: dict[str, object]) -> str:
+    """Serialize only context bodies that could support a downstream task.
+
+    The task/query itself is deliberately excluded so a fixture cannot satisfy
+    its own required marker merely by asking for that marker.
+    """
+    return json.dumps(
+        {
+            "specifications": payload.get("specifications", []),
+            "items": payload.get("items", []),
+            "mountedReferences": payload.get("mountedReferences", []),
+        },
+        sort_keys=True,
+    )
+
+
+def task_contract_success(
+    payload: dict[str, object],
+    required: list[str],
+    forbidden: list[str],
+) -> bool:
+    text = context_contract_text(payload).lower()
+    return all(marker.lower() in text for marker in required) and all(
+        marker.lower() not in text for marker in forbidden
+    )
+
+
+def privacy_violation_rate(canaries: list[str], outputs: list[object]) -> float:
+    if not canaries:
+        return 0.0
+    text = serialized(outputs).lower()
+    exposed = sum(canary.lower() in text for canary in canaries)
+    return exposed / len(canaries)
+
+
+def create_structured_session(
+    project: Path,
+    *,
+    seed: str,
+    name: str,
+    goal: str,
+    summary: str,
+    decisions: list[dict[str, str]] | None = None,
+    host: str = "codex",
+) -> tuple[str, dict[str, object]]:
+    started = mcp_call(
+        project,
+        "ley_session_start",
+        {
+            "requestId": request_id(f"{seed}:start"),
+            "name": name,
+            "goal": goal,
+            "host": host,
+        },
+        WRITE_FLAGS,
+    )
+    session_id = str(started["sessionId"])
+    checkpoint: dict[str, object] = {
+        "sessionId": session_id,
+        "requestId": request_id(f"{seed}:checkpoint"),
+        "summary": summary,
+    }
+    if decisions:
+        checkpoint["decisions"] = decisions
+    receipt = mcp_call(
+        project,
+        "ley_session_checkpoint",
+        checkpoint,
+        WRITE_FLAGS,
+    )
+    return session_id, receipt
+
+
 def check_citations(payloads: list[dict[str, object]], expected: list[str]) -> float | None:
     if not expected:
         return None
@@ -534,26 +884,7 @@ def check_untrusted(payload: dict[str, object]) -> bool:
 
 def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, object]:
     failures: list[str] = []
-    scores: dict[str, object] = {
-        "recall@k": None,
-        "precision": None,
-        "untrusted_boundary": None,
-        "cross_project_clean": None,
-        "stale_learning": None,
-        "capture_recovery": None,
-        "memory_recovery": None,
-        "memory_transition": None,
-        "memory_binding": None,
-        "origin_lineage": None,
-        "idempotency": None,
-        "token_budget": None,
-        "secret_exclusion": None,
-        "specification_admission": None,
-        "mounted_reference": None,
-        "premise_adjudication": None,
-        "revision_adjudication": None,
-        "egress_policy": None,
-    }
+    scores: dict[str, object] = {name: None for name in METRIC_NAMES}
 
     project = base_dir / "project"
     vault = base_dir / "vault"
@@ -702,6 +1033,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and int(compiled.get("estimatedTokens", 0)) <= int(compiled.get("maxTokens", 0))
         )
         scores["premise_adjudication"] = premise_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)], [compiled]
+        )
         evidence_text.append(compiled)
         if not premise_ok:
             failures.append(
@@ -802,6 +1136,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         revision_ok = divergent_ok and merged_ok
         scores["revision_adjudication"] = revision_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)], [divergent, merged]
+        )
         evidence_text.extend([divergent, merged])
         if not revision_ok:
             failures.append(
@@ -1019,6 +1356,18 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             never_hook, sort_keys=True
         )
 
+        disallowed_probe_groups = [
+            [cloud_direct, cloud_compiled, cloud_hook],
+            [confirm_direct, confirm_compiled, confirm_hook],
+            [never_direct, never_compiled, never_hook],
+        ]
+        policy_violations = sum(
+            marker in serialized(group) or derived_marker in serialized(group)
+            for group in disallowed_probe_groups
+        )
+        scores["privacy_violation_rate"] = policy_violations / len(
+            disallowed_probe_groups
+        )
         egress_ok = cloud_blocked and local_allowed and confirm_blocked and never_blocked
         scores["egress_policy"] = egress_ok
         evidence_text.extend(
@@ -1126,10 +1475,394 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and after_clean
         )
         scores["mounted_reference"] = mounted_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)]
+            + [str(path) for pair in mounted_projects for path in pair],
+            [compiled],
+        )
         evidence_text.extend([before, compiled, after])
         if not mounted_ok:
             failures.append(
                 "explicit Context Mount did not preserve authorization/isolation/budget/unmount semantics"
+            )
+
+    abstention_expectation = scenario.get("expected_selective_abstention")
+    if isinstance(abstention_expectation, dict):
+        query = str(abstention_expectation.get("query", ""))
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {
+                "task": query,
+                "maxResults": int(abstention_expectation.get("max_results", 8)),
+                "maxTokens": int(abstention_expectation.get("max_tokens", 1_500)),
+            },
+        )
+        expected_state = str(
+            abstention_expectation.get("evidence_state", "no-useful-evidence")
+        )
+        abstained = (
+            compiled.get("evidenceState") == expected_state
+            and not compiled.get("items")
+            and not compiled.get("specifications")
+            and not compiled.get("mountedReferences")
+            and compiled.get("liveSourceChecked") is False
+            and int(compiled.get("estimatedTokens", 0))
+            <= int(compiled.get("maxTokens", 0))
+        )
+        scores["selective_abstention"] = abstained
+        evidence_text.append(compiled)
+        if not abstained:
+            failures.append(
+                "Context Compiler padded a no-useful-memory task instead of abstaining"
+            )
+
+    parallel_expectation = scenario.get("expected_parallel_session_separation")
+    if isinstance(parallel_expectation, dict):
+        title = str(parallel_expectation.get("title", "Parallel architecture decision"))
+        marker_a = str(parallel_expectation.get("marker_a", "parallel_agent_a_marker"))
+        marker_b = str(parallel_expectation.get("marker_b", "parallel_agent_b_marker"))
+        session_a, _ = create_structured_session(
+            project,
+            seed=f"{scenario['id']}:parallel:a",
+            name="Parallel agent A",
+            goal="Keep agent A work isolated",
+            summary=f"Agent A recorded {marker_a}.",
+            decisions=[
+                {
+                    "title": title,
+                    "decision": f"Agent A chose the A path: {marker_a}.",
+                    "rationale": "Independent workstream A.",
+                }
+            ],
+            host="codex",
+        )
+        session_b, _ = create_structured_session(
+            project,
+            seed=f"{scenario['id']}:parallel:b",
+            name="Parallel agent B",
+            goal="Keep agent B work isolated",
+            summary=f"Agent B recorded {marker_b}.",
+            decisions=[
+                {
+                    "title": title,
+                    "decision": f"Agent B chose the B path: {marker_b}.",
+                    "rationale": "Independent workstream B.",
+                }
+            ],
+            host="claude-code",
+        )
+        context_a = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": session_a, "maxCheckpoints": 5, "maxCharacters": 8_000},
+        )
+        context_b = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": session_b, "maxCheckpoints": 5, "maxCharacters": 8_000},
+        )
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": title, "maxResults": 8, "maxTokens": 1_500},
+        )
+        text_a = json.dumps(context_a, sort_keys=True)
+        text_b = json.dumps(context_b, sort_keys=True)
+        adjudication = compiled.get("premiseAdjudication", {})
+        separated = (
+            session_a != session_b
+            and marker_a in text_a
+            and marker_b not in text_a
+            and marker_b in text_b
+            and marker_a not in text_b
+            and isinstance(adjudication, dict)
+            and adjudication.get("state") == "conflicting-state"
+            and not any(
+                isinstance(item, dict)
+                and item.get("kind") == "decision"
+                and (marker_a in json.dumps(item) or marker_b in json.dumps(item))
+                for item in compiled.get("items", [])
+            )
+        )
+        scores["parallel_session_separation"] = separated
+        evidence_text.extend([context_a, context_b, compiled])
+        if not separated:
+            failures.append(
+                "parallel sessions were merged or conflicting decisions were promoted as current"
+            )
+
+    deletion_expectation = scenario.get("expected_deletion_fidelity")
+    if isinstance(deletion_expectation, dict):
+        marker = str(
+            deletion_expectation.get("marker", "deleted_private_memory_canary")
+        )
+        session_name = "Deletion fidelity session"
+        erased_session, _ = create_structured_session(
+            project,
+            seed=f"{scenario['id']}:erase",
+            name=session_name,
+            goal=f"Private deletion test {marker}",
+            summary=f"Private memory scheduled for deletion: {marker}.",
+            decisions=[
+                {
+                    "title": "Private deletion decision",
+                    "decision": f"Sensitive session-only decision {marker}.",
+                    "rationale": "Deletion fidelity fixture.",
+                }
+            ],
+        )
+        shown = cli_json(["session", "show", erased_session, str(project), "--json"])
+        checkpoints = shown.get("checkpoints", []) if isinstance(shown, dict) else []
+        if not checkpoints:
+            raise RuntimeError("deletion fixture created no checkpoint")
+        checkpoint_id = str(checkpoints[-1]["checkpointId"])
+        proposed = mcp_call(
+            project,
+            "ley_learning_propose",
+            {
+                "requestId": request_id(f"{scenario['id']}:erase:learning"),
+                "kind": "fact",
+                "title": "Private deletion learning",
+                "guidance": f"Dependent learning carrying {marker}.",
+                "confidencePercent": 50,
+                "provenance": "agent-authored",
+                "evidence": [
+                    {
+                        "sessionId": erased_session,
+                        "recordId": checkpoint_id,
+                        "note": "Deletion fidelity evidence.",
+                    }
+                ],
+            },
+            WRITE_FLAGS,
+        )
+        learning_id = str(proposed["learningId"])
+        event_count = int(shown["eventCount"])
+        erased = cli_json(
+            [
+                "session",
+                "erase",
+                erased_session,
+                str(project),
+                "--confirm-name",
+                session_name,
+                "--expected-events",
+                str(event_count),
+                "--json",
+            ]
+        )
+        probes: list[object] = [
+            mcp_call(
+                project,
+                "ley_search_memory",
+                {"query": "private deletion memory", "maxResults": 20, "maxTokens": 1_000},
+            ),
+            mcp_call(
+                project,
+                "ley_search_context",
+                {"query": "private deletion memory", "maxResults": 20, "maxTokens": 1_000},
+            ),
+            mcp_call(
+                project,
+                "ley_search_activity",
+                {"query": "private deletion memory", "maxResults": 20},
+            ),
+            mcp_call(
+                project,
+                "ley_project_resume",
+                {"maxSessions": 10, "maxLearnings": 20, "maxCharacters": 8_000},
+            ),
+            mcp_call(
+                project,
+                "ley_learnings_list",
+                {"scope": "all", "maxResults": 50},
+            ),
+            cli_json(["session", "list", str(project), "--json"]),
+        ]
+        vault_text = "\n".join(
+            path.read_text(errors="ignore")
+            for path in vault.rglob("*")
+            if path.is_file()
+        )
+        residue_surfaces = [
+            marker in json.dumps(probe, sort_keys=True) for probe in probes
+        ] + [marker in vault_text]
+        residue_rate = sum(residue_surfaces) / len(residue_surfaces)
+        erased_learning_ids = (
+            erased.get("erasedLearningIds", []) if isinstance(erased, dict) else []
+        )
+        erased_ids = {
+            str(item.get("sessionId"))
+            for item in probes[-1]
+            if isinstance(item, dict) and item.get("sessionId")
+        } if isinstance(probes[-1], list) else set()
+        deletion_ok = (
+            residue_rate == 0.0
+            and learning_id in erased_learning_ids
+            and erased_session not in erased_ids
+        )
+        scores["deletion_fidelity"] = deletion_ok
+        scores["forgetting_residue_rate"] = residue_rate
+        scores["privacy_violation_rate"] = residue_rate
+        evidence_text.extend(probes)
+        if not deletion_ok:
+            failures.append(
+                f"session erasure left Ley-managed residue; residue rate={residue_rate:.3f}"
+            )
+
+    inactive_expectation = scenario.get("expected_inactive_workspace")
+    if isinstance(inactive_expectation, dict):
+        inactive = base_dir / "inactive-workspace"
+        inactive.mkdir()
+        config_root = Path(EVAL_ENV["XDG_CONFIG_HOME"])
+        before_config = {
+            str(path.relative_to(config_root))
+            for path in config_root.rglob("*")
+            if path.is_file()
+        } if config_root.exists() else set()
+        hook = hook_call(
+            inactive,
+            "codex",
+            {"hook_event_name": "SessionStart", "session_id": "inactive-workspace-thread"},
+        )
+        tools = mcp_tools_list(inactive)
+        after_config = {
+            str(path.relative_to(config_root))
+            for path in config_root.rglob("*")
+            if path.is_file()
+        } if config_root.exists() else set()
+        inactive_clean = (
+            hook == {}
+            and tools == []
+            and not (inactive / ".ley").exists()
+            and list(inactive.iterdir()) == []
+            and before_config == after_config
+        )
+        scores["inactive_workspace_clean"] = inactive_clean
+        if not inactive_clean:
+            failures.append(
+                "globally installed Ley mutated or exposed capabilities in an inactive workspace"
+            )
+
+    portability_expectation = scenario.get("expected_host_portability")
+    if isinstance(portability_expectation, dict):
+        marker = str(
+            portability_expectation.get("marker", "portable_host_memory_marker")
+        )
+        create_structured_session(
+            project,
+            seed=f"{scenario['id']}:portable",
+            name="Portable prior work",
+            goal="Preserve durable knowledge across hosts",
+            summary=f"Durable cross-host handoff: {marker}.",
+            decisions=[],
+            host="codex",
+        )
+        codex = hook_call(
+            project,
+            "codex",
+            {"hook_event_name": "SessionStart", "session_id": "portable-codex-thread"},
+        )
+        claude = hook_call(
+            project,
+            "claude",
+            {"hook_event_name": "SessionStart", "session_id": "portable-claude-thread"},
+        )
+        codex_text = json.dumps(codex, sort_keys=True)
+        claude_text = json.dumps(claude, sort_keys=True)
+        portable = marker in codex_text and marker in claude_text
+        scores["host_portability"] = portable
+        evidence_text.extend([codex, claude])
+        if not portable:
+            failures.append(
+                "durable Ley context was not usable from both Codex and Claude lifecycle hosts"
+            )
+
+    baseline_expectation = scenario.get("expected_budget_baseline")
+    if isinstance(baseline_expectation, dict):
+        required = [str(value) for value in baseline_expectation.get("required", [])]
+        forbidden = [str(value) for value in baseline_expectation.get("forbidden", [])]
+        query = str(baseline_expectation.get("query", ""))
+        max_tokens = int(baseline_expectation.get("max_tokens", 500))
+        resume_characters = int(
+            baseline_expectation.get("resume_max_characters", max_tokens * 4)
+        )
+        create_structured_session(
+            project,
+            seed=f"{scenario['id']}:relevant",
+            name="Older relevant database work",
+            goal="Choose the durable database migration strategy",
+            summary=(
+                "Database migration strategy selected SQLite WAL mode; "
+                + " ".join(required)
+            ),
+            decisions=[
+                {
+                    "title": "Database migration strategy",
+                    "decision": "Use SQLite in WAL mode for durable local migration. "
+                    + " ".join(required),
+                    "rationale": "Relevant prior experience for this exact task.",
+                }
+            ],
+        )
+        distractors = [
+            "UI spacing cleanup",
+            "Icon export cleanup",
+            "Landing page copy",
+            "Theme preference cleanup",
+        ]
+        for index, distractor in enumerate(distractors):
+            time.sleep(0.003)
+            create_structured_session(
+                project,
+                seed=f"{scenario['id']}:distractor:{index}",
+                name=distractor,
+                goal=distractor,
+                summary=f"{distractor}: baseline_distractor_{index}.",
+                decisions=[],
+            )
+        compiler = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": max_tokens},
+        )
+        resume = mcp_call(
+            project,
+            "ley_project_resume",
+            {
+                "maxSessions": 3,
+                "maxLearnings": 1,
+                "maxCharacters": resume_characters,
+            },
+        )
+        compiler_success = (
+            task_contract_success(compiler, required, forbidden)
+            and int(compiler.get("estimatedTokens", 0)) <= max_tokens
+        )
+        resume_text = json.dumps(
+            {
+                "sessions": resume.get("sessions", []),
+                "learnings": resume.get("learnings", []),
+            },
+            sort_keys=True,
+        ).lower()
+        baseline_success = all(marker.lower() in resume_text for marker in required) and all(
+            marker.lower() not in resume_text for marker in forbidden
+        )
+        scores["downstream_task_contract"] = compiler_success
+        scores["budget_baseline_advantage"] = compiler_success and not baseline_success
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)], [compiler, resume]
+        )
+        evidence_text.extend([compiler, resume])
+        if not compiler_success:
+            failures.append(
+                "500-token Context Compiler failed the deterministic downstream evidence contract"
+            )
+        if baseline_success:
+            failures.append(
+                "bounded recent-resume baseline unexpectedly satisfied the older task-specific evidence contract"
             )
 
     if scenario.get("expected_event_count") is not None:
@@ -1160,7 +1893,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         payload = mcp_call(project_dirs[0], "ley_search_memory", {"query": query, "maxResults": K, "maxTokens": 500})
         other = projects[1]
         markers = [str(other["name"])] + [str(path) for path in other.get("files", {})] + [str(value) for value in other.get("files", {}).values()]
-        leak = any(marker.lower() in serialized([payload]).lower() for marker in markers)
+        returned = serialized([payload]).lower()
+        exposed = sum(marker.lower() in returned for marker in markers)
+        leak = exposed > 0
+        scores["privacy_violation_rate"] = exposed / len(markers) if markers else 0.0
         scores["cross_project_clean"] = not leak
         if leak:
             failures.append("cross-project search returned another project's marker")
@@ -1214,7 +1950,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     if scenario.get("expected_redactions"):
         raw_values = [str(value) for value in scenario["expected_redactions"]]
         vault_text = "\n".join(path.read_text(errors="ignore") for path in vault.rglob("*") if path.is_file())
-        clean = all(value not in vault_text and value not in serialized(evidence_text) for value in raw_values)
+        returned = serialized(evidence_text)
+        exposed = sum(value in vault_text or value in returned for value in raw_values)
+        clean = exposed == 0
+        scores["privacy_violation_rate"] = (
+            exposed / len(raw_values) if raw_values else 0.0
+        )
         scores["secret_exclusion"] = clean
         if not clean:
             failures.append("a fixture secret appeared in vault data or returned output")
@@ -1403,6 +2144,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and after.get("totalUnconsolidatedEvidence") == 0
                 )
             scores["memory_recovery"] = recovery_ok
+            scores["privacy_violation_rate"] = privacy_violation_rate(
+                [str(project), str(vault)], [compiled]
+            )
             if not recovery_ok:
                 failures.append(
                     f"memory recovery failed: expected {expected_state}, got {compiled.get('state')}"
@@ -1420,11 +2164,129 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not budget_ok:
             failures.append(f"token budget was not disclosed/enforced: maxTokens={max_tokens}")
 
-    return {**scores, "passed": not failures, "failures": failures}
+    return {
+        "id": str(scenario["id"]),
+        "category": str(scenario.get("category", "")),
+        **scores,
+        "passed": not failures,
+        "failures": failures,
+    }
 
 
-def main() -> int:
-    scenarios = [json.loads(line) for line in FIXTURES.read_text(encoding="utf-8").splitlines() if line.strip()]
+def metric_requirement_passes(
+    result: dict[str, object],
+    metric: str,
+    expectation: str,
+) -> bool:
+    value = result.get(metric)
+    if expectation == "truthy":
+        return value is True
+    if expectation == "zero":
+        return value is not None and float(value) == 0.0
+    raise RuntimeError(f"unsupported P0 coverage expectation: {expectation}")
+
+
+def validate_p0_coverage_config(scenarios: list[dict[str, object]]) -> None:
+    scenario_ids = {str(scenario["id"]) for scenario in scenarios}
+    required_dimensions = {"adversarial", "downstream", "privacy", "regression"}
+    for capability, dimensions in P0_CAPABILITY_COVERAGE.items():
+        if set(dimensions) != required_dimensions:
+            raise RuntimeError(
+                f"P0 capability {capability} must define exactly {sorted(required_dimensions)}"
+            )
+        for dimension, (scenario_id, metric, expectation) in dimensions.items():
+            if scenario_id not in scenario_ids:
+                raise RuntimeError(
+                    f"P0 coverage {capability}/{dimension} references unknown scenario {scenario_id}"
+                )
+            if metric not in METRIC_NAMES:
+                raise RuntimeError(
+                    f"P0 coverage {capability}/{dimension} references unknown metric {metric}"
+                )
+            if expectation not in {"truthy", "zero"}:
+                raise RuntimeError(
+                    f"P0 coverage {capability}/{dimension} has unsupported expectation {expectation}"
+                )
+
+
+def parse_eval_arguments(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run Ley's deterministic end-to-end evaluation corpus."
+    )
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="Run only this scenario ID. Repeat to select multiple scenarios.",
+    )
+    parser.add_argument(
+        "--category",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Run only scenarios in this category. Repeat to select multiple categories.",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List scenario IDs/categories without running them.",
+    )
+    parser.add_argument(
+        "--p0-coverage",
+        action="store_true",
+        help="Run only P0 coverage-matrix representative scenarios and enforce the matrix.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parse_eval_arguments(argv)
+    all_scenarios = [
+        json.loads(line)
+        for line in FIXTURES.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    validate_p0_coverage_config(all_scenarios)
+    if arguments.list:
+        for scenario in all_scenarios:
+            print(f"{scenario['id']}\t{scenario.get('category', '')}")
+        return 0
+
+    requested_ids = set(arguments.scenario)
+    requested_categories = set(arguments.category)
+    if arguments.p0_coverage and (requested_ids or requested_categories):
+        raise SystemExit("--p0-coverage cannot be combined with --scenario or --category")
+    if arguments.p0_coverage:
+        coverage_ids = {
+            scenario_id
+            for dimensions in P0_CAPABILITY_COVERAGE.values()
+            for scenario_id, _, _ in dimensions.values()
+        }
+        scenarios = [
+            scenario
+            for scenario in all_scenarios
+            if str(scenario["id"]) in coverage_ids
+        ]
+    elif requested_ids or requested_categories:
+        scenarios = [
+            scenario
+            for scenario in all_scenarios
+            if str(scenario["id"]) in requested_ids
+            or str(scenario.get("category", "")) in requested_categories
+        ]
+        if not scenarios:
+            available = ", ".join(str(item["id"]) for item in all_scenarios)
+            raise SystemExit(
+                "no eval scenarios matched the requested filters; available IDs: "
+                + available
+            )
+    else:
+        scenarios = all_scenarios
+    full_corpus = len(scenarios) == len(all_scenarios) and {
+        str(item["id"]) for item in scenarios
+    } == {str(item["id"]) for item in all_scenarios}
+    enforce_p0_coverage = full_corpus or arguments.p0_coverage
     print(f"Running {len(scenarios)} eval scenarios with {LEY}...\n", flush=True)
     results: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="ley-eval-") as temporary:
@@ -1433,13 +2295,18 @@ def main() -> int:
             try:
                 result = evaluate_scenario(scenario, Path(temporary) / str(scenario["id"]))
             except Exception as error:  # one broken scenario must not hide the rest
-                result = {"passed": False, "failures": [f"unhandled scenario error: {error}"]}
+                result = {
+                    "id": str(scenario["id"]),
+                    "category": str(scenario.get("category", "")),
+                    "passed": False,
+                    "failures": [f"unhandled scenario error: {error}"],
+                }
             results.append(result)
             print(
                 f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
                 flush=True,
             )
-            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "origin_lineage", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference", "premise_adjudication", "revision_adjudication", "egress_policy"):
+            for metric in METRIC_NAMES:
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):
@@ -1448,13 +2315,67 @@ def main() -> int:
     passed = sum(bool(result.get("passed")) for result in results)
     print(f"\n=== Aggregate ({len(results)} scenarios) ===", flush=True)
     print(f"Scenarios passed: {passed}/{len(results)}", flush=True)
-    recall = [float(result["recall@k"]) for result in results if result.get("recall@k") is not None]
-    precision = [float(result["precision"]) for result in results if result.get("precision") is not None]
-    if recall:
-        print(f"Mean recall@{K}: {sum(recall) / len(recall):.3f}", flush=True)
-    if precision:
-        print(f"Mean precision: {sum(precision) / len(precision):.3f}", flush=True)
-    return 0 if passed == len(results) else 1
+    rate_metrics = {
+        "recall@k": f"Mean recall@{K}",
+        "precision": "Mean precision",
+        "privacy_violation_rate": "Mean privacy violation rate",
+        "forgetting_residue_rate": "Mean forgetting residue rate",
+    }
+    for metric, label in rate_metrics.items():
+        values = [
+            float(result[metric])
+            for result in results
+            if result.get(metric) is not None
+        ]
+        if not values:
+            continue
+        print(f"{label}: {sum(values) / len(values):.3f}", flush=True)
+        if metric in {"privacy_violation_rate", "forgetting_residue_rate"}:
+            print(f"Max {metric}: {max(values):.3f}", flush=True)
+
+    for metric in METRIC_NAMES:
+        if metric in rate_metrics:
+            continue
+        values = [
+            bool(result[metric])
+            for result in results
+            if result.get(metric) is not None
+        ]
+        if values:
+            print(
+                f"{metric}: {sum(values)}/{len(values)} passed",
+                flush=True,
+            )
+
+    coverage_failures: list[str] = []
+    if enforce_p0_coverage:
+        result_by_id = {
+            str(result.get("id")): result
+            for result in results
+            if isinstance(result.get("id"), str)
+        }
+        print("", flush=True)
+        print("=== P0 capability metric coverage ===", flush=True)
+        for capability, dimensions in P0_CAPABILITY_COVERAGE.items():
+            dimension_results: list[str] = []
+            for dimension, (scenario_id, metric, expectation) in dimensions.items():
+                result = result_by_id.get(scenario_id, {})
+                ok = metric_requirement_passes(result, metric, expectation)
+                dimension_results.append(f"{dimension}={'PASS' if ok else 'FAIL'}")
+                if not ok:
+                    coverage_failures.append(
+                        f"{capability}/{dimension} requires {scenario_id}:{metric}={expectation}"
+                    )
+            print(f"{capability}: " + ", ".join(dimension_results), flush=True)
+        for failure in coverage_failures:
+            print(f"  COVERAGE ERROR: {failure}", flush=True)
+    else:
+        print(
+            "P0 capability coverage matrix: skipped for focused subset run.",
+            flush=True,
+        )
+
+    return 0 if passed == len(results) and not coverage_failures else 1
 
 
 if __name__ == "__main__":
