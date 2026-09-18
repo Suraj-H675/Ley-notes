@@ -12,6 +12,7 @@ mod binding;
 mod context_compiler;
 mod context_mount;
 mod cross_project_search;
+mod current_project_state;
 mod egress_policy;
 mod graph;
 mod host_adapter;
@@ -63,6 +64,14 @@ pub use cross_project_search::{
     search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,
     DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, MAX_CROSS_PROJECT_SEARCH_QUERY_CHARACTERS,
     MAX_CROSS_PROJECT_SEARCH_RESULTS,
+};
+pub use current_project_state::{
+    current_project_state, CurrentKnowledgeAttention, CurrentKnowledgeAttentionReason,
+    CurrentOpenWork, CurrentOpenWorkKind, CurrentProjectState, CurrentProjectStateCoverage,
+    CurrentProjectStateLimits, CurrentRecentDecision, CurrentTrustedKnowledge, CurrentVerification,
+    CurrentWorkingSession, CURRENT_PROJECT_STATE_SCHEMA_VERSION, DEFAULT_CURRENT_STATE_CHARACTERS,
+    DEFAULT_CURRENT_STATE_KNOWLEDGE, DEFAULT_CURRENT_STATE_SESSIONS, MAX_CURRENT_STATE_CHARACTERS,
+    MAX_CURRENT_STATE_KNOWLEDGE, MAX_CURRENT_STATE_SESSIONS, MIN_CURRENT_STATE_CHARACTERS,
 };
 pub use egress_policy::{
     evaluate_agent_egress, AgentEgressBlockReason, AgentEgressDecision, AgentEgressPolicy,

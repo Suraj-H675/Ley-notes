@@ -58,11 +58,14 @@ not every representative scenario was executed.
 ## P1 capability coverage
 
 Implemented P1 capabilities get a separate matrix rather than weakening the completed P0 contract. The
-first entry is **Topic Dossiers**. Its matrix requires:
+current entries are **Topic Dossiers** and **Current Project State**. Their matrices require:
 
 - adversarial deletion/forgetting evidence from the session-erasure scenario;
 - downstream/regression success from the real authentication dossier journey;
 - zero privacy-canary leakage from the returned dossier.
+- Current Project State adversarial deletion/forgetting coverage;
+- a real active-session project-state journey proving working/open-state, historical-decision, verification, fingerprint, and privacy semantics;
+- zero privacy-canary leakage from the returned project-state projection.
 
 As later P1 capabilities land, each should add its own adversarial, downstream, privacy, and regression
 representatives before the slice is considered complete.

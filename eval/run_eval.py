@@ -52,6 +52,7 @@ METRIC_NAMES = (
     "budget_baseline_advantage",
     "privacy_violation_rate",
     "topic_dossier",
+    "current_project_state",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -239,6 +240,28 @@ P1_CAPABILITY_COVERAGE = {
             "zero",
         ),
         "regression": ("topic-dossier-authentication", "topic_dossier", "truthy"),
+    },
+    "current-project-state": {
+        "adversarial": (
+            "session-erasure-derived-residue",
+            "forgetting_residue_rate",
+            "zero",
+        ),
+        "downstream": (
+            "current-project-state-storage",
+            "current_project_state",
+            "truthy",
+        ),
+        "privacy": (
+            "current-project-state-storage",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "current-project-state-storage",
+            "current_project_state",
+            "truthy",
+        ),
     },
 }
 
@@ -1604,6 +1627,68 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "topic dossier did not preserve deterministic source binding, evidence structure, privacy, or budget"
             )
 
+    current_state_expectation = scenario.get("expected_current_project_state")
+    if isinstance(current_state_expectation, dict):
+        arguments = {
+            "maxSessions": int(current_state_expectation.get("max_sessions", 5)),
+            "maxKnowledge": int(current_state_expectation.get("max_knowledge", 12)),
+            "maxCharacters": int(current_state_expectation.get("max_characters", 16_000)),
+        }
+        state = mcp_call(project, "ley_project_state", arguments)
+        rebuilt = mcp_call(project, "ley_project_state", arguments)
+        state_text = json.dumps(state, sort_keys=True)
+        working_marker = str(current_state_expectation.get("working_marker", ""))
+        open_markers = [
+            str(value) for value in current_state_expectation.get("open_markers", [])
+        ]
+        decision_marker = str(current_state_expectation.get("decision_marker", ""))
+        verification_marker = str(
+            current_state_expectation.get("verification_marker", "")
+        )
+        decision_rows = state.get("recentDecisions", [])
+        matching_decision = next(
+            (
+                item
+                for item in decision_rows
+                if isinstance(item, dict)
+                and (not decision_marker or decision_marker in json.dumps(item, sort_keys=True))
+            ),
+            None,
+        )
+        state_ok = (
+            state.get("schemaVersion") == 1
+            and state.get("persisted") is False
+            and state.get("projection") == "on-demand-current-project-state"
+            and str(state.get("stateFingerprint", "")).startswith("sha256:")
+            and state.get("stateFingerprint") == rebuilt.get("stateFingerprint")
+            and state.get("liveSourceChecked") is False
+            and bool(state.get("workingSessions"))
+            and (not working_marker or working_marker in state_text)
+            and all(
+                marker in json.dumps(state.get("openWork", []), sort_keys=True)
+                for marker in open_markers
+            )
+            and matching_decision is not None
+            and matching_decision.get("authority") == "historical-project-memory"
+            and matching_decision.get("currentStateProven") is False
+            and (
+                not verification_marker
+                or verification_marker
+                in json.dumps(state.get("recentVerification", []), sort_keys=True)
+            )
+            and str(project) not in state_text
+            and str(vault) not in state_text
+        )
+        scores["current_project_state"] = state_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)], [state]
+        )
+        evidence_text.extend([state, rebuilt])
+        if not state_ok:
+            failures.append(
+                "Current Project State did not preserve working-state boundaries, historical decision semantics, privacy, or source binding"
+            )
+
     abstention_expectation = scenario.get("expected_selective_abstention")
     if isinstance(abstention_expectation, dict):
         query = str(abstention_expectation.get("query", ""))
@@ -1804,6 +1889,15 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "maxResults": 12,
                     "maxTokens": 2_000,
                     "maxSupportingSessions": 6,
+                },
+            ),
+            mcp_call(
+                project,
+                "ley_project_state",
+                {
+                    "maxSessions": 10,
+                    "maxKnowledge": 20,
+                    "maxCharacters": 8_000,
                 },
             ),
             cli_json(["session", "list", str(project), "--json"]),
@@ -2551,7 +2645,10 @@ def main(argv: list[str] | None = None) -> int:
                     )
             print(f"{capability}: " + ", ".join(dimension_results), flush=True)
         for failure in coverage_failures:
-            if failure.startswith("topic-dossiers/"):
+            if any(
+                failure.startswith(f"{capability}/")
+                for capability in P1_CAPABILITY_COVERAGE
+            ):
                 print(f"  COVERAGE ERROR: {failure}", flush=True)
     else:
         print(

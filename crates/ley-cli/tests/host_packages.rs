@@ -128,7 +128,9 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(skill.contains("ley_compile_context"), "{}", path.display());
+        assert!(skill.contains("ley_project_state"), "{}", path.display());
         assert!(skill.contains("ley_topic_dossier"), "{}", path.display());
+        assert!(skill.contains("currentStateProven"), "{}", path.display());
         assert!(skill.contains("premiseAdjudication"), "{}", path.display());
         assert!(skill.contains("obsolete-assumption"), "{}", path.display());
         assert!(skill.contains("revisionFreshness"), "{}", path.display());
