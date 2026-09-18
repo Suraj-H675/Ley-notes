@@ -51,6 +51,7 @@ METRIC_NAMES = (
     "downstream_task_contract",
     "budget_baseline_advantage",
     "privacy_violation_rate",
+    "topic_dossier",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -221,6 +222,23 @@ P0_CAPABILITY_COVERAGE = {
             "egress_policy",
             "truthy",
         ),
+    },
+}
+
+P1_CAPABILITY_COVERAGE = {
+    "topic-dossiers": {
+        "adversarial": (
+            "session-erasure-derived-residue",
+            "forgetting_residue_rate",
+            "zero",
+        ),
+        "downstream": ("topic-dossier-authentication", "topic_dossier", "truthy"),
+        "privacy": (
+            "topic-dossier-authentication",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": ("topic-dossier-authentication", "topic_dossier", "truthy"),
     },
 }
 
@@ -613,6 +631,9 @@ def checkpoint_from_events(events: list[dict[str, object]], artifact_paths: list
     summaries: list[str] = []
     decisions: list[dict[str, object]] = []
     problems: list[dict[str, object]] = []
+    tasks: list[dict[str, object]] = []
+    verification: list[dict[str, object]] = []
+    unresolved: list[str] = []
     current_problem: dict[str, object] | None = None
     for event in events:
         kind = event.get("type")
@@ -661,11 +682,33 @@ def checkpoint_from_events(events: list[dict[str, object]], artifact_paths: list
             summaries.append(
                 f"Learning proposal: {event.get('title', 'Untitled')} — {event.get('guidance', '')}"
             )
+        elif kind == "task":
+            tasks.append(
+                {
+                    "title": str(event.get("title", "Task")),
+                    "status": str(event.get("status", "pending")),
+                    "details": str(event.get("details", "")),
+                }
+            )
+        elif kind == "verification":
+            item: dict[str, object] = {
+                "kind": str(event.get("verification_kind", event.get("kind_name", "test"))),
+                "status": str(event.get("status", "unknown")),
+                "summary": str(event.get("summary", "")),
+            }
+            if event.get("command") is not None:
+                item["command"] = str(event.get("command"))
+            verification.append(item)
+        elif kind == "unresolved":
+            unresolved.append(str(event.get("text", "")))
 
     checkpoint: dict[str, object] = {
         "summary": ("; ".join(summaries) or "Captured structured project progress.")[:16000],
         "decisions": decisions,
         "problems": problems,
+        "tasks": tasks,
+        "verification": verification,
+        "unresolved": unresolved,
     }
     if artifact_paths:
         checkpoint["touchedArtifacts"] = artifact_paths
@@ -724,7 +767,17 @@ def capture_events(
     structured_events = [
         event
         for event in events
-        if event.get("type") in {"decision", "problem", "attempt", "resolution", "learning"}
+        if event.get("type")
+        in {
+            "decision",
+            "problem",
+            "attempt",
+            "resolution",
+            "learning",
+            "task",
+            "verification",
+            "unresolved",
+        }
     ]
     for index, event in enumerate(checkpoint_events):
         rid = str(event.get("request_id") or request_id(f"{scenario['id']}:checkpoint:{index}"))
@@ -1486,6 +1539,71 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "explicit Context Mount did not preserve authorization/isolation/budget/unmount semantics"
             )
 
+    dossier_expectation = scenario.get("expected_topic_dossier")
+    if isinstance(dossier_expectation, dict):
+        topic = str(dossier_expectation.get("topic", ""))
+        max_tokens = int(dossier_expectation.get("max_tokens", 2_000))
+        arguments = {
+            "topic": topic,
+            "maxResults": int(dossier_expectation.get("max_results", 12)),
+            "maxTokens": max_tokens,
+            "maxSupportingSessions": int(
+                dossier_expectation.get("max_supporting_sessions", 6)
+            ),
+        }
+        dossier = mcp_call(project, "ley_topic_dossier", arguments)
+        rebuilt = mcp_call(project, "ley_topic_dossier", arguments)
+        dossier_text = json.dumps(dossier, sort_keys=True)
+        evidence_markers = [
+            str(value) for value in dossier_expectation.get("evidence_markers", [])
+        ]
+        open_markers = [
+            str(value) for value in dossier_expectation.get("open_markers", [])
+        ]
+        verification_marker = str(
+            dossier_expectation.get("verification_marker", "")
+        )
+        artifact_path = str(dossier_expectation.get("artifact_path", ""))
+        dossier_ok = (
+            dossier.get("schemaVersion") == 1
+            and dossier.get("persisted") is False
+            and dossier.get("projection") == "on-demand-rebuildable-topic-dossier"
+            and str(dossier.get("sourceFingerprint", "")).startswith("sha256:")
+            and dossier.get("sourceFingerprint") == rebuilt.get("sourceFingerprint")
+            and dossier.get("liveSourceChecked") is False
+            and int(dossier.get("estimatedTokens", 0)) <= max_tokens
+            and all(marker in dossier_text for marker in evidence_markers)
+            and all(
+                marker in json.dumps(dossier.get("openItems", []), sort_keys=True)
+                for marker in open_markers
+            )
+            and (
+                not verification_marker
+                or verification_marker
+                in json.dumps(dossier.get("recentVerification", []), sort_keys=True)
+            )
+            and (
+                not artifact_path
+                or any(
+                    isinstance(item, dict)
+                    and item.get("artifactPath") == artifact_path
+                    for item in dossier.get("importantArtifacts", [])
+                )
+            )
+            and bool(dossier.get("supportingSessions"))
+            and str(project) not in dossier_text
+            and str(vault) not in dossier_text
+        )
+        scores["topic_dossier"] = dossier_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)], [dossier]
+        )
+        evidence_text.extend([dossier, rebuilt])
+        if not dossier_ok:
+            failures.append(
+                "topic dossier did not preserve deterministic source binding, evidence structure, privacy, or budget"
+            )
+
     abstention_expectation = scenario.get("expected_selective_abstention")
     if isinstance(abstention_expectation, dict):
         query = str(abstention_expectation.get("query", ""))
@@ -1677,6 +1795,16 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 project,
                 "ley_learnings_list",
                 {"scope": "all", "maxResults": 50},
+            ),
+            mcp_call(
+                project,
+                "ley_topic_dossier",
+                {
+                    "topic": "private deletion memory",
+                    "maxResults": 12,
+                    "maxTokens": 2_000,
+                    "maxSupportingSessions": 6,
+                },
             ),
             cli_json(["session", "list", str(project), "--json"]),
         ]
@@ -2183,29 +2311,33 @@ def metric_requirement_passes(
         return value is True
     if expectation == "zero":
         return value is not None and float(value) == 0.0
-    raise RuntimeError(f"unsupported P0 coverage expectation: {expectation}")
+    raise RuntimeError(f"unsupported capability coverage expectation: {expectation}")
 
 
-def validate_p0_coverage_config(scenarios: list[dict[str, object]]) -> None:
+def validate_coverage_config(
+    label: str,
+    coverage: dict[str, dict[str, tuple[str, str, str]]],
+    scenarios: list[dict[str, object]],
+) -> None:
     scenario_ids = {str(scenario["id"]) for scenario in scenarios}
     required_dimensions = {"adversarial", "downstream", "privacy", "regression"}
-    for capability, dimensions in P0_CAPABILITY_COVERAGE.items():
+    for capability, dimensions in coverage.items():
         if set(dimensions) != required_dimensions:
             raise RuntimeError(
-                f"P0 capability {capability} must define exactly {sorted(required_dimensions)}"
+                f"{label} capability {capability} must define exactly {sorted(required_dimensions)}"
             )
         for dimension, (scenario_id, metric, expectation) in dimensions.items():
             if scenario_id not in scenario_ids:
                 raise RuntimeError(
-                    f"P0 coverage {capability}/{dimension} references unknown scenario {scenario_id}"
+                    f"{label} coverage {capability}/{dimension} references unknown scenario {scenario_id}"
                 )
             if metric not in METRIC_NAMES:
                 raise RuntimeError(
-                    f"P0 coverage {capability}/{dimension} references unknown metric {metric}"
+                    f"{label} coverage {capability}/{dimension} references unknown metric {metric}"
                 )
             if expectation not in {"truthy", "zero"}:
                 raise RuntimeError(
-                    f"P0 coverage {capability}/{dimension} has unsupported expectation {expectation}"
+                    f"{label} coverage {capability}/{dimension} has unsupported expectation {expectation}"
                 )
 
 
@@ -2237,6 +2369,11 @@ def parse_eval_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Run only P0 coverage-matrix representative scenarios and enforce the matrix.",
     )
+    parser.add_argument(
+        "--p1-coverage",
+        action="store_true",
+        help="Run only implemented P1 coverage-matrix representative scenarios and enforce the matrix.",
+    )
     return parser.parse_args(argv)
 
 
@@ -2247,7 +2384,8 @@ def main(argv: list[str] | None = None) -> int:
         for line in FIXTURES.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
-    validate_p0_coverage_config(all_scenarios)
+    validate_coverage_config("P0", P0_CAPABILITY_COVERAGE, all_scenarios)
+    validate_coverage_config("P1", P1_CAPABILITY_COVERAGE, all_scenarios)
     if arguments.list:
         for scenario in all_scenarios:
             print(f"{scenario['id']}\t{scenario.get('category', '')}")
@@ -2255,12 +2393,29 @@ def main(argv: list[str] | None = None) -> int:
 
     requested_ids = set(arguments.scenario)
     requested_categories = set(arguments.category)
-    if arguments.p0_coverage and (requested_ids or requested_categories):
-        raise SystemExit("--p0-coverage cannot be combined with --scenario or --category")
+    if arguments.p0_coverage and arguments.p1_coverage:
+        raise SystemExit("--p0-coverage and --p1-coverage are mutually exclusive")
+    if (arguments.p0_coverage or arguments.p1_coverage) and (
+        requested_ids or requested_categories
+    ):
+        raise SystemExit(
+            "coverage modes cannot be combined with --scenario or --category"
+        )
     if arguments.p0_coverage:
         coverage_ids = {
             scenario_id
             for dimensions in P0_CAPABILITY_COVERAGE.values()
+            for scenario_id, _, _ in dimensions.values()
+        }
+        scenarios = [
+            scenario
+            for scenario in all_scenarios
+            if str(scenario["id"]) in coverage_ids
+        ]
+    elif arguments.p1_coverage:
+        coverage_ids = {
+            scenario_id
+            for dimensions in P1_CAPABILITY_COVERAGE.values()
             for scenario_id, _, _ in dimensions.values()
         }
         scenarios = [
@@ -2287,6 +2442,7 @@ def main(argv: list[str] | None = None) -> int:
         str(item["id"]) for item in scenarios
     } == {str(item["id"]) for item in all_scenarios}
     enforce_p0_coverage = full_corpus or arguments.p0_coverage
+    enforce_p1_coverage = full_corpus or arguments.p1_coverage
     print(f"Running {len(scenarios)} eval scenarios with {LEY}...\n", flush=True)
     results: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="ley-eval-") as temporary:
@@ -2372,6 +2528,34 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(
             "P0 capability coverage matrix: skipped for focused subset run.",
+            flush=True,
+        )
+
+    if enforce_p1_coverage:
+        result_by_id = {
+            str(result.get("id")): result
+            for result in results
+            if isinstance(result.get("id"), str)
+        }
+        print("", flush=True)
+        print("=== P1 capability metric coverage ===", flush=True)
+        for capability, dimensions in P1_CAPABILITY_COVERAGE.items():
+            dimension_results: list[str] = []
+            for dimension, (scenario_id, metric, expectation) in dimensions.items():
+                result = result_by_id.get(scenario_id, {})
+                ok = metric_requirement_passes(result, metric, expectation)
+                dimension_results.append(f"{dimension}={'PASS' if ok else 'FAIL'}")
+                if not ok:
+                    coverage_failures.append(
+                        f"{capability}/{dimension} requires {scenario_id}:{metric}={expectation}"
+                    )
+            print(f"{capability}: " + ", ".join(dimension_results), flush=True)
+        for failure in coverage_failures:
+            if failure.startswith("topic-dossiers/"):
+                print(f"  COVERAGE ERROR: {failure}", flush=True)
+    else:
+        print(
+            "P1 capability coverage matrix: skipped for focused subset run.",
             flush=True,
         )
 

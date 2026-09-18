@@ -17,7 +17,8 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 - secret/cross-project/model-egress privacy violation rate;
 - deletion fidelity and forgetting-residue rate across Ley-managed raw/derived retrieval surfaces;
 - harmless behavior in uninitialized workspaces;
-- a deterministic downstream task-evidence contract and a bounded recent-resume baseline comparison.
+- a deterministic downstream task-evidence contract and a bounded recent-resume baseline comparison;
+- Topic Dossier source binding, bounded topic-state coverage, privacy, and post-erasure rebuild behavior.
 
 `privacy_violation_rate` and `forgetting_residue_rate` are lower-is-better metrics. A zero result means
 the fixture's canaries were not extractable from the probed Ley-managed surfaces; it is not a claim
@@ -54,6 +55,18 @@ expectations, or failing metric values make a full-corpus run fail.
 Focused subset runs validate the matrix schema but intentionally skip full result-value coverage because
 not every representative scenario was executed.
 
+## P1 capability coverage
+
+Implemented P1 capabilities get a separate matrix rather than weakening the completed P0 contract. The
+first entry is **Topic Dossiers**. Its matrix requires:
+
+- adversarial deletion/forgetting evidence from the session-erasure scenario;
+- downstream/regression success from the real authentication dossier journey;
+- zero privacy-canary leakage from the returned dossier.
+
+As later P1 capabilities land, each should add its own adversarial, downstream, privacy, and regression
+representatives before the slice is considered complete.
+
 ## Running safely
 
 List available scenarios without executing them:
@@ -80,6 +93,13 @@ every adversarial/downstream/privacy/regression cell:
 
 ```text
 python eval/run_eval.py --p0-coverage
+```
+
+Run only the representative scenarios for currently implemented P1 capabilities while enforcing their
+coverage matrix:
+
+```text
+python eval/run_eval.py --p1-coverage
 ```
 
 Run the complete corpus only when the machine can tolerate it:

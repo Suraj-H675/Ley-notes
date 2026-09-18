@@ -9,8 +9,8 @@ use crate::semantic_retrieval::{
 use crate::session::visit_session_records;
 use crate::{
     find_project_hybrid_context, list_learnings, ContextItemKind, GraphCitation, LearningFreshness,
-    LearningOriginSummary, LearningState, LearningSummary, LearningTrustState, LeyCoreError,
-    ProjectRevisionFreshness, RetrievalLimits, RetrievalMode, RevisionApplicability,
+    LearningKind, LearningOriginSummary, LearningState, LearningSummary, LearningTrustState,
+    LeyCoreError, ProjectRevisionFreshness, RetrievalLimits, RetrievalMode, RevisionApplicability,
     SessionArtifactCitation,
 };
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ const RECENCY_WINDOW_MS: u64 = 365 * 24 * 60 * 60 * 1_000;
 const RESPONSE_BASE_TOKENS: usize = 64;
 const RESPONSE_RESULT_OVERHEAD_TOKENS: usize = 72;
 const LEARNING_ORIGIN_SUMMARY_TOKENS: usize = 48;
+const LEARNING_KIND_TOKENS: usize = 8;
 const RESPONSE_CONFLICT_OVERHEAD_TOKENS: usize = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +117,8 @@ pub struct ProjectMemorySearchResult {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub learning_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learning_kind: Option<LearningKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citation: Option<GraphCitation>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -213,6 +216,7 @@ struct Candidate {
     updated_at_unix_ms: u64,
     session_id: Option<String>,
     learning_id: Option<String>,
+    learning_kind: Option<LearningKind>,
     citation: Option<GraphCitation>,
     learning_state: Option<LearningState>,
     learning_trust_state: Option<LearningTrustState>,
@@ -670,6 +674,7 @@ fn learning_candidate(
         query,
         terms,
     );
+    candidate.learning_kind = Some(learning.kind);
     candidate.learning_origin_summary = Some(learning.origin_lineage_summary.clone());
     candidate.learning_superseded_by = learning.superseded_by.clone();
     candidate.revision_applicability = capture_applicability.cloned();
@@ -757,6 +762,7 @@ fn new_candidate(
         updated_at_unix_ms,
         session_id,
         learning_id,
+        learning_kind: None,
         citation,
         learning_state,
         learning_trust_state,
@@ -970,6 +976,12 @@ fn fit_result(
         .saturating_add(
             scored
                 .candidate
+                .learning_kind
+                .map_or(0, |_| LEARNING_KIND_TOKENS),
+        )
+        .saturating_add(
+            scored
+                .candidate
                 .revision_applicability
                 .as_ref()
                 .map_or(0, estimate_revision_applicability_tokens),
@@ -1012,6 +1024,7 @@ fn fit_result(
             updated_at_unix_ms: scored.candidate.updated_at_unix_ms,
             session_id: scored.candidate.session_id,
             learning_id: scored.candidate.learning_id,
+            learning_kind: scored.candidate.learning_kind,
             citation: scored.candidate.citation,
             learning_state: scored.candidate.learning_state,
             learning_trust_state: scored.candidate.learning_trust_state,
@@ -1334,6 +1347,7 @@ mod tests {
             updated_at_unix_ms: 1_000,
             session_id: None,
             learning_id: (kind == ProjectMemoryResultKind::Learning).then(|| entity_id.to_owned()),
+            learning_kind: None,
             citation: None,
             learning_state: None,
             learning_trust_state: None,
@@ -1386,6 +1400,10 @@ mod tests {
             None,
         );
         assert_eq!(candidate.learning_origin_summary, Some(origin.clone()));
+        assert_eq!(
+            candidate.learning_kind,
+            Some(crate::LearningKind::Procedure)
+        );
         let fitted = fit_result(
             ScoredCandidate {
                 candidate,
@@ -1405,6 +1423,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(fitted.0.learning_origin_summary, Some(origin));
+        assert_eq!(fitted.0.learning_kind, Some(crate::LearningKind::Procedure));
         assert!(fitted.1 <= 1_000);
     }
 

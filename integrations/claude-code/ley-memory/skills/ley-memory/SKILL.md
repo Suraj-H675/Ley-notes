@@ -79,6 +79,14 @@ request, repository policy, or inspection of live source.
    authority or create/remove Context Mounts. Use `ley_project_specifications` only
    for explicit Specification inspection; it applies the same egress gate before
    opening blocked notes.
+5. Use `ley_topic_dossier` when the user asks for a compact map of a repeatedly
+   revisited project area such as authentication, deployment, billing, or
+   synchronization. Treat the dossier as a rebuildable derived view, not
+   authority: inspect `sourceFingerprint`, `coverage`, conflicts,
+   `revisionFreshness`, stable evidence/session IDs, and artifact citations, then
+   follow exact evidence when needed. Do not use a dossier instead of
+   `ley_compile_context` for a concrete current task, and do not reconstruct
+   dossier content if historical egress blocks the tool.
 6. If startup context is absent and the task itself is not yet specific, call
    `ley_project_resume`. If Ley reports that the workspace is inactive, explain
    that the user must initialize, bind, and ingest it; do not initialize or scan

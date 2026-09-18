@@ -31,6 +31,7 @@ mod semantic_retrieval;
 mod session;
 mod session_context;
 mod specification;
+mod topic_dossier;
 
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
@@ -215,6 +216,14 @@ pub use specification::{
     MAX_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_PATH_CHARACTERS,
     MIN_SPECIFICATION_CONTEXT_CHARACTERS, SPECIFICATION_REGISTRY_FILE,
     SPECIFICATION_REGISTRY_SCHEMA_VERSION,
+};
+pub use topic_dossier::{
+    compile_topic_dossier, TopicDossier, TopicDossierArtifact, TopicDossierCoverage,
+    TopicDossierLimits, TopicDossierOpenItem, TopicDossierOpenKind, TopicDossierSections,
+    TopicDossierSupportingSession, TopicDossierVerification, DEFAULT_TOPIC_DOSSIER_RESULTS,
+    DEFAULT_TOPIC_DOSSIER_SUPPORTING_SESSIONS, DEFAULT_TOPIC_DOSSIER_TOKENS,
+    MAX_TOPIC_DOSSIER_RESULTS, MAX_TOPIC_DOSSIER_SUPPORTING_SESSIONS, MAX_TOPIC_DOSSIER_TOKENS,
+    MIN_TOPIC_DOSSIER_TOKENS, TOPIC_DOSSIER_SCHEMA_VERSION,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";

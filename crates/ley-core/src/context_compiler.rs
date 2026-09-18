@@ -2454,6 +2454,7 @@ mod tests {
             updated_at_unix_ms: 1,
             session_id: None,
             learning_id: (kind == ProjectMemoryResultKind::Learning).then(|| id.to_owned()),
+            learning_kind: None,
             citation: None,
             learning_state: None,
             learning_trust_state: None,
