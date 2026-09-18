@@ -306,8 +306,13 @@ def mcp_call(
     return payload
 
 
-def hook_call(project: Path, host: str, payload: dict[str, str]) -> dict[str, object]:
-    output = run(["hook", str(project), "--host", host], stdin=json.dumps(payload))
+def hook_call(
+    project: Path,
+    host: str,
+    payload: dict[str, str],
+    flags: tuple[str, ...] = (),
+) -> dict[str, object]:
+    output = run(["hook", str(project), "--host", host, *flags], stdin=json.dumps(payload))
     try:
         value = json.loads(output)
     except json.JSONDecodeError as error:
@@ -547,6 +552,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         "mounted_reference": None,
         "premise_adjudication": None,
         "revision_adjudication": None,
+        "egress_policy": None,
     }
 
     project = base_dir / "project"
@@ -858,6 +864,182 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not specification_ok:
             failures.append(
                 "task-conditioned Specification admission did not preserve authority/budget/conflict semantics"
+            )
+
+    egress_expectation = scenario.get("expected_egress_policy")
+    if isinstance(egress_expectation, dict):
+        specification_index = int(egress_expectation.get("specification_index", 0))
+        if specification_index >= len(specification_definitions):
+            raise RuntimeError("egress fixture did not define the expected Specification")
+        specification_id = specification_definitions[specification_index].get(
+            "resolved_specification_id"
+        )
+        if not isinstance(specification_id, str):
+            raise RuntimeError("egress fixture Specification has no stable ID")
+        marker = str(egress_expectation.get("marker", ""))
+        derived_marker = str(egress_expectation.get("derived_marker", ""))
+        query = str(egress_expectation.get("query", ""))
+        if not marker or not derived_marker or not query:
+            raise RuntimeError("egress fixture requires marker, derived_marker, and query")
+
+        run(
+            [
+                "egress",
+                "specification",
+                specification_id,
+                "local-model-only",
+                str(project),
+                "--json",
+            ]
+        )
+        cloud_direct = mcp_call(
+            project,
+            "ley_project_specifications",
+            {"maxResults": 8, "maxCharacters": 16_000},
+        )
+        cloud_compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+        )
+        cloud_hook = hook_call(
+            project,
+            "codex",
+            {"hook_event_name": "SessionStart", "session_id": "egress-cloud-startup"},
+        )
+        cloud_blocked = (
+            marker not in json.dumps(cloud_direct, sort_keys=True)
+            and marker not in json.dumps(cloud_compiled, sort_keys=True)
+            and derived_marker not in json.dumps(cloud_compiled, sort_keys=True)
+            and derived_marker not in json.dumps(cloud_hook, sort_keys=True)
+            and "withheld" in json.dumps(cloud_hook, sort_keys=True).lower()
+            and cloud_direct.get("egressTarget") == "cloud"
+            and isinstance(cloud_direct.get("egressCoverage"), dict)
+            and cloud_direct["egressCoverage"].get("blockedSpecifications") == 1
+            and cloud_compiled.get("egressTarget") == "cloud"
+            and isinstance(cloud_compiled.get("egressCoverage"), dict)
+            and cloud_compiled["egressCoverage"].get("blockedSpecifications") == 1
+            and cloud_compiled["egressCoverage"].get("historicalMemoryWithheld") is True
+            and int(cloud_compiled["egressCoverage"].get("withheldDerivedResults", 0)) >= 1
+        )
+
+        local_flags = ("--egress-target", "local")
+        local_direct = mcp_call(
+            project,
+            "ley_project_specifications",
+            {"maxResults": 8, "maxCharacters": 16_000},
+            flags=local_flags,
+        )
+        local_compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+            flags=local_flags,
+        )
+        local_hook = hook_call(
+            project,
+            "codex",
+            {"hook_event_name": "SessionStart", "session_id": "egress-local-startup"},
+            flags=local_flags,
+        )
+        local_allowed = (
+            marker in json.dumps(local_direct, sort_keys=True)
+            and marker in json.dumps(local_compiled, sort_keys=True)
+            and derived_marker in json.dumps(local_compiled, sort_keys=True)
+            and derived_marker in json.dumps(local_hook, sort_keys=True)
+            and local_direct.get("egressTarget") == "local"
+            and local_compiled.get("egressTarget") == "local"
+        )
+
+        run(
+            [
+                "egress",
+                "specification",
+                specification_id,
+                "confirm-per-use",
+                str(project),
+                "--json",
+            ]
+        )
+        confirm_direct = mcp_call(
+            project,
+            "ley_project_specifications",
+            {"maxResults": 8, "maxCharacters": 16_000},
+            flags=local_flags,
+        )
+        confirm_compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+            flags=local_flags,
+        )
+        confirm_hook = hook_call(
+            project,
+            "codex",
+            {"hook_event_name": "SessionStart", "session_id": "egress-confirm-startup"},
+            flags=local_flags,
+        )
+        confirm_blocked = marker not in json.dumps(
+            confirm_direct, sort_keys=True
+        ) and marker not in json.dumps(confirm_compiled, sort_keys=True) and derived_marker not in json.dumps(
+            confirm_hook, sort_keys=True
+        )
+
+        run(
+            [
+                "egress",
+                "specification",
+                specification_id,
+                "never-send",
+                str(project),
+                "--json",
+            ]
+        )
+        never_direct = mcp_call(
+            project,
+            "ley_project_specifications",
+            {"maxResults": 8, "maxCharacters": 16_000},
+            flags=local_flags,
+        )
+        never_compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+            flags=local_flags,
+        )
+        never_hook = hook_call(
+            project,
+            "codex",
+            {"hook_event_name": "SessionStart", "session_id": "egress-never-startup"},
+            flags=local_flags,
+        )
+        never_blocked = marker not in json.dumps(
+            never_direct, sort_keys=True
+        ) and marker not in json.dumps(never_compiled, sort_keys=True) and derived_marker not in json.dumps(
+            never_hook, sort_keys=True
+        )
+
+        egress_ok = cloud_blocked and local_allowed and confirm_blocked and never_blocked
+        scores["egress_policy"] = egress_ok
+        evidence_text.extend(
+            [
+                cloud_direct,
+                cloud_compiled,
+                cloud_hook,
+                local_direct,
+                local_compiled,
+                local_hook,
+                confirm_direct,
+                confirm_compiled,
+                confirm_hook,
+                never_direct,
+                never_compiled,
+                never_hook,
+            ]
+        )
+        if not egress_ok:
+            failures.append(
+                "agent egress policy leaked or incorrectly blocked Specification context"
             )
 
     mounted_definitions = [
@@ -1257,7 +1439,7 @@ def main() -> int:
                 f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
                 flush=True,
             )
-            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "origin_lineage", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference", "premise_adjudication", "revision_adjudication"):
+            for metric in ("recall@k", "precision", "untrusted_boundary", "cross_project_clean", "stale_learning", "capture_recovery", "memory_recovery", "memory_transition", "memory_binding", "origin_lineage", "idempotency", "token_budget", "secret_exclusion", "specification_admission", "mounted_reference", "premise_adjudication", "revision_adjudication", "egress_policy"):
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):

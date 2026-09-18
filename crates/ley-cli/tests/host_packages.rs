@@ -139,6 +139,32 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         assert!(skill.contains("divergent"), "{}", path.display());
         assert!(skill.contains("merged"), "{}", path.display());
         assert!(skill.contains("liveGitChecked"), "{}", path.display());
+        assert!(skill.contains("egressTarget"), "{}", path.display());
+        assert!(skill.contains("egressCoverage"), "{}", path.display());
+        assert!(skill.contains("egressExclusions"), "{}", path.display());
+        assert!(
+            skill.contains("withheld by egress policy"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("historicalMemoryWithheld"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("withheldDerivedResults"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("local-model-only"), "{}", path.display());
+        assert!(skill.contains("confirm-per-use"), "{}", path.display());
+        assert!(skill.contains("never-send"), "{}", path.display());
+        assert!(
+            skill.contains("cannot change egress policy"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("conflicting-state"), "{}", path.display());
         assert!(skill.contains("uncertain-state"), "{}", path.display());
         assert!(

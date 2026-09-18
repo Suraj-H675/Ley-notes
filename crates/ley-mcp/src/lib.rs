@@ -1,28 +1,30 @@
 use ley_core::{
     checkpoint_session, checkpoint_session_if_current, commit_unresolved_memory_transition,
-    compile_project_context_with_registries, compile_session_memory, find_project_context,
-    find_project_graph_path, finish_session, list_learning_contexts, project_activity_view,
-    project_memory_overview, project_resume_context, propose_learning, read_learning_context,
-    read_project_evidence, read_session_context, read_session_turns_context, search_project_memory,
-    start_session, traverse_project_graph, verify_memory_transition, AttemptInput, AttemptOutcome,
-    CheckpointInput, CommandInput, CommitUnresolvedMemoryTransitionInput, ContextCompileLimits,
-    ContextMountRegistry, DecisionInput, FinishSessionInput, GraphDirection, GraphEdgeKind,
-    LearningActor, LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation,
-    LearningProvenance, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
-    MemoryTransitionInput, PlanItemInput, PlanStatus, ProblemInput, ProjectMemorySearchLimits,
-    ProjectProblemScope, ProposeLearningInput, ResolutionInput, RetrievalLimits, SessionMutation,
-    SessionSource, SessionSourceKind, SessionStatus, SpecificationContextLimits,
-    SpecificationRegistry, StartSessionInput, TaskInput, TaskStatus, VerificationInput,
-    VerificationStatus, DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS,
-    DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
-    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
-    DEFAULT_MEMORY_COMPILE_CHARACTERS, DEFAULT_MEMORY_COMPILE_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
-    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
-    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
-    DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS,
-    DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS, DEFAULT_SPECIFICATION_CONTEXT_RESULTS,
+    compile_project_context_for_agent_with_registries, compile_session_memory, diagnose_project,
+    evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
+    list_learning_contexts, project_activity_view, project_memory_overview, project_resume_context,
+    propose_learning, read_learning_context, read_project_evidence, read_session_context,
+    read_session_turns_context, search_project_memory, start_session, traverse_project_graph,
+    verify_memory_transition, AgentContextAuthorities, AgentEgressTarget, AttemptInput,
+    AttemptOutcome, CheckpointInput, CommandInput, CommitUnresolvedMemoryTransitionInput,
+    ContextCompileLimits, ContextMountRegistry, DecisionInput, EgressPolicyRegistry,
+    FinishSessionInput, GraphDirection, GraphEdgeKind, LearningActor, LearningEvidenceInput,
+    LearningKind, LearningListScope, LearningMutation, LearningProvenance, LeyCoreError,
+    MemoryCandidateClaim, MemoryCandidateKind, MemoryTransitionInput, PlanItemInput, PlanStatus,
+    ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
+    ResolutionInput, RetrievalLimits, SessionMutation, SessionSource, SessionSourceKind,
+    SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
+    TaskStatus, VerificationInput, VerificationStatus, DEFAULT_CONTEXT_COMPILE_RESULTS,
+    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
+    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
+    DEFAULT_LEARNING_LIST_RESULTS, DEFAULT_MEMORY_COMPILE_CHARACTERS,
+    DEFAULT_MEMORY_COMPILE_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
+    DEFAULT_SESSION_TURN_RESULTS, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
+    DEFAULT_SPECIFICATION_CONTEXT_RESULTS,
 };
 use ley_core::{list_session_contexts, DEFAULT_SESSION_LIST_RESULTS};
 use rmcp::{
@@ -45,7 +47,10 @@ const SERVER_INSTRUCTIONS: &str = "Ley is private, local memory for one fixed pr
 substantive task, prefer `ley_compile_context`: it admits task-relevant current user-approved \
 Specifications as human intent before active-project memory, then uses only explicitly mounted ready \
 reference projects for lower-precedence read-only context when budget remains. Active-project evidence \
-and diagnostics stay ahead of mounted references. Read `premiseAdjudication` before acting on historical \
+and diagnostics stay ahead of mounted references. Respect `egressTarget`, `egressCoverage`, and \
+`egressExclusions`: withheld content is outside this agent target and must not be reconstructed from \
+nearby memory. `confirm-per-use` is fail-closed until Ley has a local confirmation flow, and MCP cannot \
+change egress policy. Read `premiseAdjudication` before acting on historical \
 state: `obsolete-assumption`, `conflicting-state`, or `uncertain-state` means matching memory must not be \
 treated as current merely because the task asks for it. Follow any stable replacement-learning handle and \
 inspect live source before consequential current-state edits. Use `ley_project_specifications` for explicit \
@@ -104,6 +109,8 @@ pub struct LeyMcpServer {
     learning_proposals_enabled: bool,
     specification_registry: Arc<SpecificationRegistry>,
     context_mount_registry: Arc<ContextMountRegistry>,
+    egress_policy_registry: Arc<EgressPolicyRegistry>,
+    egress_target: AgentEgressTarget,
     tool_router: ToolRouter<Self>,
 }
 
@@ -911,18 +918,18 @@ struct LearningProposalReceipt {
 #[tool_router(router = tool_router)]
 impl LeyMcpServer {
     pub fn new(project: PathBuf, vault: PathBuf) -> Result<Self, LeyCoreError> {
-        Self::configured(project, vault, false, false)
+        Self::configured(project, vault, false, false, AgentEgressTarget::Cloud)
     }
 
     pub fn new_with_session_writes(project: PathBuf, vault: PathBuf) -> Result<Self, LeyCoreError> {
-        Self::configured(project, vault, true, false)
+        Self::configured(project, vault, true, false, AgentEgressTarget::Cloud)
     }
 
     pub fn new_with_learning_proposals(
         project: PathBuf,
         vault: PathBuf,
     ) -> Result<Self, LeyCoreError> {
-        Self::configured(project, vault, false, true)
+        Self::configured(project, vault, false, true, AgentEgressTarget::Cloud)
     }
 
     pub fn new_with_capabilities(
@@ -936,6 +943,23 @@ impl LeyMcpServer {
             vault,
             session_writes_enabled,
             learning_proposals_enabled,
+            AgentEgressTarget::Cloud,
+        )
+    }
+
+    pub fn new_with_capabilities_and_egress_target(
+        project: PathBuf,
+        vault: PathBuf,
+        session_writes_enabled: bool,
+        learning_proposals_enabled: bool,
+        egress_target: AgentEgressTarget,
+    ) -> Result<Self, LeyCoreError> {
+        Self::configured(
+            project,
+            vault,
+            session_writes_enabled,
+            learning_proposals_enabled,
+            egress_target,
         )
     }
 
@@ -944,7 +968,10 @@ impl LeyMcpServer {
         vault: PathBuf,
         session_writes_enabled: bool,
         learning_proposals_enabled: bool,
+        egress_target: AgentEgressTarget,
     ) -> Result<Self, LeyCoreError> {
+        let egress_policy_registry = EgressPolicyRegistry::system_default()?;
+        egress_policy_registry.with_project_egress_locked(&project, egress_target, || Ok(()))?;
         let overview = project_memory_overview(&project, &vault)?;
         let overview_uri = format!("ley://project/{}/overview", overview.project_id);
         let specification_registry = SpecificationRegistry::system_default()?;
@@ -966,6 +993,9 @@ impl LeyMcpServer {
         if learning_proposals_enabled {
             instructions.push_str(LEARNING_WRITE_INSTRUCTIONS);
         }
+        instructions.push_str(&format!(
+            " Agent egress target is `{egress_target}`. Ley revalidates OS-private egress policy before agent-facing reads/writes; `confirm-per-use` remains blocked until an explicit local confirmation flow exists."
+        ));
         Ok(Self {
             project: Arc::new(project),
             vault: Arc::new(vault),
@@ -976,8 +1006,80 @@ impl LeyMcpServer {
             learning_proposals_enabled,
             specification_registry: Arc::new(specification_registry),
             context_mount_registry: Arc::new(context_mount_registry),
+            egress_policy_registry: Arc::new(egress_policy_registry),
+            egress_target,
             tool_router,
         })
+    }
+
+    fn gated_tool_result<T: serde::Serialize>(
+        &self,
+        operation: impl FnOnce() -> Result<T, LeyCoreError>,
+    ) -> CallToolResult {
+        tool_result(self.egress_policy_registry.with_project_egress_locked(
+            self.project.as_path(),
+            self.egress_target,
+            operation,
+        ))
+    }
+
+    fn gated_historical_tool_result<T: serde::Serialize>(
+        &self,
+        operation: impl FnOnce() -> Result<T, LeyCoreError>,
+    ) -> CallToolResult {
+        tool_result(
+            self.egress_policy_registry
+                .with_snapshot_locked(|policies| {
+                    let project_id = diagnose_project(self.project.as_path())?
+                        .identity
+                        .project_id;
+                    let project_decision = evaluate_agent_egress(
+                        policies.project_policy(&project_id),
+                        self.egress_target,
+                    );
+                    if !project_decision.allowed {
+                        return Err(LeyCoreError::AgentEgressDenied {
+                            policy: project_decision.policy.to_string(),
+                            target: self.egress_target.to_string(),
+                        });
+                    }
+                    if policies.has_blocked_fine_grained_source(&project_id, self.egress_target) {
+                        return Err(LeyCoreError::AgentDerivedEgressUnproven {
+                            target: self.egress_target.to_string(),
+                        });
+                    }
+                    self.context_mount_registry
+                        .with_agent_context_sources_locked(self.project.as_path(), |sources| {
+                            let source_blocked = sources.historical.iter().any(|source| {
+                                !evaluate_agent_egress(
+                                    policies.project_policy(&source.source_project_id),
+                                    self.egress_target,
+                                )
+                                .allowed
+                            });
+                            if source_blocked {
+                                return Err(LeyCoreError::AgentDerivedEgressUnproven {
+                                    target: self.egress_target.to_string(),
+                                });
+                            }
+                            operation()
+                        })
+                }),
+        )
+    }
+
+    fn gated_session_write_result(
+        &self,
+        operation: impl FnOnce() -> Result<SessionMutation, LeyCoreError>,
+    ) -> CallToolResult {
+        self.gated_tool_result(|| operation().map(session_write_receipt))
+    }
+
+    fn gated_learning_proposal_result(
+        &self,
+        operation: impl FnOnce() -> Result<LearningMutation, LeyCoreError>,
+    ) -> CallToolResult {
+        self.gated_tool_result(|| operation().map(learning_proposal_receipt))
     }
 
     /// Compile the smallest useful task-specific context pack, including premise/state adjudication.
@@ -995,19 +1097,25 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<CompileContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(compile_project_context_with_registries(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.task,
-            ContextCompileLimits {
-                max_results: params
-                    .max_results
-                    .unwrap_or(DEFAULT_CONTEXT_COMPILE_RESULTS),
-                max_tokens: params.max_tokens.unwrap_or(DEFAULT_CONTEXT_COMPILE_TOKENS),
-            },
-            self.specification_registry.as_ref(),
-            self.context_mount_registry.as_ref(),
-        )))
+        Ok(tool_result(
+            compile_project_context_for_agent_with_registries(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.task,
+                ContextCompileLimits {
+                    max_results: params
+                        .max_results
+                        .unwrap_or(DEFAULT_CONTEXT_COMPILE_RESULTS),
+                    max_tokens: params.max_tokens.unwrap_or(DEFAULT_CONTEXT_COMPILE_TOKENS),
+                },
+                AgentContextAuthorities {
+                    specifications: self.specification_registry.as_ref(),
+                    mounts: self.context_mount_registry.as_ref(),
+                    egress: self.egress_policy_registry.as_ref(),
+                },
+                self.egress_target,
+            ),
+        ))
     }
 
     /// Read identity, snapshot, capture, graph, Git, freshness, and privacy metadata.
@@ -1022,10 +1130,9 @@ impl LeyMcpServer {
         )
     )]
     pub async fn project_overview(&self) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(project_memory_overview(
-            self.project.as_path(),
-            self.vault.as_path(),
-        )))
+        Ok(self.gated_tool_result(|| {
+            project_memory_overview(self.project.as_path(), self.vault.as_path())
+        }))
     }
 
     /// Resume a project from bounded recent work and only current trusted learnings.
@@ -1043,13 +1150,15 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<ProjectResumeParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(project_resume_context(
-            self.project.as_path(),
-            self.vault.as_path(),
-            params.max_sessions.unwrap_or(DEFAULT_RESUME_SESSIONS),
-            params.max_learnings.unwrap_or(DEFAULT_RESUME_LEARNINGS),
-            params.max_characters.unwrap_or(DEFAULT_RESUME_CHARACTERS),
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            project_resume_context(
+                self.project.as_path(),
+                self.vault.as_path(),
+                params.max_sessions.unwrap_or(DEFAULT_RESUME_SESSIONS),
+                params.max_learnings.unwrap_or(DEFAULT_RESUME_LEARNINGS),
+                params.max_characters.unwrap_or(DEFAULT_RESUME_CHARACTERS),
+            )
+        }))
     }
 
     /// Read current user-approved Specification revisions for this fixed project.
@@ -1068,7 +1177,7 @@ impl LeyMcpServer {
         Parameters(params): Parameters<ProjectSpecificationsParams>,
     ) -> Result<CallToolResult, McpError> {
         Ok(tool_result(
-            self.specification_registry.context(
+            self.specification_registry.context_for_agent(
                 self.project.as_path(),
                 self.vault.as_path(),
                 SpecificationContextLimits {
@@ -1079,6 +1188,8 @@ impl LeyMcpServer {
                         .max_characters
                         .unwrap_or(DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS),
                 },
+                self.egress_policy_registry.as_ref(),
+                self.egress_target,
             ),
         ))
     }
@@ -1102,12 +1213,14 @@ impl LeyMcpServer {
             max_results: params.max_results.unwrap_or(DEFAULT_CONTEXT_RESULTS),
             max_tokens: params.max_tokens.unwrap_or(DEFAULT_CONTEXT_TOKENS),
         };
-        Ok(tool_result(find_project_context(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.query,
-            limits,
-        )))
+        Ok(self.gated_tool_result(|| {
+            find_project_context(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.query,
+                limits,
+            )
+        }))
     }
 
     /// Search captured project meaning with explicit local semantic retrieval and lexical fallback.
@@ -1133,12 +1246,14 @@ impl LeyMcpServer {
                 .max_tokens
                 .unwrap_or(DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS),
         };
-        Ok(tool_result(search_project_memory(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.query,
-            limits,
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            search_project_memory(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.query,
+                limits,
+            )
+        }))
     }
 
     /// Search older structured project decisions and problems with stable IDs and citations.
@@ -1156,18 +1271,20 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<SearchActivityParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(project_activity_view(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.query,
-            params
-                .problem_scope
-                .unwrap_or(McpProjectProblemScope::All)
-                .into(),
-            params
-                .max_results
-                .unwrap_or(DEFAULT_SEARCH_ACTIVITY_RESULTS),
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            project_activity_view(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.query,
+                params
+                    .problem_scope
+                    .unwrap_or(McpProjectProblemScope::All)
+                    .into(),
+                params
+                    .max_results
+                    .unwrap_or(DEFAULT_SEARCH_ACTIVITY_RESULTS),
+            )
+        }))
     }
 
     /// Read a bounded line range from an approved artifact cited by Ley.
@@ -1189,14 +1306,16 @@ impl LeyMcpServer {
         let end_line = params
             .end_line
             .unwrap_or_else(|| start_line.saturating_add(39));
-        Ok(tool_result(read_project_evidence(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.artifact_path,
-            start_line,
-            end_line,
-            params.max_characters.unwrap_or(8_000),
-        )))
+        Ok(self.gated_tool_result(|| {
+            read_project_evidence(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.artifact_path,
+                start_line,
+                end_line,
+                params.max_characters.unwrap_or(8_000),
+            )
+        }))
     }
 
     /// Traverse bounded incoming, outgoing, or bidirectional deterministic graph relations.
@@ -1215,15 +1334,17 @@ impl LeyMcpServer {
         Parameters(params): Parameters<GraphNeighborsParams>,
     ) -> Result<CallToolResult, McpError> {
         let edge_kinds = map_edge_kinds(params.edge_kinds);
-        Ok(tool_result(traverse_project_graph(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.node,
-            params.depth.unwrap_or(1),
-            params.max_nodes.unwrap_or(50),
-            params.direction.unwrap_or(McpGraphDirection::Both).into(),
-            edge_kinds.as_deref(),
-        )))
+        Ok(self.gated_tool_result(|| {
+            traverse_project_graph(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.node,
+                params.depth.unwrap_or(1),
+                params.max_nodes.unwrap_or(50),
+                params.direction.unwrap_or(McpGraphDirection::Both).into(),
+                edge_kinds.as_deref(),
+            )
+        }))
     }
 
     /// Find a bounded deterministic relationship path between two uniquely resolved graph nodes.
@@ -1242,16 +1363,18 @@ impl LeyMcpServer {
         Parameters(params): Parameters<GraphPathParams>,
     ) -> Result<CallToolResult, McpError> {
         let edge_kinds = map_edge_kinds(params.edge_kinds);
-        Ok(tool_result(find_project_graph_path(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.from,
-            &params.to,
-            params.max_depth.unwrap_or(4),
-            params.max_visited_nodes.unwrap_or(200),
-            params.direction.unwrap_or(McpGraphDirection::Both).into(),
-            edge_kinds.as_deref(),
-        )))
+        Ok(self.gated_tool_result(|| {
+            find_project_graph_path(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.from,
+                &params.to,
+                params.max_depth.unwrap_or(4),
+                params.max_visited_nodes.unwrap_or(200),
+                params.direction.unwrap_or(McpGraphDirection::Both).into(),
+                edge_kinds.as_deref(),
+            )
+        }))
     }
 
     /// List bounded recent sessions and their goals without returning full captured evidence.
@@ -1269,11 +1392,13 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<ListSessionsParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(list_session_contexts(
-            self.project.as_path(),
-            self.vault.as_path(),
-            params.max_results.unwrap_or(DEFAULT_SESSION_LIST_RESULTS),
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            list_session_contexts(
+                self.project.as_path(),
+                self.vault.as_path(),
+                params.max_results.unwrap_or(DEFAULT_SESSION_LIST_RESULTS),
+            )
+        }))
     }
 
     /// Read a bounded resume pack from one verified, immutable Ley session history.
@@ -1291,17 +1416,19 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<SessionContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(read_session_context(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.session_id,
-            params
-                .max_checkpoints
-                .unwrap_or(DEFAULT_SESSION_CONTEXT_CHECKPOINTS),
-            params
-                .max_characters
-                .unwrap_or(DEFAULT_SESSION_CONTEXT_CHARACTERS),
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            read_session_context(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                params
+                    .max_checkpoints
+                    .unwrap_or(DEFAULT_SESSION_CONTEXT_CHECKPOINTS),
+                params
+                    .max_characters
+                    .unwrap_or(DEFAULT_SESSION_CONTEXT_CHARACTERS),
+            )
+        }))
     }
 
     /// Explicitly inspect bounded prompt/response evidence from one session.
@@ -1320,15 +1447,17 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<SessionTurnsParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(read_session_turns_context(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.session_id,
-            params.max_results.unwrap_or(DEFAULT_SESSION_TURN_RESULTS),
-            params
-                .max_characters
-                .unwrap_or(DEFAULT_SESSION_TURN_CHARACTERS),
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            read_session_turns_context(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                params.max_results.unwrap_or(DEFAULT_SESSION_TURN_RESULTS),
+                params
+                    .max_characters
+                    .unwrap_or(DEFAULT_SESSION_TURN_CHARACTERS),
+            )
+        }))
     }
 
     /// Compile bounded post-checkpoint turn evidence that may need structured recovery.
@@ -1347,15 +1476,17 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<CompileSessionMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(compile_session_memory(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.session_id,
-            params.max_results.unwrap_or(DEFAULT_MEMORY_COMPILE_RESULTS),
-            params
-                .max_characters
-                .unwrap_or(DEFAULT_MEMORY_COMPILE_CHARACTERS),
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            compile_session_memory(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                params.max_results.unwrap_or(DEFAULT_MEMORY_COMPILE_RESULTS),
+                params
+                    .max_characters
+                    .unwrap_or(DEFAULT_MEMORY_COMPILE_CHARACTERS),
+            )
+        }))
     }
 
     /// Verify a proposed structured transition against the exact current recovery window.
@@ -1388,12 +1519,14 @@ impl LeyMcpServer {
                 .collect(),
             deferred_evidence_record_ids: params.deferred_evidence_record_ids,
         };
-        Ok(tool_result(verify_memory_transition(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.session_id,
-            input,
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            verify_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                input,
+            )
+        }))
     }
 
     /// Commit exactly one verifier-approved unresolved recovery claim.
@@ -1413,19 +1546,21 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<CommitUnresolvedSessionMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(session_write_result(commit_unresolved_memory_transition(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.session_id,
-            CommitUnresolvedMemoryTransitionInput {
-                request_id: params.request_id,
-                expected_event_count: params.expected_event_count,
-                candidate_fingerprint: params.candidate_fingerprint,
-                subject: params.subject,
-                statement: params.statement,
-                evidence_record_ids: params.evidence_record_ids,
-            },
-        )))
+        Ok(self.gated_session_write_result(|| {
+            commit_unresolved_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                CommitUnresolvedMemoryTransitionInput {
+                    request_id: params.request_id,
+                    expected_event_count: params.expected_event_count,
+                    candidate_fingerprint: params.candidate_fingerprint,
+                    subject: params.subject,
+                    statement: params.statement,
+                    evidence_record_ids: params.evidence_record_ids,
+                },
+            )
+        }))
     }
 
     /// List bounded project lessons, defaulting to current user-trusted memory only.
@@ -1443,15 +1578,17 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<ListLearningsParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(list_learning_contexts(
-            self.project.as_path(),
-            self.vault.as_path(),
-            params
-                .scope
-                .unwrap_or(McpLearningScope::CurrentTrusted)
-                .into(),
-            params.max_results.unwrap_or(DEFAULT_LEARNING_LIST_RESULTS),
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            list_learning_contexts(
+                self.project.as_path(),
+                self.vault.as_path(),
+                params
+                    .scope
+                    .unwrap_or(McpLearningScope::CurrentTrusted)
+                    .into(),
+                params.max_results.unwrap_or(DEFAULT_LEARNING_LIST_RESULTS),
+            )
+        }))
     }
 
     /// Read one bounded learning with trust, freshness, history, and session citations.
@@ -1469,23 +1606,25 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<LearningContextParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(tool_result(read_learning_context(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.learning_id,
-            params
-                .max_evidence
-                .unwrap_or(DEFAULT_LEARNING_CONTEXT_EVIDENCE),
-            params
-                .max_history
-                .unwrap_or(DEFAULT_LEARNING_CONTEXT_HISTORY),
-            params
-                .max_artifacts_per_evidence
-                .unwrap_or(DEFAULT_LEARNING_CONTEXT_ARTIFACTS),
-            params
-                .max_characters
-                .unwrap_or(DEFAULT_LEARNING_CONTEXT_CHARACTERS),
-        )))
+        Ok(self.gated_historical_tool_result(|| {
+            read_learning_context(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.learning_id,
+                params
+                    .max_evidence
+                    .unwrap_or(DEFAULT_LEARNING_CONTEXT_EVIDENCE),
+                params
+                    .max_history
+                    .unwrap_or(DEFAULT_LEARNING_CONTEXT_HISTORY),
+                params
+                    .max_artifacts_per_evidence
+                    .unwrap_or(DEFAULT_LEARNING_CONTEXT_ARTIFACTS),
+                params
+                    .max_characters
+                    .unwrap_or(DEFAULT_LEARNING_CONTEXT_CHARACTERS),
+            )
+        }))
     }
 
     /// Append one agent-authored, evidence-backed proposal that always requires user review.
@@ -1503,28 +1642,30 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<ProposeLearningParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(learning_proposal_result(propose_learning(
-            self.project.as_path(),
-            self.vault.as_path(),
-            ProposeLearningInput {
-                request_id: params.request_id,
-                actor: LearningActor::Agent,
-                kind: params.kind.into(),
-                title: params.title,
-                guidance: params.guidance,
-                confidence_percent: params.confidence_percent,
-                provenance: params.provenance.into(),
-                evidence: params
-                    .evidence
-                    .into_iter()
-                    .map(|evidence| LearningEvidenceInput {
-                        session_id: evidence.session_id,
-                        record_id: evidence.record_id,
-                        note: evidence.note,
-                    })
-                    .collect(),
-            },
-        )))
+        Ok(self.gated_learning_proposal_result(|| {
+            propose_learning(
+                self.project.as_path(),
+                self.vault.as_path(),
+                ProposeLearningInput {
+                    request_id: params.request_id,
+                    actor: LearningActor::Agent,
+                    kind: params.kind.into(),
+                    title: params.title,
+                    guidance: params.guidance,
+                    confidence_percent: params.confidence_percent,
+                    provenance: params.provenance.into(),
+                    evidence: params
+                        .evidence
+                        .into_iter()
+                        .map(|evidence| LearningEvidenceInput {
+                            session_id: evidence.session_id,
+                            record_id: evidence.record_id,
+                            note: evidence.note,
+                        })
+                        .collect(),
+                },
+            )
+        }))
     }
 
     /// Start one append-only structured session with an explicit idempotency key.
@@ -1542,20 +1683,22 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<StartSessionParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(session_write_result(start_session(
-            self.project.as_path(),
-            self.vault.as_path(),
-            StartSessionInput {
-                request_id: params.request_id,
-                name: params.name,
-                goal: params.goal,
-                source: SessionSource {
-                    kind: SessionSourceKind::Mcp,
-                    host: params.host,
-                    agent: params.agent,
+        Ok(self.gated_session_write_result(|| {
+            start_session(
+                self.project.as_path(),
+                self.vault.as_path(),
+                StartSessionInput {
+                    request_id: params.request_id,
+                    name: params.name,
+                    goal: params.goal,
+                    source: SessionSource {
+                        kind: SessionSourceKind::Mcp,
+                        host: params.host,
+                        agent: params.agent,
+                    },
                 },
-            },
-        )))
+            )
+        }))
     }
 
     /// Append one structured checkpoint with cited artifacts and explicit idempotency.
@@ -1574,22 +1717,23 @@ impl LeyMcpServer {
         Parameters(params): Parameters<CheckpointSessionParams>,
     ) -> Result<CallToolResult, McpError> {
         let (session_id, expected_event_count, input) = checkpoint_input(params);
-        let result = match expected_event_count {
-            Some(expected_event_count) => checkpoint_session_if_current(
-                self.project.as_path(),
-                self.vault.as_path(),
-                &session_id,
-                expected_event_count,
-                input,
-            ),
-            None => checkpoint_session(
-                self.project.as_path(),
-                self.vault.as_path(),
-                &session_id,
-                input,
-            ),
-        };
-        Ok(session_write_result(result))
+        Ok(
+            self.gated_session_write_result(|| match expected_event_count {
+                Some(expected_event_count) => checkpoint_session_if_current(
+                    self.project.as_path(),
+                    self.vault.as_path(),
+                    &session_id,
+                    expected_event_count,
+                    input,
+                ),
+                None => checkpoint_session(
+                    self.project.as_path(),
+                    self.vault.as_path(),
+                    &session_id,
+                    input,
+                ),
+            }),
+        )
     }
 
     /// Finish, pause, or abandon one active session while preserving immutable history.
@@ -1607,19 +1751,21 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<FinishSessionParams>,
     ) -> Result<CallToolResult, McpError> {
-        Ok(session_write_result(finish_session(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.session_id,
-            FinishSessionInput {
-                request_id: params.request_id,
-                status: params.status.into(),
-                summary: params.summary,
-                final_response: params.final_response,
-                handoff: params.handoff,
-                unresolved: params.unresolved,
-            },
-        )))
+        Ok(self.gated_session_write_result(|| {
+            finish_session(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                FinishSessionInput {
+                    request_id: params.request_id,
+                    status: params.status.into(),
+                    summary: params.summary,
+                    final_response: params.final_response,
+                    handoff: params.handoff,
+                    unresolved: params.unresolved,
+                },
+            )
+        }))
     }
 }
 
@@ -1664,13 +1810,19 @@ impl ServerHandler for LeyMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        Ok(ListResourcesResult::with_all_items(vec![Resource::new(
-            self.overview_uri.to_string(),
-            "ley-project-overview",
-        )
-        .with_title(format!("{} project overview", self.project_name))
-        .with_description("Read-only identity, snapshot, graph, freshness, and privacy metadata")
-        .with_mime_type("application/json")]))
+        self.egress_policy_registry
+            .with_project_egress_locked(self.project.as_path(), self.egress_target, || {
+                Ok(ListResourcesResult::with_all_items(vec![Resource::new(
+                    self.overview_uri.to_string(),
+                    "ley-project-overview",
+                )
+                .with_title(format!("{} project overview", self.project_name))
+                .with_description(
+                    "Read-only identity, snapshot, graph, freshness, and privacy metadata",
+                )
+                .with_mime_type("application/json")]))
+            })
+            .map_err(|error| McpError::internal_error(safe_error_message(&error), None))
     }
 
     async fn read_resource(
@@ -1684,15 +1836,22 @@ impl ServerHandler for LeyMcpServer {
                 None,
             ));
         }
-        let overview = project_memory_overview(self.project.as_path(), self.vault.as_path())
-            .map_err(|error| McpError::internal_error(safe_error_message(&error), None))?;
-        let text = serde_json::to_string_pretty(&overview)
-            .map_err(|_| McpError::internal_error("could not serialize Ley overview", None))?;
-        Ok(ReadResourceResult::new(vec![ResourceContents::text(
-            text,
-            self.overview_uri.to_string(),
-        )
-        .with_mime_type("application/json")]))
+        self.egress_policy_registry
+            .with_project_egress_locked(self.project.as_path(), self.egress_target, || {
+                let overview =
+                    project_memory_overview(self.project.as_path(), self.vault.as_path())?;
+                let text = serde_json::to_string_pretty(&overview).map_err(|_| {
+                    LeyCoreError::ProjectMemoryUnavailable(
+                        "could not serialize Ley overview".to_owned(),
+                    )
+                })?;
+                Ok(ReadResourceResult::new(vec![ResourceContents::text(
+                    text,
+                    self.overview_uri.to_string(),
+                )
+                .with_mime_type("application/json")]))
+            })
+            .map_err(|error| McpError::internal_error(safe_error_message(&error), None))
     }
 }
 
@@ -1702,11 +1861,28 @@ pub fn run_stdio(
     allow_session_writes: bool,
     allow_learning_proposals: bool,
 ) -> Result<(), McpServerError> {
-    let server = LeyMcpServer::new_with_capabilities(
+    run_stdio_with_egress_target(
         project,
         vault,
         allow_session_writes,
         allow_learning_proposals,
+        AgentEgressTarget::Cloud,
+    )
+}
+
+pub fn run_stdio_with_egress_target(
+    project: PathBuf,
+    vault: PathBuf,
+    allow_session_writes: bool,
+    allow_learning_proposals: bool,
+    egress_target: AgentEgressTarget,
+) -> Result<(), McpServerError> {
+    let server = LeyMcpServer::new_with_capabilities_and_egress_target(
+        project,
+        vault,
+        allow_session_writes,
+        allow_learning_proposals,
+        egress_target,
     )?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1828,8 +2004,8 @@ fn checkpoint_input(params: CheckpointSessionParams) -> (String, Option<u64>, Ch
     )
 }
 
-fn session_write_result(result: Result<SessionMutation, LeyCoreError>) -> CallToolResult {
-    tool_result(result.map(|mutation| SessionWriteReceipt {
+fn session_write_receipt(mutation: SessionMutation) -> SessionWriteReceipt {
+    SessionWriteReceipt {
         project_id: mutation.session.project_id,
         session_id: mutation.session.session_id,
         event_id: mutation.event_id,
@@ -1838,11 +2014,11 @@ fn session_write_result(result: Result<SessionMutation, LeyCoreError>) -> CallTo
         checkpoint_count: mutation.session.checkpoints.len(),
         updated_at_unix_ms: mutation.session.updated_at_unix_ms,
         replayed: mutation.replayed,
-    }))
+    }
 }
 
-fn learning_proposal_result(result: Result<LearningMutation, LeyCoreError>) -> CallToolResult {
-    tool_result(result.map(|mutation| LearningProposalReceipt {
+fn learning_proposal_receipt(mutation: LearningMutation) -> LearningProposalReceipt {
+    LearningProposalReceipt {
         project_id: mutation.learning.project_id,
         learning_id: mutation.learning.learning_id,
         event_id: mutation.event_id,
@@ -1854,7 +2030,7 @@ fn learning_proposal_result(result: Result<LearningMutation, LeyCoreError>) -> C
         updated_at_unix_ms: mutation.learning.updated_at_unix_ms,
         replayed: mutation.replayed,
         requires_user_review: true,
-    }))
+    }
 }
 
 fn tool_result<T: serde::Serialize>(result: Result<T, LeyCoreError>) -> CallToolResult {
@@ -1903,6 +2079,18 @@ fn safe_error_message(error: &LeyCoreError) -> String {
         LeyCoreError::LearningIdempotencyConflict(request_id) => {
             format!("request ID was already used with different learning content: {request_id}")
         }
+        LeyCoreError::AgentDerivedEgressUnproven { target } => format!(
+            "historical Ley memory is withheld because source-level egress inheritance cannot be proven for target '{target}'"
+        ),
+        LeyCoreError::AgentEgressDenied { policy, target } => {
+            format!("agent egress denied by {policy} policy for {target} target")
+        }
+        LeyCoreError::InvalidEgressPolicyRequest(message) => {
+            format!("invalid agent egress request: {message}")
+        }
+        LeyCoreError::InvalidEgressPolicyRegistry(_) => {
+            "agent egress policy is unavailable or invalid".to_owned()
+        }
         LeyCoreError::ProjectMemoryUnavailable(message) => {
             format!("project memory is unavailable: {message}")
         }
@@ -1926,9 +2114,10 @@ mod tests {
     use super::*;
     use ley_core::{
         checkpoint_session, ingest_project, initialize_project, record_session_prompt,
-        start_session, AttemptInput, BindingRegistry, CaptureMode, CheckpointInput, DecisionInput,
-        ProblemInput, ResolutionInput, SessionSource, StartSessionInput, TurnEvidenceInput,
-        TurnEvidenceOrigin, MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS, MAX_PROJECT_ACTIVITY_RESULTS,
+        start_session, AgentEgressPolicy, AttemptInput, BindingRegistry, CaptureMode,
+        CheckpointInput, DecisionInput, ProblemInput, ResolutionInput, SessionSource,
+        StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
+        MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS, MAX_PROJECT_ACTIVITY_RESULTS,
     };
     use rmcp::{
         model::{CallToolRequestParams, ClientInfo},
@@ -1968,6 +2157,9 @@ mod tests {
         ));
         server.context_mount_registry = Arc::new(ContextMountRegistry::at(
             temporary.path().join("context-mounts-v1.json"),
+        ));
+        server.egress_policy_registry = Arc::new(EgressPolicyRegistry::at(
+            temporary.path().join("agent-egress-v1.json"),
         ));
         (temporary, project, vault, server)
     }
@@ -2409,6 +2601,213 @@ mod tests {
         assert_eq!(changed["changedApproved"], 1);
         assert_eq!(changed["specifications"].as_array().unwrap().len(), 0);
         assert_eq!(changed["exclusions"][0]["reason"], "changed");
+    }
+
+    #[tokio::test]
+    async fn running_server_rechecks_project_egress_before_each_agent_read() {
+        let (_temporary, project, _vault, server) = fixture();
+        let before = server.project_overview().await.unwrap();
+        assert_eq!(before.is_error, Some(false));
+
+        server
+            .egress_policy_registry
+            .set_project_policy(&project, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        let blocked = server.project_overview().await.unwrap();
+        assert_eq!(blocked.is_error, Some(true));
+        let blocked_json = blocked.structured_content.unwrap();
+        assert!(blocked_json["error"]
+            .as_str()
+            .unwrap()
+            .contains("never-send"));
+
+        let blocked_search = server
+            .search_context(Parameters(SearchContextParams {
+                query: "stable evidence".to_owned(),
+                max_results: Some(4),
+                max_tokens: Some(1_000),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(blocked_search.is_error, Some(true));
+        assert!(!blocked_search
+            .structured_content
+            .unwrap()
+            .to_string()
+            .contains("stable evidence"));
+
+        server
+            .egress_policy_registry
+            .set_project_policy(&project, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        let restored = server.project_overview().await.unwrap();
+        assert_eq!(restored.is_error, Some(false));
+    }
+
+    #[tokio::test]
+    async fn specification_egress_is_enforced_in_direct_and_compiled_mcp_context() {
+        let (_temporary, project, vault, mut server) = fixture();
+        fs::create_dir_all(vault.join("Specs")).unwrap();
+        let marker = "mcp_private_specification_marker";
+        fs::write(
+            vault.join("Specs/Private.md"),
+            format!("# Private requirement\n\n{marker}\n"),
+        )
+        .unwrap();
+        let specification_id = ley_core::generate_specification_id();
+        server
+            .specification_registry
+            .approve(&project, &vault, &specification_id, "Specs/Private.md")
+            .unwrap();
+        server
+            .egress_policy_registry
+            .set_specification_policy(
+                &project,
+                &specification_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+
+        let cloud_direct = server
+            .project_specifications(Parameters(ProjectSpecificationsParams {
+                max_results: Some(4),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(cloud_direct.is_error, Some(false));
+        let cloud_direct = cloud_direct.structured_content.unwrap();
+        assert_eq!(cloud_direct["egressTarget"], "cloud");
+        assert_eq!(cloud_direct["egressCoverage"]["blockedSpecifications"], 1);
+        assert_eq!(
+            cloud_direct["egressExclusions"][0]["specificationId"],
+            specification_id
+        );
+        assert!(cloud_direct["specifications"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let serialized = cloud_direct.to_string();
+        assert!(!serialized.contains(marker));
+        assert!(!serialized.contains("Specs/Private.md"));
+
+        let cloud_compiled = server
+            .compile_context(Parameters(CompileContextParams {
+                task: "Private requirement".to_owned(),
+                max_results: Some(4),
+                max_tokens: Some(1_500),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(cloud_compiled.is_error, Some(false));
+        let cloud_compiled = cloud_compiled.structured_content.unwrap();
+        assert_eq!(cloud_compiled["egressTarget"], "cloud");
+        assert_eq!(cloud_compiled["egressCoverage"]["blockedSpecifications"], 1);
+        assert!(cloud_compiled["specifications"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(!cloud_compiled.to_string().contains(marker));
+
+        server.egress_target = AgentEgressTarget::Local;
+        let local_direct = server
+            .project_specifications(Parameters(ProjectSpecificationsParams {
+                max_results: Some(4),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(local_direct.is_error, Some(false));
+        let local_direct = local_direct.structured_content.unwrap();
+        assert_eq!(local_direct["egressTarget"], "local");
+        assert!(local_direct["specifications"][0]["source"]
+            .as_str()
+            .unwrap()
+            .contains(marker));
+    }
+
+    #[tokio::test]
+    async fn restricted_source_blocks_unproven_historical_memory_but_not_direct_project_evidence() {
+        let (_temporary, project, vault, mut server) = fixture();
+        fs::create_dir_all(vault.join("Specs")).unwrap();
+        fs::write(
+            vault.join("Specs/Private.md"),
+            "# Private requirement\n\nDo not disclose the private launch procedure.\n",
+        )
+        .unwrap();
+        let specification_id = ley_core::generate_specification_id();
+        server
+            .specification_registry
+            .approve(&project, &vault, &specification_id, "Specs/Private.md")
+            .unwrap();
+        server
+            .egress_policy_registry
+            .set_specification_policy(
+                &project,
+                &specification_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "c".repeat(32)),
+                name: "Sensitive derivative".to_owned(),
+                goal: "private_historical_derivative_marker".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let cloud_session = server
+            .session_get(Parameters(SessionContextParams {
+                session_id: started.session.session_id.clone(),
+                max_checkpoints: Some(2),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(cloud_session.is_error, Some(true));
+        let cloud_session = cloud_session.structured_content.unwrap();
+        assert!(cloud_session["error"]
+            .as_str()
+            .unwrap()
+            .contains("historical Ley memory is withheld"));
+        assert!(!cloud_session
+            .to_string()
+            .contains("private_historical_derivative_marker"));
+
+        let direct_evidence = server
+            .search_context(Parameters(SearchContextParams {
+                query: "stable evidence".to_owned(),
+                max_results: Some(4),
+                max_tokens: Some(1_000),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(direct_evidence.is_error, Some(false));
+        assert!(direct_evidence
+            .structured_content
+            .unwrap()
+            .to_string()
+            .contains("stable evidence"));
+
+        server.egress_target = AgentEgressTarget::Local;
+        let local_session = server
+            .session_get(Parameters(SessionContextParams {
+                session_id: started.session.session_id,
+                max_checkpoints: Some(2),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(local_session.is_error, Some(false));
+        assert!(local_session
+            .structured_content
+            .unwrap()
+            .to_string()
+            .contains("private_historical_derivative_marker"));
     }
 
     #[tokio::test]

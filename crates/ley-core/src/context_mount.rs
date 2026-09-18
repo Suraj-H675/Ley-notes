@@ -13,11 +13,13 @@ use uuid::Uuid;
 
 pub const CONTEXT_MOUNT_REGISTRY_FILE: &str = "context-mounts-v1.json";
 const CONTEXT_MOUNT_REGISTRY_LOCK_FILE: &str = "context-mounts-v1.lock";
-pub const CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION: u32 = 2;
+pub const CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION: u32 = 3;
 const LEGACY_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION: u32 = 1;
+const AGENT_ENABLED_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION: u32 = 2;
 pub const MAX_CONTEXT_MOUNTS_PER_PROJECT: usize = 16;
+pub const MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT: usize = 256;
 
-const PRIVACY_NOTICE: &str = "Context Mount authority stores only active/source project identities, a stable mount ID, creation time, and whether the user explicitly enabled bounded agent context. Project and vault paths remain owned by Ley's private project catalog and binding registry. Legacy v1 mounts remain agent-disabled until explicitly re-added.";
+const PRIVACY_NOTICE: &str = "Context Mount authority stores only active/source project identities, a stable mount ID, creation time, whether the user explicitly enabled bounded agent context, and bounded historical mount-ID/source-project-ID pairs so later mount or source egress restrictions can still constrain unproven derivatives after unmount. Project and vault paths remain owned by Ley's private project catalog and binding registry. Legacy v1 mounts remain agent-disabled until explicitly re-added.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -66,6 +68,18 @@ pub struct ContextMountList {
     pub privacy_notice: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMountEgressSource {
+    pub mount_id: String,
+    pub source_project_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMountEgressSources {
+    pub active: Vec<ContextMountEgressSource>,
+    pub historical: Vec<ContextMountEgressSource>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ContextMountEntry {
@@ -80,6 +94,8 @@ struct ContextMountEntry {
 struct ContextMountRegistryDocument {
     schema_version: u32,
     mounts: BTreeMap<String, BTreeMap<String, ContextMountEntry>>,
+    #[serde(default)]
+    agent_mount_history: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl ContextMountRegistryDocument {
@@ -87,17 +103,26 @@ impl ContextMountRegistryDocument {
         Self {
             schema_version: CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
             mounts: BTreeMap::new(),
+            agent_mount_history: BTreeMap::new(),
         }
     }
 
     fn validate(&self) -> Result<(), LeyCoreError> {
         if self.schema_version != LEGACY_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
+            && self.schema_version != AGENT_ENABLED_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
             && self.schema_version != CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
         {
             return Err(LeyCoreError::InvalidContextMountRegistry(format!(
                 "unsupported schema version {}",
                 self.schema_version
             )));
+        }
+        if self.schema_version != CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
+            && !self.agent_mount_history.is_empty()
+        {
+            return Err(LeyCoreError::InvalidContextMountRegistry(
+                "pre-v3 Context Mount documents cannot contain agent mount history".to_owned(),
+            ));
         }
         for (active_project_id, mounts) in &self.mounts {
             validate_project_id(active_project_id).map_err(|error| {
@@ -142,6 +167,85 @@ impl ContextMountRegistryDocument {
                 }
             }
         }
+        for (active_project_id, mounts) in &self.agent_mount_history {
+            validate_project_id(active_project_id).map_err(|error| {
+                LeyCoreError::InvalidContextMountRegistry(format!(
+                    "invalid mount-history active project ID '{active_project_id}': {error}"
+                ))
+            })?;
+            if mounts.len() > MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT {
+                return Err(LeyCoreError::InvalidContextMountRegistry(format!(
+                    "project {active_project_id} has more than {MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT} historical agent-enabled Context Mounts"
+                )));
+            }
+            for (mount_id, source_project_id) in mounts {
+                validate_mount_id(mount_id).map_err(LeyCoreError::InvalidContextMountRegistry)?;
+                validate_project_id(source_project_id).map_err(|error| {
+                    LeyCoreError::InvalidContextMountRegistry(format!(
+                        "invalid historical source project ID for {mount_id}: {error}"
+                    ))
+                })?;
+                if source_project_id == active_project_id {
+                    return Err(LeyCoreError::InvalidContextMountRegistry(
+                        "Context Mount history cannot reference its active project".to_owned(),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn upgrade_for_write(&mut self) -> Result<(), LeyCoreError> {
+        if self.schema_version == AGENT_ENABLED_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION {
+            let enabled = self
+                .mounts
+                .iter()
+                .flat_map(|(active_project_id, mounts)| {
+                    mounts
+                        .iter()
+                        .filter(|(_, entry)| entry.agent_context_enabled)
+                        .map(|(mount_id, entry)| {
+                            (
+                                active_project_id.clone(),
+                                mount_id.clone(),
+                                entry.source_project_id.clone(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            for (active_project_id, mount_id, source_project_id) in enabled {
+                self.remember_agent_mount(&active_project_id, &mount_id, &source_project_id)?;
+            }
+        }
+        self.schema_version = CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION;
+        Ok(())
+    }
+
+    fn remember_agent_mount(
+        &mut self,
+        active_project_id: &str,
+        mount_id: &str,
+        source_project_id: &str,
+    ) -> Result<(), LeyCoreError> {
+        let mounts = self
+            .agent_mount_history
+            .entry(active_project_id.to_owned())
+            .or_default();
+        if !mounts.contains_key(mount_id) && mounts.len() >= MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT {
+            return Err(LeyCoreError::InvalidContextMountRequest(format!(
+                "an active project may retain at most {MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT} agent-enabled Context Mount identities for egress inheritance"
+            )));
+        }
+        if let Some(existing_source) = mounts.get(mount_id) {
+            if existing_source != source_project_id {
+                return Err(LeyCoreError::InvalidContextMountRegistry(format!(
+                    "historical Context Mount {mount_id} changed source project identity"
+                )));
+            }
+        } else {
+            mounts.insert(mount_id.to_owned(), source_project_id.to_owned());
+        }
         Ok(())
     }
 }
@@ -160,6 +264,7 @@ pub(crate) struct ResolvedProjectContextMounts {
     pub active_project_id: String,
     pub ready: Vec<ResolvedProjectContextMount>,
     pub unavailable: Vec<ContextMount>,
+    pub historical_mounts: Vec<ContextMountEgressSource>,
 }
 
 #[derive(Debug, Clone)]
@@ -190,6 +295,38 @@ impl ContextMountRegistry {
         &self.path
     }
 
+    pub fn contains_mount(
+        &self,
+        active_project: impl AsRef<Path>,
+        mount_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_mount_id(mount_id).map_err(LeyCoreError::InvalidContextMountRequest)?;
+        let active_project_id = diagnose_project(active_project)?.identity.project_id;
+        let document = self.read_locked()?;
+        Ok(document
+            .mounts
+            .get(&active_project_id)
+            .is_some_and(|mounts| mounts.contains_key(mount_id)))
+    }
+
+    pub fn contains_mount_or_history(
+        &self,
+        active_project: impl AsRef<Path>,
+        mount_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_mount_id(mount_id).map_err(LeyCoreError::InvalidContextMountRequest)?;
+        let active_project_id = diagnose_project(active_project)?.identity.project_id;
+        let document = self.read_locked()?;
+        Ok(document
+            .mounts
+            .get(&active_project_id)
+            .is_some_and(|mounts| mounts.contains_key(mount_id))
+            || document
+                .agent_mount_history
+                .get(&active_project_id)
+                .is_some_and(|mounts| mounts.contains_key(mount_id)))
+    }
+
     pub fn mount_project(
         &self,
         active_project: impl AsRef<Path>,
@@ -213,24 +350,49 @@ impl ContextMountRegistry {
         let source_project_name = source.identity.name;
         let created_at_unix_ms = unix_time_ms();
         let (mount_id, created, stored_at) = self.mutate(|document| {
-            let mounts = document
+            let existing = document
                 .mounts
-                .entry(active_project_id.clone())
-                .or_default();
-            if let Some((mount_id, entry)) = mounts
-                .iter_mut()
-                .find(|(_, entry)| entry.source_project_id == source_project_id)
-            {
-                entry.agent_context_enabled = true;
-                return Ok((mount_id.clone(), false, entry.created_at_unix_ms));
+                .get(&active_project_id)
+                .and_then(|mounts| {
+                    mounts
+                        .iter()
+                        .find(|(_, entry)| entry.source_project_id == source_project_id)
+                        .map(|(mount_id, entry)| (mount_id.clone(), entry.created_at_unix_ms))
+                });
+            if let Some((mount_id, stored_at)) = existing {
+                document.remember_agent_mount(
+                    &active_project_id,
+                    &mount_id,
+                    &source_project_id,
+                )?;
+                document
+                    .mounts
+                    .get_mut(&active_project_id)
+                    .and_then(|mounts| mounts.get_mut(&mount_id))
+                    .expect("existing mount remains present under the registry lock")
+                    .agent_context_enabled = true;
+                return Ok((mount_id, false, stored_at));
             }
-            if mounts.len() >= MAX_CONTEXT_MOUNTS_PER_PROJECT {
+            let mounts_len = document
+                .mounts
+                .get(&active_project_id)
+                .map_or(0, BTreeMap::len);
+            if mounts_len >= MAX_CONTEXT_MOUNTS_PER_PROJECT {
                 return Err(LeyCoreError::InvalidContextMountRequest(format!(
                     "an active project may have at most {MAX_CONTEXT_MOUNTS_PER_PROJECT} Context Mounts"
                 )));
             }
             let mount_id = generate_mount_id();
-            mounts.insert(
+            document.remember_agent_mount(
+                &active_project_id,
+                &mount_id,
+                &source_project_id,
+            )?;
+            document
+                .mounts
+                .entry(active_project_id.clone())
+                .or_default()
+                .insert(
                 mount_id.clone(),
                 ContextMountEntry {
                     source_project_id: source_project_id.clone(),
@@ -293,6 +455,49 @@ impl ContextMountRegistry {
         })
     }
 
+    pub fn with_agent_context_sources_locked<T>(
+        &self,
+        active_project: impl AsRef<Path>,
+        operation: impl FnOnce(ContextMountEgressSources) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let active = diagnose_project(active_project)?;
+        let active_project_id = active.identity.project_id;
+        self.with_locked_document(|document| {
+            let mut active_sources = document
+                .mounts
+                .get(&active_project_id)
+                .into_iter()
+                .flat_map(|mounts| mounts.iter())
+                .filter(|(_, entry)| entry.agent_context_enabled)
+                .map(|(mount_id, entry)| ContextMountEgressSource {
+                    mount_id: mount_id.clone(),
+                    source_project_id: entry.source_project_id.clone(),
+                })
+                .collect::<Vec<_>>();
+            active_sources.sort_by(|left, right| left.mount_id.cmp(&right.mount_id));
+            let mut historical = document
+                .agent_mount_history
+                .get(&active_project_id)
+                .cloned()
+                .unwrap_or_default();
+            for source in &active_sources {
+                historical
+                    .entry(source.mount_id.clone())
+                    .or_insert_with(|| source.source_project_id.clone());
+            }
+            operation(ContextMountEgressSources {
+                active: active_sources,
+                historical: historical
+                    .into_iter()
+                    .map(|(mount_id, source_project_id)| ContextMountEgressSource {
+                        mount_id,
+                        source_project_id,
+                    })
+                    .collect(),
+            })
+        })
+    }
+
     pub(crate) fn with_resolved_project_mounts_locked<T>(
         &self,
         active_project: impl AsRef<Path>,
@@ -306,6 +511,19 @@ impl ContextMountRegistry {
                 .get(&active_project_id)
                 .cloned()
                 .unwrap_or_default();
+            let mut historical = document
+                .agent_mount_history
+                .get(&active_project_id)
+                .cloned()
+                .unwrap_or_default();
+            for (mount_id, entry) in entries
+                .iter()
+                .filter(|(_, entry)| entry.agent_context_enabled)
+            {
+                historical
+                    .entry(mount_id.clone())
+                    .or_insert_with(|| entry.source_project_id.clone());
+            }
             let mut ready = Vec::new();
             let mut unavailable = Vec::new();
             for (mount_id, entry) in entries {
@@ -360,6 +578,13 @@ impl ContextMountRegistry {
                 active_project_id: active_project_id.clone(),
                 ready,
                 unavailable,
+                historical_mounts: historical
+                    .into_iter()
+                    .map(|(mount_id, source_project_id)| ContextMountEgressSource {
+                        mount_id,
+                        source_project_id,
+                    })
+                    .collect(),
             })
         })
     }
@@ -462,8 +687,8 @@ impl ContextMountRegistry {
         let lock = self.acquire_lock()?;
         let result = (|| {
             let mut document = self.read_document()?;
+            document.upgrade_for_write()?;
             let value = operation(&mut document)?;
-            document.schema_version = CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION;
             document.validate()?;
             self.write_document(&document)?;
             Ok(value)
@@ -608,7 +833,7 @@ fn generate_mount_id() -> String {
     format!("mnt_{}", Uuid::new_v4().simple())
 }
 
-fn validate_mount_id(value: &str) -> Result<(), String> {
+pub(crate) fn validate_mount_id(value: &str) -> Result<(), String> {
     let Some(uuid) = value.strip_prefix("mnt_") else {
         return Err("mountId must start with mnt_".to_owned());
     };
@@ -1042,9 +1267,83 @@ mod tests {
             CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
         );
         assert_eq!(
-            persisted["mounts"][active_id][&mount_id]["agentContextEnabled"],
+            persisted["mounts"][&active_id][&mount_id]["agentContextEnabled"],
             true
         );
+        assert_eq!(
+            persisted["agentMountHistory"][&active_id][&mount_id],
+            source_id
+        );
+    }
+
+    #[test]
+    fn v2_agent_enabled_mount_migrates_mount_history_before_unmount() {
+        let fixture = setup();
+        let active_id = diagnose_project(&fixture.active)
+            .unwrap()
+            .identity
+            .project_id;
+        let source_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        let mount_id = generate_mount_id();
+        let document = serde_json::json!({
+            "schemaVersion": AGENT_ENABLED_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
+            "mounts": {
+                active_id.clone(): {
+                    mount_id.clone(): {
+                        "sourceProjectId": source_id.clone(),
+                        "createdAtUnixMs": 1,
+                        "agentContextEnabled": true
+                    }
+                }
+            }
+        });
+        fs::write(
+            fixture.registry.path(),
+            format!("{}\n", serde_json::to_string_pretty(&document).unwrap()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(fixture.registry.path(), fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+
+        fixture
+            .registry
+            .unmount(&fixture.active, &mount_id)
+            .unwrap()
+            .unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(fixture.registry.path()).unwrap()).unwrap();
+        assert_eq!(
+            persisted["schemaVersion"],
+            CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
+        );
+        assert!(persisted["mounts"]
+            .get(&active_id)
+            .is_none_or(serde_json::Value::is_null));
+        assert_eq!(
+            persisted["agentMountHistory"][&active_id][&mount_id],
+            source_id
+        );
+        fixture
+            .registry
+            .with_agent_context_sources_locked(&fixture.active, |sources| {
+                assert!(sources.active.is_empty());
+                assert_eq!(
+                    sources.historical,
+                    vec![ContextMountEgressSource {
+                        mount_id: mount_id.clone(),
+                        source_project_id: source_id.clone(),
+                    }]
+                );
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

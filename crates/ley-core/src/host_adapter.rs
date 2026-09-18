@@ -1,6 +1,7 @@
 use crate::{
-    compile_session_memory, project_resume_context, read_session, record_session_prompt,
-    record_session_response, start_session, AgentSession, LeyCoreError, MemoryCompilationState,
+    compile_session_memory, diagnose_project, evaluate_agent_egress, project_resume_context,
+    read_session, record_session_prompt, record_session_response, start_session, AgentEgressTarget,
+    AgentSession, ContextMountRegistry, EgressPolicyRegistry, LeyCoreError, MemoryCompilationState,
     ProjectResumePack, SessionSource, SessionSourceKind, SessionStatus, StartSessionInput,
     TurnEvidenceInput, TurnEvidenceOrigin, DEFAULT_MEMORY_COMPILE_RESULTS,
     MIN_MEMORY_COMPILE_CHARACTERS,
@@ -54,6 +55,7 @@ impl AgentHost {
 #[serde(rename_all = "kebab-case")]
 pub enum HostHookDisposition {
     ContextLoaded,
+    ContextWithheld,
     TurnPrepared,
     TurnCaptured,
     Noop,
@@ -69,6 +71,62 @@ pub struct HostHookResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     pub output: Value,
+}
+
+pub fn process_host_hook_for_agent_with_registries(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    host: AgentHost,
+    payload: Value,
+    egress_registry: &EgressPolicyRegistry,
+    mount_registry: &ContextMountRegistry,
+    target: AgentEgressTarget,
+) -> Result<HostHookResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let object = payload.as_object().ok_or_else(|| {
+        LeyCoreError::InvalidSessionRequest("host hook input must be a JSON object".to_owned())
+    })?;
+    let event = required_text(object.get("hook_event_name"), "hook_event_name")?;
+    let external_session_id = required_text(object.get("session_id"), "session_id")?;
+    validate_host_identifier("session_id", &external_session_id)?;
+    let project_id = diagnose_project(project_start)?.identity.project_id;
+
+    egress_registry.with_snapshot_locked(|policies| {
+        let project_decision = evaluate_agent_egress(policies.project_policy(&project_id), target);
+        if !project_decision.allowed {
+            return Ok(noop(host, event));
+        }
+
+        if event == "SessionStart" {
+            let blocked_fine_grained =
+                policies.has_blocked_fine_grained_source(&project_id, target);
+            let blocked_historical_source =
+                mount_registry.with_agent_context_sources_locked(project_start, |sources| {
+                    Ok(sources.historical.iter().any(|source| {
+                        !evaluate_agent_egress(
+                            policies.project_policy(&source.source_project_id),
+                            target,
+                        )
+                        .allowed
+                    }))
+                })?;
+            if blocked_fine_grained || blocked_historical_source {
+                let session =
+                    ensure_host_session(project_start, vault, host, &external_session_id)?;
+                return Ok(HostHookResult {
+                    schema_version: HOST_ADAPTER_SCHEMA_VERSION,
+                    host,
+                    event,
+                    disposition: HostHookDisposition::ContextWithheld,
+                    session_id: Some(session.clone()),
+                    output: session_start_egress_withheld_output(host, &session, target),
+                });
+            }
+        }
+
+        process_host_hook(project_start, vault, host, payload)
+    })
 }
 
 pub fn process_host_hook(
@@ -350,6 +408,25 @@ fn session_start_output(host: AgentHost, context: &str) -> Value {
     })
 }
 
+fn session_start_egress_withheld_output(
+    host: AgentHost,
+    session_id: &str,
+    target: AgentEgressTarget,
+) -> Value {
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": format!(
+                "# Ley project memory\n\nCurrent Ley session: {session_id}.\nHistorical Ley startup context is withheld by OS-private egress policy for the '{target}' agent target. Do not reconstruct withheld session, learning, Specification, or mounted-reference content from nearby memory. Use ley_compile_context for task-specific context that is allowed for this target; direct captured project evidence may still be available under the active-project policy."
+            )
+        },
+        "systemMessage": format!(
+            "Ley withheld historical project memory for {} because local egress policy restricts this agent target.",
+            host.label()
+        )
+    })
+}
+
 fn turn_start_output(_host: AgentHost, session_id: &str, session: &AgentSession) -> Value {
     let event = "UserPromptSubmit";
     let capture = session.prompts.last().map_or(
@@ -479,8 +556,9 @@ fn stable_request_id(parts: &[&str]) -> String {
 mod tests {
     use super::*;
     use crate::{
-        finish_session, ingest_project, initialize_project, read_session, CaptureMode,
-        FinishSessionInput,
+        finish_session, generate_specification_id, ingest_project, initialize_project,
+        list_sessions, read_session, start_session, AgentEgressPolicy, CaptureMode,
+        ContextMountRegistry, EgressPolicyRegistry, FinishSessionInput, StartSessionInput,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -590,6 +668,105 @@ mod tests {
         assert!(resumed_context.contains("expectedEventCount"));
         assert!(!resumed_context.contains("fix the watcher"));
         assert!(!resumed_context.contains("Implemented the vault watcher"));
+    }
+
+    #[test]
+    fn agent_hook_egress_withholds_startup_history_and_project_denial_is_noop() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        let config = base.path().join("config");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::create_dir(&config).unwrap();
+        fs::write(project.join("README.md"), "# Project\n").unwrap();
+        initialize_project(&project, Some("Hook egress"), CaptureMode::Structured).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let prior_marker = "private_prior_session_marker";
+        start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "a".repeat(32)),
+                name: "Sensitive prior work".to_owned(),
+                goal: prior_marker.to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
+        let specification_id = generate_specification_id();
+        egress
+            .set_specification_policy(
+                &project,
+                &specification_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+
+        let payload = json!({
+            "session_id": "codex-egress-thread",
+            "cwd": project,
+            "hook_event_name": "SessionStart",
+            "source": "startup"
+        });
+        let cloud = process_host_hook_for_agent_with_registries(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            payload.clone(),
+            &egress,
+            &mounts,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(cloud.disposition, HostHookDisposition::ContextWithheld);
+        let cloud_context = cloud.output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(cloud_context.contains("Historical Ley startup context is withheld"));
+        assert!(cloud_context.contains(cloud.session_id.as_deref().unwrap()));
+        assert!(!cloud_context.contains(prior_marker));
+
+        let local = process_host_hook_for_agent_with_registries(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            payload,
+            &egress,
+            &mounts,
+            AgentEgressTarget::Local,
+        )
+        .unwrap();
+        assert_eq!(local.disposition, HostHookDisposition::ContextLoaded);
+        assert!(local.output.to_string().contains(prior_marker));
+
+        egress
+            .set_project_policy(&project, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        let before = list_sessions(&project, &vault).unwrap().len();
+        let blocked = process_host_hook_for_agent_with_registries(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            json!({
+                "session_id": "codex-egress-blocked-thread",
+                "cwd": project,
+                "hook_event_name": "SessionStart",
+                "source": "startup"
+            }),
+            &egress,
+            &mounts,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(blocked.disposition, HostHookDisposition::Noop);
+        assert_eq!(blocked.output, json!({}));
+        assert!(blocked.session_id.is_none());
+        assert_eq!(list_sessions(&project, &vault).unwrap().len(), before);
     }
 
     #[test]

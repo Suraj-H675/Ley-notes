@@ -1,23 +1,24 @@
 use ley_core::{
     checkpoint_session, correct_learning, diagnose_project, erase_session_memory, finish_session,
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
-    learning_review_inbox, list_learnings, list_sessions, preview_capture, process_host_hook,
-    project_resume_context, propose_learning, read_learning, read_project_graph, read_session,
-    read_session_context, read_session_turns_context, record_session_prompt,
-    record_session_response, rename_session, review_learning, search_project_memory,
-    semantic_model_status, start_session, supported_semantic_model, AgentHost, BindingRegistry,
+    learning_review_inbox, list_learnings, list_sessions, preview_capture,
+    process_host_hook_for_agent_with_registries, project_resume_context, propose_learning,
+    read_learning, read_project_graph, read_session, read_session_context,
+    read_session_turns_context, record_session_prompt, record_session_response, rename_session,
+    review_learning, search_project_memory, semantic_model_status, start_session,
+    supported_semantic_model, AgentEgressPolicy, AgentEgressTarget, AgentHost, BindingRegistry,
     CaptureMode, CheckpointInput, CommandInput, ContextMountRegistry, CorrectLearningInput,
-    EraseSessionMemoryInput, FinishSessionInput, GraphNodeKind, LearningActor,
-    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
-    LearningTrustState, LeyCoreError, ProjectMemorySearchLimits, ProposeLearningInput,
-    RenameSessionInput, ReviewLearningInput, SemanticModelStatus, SessionSource, SessionSourceKind,
-    SessionStatus, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
-    VerificationStatus, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    EgressPolicyRegistry, EraseSessionMemoryInput, FinishSessionInput, GraphNodeKind,
+    LearningActor, LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance,
+    LearningState, LearningTrustState, LeyCoreError, ProjectMemorySearchLimits,
+    ProposeLearningInput, RenameSessionInput, ReviewLearningInput, SemanticModelStatus,
+    SessionSource, SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput,
+    TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput, VerificationStatus,
+    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
-use ley_mcp::{run_stdio, run_unavailable_stdio};
+use ley_mcp::{run_stdio_with_egress_target, run_unavailable_stdio};
 use ley_semantic_installer::{
     install_supported_semantic_model_with_progress, SemanticModelInstallerError,
 };
@@ -46,6 +47,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "graph" => graph(&arguments[1..]),
         "hook" => hook(&arguments[1..]),
         "mcp" => mcp(&arguments[1..]),
+        "egress" => egress(&arguments[1..]),
         "mount" => mount(&arguments[1..]),
         "session" => session(&arguments[1..]),
         "learning" => learning(&arguments[1..]),
@@ -159,6 +161,164 @@ fn semantic_install(json: bool) -> Result<(), CliError> {
     } else {
         println!("Semantic retrieval installed and checksum-verified.");
         println!("No project content or query was uploaded.");
+    }
+    Ok(())
+}
+
+fn egress(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "egress requires list, project, specification, or mount".to_owned(),
+        ));
+    };
+    let registry = EgressPolicyRegistry::system_default()?;
+    match command {
+        "list" => {
+            let mut project = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if project.is_none() => project = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.list(&project)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).expect("egress policy is serializable")
+                );
+            } else {
+                println!("Project egress: {}", result.project_policy);
+                if result.specification_overrides.is_empty() {
+                    println!("Specification overrides: none");
+                } else {
+                    println!("Specification overrides:");
+                    for item in &result.specification_overrides {
+                        println!("  {}  {}", item.scope_id, item.policy);
+                    }
+                }
+                if result.mount_overrides.is_empty() {
+                    println!("Context Mount overrides: none");
+                } else {
+                    println!("Context Mount overrides:");
+                    for item in &result.mount_overrides {
+                        println!("  {}  {}", item.scope_id, item.policy);
+                    }
+                }
+                println!("Privacy: {}", result.privacy_notice);
+            }
+            Ok(())
+        }
+        "project" => {
+            let (policy, project, json) = parse_egress_scope_arguments(
+                &arguments[1..],
+                "egress project requires POLICY [PROJECT]",
+            )?;
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.set_project_policy(&project, policy)?;
+            print_egress_mutation(&result, json)
+        }
+        "specification" => {
+            let specification_id = arguments.get(1).ok_or_else(|| {
+                CliError::Usage(
+                    "egress specification requires SPECIFICATION_ID POLICY [PROJECT]".to_owned(),
+                )
+            })?;
+            let (policy, project, json) = parse_egress_scope_arguments(
+                &arguments[2..],
+                "egress specification requires SPECIFICATION_ID POLICY [PROJECT]",
+            )?;
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let specifications = SpecificationRegistry::system_default()?;
+            let approved = specifications.contains_approval(&project, specification_id)?;
+            let retained_override =
+                registry.has_specification_override(&project, specification_id)?;
+            if !approved && !retained_override {
+                return Err(CliError::Usage(format!(
+                    "Specification {specification_id} is neither approved nor retained by egress policy for this project"
+                )));
+            }
+            let result = registry.set_specification_policy(&project, specification_id, policy)?;
+            print_egress_mutation(&result, json)
+        }
+        "mount" => {
+            let mount_id = arguments.get(1).ok_or_else(|| {
+                CliError::Usage("egress mount requires MOUNT_ID POLICY [PROJECT]".to_owned())
+            })?;
+            let (policy, project, json) = parse_egress_scope_arguments(
+                &arguments[2..],
+                "egress mount requires MOUNT_ID POLICY [PROJECT]",
+            )?;
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let mounts = ContextMountRegistry::system_default()?;
+            let known_mount = mounts.contains_mount_or_history(&project, mount_id)?;
+            let retained_override = registry.has_mount_override(&project, mount_id)?;
+            if !known_mount && !retained_override {
+                return Err(CliError::Usage(format!(
+                    "Context Mount {mount_id} is neither current/historical nor retained by egress policy for this project"
+                )));
+            }
+            let result = registry.set_mount_policy(&project, mount_id, policy)?;
+            print_egress_mutation(&result, json)
+        }
+        other => Err(CliError::Usage(format!(
+            "unknown egress command '{other}'; use list, project, specification, or mount"
+        ))),
+    }
+}
+
+fn parse_egress_scope_arguments(
+    arguments: &[String],
+    usage: &str,
+) -> Result<(AgentEgressPolicy, Option<PathBuf>, bool), CliError> {
+    let policy = arguments
+        .first()
+        .ok_or_else(|| CliError::Usage(usage.to_owned()))
+        .and_then(|value| AgentEgressPolicy::parse(value).map_err(CliError::Core))?;
+    let mut project = None;
+    let mut json = false;
+    for argument in &arguments[1..] {
+        match argument.as_str() {
+            "--json" => json = true,
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown option '{value}'")))
+            }
+            value if project.is_none() => project = Some(PathBuf::from(value)),
+            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+        }
+    }
+    Ok((policy, project, json))
+}
+
+fn print_egress_mutation(
+    result: &ley_core::AgentEgressPolicyMutation,
+    json: bool,
+) -> Result<(), CliError> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(result).expect("egress mutation is serializable")
+        );
+    } else {
+        println!(
+            "Agent egress: {:?} {} -> {}",
+            result.scope.scope_kind, result.scope.scope_id, result.scope.policy
+        );
+        if result.scope.policy == AgentEgressPolicy::ConfirmPerUse {
+            println!(
+                "confirm-per-use is fail-closed until Ley has an explicit local confirmation flow."
+            );
+        }
     }
     Ok(())
 }
@@ -385,6 +545,7 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
     let mut host = None;
     let mut project = None;
     let mut vault = None;
+    let mut egress_target = AgentEgressTarget::Cloud;
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -397,6 +558,11 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
             "--vault" => {
                 index += 1;
                 vault = Some(PathBuf::from(required_value(arguments, index, "--vault")?));
+            }
+            "--egress-target" => {
+                index += 1;
+                egress_target =
+                    AgentEgressTarget::parse(required_value(arguments, index, "--egress-target")?)?;
             }
             value if value.starts_with('-') => {
                 return Err(CliError::Usage(format!("unknown option '{value}'")))
@@ -439,7 +605,17 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
         return Err(CliError::Usage("hook input cannot exceed 1 MiB".to_owned()));
     }
     let payload = serde_json::from_slice(&bytes).map_err(CliError::HookJson)?;
-    let result = process_host_hook(&project, &binding.vault_path, host, payload)?;
+    let egress_registry = EgressPolicyRegistry::system_default()?;
+    let mount_registry = ContextMountRegistry::system_default()?;
+    let result = process_host_hook_for_agent_with_registries(
+        &project,
+        &binding.vault_path,
+        host,
+        payload,
+        &egress_registry,
+        &mount_registry,
+        egress_target,
+    )?;
     println!(
         "{}",
         serde_json::to_string(&result.output).expect("hook output is serializable")
@@ -1130,25 +1306,52 @@ fn learning_freshness_label(freshness: ley_core::LearningFreshness) -> &'static 
 fn mcp(arguments: &[String]) -> Result<(), CliError> {
     let mut allow_session_writes = false;
     let mut allow_learning_proposals = false;
+    let mut egress_target = AgentEgressTarget::Cloud;
+    let mut egress_target_set = false;
     let mut binding_arguments_only = Vec::new();
-    for argument in arguments {
-        if argument == "--allow-session-writes" {
-            if allow_session_writes {
-                return Err(CliError::Usage(
-                    "--allow-session-writes may be specified only once".to_owned(),
-                ));
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--allow-session-writes" => {
+                if allow_session_writes {
+                    return Err(CliError::Usage(
+                        "--allow-session-writes may be specified only once".to_owned(),
+                    ));
+                }
+                allow_session_writes = true;
             }
-            allow_session_writes = true;
-        } else if argument == "--allow-learning-proposals" {
-            if allow_learning_proposals {
-                return Err(CliError::Usage(
-                    "--allow-learning-proposals may be specified only once".to_owned(),
-                ));
+            "--allow-learning-proposals" => {
+                if allow_learning_proposals {
+                    return Err(CliError::Usage(
+                        "--allow-learning-proposals may be specified only once".to_owned(),
+                    ));
+                }
+                allow_learning_proposals = true;
             }
-            allow_learning_proposals = true;
-        } else {
-            binding_arguments_only.push(argument.clone());
+            "--egress-target" => {
+                if egress_target_set {
+                    return Err(CliError::Usage(
+                        "--egress-target may be specified only once".to_owned(),
+                    ));
+                }
+                index += 1;
+                let value = required_value(arguments, index, "--egress-target")?;
+                egress_target = AgentEgressTarget::parse(value)?;
+                egress_target_set = true;
+            }
+            value if value.starts_with("--egress-target=") => {
+                if egress_target_set {
+                    return Err(CliError::Usage(
+                        "--egress-target may be specified only once".to_owned(),
+                    ));
+                }
+                let value = value.trim_start_matches("--egress-target=");
+                egress_target = AgentEgressTarget::parse(value)?;
+                egress_target_set = true;
+            }
+            _ => binding_arguments_only.push(arguments[index].clone()),
         }
+        index += 1;
     }
     let parsed = binding_arguments(&binding_arguments_only, false)?;
     if parsed.json {
@@ -1170,13 +1373,21 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
         }
         Err(error) => return Err(error.into()),
     };
-    match run_stdio(
+    match run_stdio_with_egress_target(
         parsed.project,
         binding.vault_path,
         allow_session_writes,
         allow_learning_proposals,
+        egress_target,
     ) {
         Ok(()) => Ok(()),
+        Err(ley_mcp::McpServerError::Project(LeyCoreError::AgentEgressDenied {
+            policy,
+            target,
+        })) => run_unavailable_stdio(format!(
+            "Ley agent context is blocked by the OS-private {policy} egress policy for the configured {target} target. Change policy locally with 'ley egress' or choose an explicitly allowed target."
+        ))
+        .map_err(CliError::Mcp),
         Err(ley_mcp::McpServerError::Project(
             LeyCoreError::ProjectMemoryUnavailable(_)
             | LeyCoreError::InvalidArtifactStore(_)
@@ -2296,9 +2507,15 @@ fn print_help() {
     println!("  ley unbind [path] [--json]");
     println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley graph [path] [--vault TEMPORARY_VAULT] [--json]");
-    println!("  ley hook [path] --host codex|claude [--vault TEMPORARY_VAULT]");
+    println!(
+        "  ley hook [path] --host codex|claude [--vault TEMPORARY_VAULT] [--egress-target cloud|local]"
+    );
     println!("  ley mcp [path] [--vault TEMPORARY_VAULT] [--allow-session-writes]");
-    println!("      [--allow-learning-proposals]");
+    println!("      [--allow-learning-proposals] [--egress-target cloud|local]");
+    println!("  ley egress list [PROJECT] [--json]");
+    println!("  ley egress project POLICY [PROJECT] [--json]");
+    println!("  ley egress specification SPECIFICATION_ID POLICY [PROJECT] [--json]");
+    println!("  ley egress mount MOUNT_ID POLICY [PROJECT] [--json]");
     println!("  ley mount add REFERENCE_PROJECT [ACTIVE_PROJECT] [--json]");
     println!("  ley mount list [ACTIVE_PROJECT] [--json]");
     println!("  ley mount remove MOUNT_ID [ACTIVE_PROJECT] [--json]");

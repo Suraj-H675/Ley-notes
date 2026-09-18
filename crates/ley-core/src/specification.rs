@@ -1,7 +1,9 @@
+use crate::egress_policy::EgressPolicySnapshot;
 use crate::project_memory_search::lexical_score;
 use crate::{
-    default_binding_registry_path, diagnose_project, validate_project_id, LeyCoreError,
-    METADATA_FILE_LIMIT_BYTES,
+    default_binding_registry_path, diagnose_project, evaluate_agent_egress, validate_project_id,
+    AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget, EgressPolicyRegistry,
+    LeyCoreError, METADATA_FILE_LIMIT_BYTES,
 };
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
@@ -114,6 +116,7 @@ pub const DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS: usize = 16_000;
 pub const MIN_SPECIFICATION_CONTEXT_CHARACTERS: usize = 1_000;
 pub const MAX_SPECIFICATION_CONTEXT_CHARACTERS: usize = 64_000;
 const MAX_SPECIFICATION_CONTEXT_EXCLUSIONS: usize = 40;
+const MAX_SPECIFICATION_EGRESS_EXCLUSIONS: usize = 40;
 
 const SPECIFICATION_INSTRUCTION_WARNING: &str = "Approved Specifications express user-authorized human intent for the exact approved Markdown revision. They are not historical evidence, and they do not grant filesystem, network, tool, review, or write permissions. Changed or missing revisions are excluded until the user approves them again.";
 
@@ -165,6 +168,23 @@ pub struct SpecificationContextExclusion {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SpecificationEgressExclusion {
+    pub specification_id: String,
+    pub policy: AgentEgressPolicy,
+    pub block_reason: AgentEgressBlockReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecificationEgressCoverage {
+    pub target: AgentEgressTarget,
+    pub blocked_specifications: usize,
+    pub returned_exclusions: usize,
+    pub omitted_exclusions: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectSpecificationsContext {
     pub project_id: String,
     pub max_characters: usize,
@@ -178,6 +198,12 @@ pub struct ProjectSpecificationsContext {
     pub omitted_specifications: usize,
     pub omitted_exclusions: usize,
     pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub egress_target: Option<AgentEgressTarget>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub egress_exclusions: Vec<SpecificationEgressExclusion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub egress_coverage: Option<SpecificationEgressCoverage>,
     pub project_live_source_checked: bool,
     pub specification_source_revision_checked: bool,
     pub authority: &'static str,
@@ -192,6 +218,18 @@ pub fn project_specifications_context(
     limits: SpecificationContextLimits,
 ) -> Result<ProjectSpecificationsContext, LeyCoreError> {
     SpecificationRegistry::system_default()?.context(project_start, vault, limits)
+}
+
+fn push_context_exclusion(
+    exclusions: &mut Vec<SpecificationContextExclusion>,
+    omitted_exclusions: &mut usize,
+    exclusion: SpecificationContextExclusion,
+) {
+    if exclusions.len() < MAX_SPECIFICATION_CONTEXT_EXCLUSIONS {
+        exclusions.push(exclusion);
+    } else {
+        *omitted_exclusions += 1;
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -278,6 +316,22 @@ impl SpecificationRegistry {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn contains_approval(
+        &self,
+        project_start: impl AsRef<Path>,
+        specification_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_specification_id(specification_id)
+            .map_err(LeyCoreError::InvalidSpecificationRequest)?;
+        let project_id = diagnose_project(project_start)?.identity.project_id;
+        self.with_locked_document(|document| {
+            Ok(document
+                .approvals
+                .get(&project_id)
+                .is_some_and(|approvals| approvals.contains_key(specification_id)))
+        })
     }
 
     pub fn approve(
@@ -487,6 +541,47 @@ impl SpecificationRegistry {
         task: &str,
         operation: impl FnOnce(TaskSpecificationScan) -> Result<T, LeyCoreError>,
     ) -> Result<T, LeyCoreError> {
+        self.with_task_scan_policy_locked(
+            project_start.as_ref(),
+            vault.as_ref(),
+            task,
+            None,
+            |scan, _| operation(scan),
+        )
+    }
+
+    pub(crate) fn with_task_scan_for_agent_locked<T>(
+        &self,
+        project_start: impl AsRef<Path>,
+        vault: impl AsRef<Path>,
+        task: &str,
+        policies: &EgressPolicySnapshot,
+        target: AgentEgressTarget,
+        operation: impl FnOnce(
+            TaskSpecificationScan,
+            Vec<SpecificationEgressExclusion>,
+        ) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        self.with_task_scan_policy_locked(
+            project_start.as_ref(),
+            vault.as_ref(),
+            task,
+            Some((policies, target)),
+            operation,
+        )
+    }
+
+    fn with_task_scan_policy_locked<T>(
+        &self,
+        project_start: &Path,
+        vault: &Path,
+        task: &str,
+        egress: Option<(&EgressPolicySnapshot, AgentEgressTarget)>,
+        operation: impl FnOnce(
+            TaskSpecificationScan,
+            Vec<SpecificationEgressExclusion>,
+        ) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
         let normalized_task = task.trim().to_lowercase();
         let terms = specification_task_terms(&normalized_task);
         let diagnostic = diagnose_project(project_start)?;
@@ -497,31 +592,48 @@ impl SpecificationRegistry {
                 .get(&project_id)
                 .cloned()
                 .unwrap_or_default();
-            let total_approved = approvals.len();
+            let mut total_approved = 0usize;
             let mut candidates = Vec::new();
             let mut exclusions = Vec::new();
+            let mut egress_exclusions = Vec::new();
             let mut current_approved = 0;
             let mut changed_approved = 0;
             let mut missing_approved = 0;
             let mut low_relevance_approved = 0;
 
             for (specification_id, entry) in approvals {
-                let source =
-                    match read_stable_specification_bytes(vault.as_ref(), &entry.relative_path) {
-                        Ok(source) => source,
-                        Err(LeyCoreError::Io { source, .. })
-                            if source.kind() == std::io::ErrorKind::NotFound =>
-                        {
-                            missing_approved += 1;
-                            exclusions.push(TaskSpecificationExclusion {
-                                specification_id,
-                                relative_path: entry.relative_path,
-                                reason: TaskSpecificationExclusionReason::Missing,
-                            });
-                            continue;
-                        }
-                        Err(error) => return Err(error),
-                    };
+                if let Some((policies, target)) = egress {
+                    let decision = evaluate_agent_egress(
+                        policies.specification_policy(&project_id, &specification_id),
+                        target,
+                    );
+                    if !decision.allowed {
+                        egress_exclusions.push(SpecificationEgressExclusion {
+                            specification_id,
+                            policy: decision.policy,
+                            block_reason: decision
+                                .block_reason
+                                .expect("blocked egress decision has a reason"),
+                        });
+                        continue;
+                    }
+                }
+                total_approved += 1;
+                let source = match read_stable_specification_bytes(vault, &entry.relative_path) {
+                    Ok(source) => source,
+                    Err(LeyCoreError::Io { source, .. })
+                        if source.kind() == std::io::ErrorKind::NotFound =>
+                    {
+                        missing_approved += 1;
+                        exclusions.push(TaskSpecificationExclusion {
+                            specification_id,
+                            relative_path: entry.relative_path,
+                            reason: TaskSpecificationExclusionReason::Missing,
+                        });
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
                 let content_hash = specification_content_hash(&source);
                 if content_hash != entry.content_hash {
                     changed_approved += 1;
@@ -583,16 +695,19 @@ impl SpecificationRegistry {
                     })
             });
 
-            operation(TaskSpecificationScan {
-                project_id: project_id.clone(),
-                candidates,
-                exclusions,
-                total_approved,
-                current_approved,
-                changed_approved,
-                missing_approved,
-                low_relevance_approved,
-            })
+            operation(
+                TaskSpecificationScan {
+                    project_id: project_id.clone(),
+                    candidates,
+                    exclusions,
+                    total_approved,
+                    current_approved,
+                    changed_approved,
+                    missing_approved,
+                    low_relevance_approved,
+                },
+                egress_exclusions,
+            )
         })
     }
 
@@ -704,12 +819,210 @@ impl SpecificationRegistry {
             omitted_specifications,
             omitted_exclusions,
             truncated: omitted_specifications > 0 || omitted_exclusions > 0,
+            egress_target: None,
+            egress_exclusions: Vec::new(),
+            egress_coverage: None,
             project_live_source_checked: false,
             specification_source_revision_checked: true,
             authority: "human-intent",
             source_boundary: "user-approved-specification",
             instruction_warning: SPECIFICATION_INSTRUCTION_WARNING,
             privacy_notice: PRIVACY_NOTICE,
+        })
+    }
+
+    pub fn context_for_agent(
+        &self,
+        project_start: impl AsRef<Path>,
+        vault: impl AsRef<Path>,
+        limits: SpecificationContextLimits,
+        egress_registry: &EgressPolicyRegistry,
+        target: AgentEgressTarget,
+    ) -> Result<ProjectSpecificationsContext, LeyCoreError> {
+        validate_specification_context_limits(limits)?;
+        let project_start = project_start.as_ref();
+        let vault = vault.as_ref();
+        let project_id = diagnose_project(project_start)?.identity.project_id;
+        egress_registry.with_snapshot_locked(|policies| {
+            let project_decision =
+                evaluate_agent_egress(policies.project_policy(&project_id), target);
+            if !project_decision.allowed {
+                return Err(LeyCoreError::AgentEgressDenied {
+                    policy: project_decision.policy.to_string(),
+                    target: target.to_string(),
+                });
+            }
+            self.context_for_agent_with_policies(
+                project_start,
+                vault,
+                limits,
+                policies,
+                target,
+                &project_id,
+            )
+        })
+    }
+
+    fn context_for_agent_with_policies(
+        &self,
+        _project_start: &Path,
+        vault: &Path,
+        limits: SpecificationContextLimits,
+        policies: &EgressPolicySnapshot,
+        target: AgentEgressTarget,
+        project_id: &str,
+    ) -> Result<ProjectSpecificationsContext, LeyCoreError> {
+        self.with_locked_document(|document| {
+            let approvals = document
+                .approvals
+                .get(project_id)
+                .cloned()
+                .unwrap_or_default();
+            let mut specifications = Vec::new();
+            let mut exclusions = Vec::new();
+            let mut omitted_exclusions = 0usize;
+            let mut egress_exclusions = Vec::new();
+            let mut omitted_egress_exclusions = 0usize;
+            let mut blocked_specifications = 0usize;
+            let mut total_approved = 0usize;
+            let mut current_approved = 0usize;
+            let mut changed_approved = 0usize;
+            let mut missing_approved = 0usize;
+            let mut text_characters = 0usize;
+
+            for (specification_id, entry) in approvals {
+                let decision = evaluate_agent_egress(
+                    policies.specification_policy(project_id, &specification_id),
+                    target,
+                );
+                if !decision.allowed {
+                    blocked_specifications += 1;
+                    let exclusion = SpecificationEgressExclusion {
+                        specification_id,
+                        policy: decision.policy,
+                        block_reason: decision
+                            .block_reason
+                            .expect("blocked egress decision has a reason"),
+                    };
+                    if egress_exclusions.len() < MAX_SPECIFICATION_EGRESS_EXCLUSIONS {
+                        egress_exclusions.push(exclusion);
+                    } else {
+                        omitted_egress_exclusions += 1;
+                    }
+                    continue;
+                }
+                total_approved += 1;
+
+                let source = match read_stable_specification_bytes(vault, &entry.relative_path) {
+                    Ok(source) => source,
+                    Err(LeyCoreError::Io { source, .. })
+                        if source.kind() == std::io::ErrorKind::NotFound =>
+                    {
+                        missing_approved += 1;
+                        push_context_exclusion(
+                            &mut exclusions,
+                            &mut omitted_exclusions,
+                            SpecificationContextExclusion {
+                                specification_id,
+                                relative_path: entry.relative_path,
+                                reason: SpecificationContextExclusionReason::Missing,
+                            },
+                        );
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                };
+                let content_hash = specification_content_hash(&source);
+                if content_hash != entry.content_hash {
+                    changed_approved += 1;
+                    push_context_exclusion(
+                        &mut exclusions,
+                        &mut omitted_exclusions,
+                        SpecificationContextExclusion {
+                            specification_id,
+                            relative_path: entry.relative_path,
+                            reason: SpecificationContextExclusionReason::Changed,
+                        },
+                    );
+                    continue;
+                }
+                current_approved += 1;
+                if specifications.len() >= limits.max_results {
+                    push_context_exclusion(
+                        &mut exclusions,
+                        &mut omitted_exclusions,
+                        SpecificationContextExclusion {
+                            specification_id,
+                            relative_path: entry.relative_path,
+                            reason: SpecificationContextExclusionReason::ResultLimit,
+                        },
+                    );
+                    continue;
+                }
+                let source = String::from_utf8(source).map_err(|_| {
+                    LeyCoreError::InvalidSpecificationRequest(
+                        "approved Specification Markdown must be valid UTF-8".to_owned(),
+                    )
+                })?;
+                let characters = source.chars().count();
+                if text_characters.saturating_add(characters) > limits.max_characters {
+                    push_context_exclusion(
+                        &mut exclusions,
+                        &mut omitted_exclusions,
+                        SpecificationContextExclusion {
+                            specification_id,
+                            relative_path: entry.relative_path,
+                            reason: SpecificationContextExclusionReason::CharacterBudget,
+                        },
+                    );
+                    continue;
+                }
+                text_characters += characters;
+                specifications.push(SpecificationContextItem {
+                    specification_id,
+                    relative_path: entry.relative_path,
+                    content_hash,
+                    approved_at_unix_ms: entry.approved_at_unix_ms,
+                    source,
+                    characters,
+                    authority: "human-intent",
+                    source_boundary: "user-approved-specification",
+                });
+            }
+
+            let omitted_specifications = total_approved.saturating_sub(specifications.len());
+            Ok(ProjectSpecificationsContext {
+                project_id: project_id.to_owned(),
+                max_characters: limits.max_characters,
+                text_characters,
+                specifications,
+                exclusions,
+                total_approved,
+                current_approved,
+                changed_approved,
+                missing_approved,
+                omitted_specifications,
+                omitted_exclusions,
+                truncated: omitted_specifications > 0
+                    || omitted_exclusions > 0
+                    || blocked_specifications > 0
+                    || omitted_egress_exclusions > 0,
+                egress_target: Some(target),
+                egress_exclusions,
+                egress_coverage: Some(SpecificationEgressCoverage {
+                    target,
+                    blocked_specifications,
+                    returned_exclusions: blocked_specifications
+                        .saturating_sub(omitted_egress_exclusions),
+                    omitted_exclusions: omitted_egress_exclusions,
+                }),
+                project_live_source_checked: false,
+                specification_source_revision_checked: true,
+                authority: "human-intent",
+                source_boundary: "user-approved-specification",
+                instruction_warning: SPECIFICATION_INSTRUCTION_WARNING,
+                privacy_notice: PRIVACY_NOTICE,
+            })
         })
     }
 
@@ -962,7 +1275,7 @@ pub fn generate_specification_id() -> String {
     format!("spec_{}", Uuid::new_v4().simple())
 }
 
-fn validate_specification_id(value: &str) -> Result<(), String> {
+pub(crate) fn validate_specification_id(value: &str) -> Result<(), String> {
     let Some(uuid) = value.strip_prefix("spec_") else {
         return Err("specificationId must start with spec_".to_owned());
     };
@@ -1480,6 +1793,84 @@ mod tests {
             .any(|item| { item.reason == SpecificationContextExclusionReason::CharacterBudget }));
         assert_eq!(context.text_characters, 900);
         assert!(context.truncated);
+    }
+
+    #[test]
+    fn agent_context_checks_specification_egress_before_opening_source() {
+        let (base, project, vault, registry) = setup();
+        let relative_path = "Private.md";
+        let marker = "private_specification_egress_marker";
+        fs::write(
+            vault.join(relative_path),
+            format!("# Private\n\n{marker}\n"),
+        )
+        .unwrap();
+        let specification_id = generate_specification_id();
+        registry
+            .approve(&project, &vault, &specification_id, relative_path)
+            .unwrap();
+        let egress = EgressPolicyRegistry::at(base.path().join("config/egress.json"));
+        egress
+            .set_specification_policy(
+                &project,
+                &specification_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+        let limits = SpecificationContextLimits {
+            max_results: 8,
+            max_characters: 4_000,
+        };
+
+        let cloud = registry
+            .context_for_agent(&project, &vault, limits, &egress, AgentEgressTarget::Cloud)
+            .unwrap();
+        assert!(cloud.specifications.is_empty());
+        assert!(cloud.exclusions.is_empty());
+        assert_eq!(cloud.total_approved, 0);
+        assert_eq!(cloud.egress_target, Some(AgentEgressTarget::Cloud));
+        assert_eq!(
+            cloud
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .blocked_specifications,
+            1
+        );
+        assert_eq!(cloud.egress_exclusions.len(), 1);
+        assert_eq!(
+            cloud.egress_exclusions[0].specification_id,
+            specification_id
+        );
+        assert_eq!(
+            cloud.egress_exclusions[0].block_reason,
+            AgentEgressBlockReason::LocalModelOnly
+        );
+        let serialized = serde_json::to_string(&cloud).unwrap();
+        assert!(!serialized.contains(marker));
+        assert!(!serialized.contains(relative_path));
+
+        let local = registry
+            .context_for_agent(&project, &vault, limits, &egress, AgentEgressTarget::Local)
+            .unwrap();
+        assert_eq!(local.specifications.len(), 1);
+        assert!(local.specifications[0].source.contains(marker));
+        assert!(local.egress_exclusions.is_empty());
+
+        egress
+            .set_specification_policy(&project, &specification_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        fs::remove_file(vault.join(relative_path)).unwrap();
+        let blocked_missing = registry
+            .context_for_agent(&project, &vault, limits, &egress, AgentEgressTarget::Local)
+            .unwrap();
+        assert!(blocked_missing.specifications.is_empty());
+        assert!(blocked_missing.exclusions.is_empty());
+        assert_eq!(blocked_missing.missing_approved, 0);
+        assert_eq!(
+            blocked_missing.egress_exclusions[0].block_reason,
+            AgentEgressBlockReason::NeverSend
+        );
     }
 
     #[cfg(unix)]

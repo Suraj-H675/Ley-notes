@@ -1,16 +1,19 @@
 use crate::context_mount::ResolvedProjectContextMounts;
+use crate::egress_policy::EgressPolicySnapshot;
 use crate::revision::{estimate_revision_applicability_tokens, estimate_revision_freshness_tokens};
 use crate::specification::{
     TaskSpecificationCandidate, TaskSpecificationExclusionReason, TaskSpecificationScan,
 };
 use crate::{
-    search_project_memory, ContextMountRegistry, ContextMountStatus, GraphCitation,
-    LearningFreshness, LearningOriginSummary, LearningState, LearningTrustState, LeyCoreError,
-    ProjectMemoryConflict, ProjectMemoryConflictKind, ProjectMemoryRankingSignals,
-    ProjectMemoryResultKind, ProjectMemorySearch, ProjectMemorySearchLimits,
-    ProjectMemorySearchResult, ProjectMemorySearchRetrieval, ProjectMemoryTrustSignal,
-    ProjectRevisionFreshness, RevisionApplicability, RevisionCompatibility, SpecificationRegistry,
-    MAX_PROJECT_MEMORY_SEARCH_RESULTS, MAX_PROJECT_MEMORY_SEARCH_TOKENS,
+    evaluate_agent_egress, search_project_memory, AgentEgressBlockReason, AgentEgressPolicy,
+    AgentEgressScopeKind, AgentEgressTarget, ContextMountRegistry, ContextMountStatus,
+    EgressPolicyRegistry, GraphCitation, LearningFreshness, LearningOriginSummary, LearningState,
+    LearningTrustState, LeyCoreError, ProjectMemoryConflict, ProjectMemoryConflictKind,
+    ProjectMemoryRankingSignals, ProjectMemoryResultKind, ProjectMemorySearch,
+    ProjectMemorySearchLimits, ProjectMemorySearchResult, ProjectMemorySearchRetrieval,
+    ProjectMemoryTrustSignal, ProjectRevisionFreshness, RevisionApplicability,
+    RevisionCompatibility, SpecificationRegistry, MAX_PROJECT_MEMORY_SEARCH_RESULTS,
+    MAX_PROJECT_MEMORY_SEARCH_TOKENS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -34,6 +37,8 @@ const DIAGNOSTIC_TOKEN_RESERVE: usize = 160;
 const DIAGNOSTIC_ENTRY_OVERHEAD_TOKENS: usize = 12;
 const MAX_EXCLUSIONS: usize = 20;
 const MAX_PREMISE_WARNINGS: usize = 12;
+const EGRESS_METADATA_BASE_TOKENS: usize = 24;
+const MAX_EGRESS_EXCLUSIONS: usize = 24;
 
 const SOURCE_BOUNDARY: &str = "mixed-authority-context";
 const AUTHORITY_PRECEDENCE: &str = "human-intent-over-historical-memory";
@@ -57,6 +62,13 @@ impl Default for ContextCompileLimits {
             max_tokens: DEFAULT_CONTEXT_COMPILE_TOKENS,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AgentContextAuthorities<'a> {
+    pub specifications: &'a SpecificationRegistry,
+    pub mounts: &'a ContextMountRegistry,
+    pub egress: &'a EgressPolicyRegistry,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -106,6 +118,37 @@ pub struct ContextPremiseAdjudication {
     pub state: ContextPremiseState,
     pub warnings: Vec<ContextPremiseWarning>,
     pub omitted_warnings: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContextEgressPolicyOrigin {
+    Specification,
+    ContextMount,
+    SourceProject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextEgressExclusion {
+    pub scope_kind: AgentEgressScopeKind,
+    pub scope_id: String,
+    pub policy_origin: ContextEgressPolicyOrigin,
+    pub policy: AgentEgressPolicy,
+    pub block_reason: AgentEgressBlockReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextEgressCoverage {
+    pub target: AgentEgressTarget,
+    pub blocked_specifications: usize,
+    pub blocked_mounts: usize,
+    pub blocked_historical_sources: usize,
+    pub historical_memory_withheld: bool,
+    pub withheld_derived_results: usize,
+    pub returned_exclusions: usize,
+    pub omitted_exclusions: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -407,6 +450,12 @@ pub struct CompiledContextPack {
     pub task: String,
     pub evidence_state: ContextEvidenceState,
     pub premise_adjudication: ContextPremiseAdjudication,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub egress_target: Option<AgentEgressTarget>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub egress_exclusions: Vec<ContextEgressExclusion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub egress_coverage: Option<ContextEgressCoverage>,
     pub max_tokens: usize,
     pub estimated_tokens: usize,
     pub specifications: Vec<CompiledSpecificationItem>,
@@ -526,6 +575,208 @@ pub fn compile_project_context_with_registries(
             append_mounted_references(pack, mounts, task, limits)
         })
     })
+}
+
+pub fn compile_project_context_for_agent_with_registries(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    task: &str,
+    limits: ContextCompileLimits,
+    authorities: AgentContextAuthorities<'_>,
+    target: AgentEgressTarget,
+) -> Result<CompiledContextPack, LeyCoreError> {
+    validate_limits(task, limits)?;
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let project_id = crate::diagnose_project(project_start)?.identity.project_id;
+    authorities.egress.with_snapshot_locked(|egress_snapshot| {
+        let project_decision =
+            evaluate_agent_egress(egress_snapshot.project_policy(&project_id), target);
+        if !project_decision.allowed {
+            return Err(LeyCoreError::AgentEgressDenied {
+                policy: project_decision.policy.to_string(),
+                target: target.to_string(),
+            });
+        }
+
+        authorities.specifications.with_task_scan_for_agent_locked(
+            project_start,
+            vault,
+            task,
+            egress_snapshot,
+            target,
+            |specification_scan, specification_egress| {
+                let mut egress_exclusions = specification_egress
+                    .into_iter()
+                    .map(|item| ContextEgressExclusion {
+                        scope_kind: AgentEgressScopeKind::Specification,
+                        scope_id: item.specification_id,
+                        policy_origin: ContextEgressPolicyOrigin::Specification,
+                        policy: item.policy,
+                        block_reason: item.block_reason,
+                    })
+                    .collect::<Vec<_>>();
+                for scope in egress_snapshot.fine_grained_policies(&project_id) {
+                    let decision = evaluate_agent_egress(scope.policy, target);
+                    if decision.allowed {
+                        continue;
+                    }
+                    let policy_origin = match scope.scope_kind {
+                        AgentEgressScopeKind::Specification => {
+                            ContextEgressPolicyOrigin::Specification
+                        }
+                        AgentEgressScopeKind::ContextMount => {
+                            ContextEgressPolicyOrigin::ContextMount
+                        }
+                        AgentEgressScopeKind::Project => continue,
+                    };
+                    egress_exclusions.push(ContextEgressExclusion {
+                        scope_kind: scope.scope_kind,
+                        scope_id: scope.scope_id,
+                        policy_origin,
+                        policy: decision.policy,
+                        block_reason: decision
+                            .block_reason
+                            .expect("blocked decision has a reason"),
+                    });
+                }
+                authorities.mounts.with_resolved_project_mounts_locked(project_start, |mounts| {
+                    let (mounts, mount_exclusions) =
+                        filter_mounts_for_egress(mounts, egress_snapshot, target);
+                    egress_exclusions.extend(mount_exclusions);
+                    for historical_mount in &mounts.historical_mounts {
+                        let mount_decision = evaluate_agent_egress(
+                            egress_snapshot.mount_policy(
+                                &project_id,
+                                &historical_mount.mount_id,
+                            ),
+                            target,
+                        );
+                        if !mount_decision.allowed {
+                            egress_exclusions.push(ContextEgressExclusion {
+                                scope_kind: AgentEgressScopeKind::ContextMount,
+                                scope_id: historical_mount.mount_id.clone(),
+                                policy_origin: ContextEgressPolicyOrigin::ContextMount,
+                                policy: mount_decision.policy,
+                                block_reason: mount_decision
+                                    .block_reason
+                                    .expect("blocked decision has a reason"),
+                            });
+                        }
+                        let source_decision = evaluate_agent_egress(
+                            egress_snapshot.project_policy(&historical_mount.source_project_id),
+                            target,
+                        );
+                        if !source_decision.allowed {
+                            egress_exclusions.push(ContextEgressExclusion {
+                                scope_kind: AgentEgressScopeKind::Project,
+                                scope_id: historical_mount.source_project_id.clone(),
+                                policy_origin: ContextEgressPolicyOrigin::SourceProject,
+                                policy: source_decision.policy,
+                                block_reason: source_decision
+                                    .block_reason
+                                    .expect("blocked decision has a reason"),
+                            });
+                        }
+                    }
+                    egress_exclusions.sort_by(|left, right| {
+                        left.scope_kind
+                            .cmp(&right.scope_kind)
+                            .then_with(|| left.scope_id.cmp(&right.scope_id))
+                            .then_with(|| left.policy.cmp(&right.policy))
+                            .then_with(|| left.policy_origin.cmp(&right.policy_origin))
+                    });
+                    egress_exclusions.dedup();
+                    let historical_memory_withheld = !egress_exclusions.is_empty();
+                    let mut search = active_project_search(project_start, vault, task)?;
+                    if specification_scan.project_id != search.project_id
+                        || search.project_id != project_id
+                    {
+                        return Err(LeyCoreError::InvalidSpecificationRequest(
+                            "Specification authority, egress authority, and captured memory resolved to different projects"
+                                .to_owned(),
+                        ));
+                    }
+                    let withheld_derived_results = if historical_memory_withheld {
+                        withhold_unproven_derived_memory(&mut search)
+                    } else {
+                        0
+                    };
+                    let blocked_specifications = egress_exclusions
+                        .iter()
+                        .filter(|item| item.scope_kind == AgentEgressScopeKind::Specification)
+                        .count();
+                    let blocked_mounts = egress_exclusions
+                        .iter()
+                        .filter(|item| item.scope_kind == AgentEgressScopeKind::ContextMount)
+                        .count();
+                    let blocked_historical_sources = egress_exclusions
+                        .iter()
+                        .filter(|item| {
+                            item.scope_kind == AgentEgressScopeKind::Project
+                                && item.policy_origin == ContextEgressPolicyOrigin::SourceProject
+                        })
+                        .count();
+                    let (fitted_egress, egress_tokens, omitted_egress) =
+                        fit_egress_exclusions(egress_exclusions, limits.max_tokens);
+                    let inner_limits = ContextCompileLimits {
+                        max_results: limits.max_results,
+                        max_tokens: limits.max_tokens.saturating_sub(egress_tokens),
+                    };
+                    let pack = compile_search_result_with_specifications(
+                        search,
+                        specification_scan,
+                        inner_limits,
+                    );
+                    let mut pack = append_mounted_references(pack, mounts, task, inner_limits)?;
+                    pack.max_tokens = limits.max_tokens;
+                    pack.estimated_tokens = pack
+                        .estimated_tokens
+                        .saturating_add(egress_tokens)
+                        .min(limits.max_tokens);
+                    pack.egress_target = Some(target);
+                    pack.egress_coverage = Some(ContextEgressCoverage {
+                        target,
+                        blocked_specifications,
+                        blocked_mounts,
+                        blocked_historical_sources,
+                        historical_memory_withheld,
+                        withheld_derived_results,
+                        returned_exclusions: fitted_egress.len(),
+                        omitted_exclusions: omitted_egress,
+                    });
+                    pack.egress_exclusions = fitted_egress;
+                    Ok(pack)
+                })
+            },
+        )
+    })
+}
+
+fn withhold_unproven_derived_memory(search: &mut ProjectMemorySearch) -> usize {
+    let before_results = search.results.len();
+    search.results.retain(|item| {
+        matches!(
+            item.kind,
+            ProjectMemoryResultKind::Revision
+                | ProjectMemoryResultKind::Artifact
+                | ProjectMemoryResultKind::Symbol
+                | ProjectMemoryResultKind::Dependency
+        )
+    });
+    let withheld_results = before_results.saturating_sub(search.results.len());
+    let withheld_conflicts = search.conflicts.len();
+    search.conflicts.clear();
+    search.coverage.omitted_results = search
+        .coverage
+        .omitted_results
+        .saturating_add(withheld_results);
+    search.coverage.omitted_conflicts = search
+        .coverage
+        .omitted_conflicts
+        .saturating_add(withheld_conflicts);
+    search.truncated |= withheld_results > 0 || withheld_conflicts > 0;
+    withheld_results
 }
 
 fn active_project_search(
@@ -758,6 +1009,9 @@ fn compile_search_result_with_specifications(
                 .saturating_sub(diagnostics.premise_warnings.len()),
             warnings: diagnostics.premise_warnings,
         },
+        egress_target: None,
+        egress_exclusions: Vec::new(),
+        egress_coverage: None,
         max_tokens: limits.max_tokens,
         estimated_tokens,
         specifications,
@@ -782,6 +1036,109 @@ fn compile_search_result_with_specifications(
         instruction_warning: INSTRUCTION_WARNING,
         privacy_notice: PRIVACY_NOTICE,
     }
+}
+
+fn filter_mounts_for_egress(
+    mut mounts: ResolvedProjectContextMounts,
+    policies: &EgressPolicySnapshot,
+    target: AgentEgressTarget,
+) -> (ResolvedProjectContextMounts, Vec<ContextEgressExclusion>) {
+    let active_project_id = mounts.active_project_id.clone();
+    let mut exclusions = Vec::new();
+    mounts.ready.retain(|mount| {
+        mount_allowed_for_egress(
+            &active_project_id,
+            &mount.mount_id,
+            &mount.source_project_id,
+            policies,
+            target,
+            &mut exclusions,
+        )
+    });
+    mounts.unavailable.retain(|mount| {
+        mount_allowed_for_egress(
+            &active_project_id,
+            &mount.mount_id,
+            &mount.source_project_id,
+            policies,
+            target,
+            &mut exclusions,
+        )
+    });
+    (mounts, exclusions)
+}
+
+fn mount_allowed_for_egress(
+    active_project_id: &str,
+    mount_id: &str,
+    source_project_id: &str,
+    policies: &EgressPolicySnapshot,
+    target: AgentEgressTarget,
+    exclusions: &mut Vec<ContextEgressExclusion>,
+) -> bool {
+    let mount_decision =
+        evaluate_agent_egress(policies.mount_policy(active_project_id, mount_id), target);
+    if !mount_decision.allowed {
+        exclusions.push(ContextEgressExclusion {
+            scope_kind: AgentEgressScopeKind::ContextMount,
+            scope_id: mount_id.to_owned(),
+            policy_origin: ContextEgressPolicyOrigin::ContextMount,
+            policy: mount_decision.policy,
+            block_reason: mount_decision
+                .block_reason
+                .expect("blocked decision has a reason"),
+        });
+        return false;
+    }
+    let source_decision = evaluate_agent_egress(policies.project_policy(source_project_id), target);
+    if !source_decision.allowed {
+        exclusions.push(ContextEgressExclusion {
+            scope_kind: AgentEgressScopeKind::ContextMount,
+            scope_id: mount_id.to_owned(),
+            policy_origin: ContextEgressPolicyOrigin::SourceProject,
+            policy: source_decision.policy,
+            block_reason: source_decision
+                .block_reason
+                .expect("blocked decision has a reason"),
+        });
+        return false;
+    }
+    true
+}
+
+fn fit_egress_exclusions(
+    mut exclusions: Vec<ContextEgressExclusion>,
+    max_tokens: usize,
+) -> (Vec<ContextEgressExclusion>, usize, usize) {
+    exclusions.sort_by(|left, right| {
+        left.scope_kind
+            .cmp(&right.scope_kind)
+            .then_with(|| left.scope_id.cmp(&right.scope_id))
+            .then_with(|| left.policy.cmp(&right.policy))
+    });
+    exclusions.dedup();
+    let total = exclusions.len();
+    let budget = max_tokens
+        .div_ceil(4)
+        .clamp(EGRESS_METADATA_BASE_TOKENS, 256);
+    let mut used = EGRESS_METADATA_BASE_TOKENS.min(max_tokens);
+    let mut fitted = Vec::new();
+    for exclusion in exclusions {
+        if fitted.len() >= MAX_EGRESS_EXCLUSIONS {
+            continue;
+        }
+        let cost = estimate_egress_exclusion_tokens(&exclusion);
+        if used.saturating_add(cost) <= budget {
+            used = used.saturating_add(cost);
+            fitted.push(exclusion);
+        }
+    }
+    let omitted = total.saturating_sub(fitted.len());
+    (fitted, used, omitted)
+}
+
+fn estimate_egress_exclusion_tokens(exclusion: &ContextEgressExclusion) -> usize {
+    DIAGNOSTIC_ENTRY_OVERHEAD_TOKENS.saturating_add(exclusion.scope_id.chars().count().div_ceil(4))
 }
 
 fn append_mounted_references(
@@ -3010,6 +3367,548 @@ mod tests {
     }
 
     #[test]
+    fn agent_compiler_enforces_project_target_before_returning_context() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        let config = root.path().join("config");
+        for path in [&project, &vault, &config] {
+            fs::create_dir_all(path).unwrap();
+        }
+        initialize_project(&project, Some("Private project"), CaptureMode::Structured).unwrap();
+        fs::write(
+            project.join("README.md"),
+            "local_model_marker private project evidence\n",
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let authorities = AgentContextAuthorities {
+            specifications: &specifications,
+            mounts: &mounts,
+            egress: &egress,
+        };
+        egress
+            .set_project_policy(&project, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+
+        let cloud = compile_project_context_for_agent_with_registries(
+            &project,
+            &vault,
+            "local_model_marker",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Cloud,
+        );
+        assert!(matches!(
+            cloud,
+            Err(LeyCoreError::AgentEgressDenied { policy, target })
+                if policy == "local-model-only" && target == "cloud"
+        ));
+
+        let local = compile_project_context_for_agent_with_registries(
+            &project,
+            &vault,
+            "local_model_marker",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Local,
+        )
+        .unwrap();
+        assert_eq!(local.egress_target, Some(AgentEgressTarget::Local));
+        assert_eq!(
+            local
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .blocked_specifications,
+            0
+        );
+        assert_eq!(local.egress_coverage.as_ref().unwrap().blocked_mounts, 0);
+        assert!(local.egress_exclusions.is_empty());
+        assert!(local
+            .items
+            .iter()
+            .any(|item| item.excerpt.contains("local_model_marker")));
+        assert!(!local.live_source_checked);
+        assert!(local.estimated_tokens <= local.max_tokens);
+    }
+
+    #[test]
+    fn blocked_specification_cannot_leak_or_steer_cloud_context() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        let config = root.path().join("config");
+        for path in [&project, &vault, &config] {
+            fs::create_dir_all(path).unwrap();
+        }
+        initialize_project(
+            &project,
+            Some("Specification egress"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        fs::write(
+            project.join("README.md"),
+            "private launch procedure public scaffold\n",
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        fs::create_dir_all(vault.join("Specs")).unwrap();
+        let private_marker = "private_spec_marker use the private launch procedure";
+        fs::write(
+            vault.join("Specs/Private.md"),
+            format!("# Private requirement\n\n{private_marker}\n"),
+        )
+        .unwrap();
+        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let specification_id = crate::generate_specification_id();
+        specifications
+            .approve(&project, &vault, &specification_id, "Specs/Private.md")
+            .unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "a".repeat(32)),
+                name: "Private launch memory".to_owned(),
+                goal: "Record private launch guidance".to_owned(),
+                source: Default::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "b".repeat(32)),
+                summary: "Recorded private launch guidance".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "Private launch procedure".to_owned(),
+                    decision: "Use laundered_private_spec_marker for the private launch procedure."
+                        .to_owned(),
+                    rationale: "Historical derivative of sensitive guidance.".to_owned(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let authorities = AgentContextAuthorities {
+            specifications: &specifications,
+            mounts: &mounts,
+            egress: &egress,
+        };
+        egress
+            .set_specification_policy(
+                &project,
+                &specification_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+
+        let cloud = compile_project_context_for_agent_with_registries(
+            &project,
+            &vault,
+            "private launch procedure",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert!(cloud.specifications.is_empty());
+        assert!(cloud.egress_exclusions.iter().any(|item| item.scope_kind
+            == AgentEgressScopeKind::Specification
+            && item.scope_id == specification_id
+            && item.policy == AgentEgressPolicy::LocalModelOnly
+            && item.block_reason == AgentEgressBlockReason::LocalModelOnly));
+        assert_eq!(
+            cloud
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .blocked_specifications,
+            1
+        );
+        assert!(
+            cloud
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .historical_memory_withheld
+        );
+        assert!(
+            cloud
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .withheld_derived_results
+                >= 1
+        );
+        let cloud_json = serde_json::to_string(&cloud).unwrap();
+        assert!(!cloud_json.contains(private_marker));
+        assert!(!cloud_json.contains("Specs/Private.md"));
+        assert!(!cloud_json.contains("laundered_private_spec_marker"));
+        assert!(cloud.items.iter().any(|item| {
+            item.kind == ProjectMemoryResultKind::Artifact
+                && item
+                    .excerpt
+                    .contains("private launch procedure public scaffold")
+        }));
+        assert!(cloud.estimated_tokens <= cloud.max_tokens);
+
+        let local = compile_project_context_for_agent_with_registries(
+            &project,
+            &vault,
+            "private launch procedure",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Local,
+        )
+        .unwrap();
+        assert_eq!(local.specifications.len(), 1);
+        assert_eq!(local.specifications[0].specification_id, specification_id);
+        assert!(local.specifications[0].source.contains(private_marker));
+        assert!(local
+            .items
+            .iter()
+            .any(|item| item.excerpt.contains("laundered_private_spec_marker")));
+        assert!(local.egress_exclusions.is_empty());
+        assert!(local.estimated_tokens <= local.max_tokens);
+
+        egress
+            .set_specification_policy(&project, &specification_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        specifications
+            .revoke(&project, &specification_id)
+            .unwrap()
+            .unwrap();
+        let revoked = compile_project_context_for_agent_with_registries(
+            &project,
+            &vault,
+            "private launch procedure",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert!(revoked.specifications.is_empty());
+        assert!(
+            revoked
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .historical_memory_withheld
+        );
+        assert_eq!(
+            revoked
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .blocked_specifications,
+            1
+        );
+        assert!(revoked.egress_exclusions.iter().any(|item| {
+            item.scope_kind == AgentEgressScopeKind::Specification
+                && item.scope_id == specification_id
+                && item.policy == AgentEgressPolicy::NeverSend
+        }));
+        assert!(!serde_json::to_string(&revoked)
+            .unwrap()
+            .contains("laundered_private_spec_marker"));
+
+        egress
+            .set_specification_policy(&project, &specification_id, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        let reauthorized = compile_project_context_for_agent_with_registries(
+            &project,
+            &vault,
+            "private launch procedure",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert!(reauthorized.egress_exclusions.is_empty());
+        assert!(
+            !reauthorized
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .historical_memory_withheld
+        );
+        assert!(reauthorized
+            .items
+            .iter()
+            .any(|item| item.excerpt.contains("laundered_private_spec_marker")));
+    }
+
+    #[test]
+    fn mount_and_source_project_egress_are_checked_before_reference_search() {
+        let root = tempdir().unwrap();
+        let config = root.path().join("config");
+        let active = root.path().join("active");
+        let active_vault = root.path().join("active-vault");
+        let reference = root.path().join("reference");
+        let reference_vault = root.path().join("reference-vault");
+        for path in [
+            &config,
+            &active,
+            &active_vault,
+            &reference,
+            &reference_vault,
+        ] {
+            fs::create_dir_all(path).unwrap();
+        }
+        initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
+        initialize_project(
+            &reference,
+            Some("Sensitive Reference"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        fs::write(active.join("README.md"), "active baseline\n").unwrap();
+        let reference_marker = "local_reference_marker sensitive design experience";
+        fs::write(reference.join("REFERENCE.md"), reference_marker).unwrap();
+        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
+        bindings.bind(&active, &active_vault).unwrap();
+        bindings.bind(&reference, &reference_vault).unwrap();
+        ingest_project(&active, &active_vault).unwrap();
+        ingest_project(&reference, &reference_vault).unwrap();
+        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
+        let mounted = mounts.mount_project(&active, &reference).unwrap();
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let authorities = AgentContextAuthorities {
+            specifications: &specifications,
+            mounts: &mounts,
+            egress: &egress,
+        };
+        egress
+            .set_mount_policy(
+                &active,
+                &mounted.mount.mount_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+
+        let cloud = compile_project_context_for_agent_with_registries(
+            &active,
+            &active_vault,
+            "local_reference_marker",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert!(cloud.mounted_reference_scopes.is_empty());
+        assert!(cloud.mounted_references.is_empty());
+        assert_eq!(cloud.egress_coverage.as_ref().unwrap().blocked_mounts, 1);
+        let cloud_json = serde_json::to_string(&cloud).unwrap();
+        assert!(!cloud_json.contains(reference_marker));
+        assert!(!cloud_json.contains("Sensitive Reference"));
+
+        let local = compile_project_context_for_agent_with_registries(
+            &active,
+            &active_vault,
+            "local_reference_marker",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Local,
+        )
+        .unwrap();
+        assert!(local
+            .mounted_references
+            .iter()
+            .any(|item| item.excerpt.contains("local_reference_marker")));
+
+        let started = start_session(
+            &active,
+            &active_vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "d".repeat(32)),
+                name: "Reference-derived memory".to_owned(),
+                goal: "Record reference-derived guidance".to_owned(),
+                source: Default::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &active,
+            &active_vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "e".repeat(32)),
+                summary: "Recorded reference-derived guidance".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "Reference-derived design".to_owned(),
+                    decision:
+                        "historical_reference_copy_marker follows local_reference_marker guidance."
+                            .to_owned(),
+                    rationale: "Copied from the mounted reference.".to_owned(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        egress
+            .set_mount_policy(&active, &mounted.mount.mount_id, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        egress
+            .set_project_policy(&reference, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        let source_blocked = compile_project_context_for_agent_with_registries(
+            &active,
+            &active_vault,
+            "local_reference_marker",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Local,
+        )
+        .unwrap();
+        assert!(source_blocked.mounted_references.is_empty());
+        assert!(source_blocked.egress_exclusions.iter().any(|item| {
+            item.scope_id == mounted.mount.mount_id
+                && item.policy_origin == ContextEgressPolicyOrigin::SourceProject
+                && item.policy == AgentEgressPolicy::NeverSend
+        }));
+        let blocked_json = serde_json::to_string(&source_blocked).unwrap();
+        assert!(!blocked_json.contains(reference_marker));
+        assert!(!blocked_json.contains("Sensitive Reference"));
+        assert!(source_blocked.estimated_tokens <= source_blocked.max_tokens);
+
+        mounts
+            .unmount(&active, &mounted.mount.mount_id)
+            .unwrap()
+            .unwrap();
+        let after_unmount = compile_project_context_for_agent_with_registries(
+            &active,
+            &active_vault,
+            "local_reference_marker",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Local,
+        )
+        .unwrap();
+        assert!(after_unmount.mounted_references.is_empty());
+        assert!(
+            after_unmount
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .historical_memory_withheld
+        );
+        assert!(
+            after_unmount
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .blocked_historical_sources
+                >= 1
+        );
+        assert!(
+            after_unmount
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .withheld_derived_results
+                >= 1
+        );
+        assert!(after_unmount.egress_exclusions.iter().any(|item| {
+            item.scope_kind == AgentEgressScopeKind::Project
+                && item.scope_id == mounted.mount.source_project_id
+                && item.policy_origin == ContextEgressPolicyOrigin::SourceProject
+                && item.policy == AgentEgressPolicy::NeverSend
+        }));
+        assert!(!serde_json::to_string(&after_unmount)
+            .unwrap()
+            .contains("historical_reference_copy_marker"));
+
+        egress
+            .set_project_policy(&reference, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        egress
+            .set_mount_policy(
+                &active,
+                &mounted.mount.mount_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+        let historical_mount_blocked = compile_project_context_for_agent_with_registries(
+            &active,
+            &active_vault,
+            "local_reference_marker",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert!(
+            historical_mount_blocked
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .historical_memory_withheld
+        );
+        assert!(historical_mount_blocked
+            .egress_exclusions
+            .iter()
+            .any(|item| {
+                item.scope_kind == AgentEgressScopeKind::ContextMount
+                    && item.scope_id == mounted.mount.mount_id
+                    && item.policy_origin == ContextEgressPolicyOrigin::ContextMount
+                    && item.policy == AgentEgressPolicy::LocalModelOnly
+            }));
+        assert!(!serde_json::to_string(&historical_mount_blocked)
+            .unwrap()
+            .contains("historical_reference_copy_marker"));
+
+        egress
+            .set_mount_policy(&active, &mounted.mount.mount_id, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        let reauthorized = compile_project_context_for_agent_with_registries(
+            &active,
+            &active_vault,
+            "local_reference_marker",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert!(reauthorized.egress_exclusions.is_empty());
+        assert!(
+            !reauthorized
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .historical_memory_withheld
+        );
+        assert!(reauthorized
+            .items
+            .iter()
+            .any(|item| item.excerpt.contains("historical_reference_copy_marker")));
+    }
+
+    #[test]
     fn divergent_decision_is_withheld_until_git_proves_the_branch_landed() {
         let root = tempdir().unwrap();
         let project = root.path().join("project");
@@ -3452,6 +4351,7 @@ mod tests {
                     created_at_unix_ms: index + 1,
                 })
                 .collect(),
+            historical_mounts: Vec::new(),
         };
         let pack = append_mounted_references(
             pack,

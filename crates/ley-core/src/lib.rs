@@ -12,6 +12,7 @@ mod binding;
 mod context_compiler;
 mod context_mount;
 mod cross_project_search;
+mod egress_policy;
 mod graph;
 mod host_adapter;
 mod ingestion;
@@ -36,28 +37,37 @@ pub use binding::{
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
 };
 pub use context_compiler::{
-    compile_project_context, compile_project_context_with_registries,
-    compile_project_context_with_registry, CompiledContextItem, CompiledContextPack,
+    compile_project_context, compile_project_context_for_agent_with_registries,
+    compile_project_context_with_registries, compile_project_context_with_registry,
+    AgentContextAuthorities, CompiledContextItem, CompiledContextPack,
     CompiledMountedReferenceItem, CompiledSpecificationItem, ContextAdmissionBasis,
-    ContextAuthority, ContextCompileCoverage, ContextCompileLimits, ContextEvidenceState,
-    ContextExclusion, ContextExclusionReason, ContextExclusionStage, ContextFollowUp,
-    ContextFollowUpKind, ContextGap, ContextGapKind, ContextPremiseAdjudication,
-    ContextPremiseState, ContextPremiseWarning, ContextPremiseWarningKind,
-    MountedReferenceCoverage, MountedReferenceExclusion, MountedReferenceScope,
-    MountedReferenceScopeState, SpecificationCompileCoverage, SpecificationCompileExclusion,
+    ContextAuthority, ContextCompileCoverage, ContextCompileLimits, ContextEgressCoverage,
+    ContextEgressExclusion, ContextEgressPolicyOrigin, ContextEvidenceState, ContextExclusion,
+    ContextExclusionReason, ContextExclusionStage, ContextFollowUp, ContextFollowUpKind,
+    ContextGap, ContextGapKind, ContextPremiseAdjudication, ContextPremiseState,
+    ContextPremiseWarning, ContextPremiseWarningKind, MountedReferenceCoverage,
+    MountedReferenceExclusion, MountedReferenceScope, MountedReferenceScopeState,
+    SpecificationCompileCoverage, SpecificationCompileExclusion,
     SpecificationCompileExclusionReason, DEFAULT_CONTEXT_COMPILE_RESULTS,
     DEFAULT_CONTEXT_COMPILE_TOKENS, MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
     MIN_CONTEXT_COMPILE_TOKENS, MIN_SEMANTIC_ADMISSION_SIMILARITY,
 };
 pub use context_mount::{
-    ContextMount, ContextMountList, ContextMountMutation, ContextMountPermission,
-    ContextMountRegistry, ContextMountStatus, CONTEXT_MOUNT_REGISTRY_FILE,
-    CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION, MAX_CONTEXT_MOUNTS_PER_PROJECT,
+    ContextMount, ContextMountEgressSource, ContextMountEgressSources, ContextMountList,
+    ContextMountMutation, ContextMountPermission, ContextMountRegistry, ContextMountStatus,
+    CONTEXT_MOUNT_REGISTRY_FILE, CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
+    MAX_CONTEXT_MOUNTS_PER_PROJECT, MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT,
 };
 pub use cross_project_search::{
     search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,
     DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, MAX_CROSS_PROJECT_SEARCH_QUERY_CHARACTERS,
     MAX_CROSS_PROJECT_SEARCH_RESULTS,
+};
+pub use egress_policy::{
+    evaluate_agent_egress, AgentEgressBlockReason, AgentEgressDecision, AgentEgressPolicy,
+    AgentEgressPolicyMutation, AgentEgressScopeKind, AgentEgressScopePolicy, AgentEgressTarget,
+    EgressPolicyRegistry, EgressPolicySnapshot, ProjectAgentEgressPolicy,
+    EGRESS_POLICY_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_SCHEMA_VERSION,
 };
 pub use graph::{
     FactProvenance, GitChange, GitState, GraphCitation, GraphDiagnostic, GraphEdge, GraphEdgeKind,
@@ -65,7 +75,8 @@ pub use graph::{
     PROJECT_GRAPH_SCHEMA_VERSION,
 };
 pub use host_adapter::{
-    process_host_hook, AgentHost, HostHookDisposition, HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
+    process_host_hook, process_host_hook_for_agent_with_registries, AgentHost, HostHookDisposition,
+    HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
 };
 pub use ingestion::{
     erase_project_memory, ingest_project, read_project_graph, ArtifactKind, ArtifactRecord,
@@ -197,7 +208,8 @@ pub use specification::{
     ApprovedSpecificationSource, ProjectSpecificationsContext, SpecificationApproval,
     SpecificationApprovalState, SpecificationAuthority, SpecificationAuthorityList,
     SpecificationContextExclusion, SpecificationContextExclusionReason, SpecificationContextItem,
-    SpecificationContextLimits, SpecificationRegistry, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
+    SpecificationContextLimits, SpecificationEgressCoverage, SpecificationEgressExclusion,
+    SpecificationRegistry, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
     DEFAULT_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_APPROVALS_PER_PROJECT,
     MAX_SPECIFICATION_BYTES, MAX_SPECIFICATION_CONTEXT_CHARACTERS,
     MAX_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_PATH_CHARACTERS,
@@ -367,6 +379,14 @@ pub enum LeyCoreError {
     InvalidContextMountRegistry(String),
     #[error("invalid Ley Context Mount request: {0}")]
     InvalidContextMountRequest(String),
+    #[error("invalid Ley agent egress policy registry: {0}")]
+    InvalidEgressPolicyRegistry(String),
+    #[error("invalid Ley agent egress policy request: {0}")]
+    InvalidEgressPolicyRequest(String),
+    #[error("Ley agent egress policy '{policy}' does not allow target '{target}'")]
+    AgentEgressDenied { policy: String, target: String },
+    #[error("Ley cannot prove historical derived memory is independent of a source blocked for target '{target}'")]
+    AgentDerivedEgressUnproven { target: String },
     #[error("invalid Ley specification approval registry: {0}")]
     InvalidSpecificationRegistry(String),
     #[error("invalid Ley specification request: {0}")]
