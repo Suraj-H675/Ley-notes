@@ -64,6 +64,7 @@ METRIC_NAMES = (
     "context_memory_utility",
     "external_connector",
     "multimodal_evidence",
+    "knowledge_scope",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -494,6 +495,28 @@ P2_CAPABILITY_COVERAGE = {
         "regression": (
             "multimodal-original-image-evidence",
             "multimodal_evidence",
+            "truthy",
+        ),
+    },
+    "team-organization-knowledge-scopes": {
+        "adversarial": (
+            "team-organization-knowledge-scope",
+            "knowledge_scope",
+            "truthy",
+        ),
+        "downstream": (
+            "team-organization-knowledge-scope",
+            "knowledge_scope",
+            "truthy",
+        ),
+        "privacy": (
+            "team-organization-knowledge-scope",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "team-organization-knowledge-scope",
+            "knowledge_scope",
             "truthy",
         ),
     },
@@ -1157,6 +1180,7 @@ def context_contract_text(payload: dict[str, object]) -> str:
             "specifications": payload.get("specifications", []),
             "items": payload.get("items", []),
             "mountedReferences": payload.get("mountedReferences", []),
+            "sharedKnowledgeReferences": payload.get("sharedKnowledgeReferences", []),
         },
         sort_keys=True,
     )
@@ -2364,6 +2388,305 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "explicit Context Mount did not preserve authorization/isolation/budget/unmount semantics"
             )
 
+    knowledge_scope_definitions = [
+        item
+        for item in scenario.get("knowledge_scope_projects", [])
+        if isinstance(item, dict)
+    ]
+    knowledge_scope_expectation = scenario.get("expected_knowledge_scope_compiler")
+    if isinstance(knowledge_scope_expectation, dict):
+        scope_projects: list[tuple[Path, Path]] = []
+        for index, definition in enumerate(knowledge_scope_definitions):
+            scope_project = base_dir / f"knowledge-scope-project-{index}"
+            scope_vault = base_dir / f"knowledge-scope-vault-{index}"
+            scope_project.mkdir()
+            scope_vault.mkdir()
+            write_project_files(scope_project, definition.get("files", {}))
+            init_project(scope_project, str(definition["name"]), scope_vault)
+            scope_projects.append((scope_project, scope_vault))
+
+        query = str(knowledge_scope_expectation.get("query", ""))
+        historical_query = str(knowledge_scope_expectation.get("historical_query", ""))
+        historical_marker = str(knowledge_scope_expectation.get("historical_marker", ""))
+        scope_kind = str(knowledge_scope_expectation.get("kind", "team"))
+        scope_name = str(knowledge_scope_expectation.get("name", "Shared team"))
+        source_indices = [
+            int(value) for value in knowledge_scope_expectation.get("source_indices", [])
+        ]
+        unrelated_index = int(knowledge_scope_expectation.get("unrelated_index", -1))
+        restricted_index = int(knowledge_scope_expectation.get("restricted_index", -1))
+        markers = [
+            str(value) for value in knowledge_scope_expectation.get("markers", [])
+        ]
+        unrelated_marker = str(
+            knowledge_scope_expectation.get("unrelated_marker", "")
+        )
+        restricted_marker = str(
+            knowledge_scope_expectation.get("restricted_marker", "")
+        )
+        if (
+            not query
+            or not source_indices
+            or any(index < 0 or index >= len(scope_projects) for index in source_indices)
+            or unrelated_index < 0
+            or unrelated_index >= len(scope_projects)
+            or restricted_index < 0
+            or restricted_index >= len(scope_projects)
+        ):
+            raise RuntimeError("knowledge scope fixture indices/query are invalid")
+
+        before = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+        )
+        create_args = [
+            "scope",
+            "create",
+            scope_kind,
+            scope_name,
+            *[str(scope_projects[index][0]) for index in source_indices],
+            "--json",
+        ]
+        created = cli_json(create_args)
+        if not isinstance(created, dict) or not isinstance(created.get("scope"), dict):
+            raise RuntimeError("scope create returned no scope receipt")
+        scope = created["scope"]
+        scope_id = str(scope.get("scopeId", ""))
+        listed = cli_json(["scope", "list", "--json"])
+        attached = cli_json(
+            ["scope", "attach", scope_id, str(project), "--json"]
+        )
+        retry_attach = cli_json(
+            ["scope", "attach", scope_id, str(project), "--json"]
+        )
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+        )
+        scope_inspection = mcp_call(
+            project,
+            "ley_context_pack_inspect",
+            {
+                "task": query,
+                "maxResults": 12,
+                "maxTokens": 3_000,
+                "expectedContextPackId": str(compiled.get("contextPackId", "")),
+            },
+        )
+        shared_scopes = [
+            item
+            for item in compiled.get("sharedKnowledgeScopes", [])
+            if isinstance(item, dict)
+        ]
+        shared_references = [
+            item
+            for item in compiled.get("sharedKnowledgeReferences", [])
+            if isinstance(item, dict)
+        ]
+        compiled_text = json.dumps(compiled, sort_keys=True)
+        expected_source_ids = {
+            str(item.get("sourceProjectId", ""))
+            for item in scope.get("sources", [])
+            if isinstance(item, dict)
+        }
+        listed_text = json.dumps(listed, sort_keys=True)
+        scope_inspection_text = json.dumps(scope_inspection, sort_keys=True)
+        source_visible = all(
+            any(
+                reference.get("scopeId") == scope_id
+                and reference.get("authority") == "shared-knowledge-reference"
+                and reference.get("sourceBoundary")
+                == "untrusted-shared-project-memory"
+                and marker.lower() in json.dumps(reference).lower()
+                for reference in shared_references
+            )
+            for marker in markers
+        )
+        scope_visible = any(
+            item.get("scopeId") == scope_id
+            and item.get("kind") == scope_kind
+            and item.get("name") == scope_name
+            for item in shared_scopes
+        )
+        unrelated_hidden = (
+            not unrelated_marker
+            or unrelated_marker.lower() not in compiled_text.lower()
+        )
+        no_paths = all(
+            str(path) not in compiled_text and str(path) not in listed_text
+            for pair in scope_projects
+            for path in pair
+        ) and str(project) not in compiled_text and str(vault) not in compiled_text
+        authority_ok = (
+            created.get("created") is True
+            and scope.get("permission") == "read-only"
+            and len(expected_source_ids) == len(source_indices)
+            and isinstance(attached, dict)
+            and attached.get("created") is True
+            and isinstance(retry_attach, dict)
+            and retry_attach.get("created") is False
+            and not before.get("sharedKnowledgeScopes")
+            and not before.get("sharedKnowledgeReferences")
+            and scope_visible
+            and source_visible
+            and unrelated_hidden
+            and no_paths
+            and compiled.get("sharedKnowledgePrecedence")
+            == "explicit-mount-over-shared-knowledge"
+            and scope_inspection.get("schemaVersion") == 2
+            and scope_inspection.get("matchesExpectedContextPack") is True
+            and scope_inspection.get("sharedKnowledgePrecedence")
+            == "explicit-mount-over-shared-knowledge"
+            and any(
+                isinstance(item, dict)
+                and item.get("source") == "shared-knowledge-reference"
+                and item.get("scopeId") == scope_id
+                and item.get("sourceProjectId") in expected_source_ids
+                for item in scope_inspection.get("includedRecords", [])
+            )
+            and all(marker not in scope_inspection_text for marker in markers)
+            and int(compiled.get("estimatedTokens", 0))
+            <= int(compiled.get("maxTokens", 0))
+        )
+
+        restricted_project, _ = scope_projects[restricted_index]
+        run(
+            [
+                "egress",
+                "project",
+                "local-model-only",
+                str(restricted_project),
+                "--json",
+            ]
+        )
+        cloud_restricted = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+        )
+        cloud_restricted_text = json.dumps(cloud_restricted, sort_keys=True)
+        restricted_project_id = ""
+        for item in scope.get("sources", []):
+            if (
+                isinstance(item, dict)
+                and item.get("sourceProjectName")
+                == knowledge_scope_definitions[restricted_index].get("name")
+            ):
+                restricted_project_id = str(item.get("sourceProjectId", ""))
+                break
+        cloud_egress_ok = (
+            bool(restricted_project_id)
+            and restricted_marker not in cloud_restricted_text
+            and any(
+                isinstance(item, dict)
+                and item.get("scopeKind") == "project"
+                and item.get("scopeId") == restricted_project_id
+                and item.get("policyOrigin") == "source-project"
+                and item.get("policy") == "local-model-only"
+                for item in cloud_restricted.get("egressExclusions", [])
+            )
+        )
+        local_flags = ("--egress-target", "local")
+        local_restricted = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+            flags=local_flags,
+        )
+        local_egress_ok = restricted_marker in json.dumps(
+            local_restricted, sort_keys=True
+        )
+
+        detached = cli_json(
+            ["scope", "detach", scope_id, str(project), "--json"]
+        )
+        after = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+        )
+        after_clean = (
+            not after.get("sharedKnowledgeScopes")
+            and not after.get("sharedKnowledgeReferences")
+        )
+        cloud_history = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": historical_query, "maxResults": 8, "maxTokens": 1_500},
+        )
+        cloud_history_text = json.dumps(cloud_history, sort_keys=True)
+        cloud_history_coverage = cloud_history.get("egressCoverage", {})
+        historical_withheld = (
+            historical_marker not in cloud_history_text
+            and isinstance(cloud_history_coverage, dict)
+            and cloud_history_coverage.get("historicalMemoryWithheld") is True
+            and int(cloud_history_coverage.get("blockedHistoricalSources", 0)) >= 1
+            and int(cloud_history_coverage.get("withheldDerivedResults", 0)) >= 1
+        )
+        historical_reader_error = ""
+        try:
+            mcp_call(
+                project,
+                "ley_project_resume",
+                {"maxSessions": 3, "maxLearnings": 3, "maxCharacters": 8_000},
+            )
+        except RuntimeError as error:
+            historical_reader_error = str(error)
+        historical_reader_blocked = (
+            "historical Ley memory is withheld" in historical_reader_error
+            and historical_marker not in historical_reader_error
+        )
+        local_history = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": historical_query, "maxResults": 8, "maxTokens": 1_500},
+            flags=local_flags,
+        )
+        local_history_ok = historical_marker in json.dumps(
+            local_history.get("items", []), sort_keys=True
+        )
+
+        knowledge_scope_ok = (
+            authority_ok
+            and cloud_egress_ok
+            and local_egress_ok
+            and isinstance(detached, dict)
+            and detached.get("scopeId") == scope_id
+            and after_clean
+            and historical_withheld
+            and historical_reader_blocked
+            and local_history_ok
+        )
+        scores["knowledge_scope"] = knowledge_scope_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)]
+            + [str(path) for pair in scope_projects for path in pair]
+            + ([unrelated_marker] if unrelated_marker else []),
+            [before, compiled, cloud_restricted, after, cloud_history],
+        )
+        evidence_text.extend(
+            [
+                before,
+                created,
+                listed,
+                attached,
+                compiled,
+                scope_inspection,
+                cloud_restricted,
+                local_restricted,
+                detached,
+                after,
+                cloud_history,
+                local_history,
+            ]
+        )
+        if not knowledge_scope_ok:
+            failures.append(
+                "team/organization knowledge scope failed explicit authority, isolation, egress, detach, or historical non-laundering checks"
+            )
+
     dossier_expectation = scenario.get("expected_topic_dossier")
     if isinstance(dossier_expectation, dict):
         topic = str(dossier_expectation.get("topic", ""))
@@ -3098,7 +3421,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and len(pack_id) == 68
             and int(compiled.get("createdAtUnixMs", 0)) > 0
             and compiled.get("liveSourceChecked") is False
-            and inspection.get("schemaVersion") == 1
+            and inspection.get("schemaVersion") == 2
             and inspection.get("persisted") is False
             and inspection.get("inspectionBasis")
             == "current-recompiled-context-pack-manifest"

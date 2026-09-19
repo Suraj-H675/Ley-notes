@@ -99,11 +99,31 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         assert!(skill.contains("authorityPrecedence"), "{}", path.display());
         assert!(skill.contains("referencePrecedence"), "{}", path.display());
         assert!(
+            skill.contains("sharedKnowledgePrecedence"),
+            "{}",
+            path.display()
+        );
+        assert!(
             skill.contains("mountedReferenceScopes"),
             "{}",
             path.display()
         );
         assert!(skill.contains("mountedReferences"), "{}", path.display());
+        assert!(
+            skill.contains("sharedKnowledgeScopes"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("sharedKnowledgeReferences"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("sharedKnowledgeExclusions"),
+            "{}",
+            path.display()
+        );
         assert!(
             skill.contains("mountedReferenceExclusions"),
             "{}",
@@ -116,7 +136,17 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         );
         assert!(skill.contains("mountId"), "{}", path.display());
         assert!(
+            skill.contains("untrusted-shared-project-memory"),
+            "{}",
+            path.display()
+        );
+        assert!(
             skill.contains("create/remove Context Mounts"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("create/list/attach/detach Knowledge Scopes"),
             "{}",
             path.display()
         );

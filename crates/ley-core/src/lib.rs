@@ -20,6 +20,7 @@ mod external_connector;
 mod graph;
 mod host_adapter;
 mod ingestion;
+mod knowledge_scope;
 mod knowledge_view;
 mod learning;
 mod learning_context;
@@ -57,13 +58,15 @@ pub use context_compiler::{
     compile_project_context, compile_project_context_for_agent_with_registries,
     compile_project_context_with_registries, compile_project_context_with_registry,
     AgentContextAuthorities, CompiledContextItem, CompiledContextPack,
-    CompiledMountedReferenceItem, CompiledSpecificationItem, ContextAdmissionBasis,
-    ContextAuthority, ContextCompileCoverage, ContextCompileLimits, ContextEgressCoverage,
-    ContextEgressExclusion, ContextEgressPolicyOrigin, ContextEvidenceState, ContextExclusion,
-    ContextExclusionReason, ContextExclusionStage, ContextFollowUp, ContextFollowUpKind,
-    ContextGap, ContextGapKind, ContextPremiseAdjudication, ContextPremiseState,
-    ContextPremiseWarning, ContextPremiseWarningKind, MountedReferenceCoverage,
-    MountedReferenceExclusion, MountedReferenceScope, MountedReferenceScopeState,
+    CompiledMountedReferenceItem, CompiledSharedKnowledgeReference, CompiledSpecificationItem,
+    ContextAdmissionBasis, ContextAuthority, ContextCompileCoverage, ContextCompileLimits,
+    ContextEgressCoverage, ContextEgressExclusion, ContextEgressPolicyOrigin, ContextEvidenceState,
+    ContextExclusion, ContextExclusionReason, ContextExclusionStage, ContextFollowUp,
+    ContextFollowUpKind, ContextGap, ContextGapKind, ContextPremiseAdjudication,
+    ContextPremiseState, ContextPremiseWarning, ContextPremiseWarningKind,
+    MountedReferenceCoverage, MountedReferenceExclusion, MountedReferenceScope,
+    MountedReferenceScopeState, SharedKnowledgeCoverage, SharedKnowledgeExclusion,
+    SharedKnowledgeScope, SharedKnowledgeSource, SharedKnowledgeSourceState,
     SpecificationCompileCoverage, SpecificationCompileExclusion,
     SpecificationCompileExclusionReason, DEFAULT_CONTEXT_COMPILE_RESULTS,
     DEFAULT_CONTEXT_COMPILE_TOKENS, MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
@@ -113,14 +116,23 @@ pub use graph::{
     PROJECT_GRAPH_SCHEMA_VERSION,
 };
 pub use host_adapter::{
-    process_host_hook, process_host_hook_for_agent_with_registries, AgentHost, HostHookDisposition,
-    HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
+    process_host_hook, process_host_hook_for_agent_with_registries, AgentHost,
+    HostAgentContextRegistries, HostHookDisposition, HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
 };
 pub use ingestion::{
     erase_project_memory, ingest_project, read_project_graph, ArtifactKind, ArtifactMediaType,
     ArtifactRecord, ArtifactSkipReason, IngestionResult, ProjectMemoryErasure, RedactionFinding,
     RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY, ARTIFACT_MANIFEST_LIMIT_BYTES,
     ARTIFACT_MANIFEST_SCHEMA_VERSION,
+};
+pub use knowledge_scope::{
+    KnowledgeScope, KnowledgeScopeAttachment, KnowledgeScopeAttachmentList,
+    KnowledgeScopeAttachmentMutation, KnowledgeScopeEgressSource, KnowledgeScopeEgressSources,
+    KnowledgeScopeKind, KnowledgeScopeList, KnowledgeScopeMutation, KnowledgeScopePermission,
+    KnowledgeScopeRegistry, KnowledgeScopeSource, KnowledgeScopeSourceStatus,
+    KNOWLEDGE_SCOPE_REGISTRY_FILE, KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION,
+    MAX_ATTACHED_KNOWLEDGE_SCOPES_PER_PROJECT, MAX_KNOWLEDGE_SCOPES,
+    MAX_KNOWLEDGE_SCOPE_HISTORY_PER_PROJECT, MAX_KNOWLEDGE_SCOPE_SOURCES,
 };
 pub use knowledge_view::{
     project_artifact_inventory, project_graph_history, project_graph_view,
@@ -450,6 +462,12 @@ pub enum LeyCoreError {
     InvalidContextMountRegistry(String),
     #[error("invalid Ley Context Mount request: {0}")]
     InvalidContextMountRequest(String),
+    #[error("invalid Ley knowledge scope registry: {0}")]
+    InvalidKnowledgeScopeRegistry(String),
+    #[error("invalid Ley knowledge scope request: {0}")]
+    InvalidKnowledgeScopeRequest(String),
+    #[error("Ley knowledge scope not found: {0}")]
+    KnowledgeScopeNotFound(String),
     #[error("invalid Ley agent egress policy registry: {0}")]
     InvalidEgressPolicyRegistry(String),
     #[error("invalid Ley agent egress policy request: {0}")]

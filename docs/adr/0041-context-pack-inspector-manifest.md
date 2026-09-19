@@ -4,6 +4,8 @@
 
 Accepted.
 
+Extended by ADR 0052: Inspector schema v2 adds reusable team/organization Knowledge Scope attribution without copying shared reference bodies.
+
 ## Context
 
 Ley's third P1 roadmap item is a Context Pack Inspector. The Context Compiler already exposes most of the raw diagnostics needed to understand a pack—authority, admission basis, exclusions, premise warnings, conflicts, retrieval mode, revision freshness, budgets, omissions, mounts, egress exclusions, and follow-up handles—but there is no stable identity for one compiled pack and no compact manifest that answers “why was this supplied?” without copying all supplied text again.
@@ -14,16 +16,16 @@ Persisting every full context pack would create another sensitive storage tier, 
 
 Ley adds a logical `contextPackId` and `createdAtUnixMs` to every `CompiledContextPack`, then derives a non-persistent Inspector manifest from the **same finalized pack structure**.
 
-`contextPackId` is `cpk_` plus a SHA-256 digest of the logical compiled pack after Specifications, active-project admission, mounted references, premise/revision diagnostics, and agent egress filtering have been finalized. The hash input clears the pack ID itself and excludes creation time, so recompiling unchanged logical context can reproduce the same ID. If included records, context text, authority/policy diagnostics, mounts, source snapshots, or other logical pack content changes, the ID changes.
+`contextPackId` is `cpk_` plus a SHA-256 digest of the logical compiled pack after Specifications, active-project admission, mounted references, shared Knowledge Scope references, premise/revision diagnostics, and agent egress filtering have been finalized. The hash input clears the pack ID itself and excludes creation time, so recompiling unchanged logical context can reproduce the same ID. If included records, context text, authority/policy diagnostics, mounts/scopes, source snapshots, or other logical pack content changes, the ID changes.
 
 The Inspector:
 
 - uses the same agent-aware Context Compiler path, same task, same result/token limits, same Specification registry, same Context Mount registry, same egress registry, and same configured target;
 - returns a compact manifest rather than another copy of context bodies/excerpts;
-- lists included Specification, active-project, and mounted-reference records with stable IDs, project-relative citations/paths, authority, admission basis, inclusion reason, revision applicability, and estimated token contribution;
-- exposes Specification, active-project, mounted-reference, and egress exclusions;
-- preserves premise adjudication, conflicts, gaps, retrieval mode/fallback metadata, revision freshness, coverage, mount scopes, and follow-up handles;
-- reports budget composition across Specifications, active-project items, mounted references, and diagnostic/structural overhead;
+- lists included Specification, active-project, mounted-reference, and shared-scope records with stable IDs, project-relative citations/paths where applicable, scope/source identity, authority, admission basis, inclusion reason, revision applicability, and estimated token contribution;
+- exposes Specification, active-project, mounted-reference, shared-scope, and egress exclusions;
+- preserves premise adjudication, conflicts, gaps, retrieval mode/fallback metadata, revision freshness, coverage, mount scopes, shared Knowledge Scopes, and follow-up handles;
+- reports budget composition across Specifications, active-project items, mounted references, shared Knowledge Scope references, and diagnostic/structural overhead;
 - keeps `liveSourceChecked: false` unless the compiler itself can truthfully claim otherwise;
 - returns `persisted: false` and stores no Inspector manifest or copied pack body in this slice.
 

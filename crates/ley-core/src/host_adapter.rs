@@ -1,9 +1,9 @@
 use crate::{
     compile_session_memory, diagnose_project, evaluate_agent_egress, project_resume_context,
     read_session, record_session_prompt, record_session_response, start_session, AgentEgressTarget,
-    AgentSession, ContextMountRegistry, EgressPolicyRegistry, LeyCoreError, MemoryCompilationState,
-    ProjectResumePack, SessionSource, SessionSourceKind, SessionStatus, StartSessionInput,
-    TurnEvidenceInput, TurnEvidenceOrigin, DEFAULT_MEMORY_COMPILE_RESULTS,
+    AgentSession, ContextMountRegistry, EgressPolicyRegistry, KnowledgeScopeRegistry, LeyCoreError,
+    MemoryCompilationState, ProjectResumePack, SessionSource, SessionSourceKind, SessionStatus,
+    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, DEFAULT_MEMORY_COMPILE_RESULTS,
     MIN_MEMORY_COMPILE_CHARACTERS,
 };
 use serde::{Deserialize, Serialize};
@@ -73,15 +73,26 @@ pub struct HostHookResult {
     pub output: Value,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct HostAgentContextRegistries<'a> {
+    pub egress: &'a EgressPolicyRegistry,
+    pub mounts: &'a ContextMountRegistry,
+    pub knowledge_scopes: &'a KnowledgeScopeRegistry,
+}
+
 pub fn process_host_hook_for_agent_with_registries(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
     host: AgentHost,
     payload: Value,
-    egress_registry: &EgressPolicyRegistry,
-    mount_registry: &ContextMountRegistry,
+    registries: HostAgentContextRegistries<'_>,
     target: AgentEgressTarget,
 ) -> Result<HostHookResult, LeyCoreError> {
+    let HostAgentContextRegistries {
+        egress: egress_registry,
+        mounts: mount_registry,
+        knowledge_scopes: knowledge_scope_registry,
+    } = registries;
     let project_start = project_start.as_ref();
     let vault = vault.as_ref();
     let object = payload.as_object().ok_or_else(|| {
@@ -101,7 +112,7 @@ pub fn process_host_hook_for_agent_with_registries(
         if event == "SessionStart" {
             let blocked_fine_grained =
                 policies.has_blocked_fine_grained_source(&project_id, target);
-            let blocked_historical_source =
+            let blocked_mount_source =
                 mount_registry.with_agent_context_sources_locked(project_start, |sources| {
                     Ok(sources.historical.iter().any(|source| {
                         !evaluate_agent_egress(
@@ -111,7 +122,19 @@ pub fn process_host_hook_for_agent_with_registries(
                         .allowed
                     }))
                 })?;
-            if blocked_fine_grained || blocked_historical_source {
+            let blocked_scope_source = knowledge_scope_registry.with_agent_context_sources_locked(
+                project_start,
+                |sources| {
+                    Ok(sources.historical.iter().any(|source| {
+                        !evaluate_agent_egress(
+                            policies.project_policy(&source.source_project_id),
+                            target,
+                        )
+                        .allowed
+                    }))
+                },
+            )?;
+            if blocked_fine_grained || blocked_mount_source || blocked_scope_source {
                 let session =
                     ensure_host_session(project_start, vault, host, &external_session_id)?;
                 return Ok(HostHookResult {
@@ -698,6 +721,7 @@ mod tests {
 
         let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
         let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
+        let scopes = KnowledgeScopeRegistry::at(config.join("knowledge-scopes-v1.json"));
         let specification_id = generate_specification_id();
         egress
             .set_specification_policy(
@@ -718,8 +742,11 @@ mod tests {
             &vault,
             AgentHost::Codex,
             payload.clone(),
-            &egress,
-            &mounts,
+            HostAgentContextRegistries {
+                egress: &egress,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+            },
             AgentEgressTarget::Cloud,
         )
         .unwrap();
@@ -736,8 +763,11 @@ mod tests {
             &vault,
             AgentHost::Codex,
             payload,
-            &egress,
-            &mounts,
+            HostAgentContextRegistries {
+                egress: &egress,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+            },
             AgentEgressTarget::Local,
         )
         .unwrap();
@@ -758,8 +788,11 @@ mod tests {
                 "hook_event_name": "SessionStart",
                 "source": "startup"
             }),
-            &egress,
-            &mounts,
+            HostAgentContextRegistries {
+                egress: &egress,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+            },
             AgentEgressTarget::Cloud,
         )
         .unwrap();
@@ -767,6 +800,103 @@ mod tests {
         assert_eq!(blocked.output, json!({}));
         assert!(blocked.session_id.is_none());
         assert_eq!(list_sessions(&project, &vault).unwrap().len(), before);
+    }
+
+    #[test]
+    fn detached_shared_scope_source_still_withholds_host_startup_history() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        let reference = base.path().join("reference");
+        let reference_vault = base.path().join("reference-vault");
+        let config = base.path().join("config");
+        for path in [&project, &vault, &reference, &reference_vault, &config] {
+            fs::create_dir(path).unwrap();
+        }
+        fs::write(project.join("README.md"), "# Active\n").unwrap();
+        fs::write(reference.join("README.md"), "# Private team reference\n").unwrap();
+        initialize_project(&project, Some("Hook active"), CaptureMode::Structured).unwrap();
+        initialize_project(
+            &reference,
+            Some("Hook private reference"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        ingest_project(&reference, &reference_vault).unwrap();
+
+        let prior_marker = "scope_derived_host_history_marker";
+        start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "c".repeat(32)),
+                name: "Scope-derived prior work".to_owned(),
+                goal: prior_marker.to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+
+        let bindings = crate::BindingRegistry::at(config.join(crate::BINDING_REGISTRY_FILE));
+        bindings.bind(&project, &vault).unwrap();
+        bindings.bind(&reference, &reference_vault).unwrap();
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
+        let scopes = KnowledgeScopeRegistry::at(config.join("knowledge-scopes-v1.json"));
+        let scope = scopes
+            .create(
+                crate::KnowledgeScopeKind::Team,
+                "Private team",
+                std::slice::from_ref(&reference),
+            )
+            .unwrap();
+        scopes.attach(&project, &scope.scope.scope_id).unwrap();
+        scopes
+            .detach(&project, &scope.scope.scope_id)
+            .unwrap()
+            .unwrap();
+        egress
+            .set_project_policy(&reference, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+
+        let payload = json!({
+            "session_id": "codex-scope-history-thread",
+            "cwd": project,
+            "hook_event_name": "SessionStart",
+            "source": "startup"
+        });
+        let cloud = process_host_hook_for_agent_with_registries(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            payload.clone(),
+            HostAgentContextRegistries {
+                egress: &egress,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+            },
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(cloud.disposition, HostHookDisposition::ContextWithheld);
+        assert!(!cloud.output.to_string().contains(prior_marker));
+
+        let local = process_host_hook_for_agent_with_registries(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            payload,
+            HostAgentContextRegistries {
+                egress: &egress,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+            },
+            AgentEgressTarget::Local,
+        )
+        .unwrap();
+        assert_eq!(local.disposition, HostHookDisposition::ContextLoaded);
+        assert!(local.output.to_string().contains(prior_marker));
     }
 
     #[test]

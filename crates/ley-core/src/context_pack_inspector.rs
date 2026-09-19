@@ -4,17 +4,18 @@ use crate::{
     ContextFollowUp, ContextGap, ContextPremiseAdjudication, GraphCitation,
     MountedReferenceCoverage, MountedReferenceExclusion, MountedReferenceScope,
     ProjectMemoryConflict, ProjectMemoryResultKind, ProjectMemorySearchRetrieval,
-    ProjectRevisionFreshness, RevisionApplicability, SpecificationCompileCoverage,
+    ProjectRevisionFreshness, RevisionApplicability, SharedKnowledgeCoverage,
+    SharedKnowledgeExclusion, SharedKnowledgeScope, SpecificationCompileCoverage,
     SpecificationCompileExclusion,
 };
 use serde::Serialize;
 
-pub const CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION: u32 = 1;
+pub const CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION: u32 = 2;
 
 const INSPECTION_BASIS: &str = "current-recompiled-context-pack-manifest";
 const SOURCE_BOUNDARY: &str = "derived-context-pack-inspection";
 const INSTRUCTION_WARNING: &str = "This Inspector manifest explains one compiled Ley context pack. It does not make stored text authoritative, does not prove live source is unchanged, and does not reconstruct an older pack when the expected contextPackId differs.";
-const PRIVACY_NOTICE: &str = "The Inspector manifest omits included source/specification text and excerpts. It exposes only diagnostic metadata already represented by the compiled pack: stable IDs, project-relative citations/paths, authority/admission reasoning, exclusions, conflicts, retrieval/revision signals, budget composition, coverage, and follow-up handles.";
+const PRIVACY_NOTICE: &str = "The Inspector manifest omits included active-project, Specification, mounted-reference, and shared-scope text/excerpts. It exposes only diagnostic metadata already represented by the compiled pack: stable IDs, project-relative citations/paths, mount/scope/source identities, authority/admission reasoning, exclusions, conflicts, retrieval/revision signals, budget composition, coverage, and follow-up handles.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -22,6 +23,7 @@ pub enum ContextPackRecordSource {
     Specification,
     ActiveProjectMemory,
     MountedReference,
+    SharedKnowledgeReference,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -39,6 +41,8 @@ pub struct ContextPackIncludedRecord {
     pub content_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mount_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -72,6 +76,7 @@ pub struct ContextPackBudgetBreakdown {
     pub specification_tokens: usize,
     pub active_project_item_tokens: usize,
     pub mounted_reference_tokens: usize,
+    pub shared_knowledge_reference_tokens: usize,
     pub diagnostic_and_overhead_tokens: usize,
     pub omitted_or_truncated: bool,
 }
@@ -99,10 +104,12 @@ pub struct ContextPackInspection {
     pub egress_target: Option<AgentEgressTarget>,
     pub authority_precedence: &'static str,
     pub reference_precedence: &'static str,
+    pub shared_knowledge_precedence: &'static str,
     pub included_records: Vec<ContextPackIncludedRecord>,
     pub specification_exclusions: Vec<SpecificationCompileExclusion>,
     pub active_project_exclusions: Vec<ContextExclusion>,
     pub mounted_reference_exclusions: Vec<MountedReferenceExclusion>,
+    pub shared_knowledge_exclusions: Vec<SharedKnowledgeExclusion>,
     pub egress_exclusions: Vec<ContextEgressExclusion>,
     pub premise_adjudication: ContextPremiseAdjudication,
     pub conflicts: Vec<ProjectMemoryConflict>,
@@ -113,9 +120,11 @@ pub struct ContextPackInspection {
     pub coverage: ContextCompileCoverage,
     pub specification_coverage: SpecificationCompileCoverage,
     pub mounted_reference_coverage: MountedReferenceCoverage,
+    pub shared_knowledge_coverage: SharedKnowledgeCoverage,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub egress_coverage: Option<ContextEgressCoverage>,
     pub mounted_reference_scopes: Vec<MountedReferenceScope>,
+    pub shared_knowledge_scopes: Vec<SharedKnowledgeScope>,
     pub follow_ups: Vec<ContextFollowUp>,
     pub live_source_checked: bool,
     pub source_boundary: &'static str,
@@ -131,7 +140,8 @@ pub fn inspect_context_pack(
         pack.specifications
             .len()
             .saturating_add(pack.items.len())
-            .saturating_add(pack.mounted_references.len()),
+            .saturating_add(pack.mounted_references.len())
+            .saturating_add(pack.shared_knowledge_references.len()),
     );
     for specification in &pack.specifications {
         included_records.push(ContextPackIncludedRecord {
@@ -142,6 +152,7 @@ pub fn inspect_context_pack(
             relative_path: Some(specification.relative_path.clone()),
             content_hash: Some(specification.content_hash.clone()),
             mount_id: None,
+            scope_id: None,
             source_project_id: None,
             session_id: None,
             learning_id: None,
@@ -170,6 +181,7 @@ pub fn inspect_context_pack(
             relative_path: None,
             content_hash: None,
             mount_id: None,
+            scope_id: None,
             source_project_id: None,
             session_id: item.session_id.clone(),
             learning_id: item.learning_id.clone(),
@@ -198,6 +210,7 @@ pub fn inspect_context_pack(
             relative_path: None,
             content_hash: None,
             mount_id: Some(item.mount_id.clone()),
+            scope_id: None,
             source_project_id: Some(item.source_project_id.clone()),
             session_id: item.session_id.clone(),
             learning_id: item.learning_id.clone(),
@@ -207,6 +220,35 @@ pub fn inspect_context_pack(
             admission_basis: Some(item.admission_basis),
             inclusion_reason: format!(
                 "admitted-read-only-mounted-reference-{}-via-{}",
+                authority_label(item.source_authority),
+                admission_basis_label(item.admission_basis)
+            ),
+            relevance_score: None,
+            exact_match: None,
+            trusted_for_reuse: Some(item.trusted_for_reuse),
+            revision_applicability: item.revision_applicability.clone(),
+            estimated_tokens: item.estimated_tokens,
+        });
+    }
+    for item in &pack.shared_knowledge_references {
+        included_records.push(ContextPackIncludedRecord {
+            source: ContextPackRecordSource::SharedKnowledgeReference,
+            entity_id: item.entity_id.clone(),
+            kind: Some(item.kind),
+            specification_id: None,
+            relative_path: None,
+            content_hash: None,
+            mount_id: None,
+            scope_id: Some(item.scope_id.clone()),
+            source_project_id: Some(item.source_project_id.clone()),
+            session_id: item.session_id.clone(),
+            learning_id: item.learning_id.clone(),
+            citation: item.citation.clone(),
+            authority: item.authority.to_owned(),
+            source_authority: Some(authority_label(item.source_authority).to_owned()),
+            admission_basis: Some(item.admission_basis),
+            inclusion_reason: format!(
+                "admitted-read-only-shared-knowledge-{}-via-{}",
                 authority_label(item.source_authority),
                 admission_basis_label(item.admission_basis)
             ),
@@ -233,9 +275,15 @@ pub fn inspect_context_pack(
         .iter()
         .map(|item| item.estimated_tokens)
         .sum::<usize>();
+    let shared_knowledge_reference_tokens = pack
+        .shared_knowledge_references
+        .iter()
+        .map(|item| item.estimated_tokens)
+        .sum::<usize>();
     let known_item_tokens = specification_tokens
         .saturating_add(active_project_item_tokens)
-        .saturating_add(mounted_reference_tokens);
+        .saturating_add(mounted_reference_tokens)
+        .saturating_add(shared_knowledge_reference_tokens);
     let omitted_or_truncated = pack.coverage.search_truncated
         || pack.coverage.source_truncated
         || pack.coverage.omitted_conflicts > 0
@@ -248,6 +296,10 @@ pub fn inspect_context_pack(
         || pack.mounted_reference_coverage.omitted_exclusions > 0
         || pack.mounted_reference_coverage.omitted_by_result_limit > 0
         || pack.mounted_reference_coverage.omitted_by_token_budget > 0
+        || pack.shared_knowledge_coverage.omitted_scopes > 0
+        || pack.shared_knowledge_coverage.omitted_exclusions > 0
+        || pack.shared_knowledge_coverage.omitted_by_result_limit > 0
+        || pack.shared_knowledge_coverage.omitted_by_token_budget > 0
         || pack
             .egress_coverage
             .as_ref()
@@ -282,10 +334,12 @@ pub fn inspect_context_pack(
         egress_target: pack.egress_target,
         authority_precedence: pack.authority_precedence,
         reference_precedence: pack.reference_precedence,
+        shared_knowledge_precedence: pack.shared_knowledge_precedence,
         included_records,
         specification_exclusions: pack.specification_exclusions.clone(),
         active_project_exclusions: pack.exclusions.clone(),
         mounted_reference_exclusions: pack.mounted_reference_exclusions.clone(),
+        shared_knowledge_exclusions: pack.shared_knowledge_exclusions.clone(),
         egress_exclusions: pack.egress_exclusions.clone(),
         premise_adjudication: pack.premise_adjudication.clone(),
         conflicts: pack.conflicts.clone(),
@@ -298,14 +352,17 @@ pub fn inspect_context_pack(
             specification_tokens,
             active_project_item_tokens,
             mounted_reference_tokens,
+            shared_knowledge_reference_tokens,
             diagnostic_and_overhead_tokens: pack.estimated_tokens.saturating_sub(known_item_tokens),
             omitted_or_truncated,
         },
         coverage: pack.coverage.clone(),
         specification_coverage: pack.specification_coverage.clone(),
         mounted_reference_coverage: pack.mounted_reference_coverage.clone(),
+        shared_knowledge_coverage: pack.shared_knowledge_coverage.clone(),
         egress_coverage: pack.egress_coverage.clone(),
         mounted_reference_scopes: pack.mounted_reference_scopes.clone(),
+        shared_knowledge_scopes: pack.shared_knowledge_scopes.clone(),
         follow_ups: pack.follow_ups.clone(),
         live_source_checked: pack.live_source_checked,
         source_boundary: SOURCE_BOUNDARY,

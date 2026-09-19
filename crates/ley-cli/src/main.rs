@@ -11,16 +11,17 @@ use ley_core::{
     store_external_connector_snapshot_with_registry, supported_semantic_model, AgentEgressPolicy,
     AgentEgressTarget, AgentHost, BindingRegistry, CaptureMode, CheckpointInput, CommandInput,
     ContextMountRegistry, CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput,
-    ExternalConnectorRegistry, FinishSessionInput, GraphNodeKind, LearningActor,
-    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
-    LearningTrustState, LeyCoreError, ProjectMemorySearchLimits, ProposeLearningInput,
-    RenameSessionInput, ReviewLearningInput, ReviewedRunbookInput, RevisionCompatibility,
-    RunbookSkillExportInput, RunbookSkillHost, SemanticModelStatus, SessionSource,
-    SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
-    TurnEvidenceOrigin, VerificationInput, VerificationStatus,
-    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
-    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
-    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    ExternalConnectorRegistry, FinishSessionInput, GraphNodeKind, HostAgentContextRegistries,
+    KnowledgeScopeKind, KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput,
+    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
+    LeyCoreError, ProjectMemorySearchLimits, ProposeLearningInput, RenameSessionInput,
+    ReviewLearningInput, ReviewedRunbookInput, RevisionCompatibility, RunbookSkillExportInput,
+    RunbookSkillHost, SemanticModelStatus, SessionSource, SessionSourceKind, SessionStatus,
+    SpecificationRegistry, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
+    VerificationInput, VerificationStatus, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_github_connector::{fetch_public_github_reference, GitHubConnectorError};
 use ley_mcp::{run_stdio_with_egress_target, run_unavailable_stdio};
@@ -55,6 +56,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "egress" => egress(&arguments[1..]),
         "connector" => connector(&arguments[1..]),
         "mount" => mount(&arguments[1..]),
+        "scope" => scope(&arguments[1..]),
         "session" => session(&arguments[1..]),
         "learning" => learning(&arguments[1..]),
         "runbook" => runbook(&arguments[1..]),
@@ -742,6 +744,199 @@ fn mount(arguments: &[String]) -> Result<(), CliError> {
     }
 }
 
+fn scope(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "scope requires create, list, attach, attached, or detach".to_owned(),
+        ));
+    };
+    let registry = KnowledgeScopeRegistry::system_default()?;
+    match command {
+        "create" => {
+            let kind = arguments
+                .get(1)
+                .ok_or_else(|| {
+                    CliError::Usage("scope create requires KIND NAME SOURCE_PROJECT...".to_owned())
+                })
+                .and_then(|value| KnowledgeScopeKind::parse(value).map_err(CliError::Core))?;
+            let name = arguments.get(2).ok_or_else(|| {
+                CliError::Usage("scope create requires KIND NAME SOURCE_PROJECT...".to_owned())
+            })?;
+            let mut sources = Vec::new();
+            let mut json = false;
+            for argument in &arguments[3..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value => sources.push(PathBuf::from(value)),
+                }
+            }
+            let result = registry.create(kind, name, &sources)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("knowledge scope result is serializable")
+                );
+            } else {
+                println!(
+                    "Knowledge scope: {} ({})",
+                    result.scope.name, result.scope.scope_id
+                );
+                println!("Kind: {:?}", result.scope.kind);
+                println!("Permission: read-only");
+                println!("Sources: {}", result.scope.sources.len());
+                if !result.created {
+                    println!("Existing immutable scope reused.");
+                }
+            }
+            Ok(())
+        }
+        "list" => {
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let result = registry.list()?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("knowledge scope list is serializable")
+                );
+            } else if result.scopes.is_empty() {
+                println!("No knowledge scopes.");
+            } else {
+                println!("Knowledge scopes: {}", result.scopes.len());
+                for scope in &result.scopes {
+                    println!(
+                        "  {}  {:?}  {}  read-only  sources:{}",
+                        scope.scope_id,
+                        scope.kind,
+                        scope.name,
+                        scope.sources.len()
+                    );
+                }
+            }
+            Ok(())
+        }
+        "attach" => {
+            let mut scope_id = None;
+            let mut active = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if scope_id.is_none() => scope_id = Some(value.to_owned()),
+                    value if active.is_none() => active = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let scope_id = scope_id
+                .ok_or_else(|| CliError::Usage("scope attach requires SCOPE_ID".to_owned()))?;
+            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.attach(active, &scope_id)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("knowledge scope attachment is serializable")
+                );
+            } else {
+                println!(
+                    "Attached knowledge scope: {} ({})",
+                    result.attachment.name, result.attachment.scope_id
+                );
+                println!("Permission: read-only");
+                if !result.created {
+                    println!("Existing attachment reused.");
+                }
+            }
+            Ok(())
+        }
+        "attached" => {
+            let mut active = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if active.is_none() => active = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.attached(active)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("knowledge scope attachment list is serializable")
+                );
+            } else if result.attachments.is_empty() {
+                println!("No knowledge scopes attached.");
+            } else {
+                println!("Attached knowledge scopes: {}", result.attachments.len());
+                for attachment in &result.attachments {
+                    println!(
+                        "  {}  {:?}  {}  read-only  sources:{}",
+                        attachment.scope_id,
+                        attachment.kind,
+                        attachment.name,
+                        attachment.source_count
+                    );
+                }
+            }
+            Ok(())
+        }
+        "detach" => {
+            let mut scope_id = None;
+            let mut active = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if scope_id.is_none() => scope_id = Some(value.to_owned()),
+                    value if active.is_none() => active = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let scope_id = scope_id
+                .ok_or_else(|| CliError::Usage("scope detach requires SCOPE_ID".to_owned()))?;
+            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let removed = registry.detach(active, &scope_id)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&removed)
+                        .expect("knowledge scope detachment is serializable")
+                );
+            } else if removed.is_some() {
+                println!("Detached knowledge scope: {scope_id}");
+            } else {
+                println!("Knowledge scope was not attached: {scope_id}");
+            }
+            Ok(())
+        }
+        other => Err(CliError::Usage(format!(
+            "unknown scope command '{other}'; use create, list, attach, attached, or detach"
+        ))),
+    }
+}
+
 fn search(arguments: &[String]) -> Result<(), CliError> {
     let mut query = None;
     let mut project = None;
@@ -917,13 +1112,17 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
     let payload = serde_json::from_slice(&bytes).map_err(CliError::HookJson)?;
     let egress_registry = EgressPolicyRegistry::system_default()?;
     let mount_registry = ContextMountRegistry::system_default()?;
+    let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
     let result = process_host_hook_for_agent_with_registries(
         &project,
         &binding.vault_path,
         host,
         payload,
-        &egress_registry,
-        &mount_registry,
+        HostAgentContextRegistries {
+            egress: &egress_registry,
+            mounts: &mount_registry,
+            knowledge_scopes: &knowledge_scope_registry,
+        },
         egress_target,
     )?;
     println!(
@@ -1499,6 +1698,7 @@ fn runbook_export_skill(arguments: &[String]) -> Result<(), CliError> {
     let binding = resolve_runbook_binding(&common)?;
     let egress_registry = EgressPolicyRegistry::system_default()?;
     let mount_registry = ContextMountRegistry::system_default()?;
+    let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
     let exported = export_reviewed_runbook_skill(
         common.project_path()?,
         &binding.vault_path,
@@ -1523,6 +1723,7 @@ fn runbook_export_skill(arguments: &[String]) -> Result<(), CliError> {
         },
         &egress_registry,
         &mount_registry,
+        &knowledge_scope_registry,
     )?;
     if common.json {
         println!(
@@ -3014,6 +3215,11 @@ fn print_help() {
     println!("  ley mount add REFERENCE_PROJECT [ACTIVE_PROJECT] [--json]");
     println!("  ley mount list [ACTIVE_PROJECT] [--json]");
     println!("  ley mount remove MOUNT_ID [ACTIVE_PROJECT] [--json]");
+    println!("  ley scope create team|organization NAME SOURCE_PROJECT... [--json]");
+    println!("  ley scope list [--json]");
+    println!("  ley scope attach SCOPE_ID [ACTIVE_PROJECT] [--json]");
+    println!("  ley scope attached [ACTIVE_PROJECT] [--json]");
+    println!("  ley scope detach SCOPE_ID [ACTIVE_PROJECT] [--json]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
     println!("  ley session prompt SESSION [path] --stdin [--request-id REQUEST] [--json]");
     println!("  ley session response SESSION [path] --stdin [--request-id REQUEST] [--json]");

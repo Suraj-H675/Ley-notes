@@ -2,6 +2,8 @@
 
 Status: accepted
 
+Extended by ADR 0052: reusable Knowledge Scope sources inherit source-project egress before search, and detached scope/source ancestry participates in conservative derivative withholding.
+
 ## Context
 
 Ley can retain project evidence, user-approved Specifications, structured sessions, learnings, and explicitly mounted reference projects locally. Local retention is not permission to hand that content to a connected model provider. Before this slice, mounts required explicit agent-context enablement and the product disclosed the provider boundary, but Ley did not have one enforceable per-source policy vocabulary that could stop otherwise retrievable content from entering an agent response.

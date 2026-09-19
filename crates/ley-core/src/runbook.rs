@@ -1,7 +1,7 @@
 use crate::{
     diagnose_project, evaluate_agent_egress, read_learning, AgentEgressTarget,
-    ContextMountRegistry, EgressPolicyRegistry, LearningFreshness, LearningKind,
-    LearningProvenance, LearningState, LearningTrustState, LeyCoreError,
+    ContextMountRegistry, EgressPolicyRegistry, KnowledgeScopeRegistry, LearningFreshness,
+    LearningKind, LearningProvenance, LearningState, LearningTrustState, LeyCoreError,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -256,6 +256,7 @@ pub fn export_reviewed_runbook_skill(
     input: RunbookSkillExportInput,
     egress_registry: &EgressPolicyRegistry,
     context_mount_registry: &ContextMountRegistry,
+    knowledge_scope_registry: &KnowledgeScopeRegistry,
 ) -> Result<RunbookSkillExport, LeyCoreError> {
     validate_runbook_id(&input.expected_runbook_id)?;
     enforce_historical_egress(
@@ -263,6 +264,7 @@ pub fn export_reviewed_runbook_skill(
         input.egress_target,
         egress_registry,
         context_mount_registry,
+        knowledge_scope_registry,
     )?;
     let runbook = compile_reviewed_runbook(&project_start, vault, input.runbook)?;
     if runbook.runbook_id != input.expected_runbook_id {
@@ -296,6 +298,7 @@ fn enforce_historical_egress(
     target: AgentEgressTarget,
     egress_registry: &EgressPolicyRegistry,
     context_mount_registry: &ContextMountRegistry,
+    knowledge_scope_registry: &KnowledgeScopeRegistry,
 ) -> Result<(), LeyCoreError> {
     let project_id = diagnose_project(project_start)?.identity.project_id;
     egress_registry.with_snapshot_locked(|policies| {
@@ -321,7 +324,24 @@ fn enforce_historical_egress(
                     target: target.to_string(),
                 });
             }
-            Ok(())
+            knowledge_scope_registry.with_agent_context_sources_locked(
+                project_start,
+                |scope_sources| {
+                    let source_blocked = scope_sources.historical.iter().any(|source| {
+                        !evaluate_agent_egress(
+                            policies.project_policy(&source.source_project_id),
+                            target,
+                        )
+                        .allowed
+                    });
+                    if source_blocked {
+                        return Err(LeyCoreError::AgentDerivedEgressUnproven {
+                            target: target.to_string(),
+                        });
+                    }
+                    Ok(())
+                },
+            )
         })
     })
 }
@@ -741,6 +761,7 @@ mod tests {
         std::fs::create_dir(&config).unwrap();
         let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
         let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
+        let scopes = KnowledgeScopeRegistry::at(config.join("knowledge-scopes-v1.json"));
         egress
             .set_project_policy(&project, AgentEgressPolicy::LocalModelOnly)
             .unwrap();
@@ -756,6 +777,7 @@ mod tests {
             },
             &egress,
             &mounts,
+            &scopes,
         )
         .unwrap_err();
         assert!(matches!(cloud, LeyCoreError::AgentEgressDenied { .. }));
@@ -771,6 +793,7 @@ mod tests {
             },
             &egress,
             &mounts,
+            &scopes,
         )
         .unwrap_err();
         assert!(wrong.to_string().contains("reviewed runbook changed"));
@@ -786,6 +809,7 @@ mod tests {
             },
             &egress,
             &mounts,
+            &scopes,
         )
         .unwrap();
         assert_eq!(exported.host, RunbookSkillHost::ClaudeCode);
@@ -804,5 +828,138 @@ mod tests {
             .content
             .contains(project.to_string_lossy().as_ref()));
         assert!(!exported.content.contains(vault.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn detached_shared_scope_source_blocks_cloud_runbook_export() {
+        let temporary = tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let vault = temporary.path().join("vault");
+        let reference = temporary.path().join("reference");
+        let reference_vault = temporary.path().join("reference-vault");
+        let config = temporary.path().join("config");
+        for path in [&project, &vault, &reference, &reference_vault, &config] {
+            std::fs::create_dir(path).unwrap();
+        }
+        initialize_project(&project, Some("Runbook active"), CaptureMode::Structured).unwrap();
+        initialize_project(
+            &reference,
+            Some("Runbook private reference"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("README.md"),
+            "# Active\n\nVerify before release.\n",
+        )
+        .unwrap();
+        std::fs::write(reference.join("README.md"), "# Private reference\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        ingest_project(&reference, &reference_vault).unwrap();
+        let session = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id("scope-export-session"),
+                name: "Scope-aware export".to_owned(),
+                goal: "Prepare a reviewed procedure".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &session.session.session_id,
+            CheckpointInput {
+                request_id: request_id("scope-export-checkpoint"),
+                summary: "Verified release procedure".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["README.md".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let procedure = confirm_learning(
+            &project,
+            &vault,
+            (
+                &session.session.session_id,
+                &checkpoint.session.checkpoints[0].id,
+            ),
+            LearningKind::Procedure,
+            "Verify before release",
+            "Run the reviewed verification before release.",
+            "scope-export-procedure",
+        );
+        let input = ReviewedRunbookInput {
+            title: "Scope-aware delivery".to_owned(),
+            learning_ids: vec![procedure],
+        };
+        let runbook = compile_reviewed_runbook(&project, &vault, input.clone()).unwrap();
+
+        let bindings = crate::BindingRegistry::at(config.join(crate::BINDING_REGISTRY_FILE));
+        bindings.bind(&project, &vault).unwrap();
+        bindings.bind(&reference, &reference_vault).unwrap();
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
+        let scopes = KnowledgeScopeRegistry::at(config.join("knowledge-scopes-v1.json"));
+        let scope = scopes
+            .create(
+                crate::KnowledgeScopeKind::Organization,
+                "Private organization",
+                std::slice::from_ref(&reference),
+            )
+            .unwrap();
+        scopes.attach(&project, &scope.scope.scope_id).unwrap();
+        scopes
+            .detach(&project, &scope.scope.scope_id)
+            .unwrap()
+            .unwrap();
+        egress
+            .set_project_policy(&reference, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+
+        let blocked = export_reviewed_runbook_skill(
+            &project,
+            &vault,
+            RunbookSkillExportInput {
+                runbook: input.clone(),
+                expected_runbook_id: runbook.runbook_id.clone(),
+                host: RunbookSkillHost::Codex,
+                egress_target: AgentEgressTarget::Cloud,
+            },
+            &egress,
+            &mounts,
+            &scopes,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            blocked,
+            LeyCoreError::AgentDerivedEgressUnproven { .. }
+        ));
+
+        let local = export_reviewed_runbook_skill(
+            &project,
+            &vault,
+            RunbookSkillExportInput {
+                runbook: input,
+                expected_runbook_id: runbook.runbook_id,
+                host: RunbookSkillHost::Codex,
+                egress_target: AgentEgressTarget::Local,
+            },
+            &egress,
+            &mounts,
+            &scopes,
+        )
+        .unwrap();
+        assert!(local
+            .content
+            .contains("Run the reviewed verification before release."));
     }
 }
