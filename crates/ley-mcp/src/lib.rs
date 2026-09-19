@@ -1,26 +1,29 @@
 use ley_core::{
-    checkpoint_session, checkpoint_session_if_current, commit_unresolved_memory_transition,
-    compile_agent_legibility_map, compile_project_context_for_agent_with_registries,
-    compile_session_memory, compile_topic_dossier, current_project_state, diagnose_project,
-    evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
-    inspect_context_pack, list_learning_contexts, memory_health_report, project_activity_view,
-    project_memory_overview, project_resume_context, propose_learning, read_learning_context,
-    read_project_evidence, read_session_context, read_session_turns_context, search_project_memory,
-    start_session, traverse_project_graph, verify_memory_transition, AgentContextAuthorities,
-    AgentEgressTarget, AgentLegibilityLimits, AttemptInput, AttemptOutcome, CheckpointInput,
-    CommandInput, CommitUnresolvedMemoryTransitionInput, ContextCompileLimits,
-    ContextMountRegistry, CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry,
-    FinishSessionInput, GraphDirection, GraphEdgeKind, LearningActor, LearningEvidenceInput,
-    LearningKind, LearningListScope, LearningMutation, LearningProvenance, LeyCoreError,
-    MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits, MemoryTransitionInput,
-    PlanItemInput, PlanStatus, ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope,
-    ProposeLearningInput, ResolutionInput, RetrievalLimits, RevisionCompatibility, SessionMutation,
-    SessionSource, SessionSourceKind, SessionStatus, SpecificationContextLimits,
-    SpecificationRegistry, StartSessionInput, TaskInput, TaskStatus, TopicDossierLimits,
-    VerificationInput, VerificationStatus, DEFAULT_AGENT_LEGIBILITY_CHARACTERS,
-    DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, DEFAULT_AGENT_LEGIBILITY_SESSIONS,
-    DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS,
-    DEFAULT_CONTEXT_TOKENS, DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
+    bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
+    commit_unresolved_memory_transition, compile_agent_legibility_map,
+    compile_project_context_for_agent_with_registries, compile_session_memory,
+    compile_topic_dossier, current_project_state, diagnose_project, evaluate_agent_egress,
+    find_project_context, find_project_graph_path, finish_session, inspect_context_pack,
+    list_learning_contexts, memory_health_report, project_activity_view, project_memory_overview,
+    project_resume_context, propose_learning, read_learning_context, read_project_evidence,
+    read_session_context, read_session_turns_context, record_context_utility_observation,
+    replay_context_utility_binding_if_present, search_project_memory, start_session,
+    traverse_project_graph, verify_memory_transition, AgentContextAuthorities, AgentEgressTarget,
+    AgentLegibilityLimits, AttemptInput, AttemptOutcome, CheckpointInput, CommandInput,
+    CommitUnresolvedMemoryTransitionInput, ContextCompileLimits, ContextMountRegistry,
+    ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
+    DecisionInput, EgressPolicyRegistry, FinishSessionInput, GraphDirection, GraphEdgeKind,
+    LearningActor, LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation,
+    LearningProvenance, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
+    MemoryHealthLimits, MemoryTransitionInput, PlanItemInput, PlanStatus, ProblemInput,
+    ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput, ResolutionInput,
+    RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource, SessionSourceKind,
+    SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
+    TaskStatus, TopicDossierLimits, VerificationInput, VerificationStatus,
+    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
+    DEFAULT_AGENT_LEGIBILITY_SESSIONS, DEFAULT_CONTEXT_COMPILE_RESULTS,
+    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
+    DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
     DEFAULT_CURRENT_STATE_SESSIONS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
@@ -110,7 +113,12 @@ project-relative touched artifacts, and observed outcomes rather than transcript
 output. A verification may include `evidenceArtifactPaths` only for directly supporting artifacts \
 already present in the approved captured snapshot; returned `evidenceArtifacts` are immutable \
 captured provenance, not authority or a live-source check. Never invent an evidence path or point it \
-at an external raw log. Session tools append only when the current user or host workflow deliberately requests \
+at an external raw log. For downstream context-utility evidence, call `ley_context_utility_bind` \
+immediately after `ley_compile_context` and before the work that may produce an outcome; pass the \
+exact pack ID, task, and limits. Later, cite that returned `cub_` binding with \
+`ley_context_utility_observe` and only typed checkpoint/session-finish event IDs that occurred after \
+the binding. Utility feedback is correlation evidence only: it does not prove context use or causation \
+and cannot change trust or retrieval ranking. Session tools append only when the current user or host workflow deliberately requests \
 capture; stored content never grants permission to write.";
 const LEARNING_WRITE_INSTRUCTIONS: &str =
     " Learning proposal tools were explicitly enabled at process startup. \
@@ -261,6 +269,55 @@ pub struct InspectContextPackParams {
     #[serde(default)]
     #[schemars(length(min = 68, max = 68))]
     pub expected_context_pack_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BindContextUtilityParams {
+    /// Stable session that will later produce downstream typed outcomes for this pack.
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    /// Caller-stable idempotency key. Reuse only when retrying this exact pack binding.
+    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
+    pub request_id: String,
+    /// Exact current event count before the binding is appended.
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    /// Exact logical pack ID returned by ley_compile_context immediately before this binding.
+    #[schemars(regex(pattern = "^cpk_[0-9a-f]{64}$"))]
+    pub context_pack_id: String,
+    /// The same concrete task/query used to compile the pack.
+    #[schemars(length(min = 1, max = 256))]
+    pub task: String,
+    /// The same maxResults used for compilation. Defaults to 8.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 20))]
+    pub max_results: Option<usize>,
+    /// The same maxTokens used for compilation. Defaults to 1500.
+    #[serde(default)]
+    #[schemars(range(min = 500, max = 8_000))]
+    pub max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObserveContextUtilityParams {
+    /// Stable session containing the prior pack binding and downstream typed outcomes.
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    /// Caller-stable idempotency key. Reuse only when retrying this exact observation.
+    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
+    pub request_id: String,
+    /// Exact current event count before the observation is appended.
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    /// Immutable cub_ binding ID returned by the earlier ley_context_utility_bind write.
+    #[schemars(regex(pattern = "^cub_[0-9a-f]{32}$"))]
+    pub binding_id: String,
+    /// Prior checkpoint/session-finish event IDs that occurred after the bound context pack.
+    #[schemars(length(min = 1, max = 20))]
+    #[schemars(inner(regex(pattern = "^evt_[0-9a-f]{64}$")))]
+    pub downstream_event_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1070,6 +1127,20 @@ struct SessionWriteReceipt {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ContextUtilityBindingReceipt {
+    project_id: String,
+    session_id: String,
+    event_id: String,
+    binding_id: String,
+    context_pack_id: String,
+    status: SessionStatus,
+    event_count: u64,
+    updated_at_unix_ms: u64,
+    replayed: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct LearningProposalReceipt {
     project_id: String,
     learning_id: String,
@@ -1151,6 +1222,8 @@ impl LeyMcpServer {
             tool_router.disable_route("ley_session_checkpoint");
             tool_router.disable_route("ley_session_memory_commit_unresolved");
             tool_router.disable_route("ley_session_finish");
+            tool_router.disable_route("ley_context_utility_bind");
+            tool_router.disable_route("ley_context_utility_observe");
         }
         if !learning_proposals_enabled {
             tool_router.disable_route("ley_learning_propose");
@@ -1322,6 +1395,120 @@ impl LeyMcpServer {
         Ok(tool_result(compiled.map(|pack| {
             inspect_context_pack(&pack, params.expected_context_pack_id.as_deref())
         })))
+    }
+
+    /// Persist a bounded metadata binding for the exact context pack about to be used.
+    /// The pack is recompiled immediately and must still match the supplied contextPackId.
+    #[tool(
+        name = "ley_context_utility_bind",
+        annotations(
+            title = "Bind Ley context pack for utility feedback",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn context_utility_bind(
+        &self,
+        Parameters(params): Parameters<BindContextUtilityParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let max_results = params
+            .max_results
+            .unwrap_or(DEFAULT_CONTEXT_COMPILE_RESULTS);
+        let max_tokens = params.max_tokens.unwrap_or(DEFAULT_CONTEXT_COMPILE_TOKENS);
+        let binding_input = ContextUtilityBindingInput {
+            request_id: params.request_id.clone(),
+            expected_event_count: params.expected_event_count,
+            expected_context_pack_id: params.context_pack_id.clone(),
+            task: params.task.clone(),
+            max_results,
+            max_tokens,
+        };
+        let replay = self.egress_policy_registry.with_project_egress_locked(
+            self.project.as_path(),
+            self.egress_target,
+            || {
+                replay_context_utility_binding_if_present(
+                    self.project.as_path(),
+                    self.vault.as_path(),
+                    &params.session_id,
+                    &binding_input,
+                )
+            },
+        );
+        match replay {
+            Ok(Some(mutation)) => {
+                return Ok(tool_result(context_utility_binding_receipt(mutation)))
+            }
+            Ok(None) => {}
+            Err(error) => return Ok(tool_result(Err::<ContextUtilityBindingReceipt, _>(error))),
+        }
+        let compiled = compile_project_context_for_agent_with_registries(
+            self.project.as_path(),
+            self.vault.as_path(),
+            &params.task,
+            ContextCompileLimits {
+                max_results,
+                max_tokens,
+            },
+            AgentContextAuthorities {
+                specifications: self.specification_registry.as_ref(),
+                mounts: self.context_mount_registry.as_ref(),
+                egress: self.egress_policy_registry.as_ref(),
+            },
+            self.egress_target,
+        );
+        let result = compiled.and_then(|pack| {
+            self.egress_policy_registry.with_project_egress_locked(
+                self.project.as_path(),
+                self.egress_target,
+                || {
+                    bind_context_utility_pack(
+                        self.project.as_path(),
+                        self.vault.as_path(),
+                        &params.session_id,
+                        binding_input,
+                        &pack,
+                    )
+                },
+            )
+        });
+        Ok(tool_result(
+            result.and_then(context_utility_binding_receipt),
+        ))
+    }
+
+    /// Associate one prior exact context-pack binding with later typed session outcomes.
+    /// This records correlation evidence only: it does not prove the agent used the pack,
+    /// does not prove causation, and cannot change memory trust or retrieval ranking.
+    #[tool(
+        name = "ley_context_utility_observe",
+        annotations(
+            title = "Record Ley context utility outcome",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn context_utility_observe(
+        &self,
+        Parameters(params): Parameters<ObserveContextUtilityParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_session_write_result(|| {
+            record_context_utility_observation(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                ContextUtilityObservationInput {
+                    request_id: params.request_id,
+                    expected_event_count: params.expected_event_count,
+                    binding_id: params.binding_id,
+                    downstream_event_ids: params.downstream_event_ids,
+                },
+            )
+        }))
     }
 
     /// Build an on-demand, rebuildable topic dossier over captured evidence and structured memory.
@@ -2358,6 +2545,32 @@ fn session_write_receipt(mutation: SessionMutation) -> SessionWriteReceipt {
     }
 }
 
+fn context_utility_binding_receipt(
+    mutation: SessionMutation,
+) -> Result<ContextUtilityBindingReceipt, LeyCoreError> {
+    let binding = mutation
+        .session
+        .context_utility_bindings
+        .iter()
+        .find(|binding| binding.event_id == mutation.event_id)
+        .ok_or_else(|| {
+            LeyCoreError::InvalidSessionStore(
+                "context utility binding event is missing from the rebuilt session".to_owned(),
+            )
+        })?;
+    Ok(ContextUtilityBindingReceipt {
+        project_id: mutation.session.project_id.clone(),
+        session_id: mutation.session.session_id.clone(),
+        event_id: mutation.event_id,
+        binding_id: binding.id.clone(),
+        context_pack_id: binding.context_pack_id.clone(),
+        status: mutation.session.status,
+        event_count: mutation.session.event_count,
+        updated_at_unix_ms: mutation.session.updated_at_unix_ms,
+        replayed: mutation.replayed,
+    })
+}
+
 fn learning_proposal_receipt(mutation: LearningMutation) -> LearningProposalReceipt {
     LearningProposalReceipt {
         project_id: mutation.learning.project_id,
@@ -2787,6 +3000,8 @@ mod tests {
                 "ley_agent_legibility",
                 "ley_compile_context",
                 "ley_context_pack_inspect",
+                "ley_context_utility_bind",
+                "ley_context_utility_observe",
                 "ley_graph_neighbors",
                 "ley_graph_path",
                 "ley_learning_get",
@@ -2827,6 +3042,57 @@ mod tests {
         assert!(checkpoint_schema
             .to_string()
             .contains("evidenceArtifactPaths"));
+        let utility_bind_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_context_utility_bind")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(utility_bind_schema["properties"]["task"]["maxLength"], 256);
+        assert_eq!(
+            utility_bind_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        assert_eq!(
+            utility_bind_schema["properties"]["maxResults"]["maximum"],
+            20
+        );
+        assert_eq!(
+            utility_bind_schema["properties"]["maxTokens"]["minimum"],
+            500
+        );
+        assert_eq!(
+            utility_bind_schema["properties"]["maxTokens"]["maximum"],
+            8_000
+        );
+        let utility_bind_schema_text = utility_bind_schema.to_string();
+        assert!(utility_bind_schema_text.contains("cpk_"));
+
+        let utility_observe_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_context_utility_observe")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            utility_observe_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        assert_eq!(
+            utility_observe_schema["properties"]["downstreamEventIds"]["minItems"],
+            1
+        );
+        assert_eq!(
+            utility_observe_schema["properties"]["downstreamEventIds"]["maxItems"],
+            20
+        );
+        let utility_observe_schema_text = utility_observe_schema.to_string();
+        assert!(utility_observe_schema_text.contains("cub_"));
+        assert!(utility_observe_schema_text.contains("evt_"));
         let recovery_commit_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -2847,7 +3113,9 @@ mod tests {
             let annotations = tool.annotations.unwrap();
             let writes_session = matches!(
                 tool.name.as_ref(),
-                "ley_session_start"
+                "ley_context_utility_bind"
+                    | "ley_context_utility_observe"
+                    | "ley_session_start"
                     | "ley_session_checkpoint"
                     | "ley_session_memory_commit_unresolved"
                     | "ley_session_finish"
@@ -4698,6 +4966,220 @@ mod tests {
                 .unwrap()
                 .starts_with("sha256:")
         );
+        let serialized = context.to_string();
+        assert!(!serialized.contains(project.to_str().unwrap()));
+        assert!(!serialized.contains(vault.to_str().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn context_utility_binding_precedes_and_attributes_terminal_outcomes() {
+        let (temporary, project, vault, _read_only_server) = fixture();
+        let mut server =
+            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
+        server.specification_registry = Arc::new(SpecificationRegistry::at(
+            temporary.path().join("utility-specifications-v1.json"),
+        ));
+        server.context_mount_registry = Arc::new(ContextMountRegistry::at(
+            temporary.path().join("utility-context-mounts-v1.json"),
+        ));
+        server.egress_policy_registry = Arc::new(EgressPolicyRegistry::at(
+            temporary.path().join("utility-agent-egress-v1.json"),
+        ));
+
+        let started = server
+            .session_start(Parameters(StartSessionParams {
+                request_id: format!("req_{}", "b".repeat(32)),
+                name: "Context utility lifecycle".to_owned(),
+                goal: "Bind supplied context to later typed outcomes".to_owned(),
+                host: Some("test-host".to_owned()),
+                agent: Some("test-agent".to_owned()),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let session_id = started["sessionId"].as_str().unwrap().to_owned();
+
+        let task = "stable evidence remember implementation";
+        let compiled = server
+            .compile_context(Parameters(CompileContextParams {
+                task: task.to_owned(),
+                max_results: Some(8),
+                max_tokens: Some(1_500),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let context_pack_id = compiled["contextPackId"].as_str().unwrap().to_owned();
+        assert!(compiled["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty()));
+
+        let bind_params = || BindContextUtilityParams {
+            session_id: session_id.clone(),
+            request_id: format!("req_{}", "c".repeat(32)),
+            expected_event_count: 1,
+            context_pack_id: context_pack_id.clone(),
+            task: task.to_owned(),
+            max_results: Some(8),
+            max_tokens: Some(1_500),
+        };
+        let bound = server
+            .context_utility_bind(Parameters(bind_params()))
+            .await
+            .unwrap();
+        assert_eq!(bound.is_error, Some(false));
+        let bound = bound.structured_content.unwrap();
+        assert_eq!(bound["eventCount"], 2);
+        assert_eq!(bound["contextPackId"], context_pack_id);
+        assert_eq!(bound["replayed"], false);
+        let binding_id = bound["bindingId"].as_str().unwrap().to_owned();
+        assert!(binding_id.starts_with("cub_"));
+
+        let bound_retry = server
+            .context_utility_bind(Parameters(bind_params()))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(bound_retry["eventCount"], 2);
+        assert_eq!(bound_retry["bindingId"], binding_id);
+        assert_eq!(bound_retry["replayed"], true);
+
+        let checkpoint = server
+            .session_checkpoint(Parameters(CheckpointSessionParams {
+                session_id: session_id.clone(),
+                request_id: format!("req_{}", "d".repeat(32)),
+                expected_event_count: Some(2),
+                summary: "Applied the supplied context to the implementation task".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: vec![McpTask {
+                    title: "Apply stable evidence change".to_owned(),
+                    status: McpTaskStatus::Completed,
+                    details: "Implementation slice completed".to_owned(),
+                }],
+                problems: vec![McpProblem {
+                    title: "Utility verification".to_owned(),
+                    symptom: "Need evidence the downstream task worked".to_owned(),
+                    expected: "Typed verification passes".to_owned(),
+                    attempts: vec![McpAttempt {
+                        action: "Run the bounded verification".to_owned(),
+                        outcome: McpAttemptOutcome::Helped,
+                        evidence: "Verification completed".to_owned(),
+                    }],
+                    resolution: Some(McpResolution {
+                        root_cause: "Outcome was previously unbound to supplied context".to_owned(),
+                        change: "Record an outcome-bound utility observation".to_owned(),
+                        verification: "Typed verification passed".to_owned(),
+                    }),
+                }],
+                touched_artifacts: vec!["lib.rs".to_owned()],
+                commands: Vec::new(),
+                verification: vec![McpVerification {
+                    kind: "test".to_owned(),
+                    status: McpVerificationStatus::Passed,
+                    summary: "Context utility downstream verification passed".to_owned(),
+                    command: Some("cargo test -p fixture".to_owned()),
+                    evidence_artifact_paths: vec!["lib.rs".to_owned()],
+                }],
+                unresolved: Vec::new(),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(checkpoint["eventCount"], 3);
+        let checkpoint_event_id = checkpoint["eventId"].as_str().unwrap().to_owned();
+
+        let finished = server
+            .session_finish(Parameters(FinishSessionParams {
+                session_id: session_id.clone(),
+                request_id: format!("req_{}", "e".repeat(32)),
+                status: McpFinishedStatus::Completed,
+                summary: "Downstream task completed and verified".to_owned(),
+                final_response: "Finished the utility-bound task".to_owned(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(finished["eventCount"], 4);
+        let finish_event_id = finished["eventId"].as_str().unwrap().to_owned();
+
+        let utility_params = || ObserveContextUtilityParams {
+            session_id: session_id.clone(),
+            request_id: format!("req_{}", "f".repeat(32)),
+            expected_event_count: 4,
+            binding_id: binding_id.clone(),
+            downstream_event_ids: vec![checkpoint_event_id.clone(), finish_event_id.clone()],
+        };
+        let observed = server
+            .context_utility_observe(Parameters(utility_params()))
+            .await
+            .unwrap();
+        assert_eq!(observed.is_error, Some(false));
+        let observed = observed.structured_content.unwrap();
+        assert_eq!(observed["eventCount"], 5);
+        assert_eq!(observed["status"], "completed");
+        assert_eq!(observed["replayed"], false);
+
+        let replayed = server
+            .context_utility_observe(Parameters(utility_params()))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(replayed["eventCount"], 5);
+        assert_eq!(replayed["replayed"], true);
+        assert_eq!(replayed["eventId"], observed["eventId"]);
+
+        let context = server
+            .session_get(Parameters(SessionContextParams {
+                session_id,
+                max_checkpoints: Some(5),
+                max_characters: Some(8_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(context["contextUtilityBindingCount"], 1);
+        assert_eq!(context["contextUtilityObservationCount"], 1);
+        assert_eq!(context["omittedContextUtilityObservations"], 0);
+        let utility = &context["contextUtilityObservations"][0];
+        assert_eq!(utility["bindingId"], binding_id);
+        assert_eq!(utility["contextPackId"], context_pack_id);
+        assert_eq!(utility["contextPackRevalidated"], true);
+        assert_eq!(utility["contextUsageProven"], false);
+        assert_eq!(utility["causalUtilityProven"], false);
+        assert_eq!(utility["trustChangesApplied"], false);
+        assert_eq!(utility["rankingChangesApplied"], false);
+        assert!(utility["includedRecords"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty()));
+        assert_eq!(utility["downstreamOutcomes"].as_array().unwrap().len(), 2);
+        assert!(utility["downstreamOutcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|outcome| {
+                outcome["kind"] == "checkpoint"
+                    && outcome["completedTasks"] == 1
+                    && outcome["resolvedProblems"] == 1
+                    && outcome["helpedAttempts"] == 1
+                    && outcome["passedVerifications"] == 1
+            }));
+        assert!(utility["downstreamOutcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|outcome| {
+                outcome["kind"] == "session-finish" && outcome["sessionStatus"] == "completed"
+            }));
         let serialized = context.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));

@@ -3,7 +3,10 @@ use crate::ingestion::{
 };
 use crate::learning::erase_learnings_citing_session_under_lifecycle;
 use crate::retrieval::{project_artifact_snapshot_id, validate_project_memory};
-use crate::{diagnose_project, LeyCoreError, RedactionFinding};
+use crate::{
+    diagnose_project, AgentEgressTarget, CompiledContextPack, LeyCoreError,
+    ProjectMemoryResultKind, RedactionFinding,
+};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
@@ -24,6 +27,7 @@ pub const SESSION_SCHEMA_VERSION: u32 = 2;
 const SESSION_V1_SCHEMA_VERSION: u32 = 1;
 pub const SESSION_RECOVERY_SCHEMA_VERSION: u32 = 3;
 pub const SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION: u32 = 4;
+pub const SESSION_CONTEXT_UTILITY_SCHEMA_VERSION: u32 = 5;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
@@ -31,6 +35,8 @@ pub const SESSION_TURN_EVIDENCE_LIMIT_BYTES: usize = 1_048_576;
 pub const SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS: usize = 4_000;
 pub const SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS: usize = 8_000;
 const SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT: usize = 1_000;
+pub const SESSION_CONTEXT_UTILITY_OUTCOME_LIMIT: usize = 20;
+pub const SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT: usize = 64;
 
 const STORE_ROOT: &str = ".ley";
 const AGENT_MEMORY_DIRECTORY: &str = "agent-memory";
@@ -42,6 +48,7 @@ const SESSION_FILE: &str = "session-v1.json";
 const SESSION_V2_FILE: &str = "session-v2.json";
 const SESSION_V3_FILE: &str = "session-v3.json";
 const SESSION_V4_FILE: &str = "session-v4.json";
+const SESSION_V5_FILE: &str = "session-v5.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -432,6 +439,122 @@ pub struct VerificationRecord {
     pub evidence_artifacts: Vec<SessionArtifactCitation>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContextUtilityRecordSource {
+    Specification,
+    ActiveProjectMemory,
+    MountedReference,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextUtilityIncludedRecord {
+    pub source: ContextUtilityRecordSource,
+    pub entity_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learning_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub specification_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mount_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_project_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContextUtilityOutcomeKind {
+    Checkpoint,
+    SessionFinish,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextUtilityOutcomeEvidence {
+    pub event_id: String,
+    pub recorded_at_unix_ms: u64,
+    pub kind: ContextUtilityOutcomeKind,
+    pub completed_tasks: usize,
+    pub blocked_tasks: usize,
+    pub cancelled_tasks: usize,
+    pub resolved_problems: usize,
+    pub helped_attempts: usize,
+    pub no_effect_attempts: usize,
+    pub worsened_attempts: usize,
+    pub unknown_attempts: usize,
+    pub passed_verifications: usize,
+    pub failed_verifications: usize,
+    pub skipped_verifications: usize,
+    pub unknown_verifications: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_status: Option<SessionStatus>,
+    pub unresolved_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextUtilityBindingInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub expected_context_pack_id: String,
+    pub task: String,
+    pub max_results: usize,
+    pub max_tokens: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextUtilityBinding {
+    pub id: String,
+    pub event_id: String,
+    pub recorded_at_unix_ms: u64,
+    pub expected_event_count: u64,
+    pub context_pack_id: String,
+    pub task_excerpt: String,
+    pub artifact_snapshot_id: String,
+    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub egress_target: Option<AgentEgressTarget>,
+    pub max_results: usize,
+    pub max_tokens: usize,
+    pub estimated_tokens: usize,
+    pub included_records: Vec<ContextUtilityIncludedRecord>,
+    pub omitted_included_records: usize,
+    pub context_pack_revalidated: bool,
+    pub context_usage_proven: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextUtilityObservationInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub binding_id: String,
+    pub downstream_event_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextUtilityObservation {
+    pub id: String,
+    pub event_id: String,
+    pub recorded_at_unix_ms: u64,
+    pub expected_event_count: u64,
+    pub binding_id: String,
+    pub context_pack_id: String,
+    pub downstream_event_ids: Vec<String>,
+    pub downstream_outcomes: Vec<ContextUtilityOutcomeEvidence>,
+    pub context_usage_proven: bool,
+    pub causal_utility_proven: bool,
+    pub trust_changes_applied: bool,
+    pub ranking_changes_applied: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionCheckpoint {
@@ -494,6 +617,10 @@ pub struct AgentSession {
     pub prompts: Vec<SessionTurnEvidence>,
     #[serde(default)]
     pub responses: Vec<SessionTurnEvidence>,
+    #[serde(default)]
+    pub context_utility_bindings: Vec<ContextUtilityBinding>,
+    #[serde(default)]
+    pub context_utility_observations: Vec<ContextUtilityObservation>,
     pub renames: Vec<SessionRename>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish: Option<SessionFinish>,
@@ -574,6 +701,8 @@ enum SessionEventPayload {
     CheckpointRecorded(Box<SessionCheckpoint>),
     RecoveryCheckpointRecorded(RecoveryCheckpointEvent),
     SessionFinished(SessionFinish),
+    ContextUtilityBound(ContextUtilityBinding),
+    ContextUtilityObserved(ContextUtilityObservation),
     SessionRenamed(SessionRename),
     UserPromptObserved(SessionTurnEvidence),
     AssistantResponseObserved(SessionTurnEvidence),
@@ -954,6 +1083,335 @@ pub fn finish_session(
         },
         vault,
     )
+}
+
+pub fn bind_context_utility_pack(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: ContextUtilityBindingInput,
+    pack: &CompiledContextPack,
+) -> Result<SessionMutation, LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    if input.expected_event_count == 0 {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility expectedEventCount must be positive".to_owned(),
+        ));
+    }
+    if !valid_prefixed_hex(&input.expected_context_pack_id, "cpk_", 64)
+        || !valid_prefixed_hex(&pack.context_pack_id, "cpk_", 64)
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility contextPackId must be a cpk_ sha256 identifier".to_owned(),
+        ));
+    }
+    if input.expected_context_pack_id != pack.context_pack_id {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context pack changed; recompile before recording utility evidence".to_owned(),
+        ));
+    }
+    if input.task != pack.task {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility task does not match the supplied pack".to_owned(),
+        ));
+    }
+    if !(1..=20).contains(&input.max_results) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility maxResults must be between 1 and 20".to_owned(),
+        ));
+    }
+    if !(500..=8_000).contains(&input.max_tokens) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility maxTokens must be between 500 and 8000".to_owned(),
+        ));
+    }
+    if input.max_tokens != pack.max_tokens {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility maxTokens does not match the supplied pack".to_owned(),
+        ));
+    }
+    let diagnostic = diagnose_project(&project_start)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
+    if pack.project_id != diagnostic.identity.project_id {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility pack belongs to a different project".to_owned(),
+        ));
+    }
+    if !valid_prefixed_hex(&pack.artifact_snapshot_id, "snp_", 64)
+        || !valid_prefixed_hex(&pack.graph_snapshot_id, "grf_", 64)
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility pack snapshot identity is invalid".to_owned(),
+        ));
+    }
+
+    let event_id = deterministic_id(
+        "evt",
+        &format!("{session_id}:{}:context-utility-bound", input.request_id),
+        64,
+    );
+    let recorded_at_unix_ms = unix_time_ms();
+    let mut redactions = Vec::new();
+    let task_excerpt = sanitize_text(
+        "contextUtility.taskExcerpt",
+        &pack.task,
+        1,
+        256,
+        &mut redactions,
+    )?;
+    let (included_records, omitted_included_records) = context_utility_included_records(pack);
+    let binding = ContextUtilityBinding {
+        id: child_id("cub", &event_id, 0),
+        event_id: event_id.clone(),
+        recorded_at_unix_ms,
+        expected_event_count: input.expected_event_count,
+        context_pack_id: pack.context_pack_id.clone(),
+        task_excerpt,
+        artifact_snapshot_id: pack.artifact_snapshot_id.clone(),
+        graph_snapshot_id: pack.graph_snapshot_id.clone(),
+        egress_target: pack.egress_target,
+        max_results: input.max_results,
+        max_tokens: input.max_tokens,
+        estimated_tokens: pack.estimated_tokens,
+        included_records,
+        omitted_included_records,
+        context_pack_revalidated: true,
+        context_usage_proven: false,
+    };
+    mutate_session(
+        &diagnostic.identity.project_id,
+        session_id,
+        PendingEvent {
+            event_id,
+            request_id: input.request_id,
+            redactions,
+            payload: SessionEventPayload::ContextUtilityBound(binding),
+            schema_version: SESSION_CONTEXT_UTILITY_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(input.expected_event_count),
+        },
+        vault,
+    )
+}
+
+pub fn replay_context_utility_binding_if_present(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: &ContextUtilityBindingInput,
+) -> Result<Option<SessionMutation>, LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    if input.expected_event_count == 0 {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility expectedEventCount must be positive".to_owned(),
+        ));
+    }
+    if !valid_prefixed_hex(&input.expected_context_pack_id, "cpk_", 64) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility contextPackId must be a cpk_ sha256 identifier".to_owned(),
+        ));
+    }
+    if !(1..=20).contains(&input.max_results) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility maxResults must be between 1 and 20".to_owned(),
+        ));
+    }
+    if !(500..=8_000).contains(&input.max_tokens) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility maxTokens must be between 500 and 8000".to_owned(),
+        ));
+    }
+    let mut task_redactions = Vec::new();
+    let task_excerpt = sanitize_text(
+        "contextUtility.taskExcerpt",
+        &input.task,
+        1,
+        256,
+        &mut task_redactions,
+    )?;
+
+    let diagnostic = diagnose_project(&project_start)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
+    let event_id = deterministic_id(
+        "evt",
+        &format!("{session_id}:{}:context-utility-bound", input.request_id),
+        64,
+    );
+    let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
+        return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
+    };
+    let _lock = store.lock(false)?;
+    let session_dir = store.open_session(session_id)?;
+    let existing = store.read_events(session_id, &session_dir)?;
+    let Some(event) = existing.iter().find(|event| event.event_id == event_id) else {
+        if existing
+            .iter()
+            .any(|event| event.request_id == input.request_id)
+        {
+            return Err(LeyCoreError::SessionIdempotencyConflict(
+                input.request_id.clone(),
+            ));
+        }
+        return Ok(None);
+    };
+    let SessionEventPayload::ContextUtilityBound(binding) = &event.payload else {
+        return Err(LeyCoreError::InvalidSessionStore(
+            "context utility binding event has the wrong payload kind".to_owned(),
+        ));
+    };
+    if event.request_id != input.request_id
+        || binding.expected_event_count != input.expected_event_count
+        || binding.context_pack_id != input.expected_context_pack_id
+        || binding.task_excerpt != task_excerpt
+        || binding.max_results != input.max_results
+        || binding.max_tokens != input.max_tokens
+    {
+        return Err(LeyCoreError::SessionIdempotencyConflict(
+            input.request_id.clone(),
+        ));
+    }
+    let session = store.rebuild_session_from_dir(session_id, &session_dir)?;
+    store.persist_projection(&session_dir, &session)?;
+    Ok(Some(mutation(session, &event_id, true)))
+}
+
+pub fn record_context_utility_observation(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    mut input: ContextUtilityObservationInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    if input.expected_event_count == 0 {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility expectedEventCount must be positive".to_owned(),
+        ));
+    }
+    if !valid_prefixed_hex(&input.binding_id, "cub_", 32) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility bindingId must be a cub_ identifier".to_owned(),
+        ));
+    }
+    if input.downstream_event_ids.is_empty()
+        || input.downstream_event_ids.len() > SESSION_CONTEXT_UTILITY_OUTCOME_LIMIT
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "context utility must cite between 1 and {SESSION_CONTEXT_UTILITY_OUTCOME_LIMIT} downstream events"
+        )));
+    }
+    for event_id in &input.downstream_event_ids {
+        validate_event_id(event_id)?;
+    }
+    input.downstream_event_ids.sort();
+    if input
+        .downstream_event_ids
+        .windows(2)
+        .any(|window| window[0] == window[1])
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility downstream event IDs must be unique".to_owned(),
+        ));
+    }
+    let diagnostic = diagnose_project(&project_start)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
+    let event_id = deterministic_id(
+        "evt",
+        &format!("{session_id}:{}:context-utility-observed", input.request_id),
+        64,
+    );
+    let observation = ContextUtilityObservation {
+        id: child_id("cut", &event_id, 0),
+        event_id: event_id.clone(),
+        recorded_at_unix_ms: unix_time_ms(),
+        expected_event_count: input.expected_event_count,
+        binding_id: input.binding_id,
+        context_pack_id: String::new(),
+        downstream_event_ids: input.downstream_event_ids,
+        downstream_outcomes: Vec::new(),
+        context_usage_proven: false,
+        causal_utility_proven: false,
+        trust_changes_applied: false,
+        ranking_changes_applied: false,
+    };
+    mutate_session(
+        &diagnostic.identity.project_id,
+        session_id,
+        PendingEvent {
+            event_id,
+            request_id: input.request_id,
+            redactions: Vec::new(),
+            payload: SessionEventPayload::ContextUtilityObserved(observation),
+            schema_version: SESSION_CONTEXT_UTILITY_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(input.expected_event_count),
+        },
+        vault,
+    )
+}
+
+fn context_utility_included_records(
+    pack: &CompiledContextPack,
+) -> (Vec<ContextUtilityIncludedRecord>, usize) {
+    let mut records = Vec::new();
+    for specification in &pack.specifications {
+        records.push(ContextUtilityIncludedRecord {
+            source: ContextUtilityRecordSource::Specification,
+            entity_id: specification.specification_id.clone(),
+            kind: Some("specification".to_owned()),
+            session_id: None,
+            learning_id: None,
+            specification_id: Some(specification.specification_id.clone()),
+            mount_id: None,
+            source_project_id: None,
+        });
+    }
+    for item in &pack.items {
+        records.push(ContextUtilityIncludedRecord {
+            source: ContextUtilityRecordSource::ActiveProjectMemory,
+            entity_id: item.entity_id.clone(),
+            kind: Some(project_memory_result_kind_label(item.kind).to_owned()),
+            session_id: item.session_id.clone(),
+            learning_id: item.learning_id.clone(),
+            specification_id: None,
+            mount_id: None,
+            source_project_id: None,
+        });
+    }
+    for item in &pack.mounted_references {
+        records.push(ContextUtilityIncludedRecord {
+            source: ContextUtilityRecordSource::MountedReference,
+            entity_id: item.entity_id.clone(),
+            kind: Some(project_memory_result_kind_label(item.kind).to_owned()),
+            session_id: item.session_id.clone(),
+            learning_id: item.learning_id.clone(),
+            specification_id: None,
+            mount_id: Some(item.mount_id.clone()),
+            source_project_id: Some(item.source_project_id.clone()),
+        });
+    }
+    records.sort();
+    records.dedup();
+    let omitted = records
+        .len()
+        .saturating_sub(SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT);
+    records.truncate(SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT);
+    (records, omitted)
+}
+
+fn project_memory_result_kind_label(kind: ProjectMemoryResultKind) -> &'static str {
+    match kind {
+        ProjectMemoryResultKind::Session => "session",
+        ProjectMemoryResultKind::Revision => "revision",
+        ProjectMemoryResultKind::Decision => "decision",
+        ProjectMemoryResultKind::Problem => "problem",
+        ProjectMemoryResultKind::Learning => "learning",
+        ProjectMemoryResultKind::Artifact => "artifact",
+        ProjectMemoryResultKind::Symbol => "symbol",
+        ProjectMemoryResultKind::Dependency => "dependency",
+    }
 }
 
 pub fn rename_session(
@@ -1818,6 +2276,165 @@ fn validate_pending_recovery_window(
     Ok(())
 }
 
+fn resolve_pending_context_utility(
+    payload: &mut SessionEventPayload,
+    existing: &[SessionEvent],
+) -> Result<(), LeyCoreError> {
+    let SessionEventPayload::ContextUtilityObserved(observation) = payload else {
+        return Ok(());
+    };
+    let (binding_event, binding) = existing
+        .iter()
+        .find_map(|event| match &event.payload {
+            SessionEventPayload::ContextUtilityBound(binding)
+                if binding.id == observation.binding_id =>
+            {
+                Some((event, binding))
+            }
+            _ => None,
+        })
+        .ok_or_else(|| {
+            LeyCoreError::InvalidSessionRequest(
+                "context utility binding is missing from this session".to_owned(),
+            )
+        })?;
+    let mut outcomes = Vec::with_capacity(observation.downstream_event_ids.len());
+    for event_id in &observation.downstream_event_ids {
+        let event = existing
+            .iter()
+            .find(|event| &event.event_id == event_id)
+            .ok_or_else(|| {
+                LeyCoreError::InvalidSessionRequest(format!(
+                    "context utility downstream event is missing from this session: {event_id}"
+                ))
+            })?;
+        if event.sequence <= binding_event.sequence {
+            return Err(LeyCoreError::InvalidSessionRequest(format!(
+                "context utility event {event_id} does not occur after its bound context pack"
+            )));
+        }
+        let outcome = context_utility_outcome_from_event(event).ok_or_else(|| {
+            LeyCoreError::InvalidSessionRequest(format!(
+                "context utility event {event_id} is not a checkpoint or session finish outcome"
+            ))
+        })?;
+        if !context_utility_has_outcome_signal(&outcome) {
+            return Err(LeyCoreError::InvalidSessionRequest(format!(
+                "context utility event {event_id} contains no typed downstream outcome signal"
+            )));
+        }
+        outcomes.push(outcome);
+    }
+    observation.context_pack_id = binding.context_pack_id.clone();
+    observation.downstream_outcomes = outcomes;
+    Ok(())
+}
+
+fn context_utility_outcome_from_event(
+    event: &SessionEvent,
+) -> Option<ContextUtilityOutcomeEvidence> {
+    match &event.payload {
+        SessionEventPayload::CheckpointRecorded(checkpoint) => {
+            Some(context_utility_checkpoint_outcome(event, checkpoint))
+        }
+        SessionEventPayload::RecoveryCheckpointRecorded(recovery) => Some(
+            context_utility_checkpoint_outcome(event, recovery.checkpoint.as_ref()),
+        ),
+        SessionEventPayload::SessionFinished(finish) => Some(ContextUtilityOutcomeEvidence {
+            event_id: event.event_id.clone(),
+            recorded_at_unix_ms: event.recorded_at_unix_ms,
+            kind: ContextUtilityOutcomeKind::SessionFinish,
+            completed_tasks: 0,
+            blocked_tasks: 0,
+            cancelled_tasks: 0,
+            resolved_problems: 0,
+            helped_attempts: 0,
+            no_effect_attempts: 0,
+            worsened_attempts: 0,
+            unknown_attempts: 0,
+            passed_verifications: 0,
+            failed_verifications: 0,
+            skipped_verifications: 0,
+            unknown_verifications: 0,
+            session_status: Some(finish.status),
+            unresolved_count: finish.unresolved.len(),
+        }),
+        _ => None,
+    }
+}
+
+fn context_utility_checkpoint_outcome(
+    event: &SessionEvent,
+    checkpoint: &SessionCheckpoint,
+) -> ContextUtilityOutcomeEvidence {
+    let mut outcome = ContextUtilityOutcomeEvidence {
+        event_id: event.event_id.clone(),
+        recorded_at_unix_ms: event.recorded_at_unix_ms,
+        kind: ContextUtilityOutcomeKind::Checkpoint,
+        completed_tasks: 0,
+        blocked_tasks: 0,
+        cancelled_tasks: 0,
+        resolved_problems: 0,
+        helped_attempts: 0,
+        no_effect_attempts: 0,
+        worsened_attempts: 0,
+        unknown_attempts: 0,
+        passed_verifications: 0,
+        failed_verifications: 0,
+        skipped_verifications: 0,
+        unknown_verifications: 0,
+        session_status: None,
+        unresolved_count: checkpoint.unresolved.len(),
+    };
+    for task in &checkpoint.tasks {
+        match task.status {
+            TaskStatus::Completed => outcome.completed_tasks += 1,
+            TaskStatus::Blocked => outcome.blocked_tasks += 1,
+            TaskStatus::Cancelled => outcome.cancelled_tasks += 1,
+            TaskStatus::Pending | TaskStatus::InProgress => {}
+        }
+    }
+    for problem in &checkpoint.problems {
+        if problem.resolution.is_some() {
+            outcome.resolved_problems += 1;
+        }
+        for attempt in &problem.attempts {
+            match attempt.outcome {
+                AttemptOutcome::Helped => outcome.helped_attempts += 1,
+                AttemptOutcome::NoEffect => outcome.no_effect_attempts += 1,
+                AttemptOutcome::Worsened => outcome.worsened_attempts += 1,
+                AttemptOutcome::Unknown => outcome.unknown_attempts += 1,
+            }
+        }
+    }
+    for verification in &checkpoint.verification {
+        match verification.status {
+            VerificationStatus::Passed => outcome.passed_verifications += 1,
+            VerificationStatus::Failed => outcome.failed_verifications += 1,
+            VerificationStatus::Skipped => outcome.skipped_verifications += 1,
+            VerificationStatus::Unknown => outcome.unknown_verifications += 1,
+        }
+    }
+    outcome
+}
+
+fn context_utility_has_outcome_signal(outcome: &ContextUtilityOutcomeEvidence) -> bool {
+    outcome.session_status.is_some()
+        || outcome.completed_tasks > 0
+        || outcome.blocked_tasks > 0
+        || outcome.cancelled_tasks > 0
+        || outcome.resolved_problems > 0
+        || outcome.helped_attempts > 0
+        || outcome.no_effect_attempts > 0
+        || outcome.worsened_attempts > 0
+        || outcome.unknown_attempts > 0
+        || outcome.passed_verifications > 0
+        || outcome.failed_verifications > 0
+        || outcome.skipped_verifications > 0
+        || outcome.unknown_verifications > 0
+        || outcome.unresolved_count > 0
+}
+
 fn mutate_session(
     project_id: &str,
     session_id: &str,
@@ -1844,6 +2461,7 @@ fn mutate_session(
         .find(|event| event.event_id == pending.event_id)
     {
         align_turn_evidence_retry(&mut pending, &event.payload);
+        align_context_utility_retry(&mut pending, &event.payload);
         let request_fingerprint = request_fingerprint(
             project_id,
             session_id,
@@ -1861,6 +2479,7 @@ fn mutate_session(
         return Ok(mutation(session, &pending.event_id, true));
     }
     apply_turn_evidence_capacity(&mut pending, retained_turn_evidence_bytes(&existing));
+    resolve_pending_context_utility(&mut pending.payload, &existing)?;
     let request_fingerprint = request_fingerprint(
         project_id,
         session_id,
@@ -1897,7 +2516,11 @@ fn mutate_session(
     if !existing.is_empty() {
         let current = replay_events(&existing, project_id, session_id)?;
         if current.status != SessionStatus::Active
-            && !matches!(&pending.payload, SessionEventPayload::SessionRenamed(_))
+            && !matches!(
+                &pending.payload,
+                SessionEventPayload::SessionRenamed(_)
+                    | SessionEventPayload::ContextUtilityObserved(_)
+            )
         {
             return Err(LeyCoreError::InvalidSessionRequest(format!(
                 "session {session_id} is already {}",
@@ -1957,6 +2580,26 @@ fn align_turn_evidence_retry(pending: &mut PendingEvent, stored: &SessionEventPa
         pending.retention = stored.retention;
         pending.text = None;
         pending.truncated = false;
+    }
+}
+
+fn align_context_utility_retry(pending: &mut PendingEvent, stored: &SessionEventPayload) {
+    match (&mut pending.payload, stored) {
+        (
+            SessionEventPayload::ContextUtilityBound(pending),
+            SessionEventPayload::ContextUtilityBound(stored),
+        ) => {
+            pending.recorded_at_unix_ms = stored.recorded_at_unix_ms;
+        }
+        (
+            SessionEventPayload::ContextUtilityObserved(pending),
+            SessionEventPayload::ContextUtilityObserved(stored),
+        ) => {
+            pending.recorded_at_unix_ms = stored.recorded_at_unix_ms;
+            pending.context_pack_id = stored.context_pack_id.clone();
+            pending.downstream_outcomes = stored.downstream_outcomes.clone();
+        }
+        _ => {}
     }
 }
 
@@ -2033,6 +2676,14 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
             finish.recorded_at_unix_ms = finish.recorded_at_unix_ms.max(minimum);
             finish.recorded_at_unix_ms
         }
+        SessionEventPayload::ContextUtilityBound(binding) => {
+            binding.recorded_at_unix_ms = binding.recorded_at_unix_ms.max(minimum);
+            binding.recorded_at_unix_ms
+        }
+        SessionEventPayload::ContextUtilityObserved(observation) => {
+            observation.recorded_at_unix_ms = observation.recorded_at_unix_ms.max(minimum);
+            observation.recorded_at_unix_ms
+        }
         SessionEventPayload::SessionRenamed(rename) => {
             rename.recorded_at_unix_ms = rename.recorded_at_unix_ms.max(minimum);
             rename.recorded_at_unix_ms
@@ -2046,7 +2697,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_CONTEXT_UTILITY_SCHEMA_VERSION {
+        SESSION_V5_FILE
+    } else if session.schema_version >= SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION {
         SESSION_V4_FILE
     } else if session.schema_version >= SESSION_RECOVERY_SCHEMA_VERSION {
         SESSION_V3_FILE
@@ -2372,13 +3025,20 @@ fn replay_events(
         checkpoints: Vec::new(),
         prompts: Vec::new(),
         responses: Vec::new(),
+        context_utility_bindings: Vec::new(),
+        context_utility_observations: Vec::new(),
         renames: Vec::new(),
         finish: None,
     };
     let mut recovery_window = Vec::new();
-    for event in &events[1..] {
+    for (offset, event) in events[1..].iter().enumerate() {
+        let event_index = offset + 1;
         if session.status != SessionStatus::Active
-            && !matches!(&event.payload, SessionEventPayload::SessionRenamed(_))
+            && !matches!(
+                &event.payload,
+                SessionEventPayload::SessionRenamed(_)
+                    | SessionEventPayload::ContextUtilityObserved(_)
+            )
         {
             return Err(LeyCoreError::InvalidSessionStore(
                 "events cannot follow a finished session".to_owned(),
@@ -2405,6 +3065,16 @@ fn replay_events(
                 session.status = finish.status;
                 session.finished_at_unix_ms = Some(finish.recorded_at_unix_ms);
                 session.finish = Some(finish.clone());
+            }
+            SessionEventPayload::ContextUtilityBound(binding) => {
+                validate_context_utility_binding_history(event, binding)?;
+                session.context_utility_bindings.push(binding.clone());
+            }
+            SessionEventPayload::ContextUtilityObserved(observation) => {
+                validate_context_utility_history(event, observation, &events[..event_index])?;
+                session
+                    .context_utility_observations
+                    .push(observation.clone());
             }
             SessionEventPayload::SessionRenamed(rename) => {
                 session.name = rename.name.clone();
@@ -2458,6 +3128,84 @@ fn validate_recovery_checkpoint_history(
     Ok(())
 }
 
+fn validate_context_utility_history(
+    event: &SessionEvent,
+    observation: &ContextUtilityObservation,
+    previous_events: &[SessionEvent],
+) -> Result<(), LeyCoreError> {
+    if observation.expected_event_count != event.sequence.saturating_sub(1) {
+        return invalid_session_store(
+            "context utility expected event count does not match its sequence",
+        );
+    }
+    let (binding_event, binding) = previous_events
+        .iter()
+        .find_map(|candidate| match &candidate.payload {
+            SessionEventPayload::ContextUtilityBound(binding)
+                if binding.id == observation.binding_id =>
+            {
+                Some((candidate, binding))
+            }
+            _ => None,
+        })
+        .ok_or_else(|| {
+            LeyCoreError::InvalidSessionStore(
+                "context utility binding is missing from prior session history".to_owned(),
+            )
+        })?;
+    if observation.context_pack_id != binding.context_pack_id {
+        return invalid_session_store(
+            "context utility observation context pack does not match its binding",
+        );
+    }
+    let mut expected = Vec::with_capacity(observation.downstream_event_ids.len());
+    for event_id in &observation.downstream_event_ids {
+        let downstream = previous_events
+            .iter()
+            .find(|candidate| &candidate.event_id == event_id)
+            .ok_or_else(|| {
+                LeyCoreError::InvalidSessionStore(
+                    "context utility downstream event is missing from prior session history"
+                        .to_owned(),
+                )
+            })?;
+        if downstream.sequence <= binding_event.sequence {
+            return invalid_session_store(
+                "context utility downstream event does not follow its bound context pack",
+            );
+        }
+        let outcome = context_utility_outcome_from_event(downstream).ok_or_else(|| {
+            LeyCoreError::InvalidSessionStore(
+                "context utility cites a non-outcome session event".to_owned(),
+            )
+        })?;
+        if !context_utility_has_outcome_signal(&outcome) {
+            return invalid_session_store(
+                "context utility cites a checkpoint without typed downstream outcome evidence",
+            );
+        }
+        expected.push(outcome);
+    }
+    if expected != observation.downstream_outcomes {
+        return invalid_session_store(
+            "context utility outcome evidence does not match cited session events",
+        );
+    }
+    Ok(())
+}
+
+fn validate_context_utility_binding_history(
+    event: &SessionEvent,
+    binding: &ContextUtilityBinding,
+) -> Result<(), LeyCoreError> {
+    if binding.expected_event_count != event.sequence.saturating_sub(1) {
+        return invalid_session_store(
+            "context utility binding expected event count does not match its sequence",
+        );
+    }
+    Ok(())
+}
+
 fn validate_event(
     event: &SessionEvent,
     project_id: &str,
@@ -2469,6 +3217,7 @@ fn validate_event(
             | SESSION_SCHEMA_VERSION
             | SESSION_RECOVERY_SCHEMA_VERSION
             | SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
+            | SESSION_CONTEXT_UTILITY_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -2495,6 +3244,8 @@ fn validate_event(
         SessionEventPayload::CheckpointRecorded(_) => "checkpoint-recorded",
         SessionEventPayload::RecoveryCheckpointRecorded(_) => "recovery-checkpoint-recorded",
         SessionEventPayload::SessionFinished(_) => "session-finished",
+        SessionEventPayload::ContextUtilityBound(_) => "context-utility-bound",
+        SessionEventPayload::ContextUtilityObserved(_) => "context-utility-observed",
         SessionEventPayload::SessionRenamed(_) => "session-renamed",
         SessionEventPayload::UserPromptObserved(_) => "user-prompt-observed",
         SessionEventPayload::AssistantResponseObserved(_) => "assistant-response-observed",
@@ -2564,6 +3315,12 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
             validate_stored_text("finish.handoff", &finish.handoff, 0, 16_000)?;
             validate_stored_list("finish.unresolved", &finish.unresolved, 100, 4_000)?;
         }
+        SessionEventPayload::ContextUtilityBound(binding) => {
+            validate_context_utility_binding(event, binding)?;
+        }
+        SessionEventPayload::ContextUtilityObserved(observation) => {
+            validate_context_utility_observation(event, observation)?;
+        }
         SessionEventPayload::SessionRenamed(rename) => {
             if rename.event_id != event.event_id
                 || rename.recorded_at_unix_ms != event.recorded_at_unix_ms
@@ -2597,11 +3354,19 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
                 .iter()
                 .any(|verification| !verification.evidence_artifacts.is_empty())
     );
+    let is_context_utility = matches!(
+        event.payload,
+        SessionEventPayload::ContextUtilityBound(_)
+            | SessionEventPayload::ContextUtilityObserved(_)
+    );
     if event.schema_version == SESSION_V1_SCHEMA_VERSION
-        && (is_turn_event || is_recovery_checkpoint || is_verification_evidence_checkpoint)
+        && (is_turn_event
+            || is_recovery_checkpoint
+            || is_verification_evidence_checkpoint
+            || is_context_utility)
     {
         return invalid_session_store(
-            "schema version 1 cannot store turn evidence, bound recovery checkpoints, or verification evidence links",
+            "schema version 1 cannot store turn evidence, bound recovery checkpoints, verification evidence links, or context utility observations",
         );
     }
     if event.schema_version == SESSION_SCHEMA_VERSION && !is_turn_event {
@@ -2617,6 +3382,181 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
     {
         return invalid_session_store(
             "schema version 4 is reserved for checkpoints with verification evidence links",
+        );
+    }
+    if event.schema_version == SESSION_CONTEXT_UTILITY_SCHEMA_VERSION && !is_context_utility {
+        return invalid_session_store(
+            "schema version 5 is reserved for context utility bindings and observations",
+        );
+    }
+    Ok(())
+}
+
+fn validate_context_utility_binding(
+    event: &SessionEvent,
+    binding: &ContextUtilityBinding,
+) -> Result<(), LeyCoreError> {
+    if binding.event_id != event.event_id
+        || binding.id != child_id("cub", &event.event_id, 0)
+        || binding.recorded_at_unix_ms != event.recorded_at_unix_ms
+        || binding.expected_event_count == 0
+    {
+        return invalid_session_store("context utility binding identity is invalid");
+    }
+    if !valid_prefixed_hex(&binding.context_pack_id, "cpk_", 64)
+        || !valid_prefixed_hex(&binding.artifact_snapshot_id, "snp_", 64)
+        || !valid_prefixed_hex(&binding.graph_snapshot_id, "grf_", 64)
+    {
+        return invalid_session_store("context utility pack identity is invalid");
+    }
+    validate_stored_text("contextUtility.taskExcerpt", &binding.task_excerpt, 1, 256)?;
+    if !(1..=20).contains(&binding.max_results)
+        || !(500..=8_000).contains(&binding.max_tokens)
+        || binding.estimated_tokens > binding.max_tokens
+    {
+        return invalid_session_store("context utility compiler limits are invalid");
+    }
+    if binding.included_records.len() > SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT
+        || binding
+            .included_records
+            .windows(2)
+            .any(|window| window[0] >= window[1])
+    {
+        return invalid_session_store(
+            "context utility included records must be bounded, sorted, and unique",
+        );
+    }
+    for record in &binding.included_records {
+        validate_stored_text("contextUtility.record.entityId", &record.entity_id, 1, 256)?;
+        if let Some(kind) = &record.kind {
+            validate_stored_text("contextUtility.record.kind", kind, 1, 64)?;
+        }
+        if let Some(session_id) = &record.session_id {
+            validate_session_id(session_id)?;
+        }
+        if let Some(learning_id) = &record.learning_id {
+            if !valid_prefixed_hex(learning_id, "lrn_", 32) {
+                return invalid_session_store("context utility learning ID is invalid");
+            }
+        }
+        if let Some(specification_id) = &record.specification_id {
+            if !valid_prefixed_hex(specification_id, "spec_", 32) {
+                return invalid_session_store("context utility specification ID is invalid");
+            }
+        }
+        if let Some(mount_id) = &record.mount_id {
+            if !valid_prefixed_hex(mount_id, "mnt_", 32) {
+                return invalid_session_store("context utility mount ID is invalid");
+            }
+        }
+        if let Some(source_project_id) = &record.source_project_id {
+            if !valid_prefixed_hex(source_project_id, "prj_", 32) {
+                return invalid_session_store("context utility source project ID is invalid");
+            }
+        }
+        match record.source {
+            ContextUtilityRecordSource::Specification => {
+                if record.specification_id.as_deref() != Some(record.entity_id.as_str())
+                    || record.session_id.is_some()
+                    || record.learning_id.is_some()
+                    || record.mount_id.is_some()
+                    || record.source_project_id.is_some()
+                {
+                    return invalid_session_store(
+                        "context utility specification record shape is invalid",
+                    );
+                }
+            }
+            ContextUtilityRecordSource::ActiveProjectMemory => {
+                if record.specification_id.is_some()
+                    || record.mount_id.is_some()
+                    || record.source_project_id.is_some()
+                {
+                    return invalid_session_store(
+                        "context utility active-project record shape is invalid",
+                    );
+                }
+            }
+            ContextUtilityRecordSource::MountedReference => {
+                if record.specification_id.is_some()
+                    || record.mount_id.is_none()
+                    || record.source_project_id.is_none()
+                {
+                    return invalid_session_store(
+                        "context utility mounted-reference record shape is invalid",
+                    );
+                }
+            }
+        }
+    }
+    if !binding.context_pack_revalidated || binding.context_usage_proven {
+        return invalid_session_store(
+            "context utility binding must remain revalidated but usage-unproven",
+        );
+    }
+    Ok(())
+}
+
+fn validate_context_utility_observation(
+    event: &SessionEvent,
+    observation: &ContextUtilityObservation,
+) -> Result<(), LeyCoreError> {
+    if observation.event_id != event.event_id
+        || observation.id != child_id("cut", &event.event_id, 0)
+        || observation.recorded_at_unix_ms != event.recorded_at_unix_ms
+        || observation.expected_event_count == 0
+        || !valid_prefixed_hex(&observation.binding_id, "cub_", 32)
+        || !valid_prefixed_hex(&observation.context_pack_id, "cpk_", 64)
+    {
+        return invalid_session_store("context utility observation identity is invalid");
+    }
+    if observation.downstream_event_ids.is_empty()
+        || observation.downstream_event_ids.len() > SESSION_CONTEXT_UTILITY_OUTCOME_LIMIT
+        || observation
+            .downstream_event_ids
+            .windows(2)
+            .any(|window| window[0] >= window[1])
+        || observation.downstream_outcomes.len() != observation.downstream_event_ids.len()
+    {
+        return invalid_session_store("context utility downstream outcome set is invalid");
+    }
+    for (event_id, outcome) in observation
+        .downstream_event_ids
+        .iter()
+        .zip(&observation.downstream_outcomes)
+    {
+        validate_event_id(event_id)?;
+        if &outcome.event_id != event_id || !context_utility_has_outcome_signal(outcome) {
+            return invalid_session_store("context utility outcome evidence is invalid");
+        }
+        match outcome.kind {
+            ContextUtilityOutcomeKind::Checkpoint if outcome.session_status.is_some() => {
+                return invalid_session_store(
+                    "checkpoint utility outcome cannot have session status",
+                )
+            }
+            ContextUtilityOutcomeKind::SessionFinish => {
+                if outcome.session_status.is_none() {
+                    return invalid_session_store(
+                        "session-finish utility outcome must include terminal status",
+                    );
+                }
+                if matches!(outcome.session_status, Some(SessionStatus::Active)) {
+                    return invalid_session_store(
+                        "session-finish utility outcome cannot be active",
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    if observation.context_usage_proven
+        || observation.causal_utility_proven
+        || observation.trust_changes_applied
+        || observation.ranking_changes_applied
+    {
+        return invalid_session_store(
+            "context utility observation must remain correlation-only and non-authoritative",
         );
     }
     Ok(())
@@ -3161,6 +4101,16 @@ fn request_fingerprint(
             let mut finish = finish.clone();
             finish.recorded_at_unix_ms = 0;
             SessionEventPayload::SessionFinished(finish)
+        }
+        SessionEventPayload::ContextUtilityBound(binding) => {
+            let mut binding = binding.clone();
+            binding.recorded_at_unix_ms = 0;
+            SessionEventPayload::ContextUtilityBound(binding)
+        }
+        SessionEventPayload::ContextUtilityObserved(observation) => {
+            let mut observation = observation.clone();
+            observation.recorded_at_unix_ms = 0;
+            SessionEventPayload::ContextUtilityObserved(observation)
         }
         SessionEventPayload::SessionRenamed(rename) => {
             let mut rename = rename.clone();
@@ -3708,9 +4658,13 @@ fn unix_time_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ingest_project, initialize_project, CaptureMode};
+    use crate::{
+        compile_project_context_with_registries, ingest_project, initialize_project, CaptureMode,
+        ContextCompileLimits, ContextMountRegistry, SpecificationRegistry,
+    };
     use std::process::Command;
     use std::sync::{Arc, Barrier};
+    use std::time::Duration;
     use tempfile::tempdir;
 
     fn setup_memory() -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -3860,6 +4814,29 @@ mod tests {
         }
     }
 
+    fn compile_test_pack(
+        base: &tempfile::TempDir,
+        project: &Path,
+        vault: &Path,
+        task: &str,
+    ) -> CompiledContextPack {
+        let specifications =
+            SpecificationRegistry::at(base.path().join("utility-specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(base.path().join("utility-context-mounts-v1.json"));
+        compile_project_context_with_registries(
+            project,
+            vault,
+            task,
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 1_500,
+            },
+            &specifications,
+            &mounts,
+        )
+        .unwrap()
+    }
+
     fn session_directory(project: &Path, vault: &Path, session_id: &str) -> PathBuf {
         let project_id = diagnose_project(project).unwrap().identity.project_id;
         vault
@@ -3940,6 +4917,255 @@ mod tests {
         let replayed = read_session(&project, &vault, &started.session.session_id).unwrap();
         assert_eq!(replayed.event_count, 1);
         assert!(replayed.checkpoints.is_empty());
+    }
+
+    #[test]
+    fn context_utility_binds_exact_pack_to_checkpoint_and_terminal_outcomes() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
+        let session_id = started.session.session_id.clone();
+        let pack = compile_test_pack(
+            &base,
+            &project,
+            &vault,
+            "durable checkpoint target structured memory",
+        );
+        let binding_input = ContextUtilityBindingInput {
+            request_id: request_id('2'),
+            expected_event_count: 1,
+            expected_context_pack_id: pack.context_pack_id.clone(),
+            task: pack.task.clone(),
+            max_results: 8,
+            max_tokens: 1_500,
+        };
+        let bound =
+            bind_context_utility_pack(&project, &vault, &session_id, binding_input.clone(), &pack)
+                .unwrap();
+        assert_eq!(bound.session.event_count, 2);
+        assert_eq!(bound.session.context_utility_bindings.len(), 1);
+        assert_eq!(
+            bound.session.schema_version,
+            SESSION_CONTEXT_UTILITY_SCHEMA_VERSION
+        );
+        let binding = &bound.session.context_utility_bindings[0];
+        assert_eq!(binding.context_pack_id, pack.context_pack_id);
+        assert_eq!(binding.expected_event_count, 1);
+        assert!(binding.context_pack_revalidated);
+        assert!(!binding.context_usage_proven);
+        assert!(!binding.included_records.is_empty());
+        let binding_id = binding.id.clone();
+
+        std::thread::sleep(Duration::from_millis(2));
+        let bound_retry =
+            bind_context_utility_pack(&project, &vault, &session_id, binding_input.clone(), &pack)
+                .unwrap();
+        assert!(bound_retry.replayed);
+        assert_eq!(bound_retry.event_id, bound.event_id);
+        assert_eq!(bound_retry.session.event_count, 2);
+
+        let mut changed_task_retry = binding_input.clone();
+        changed_task_retry.task = "different utility task".to_owned();
+        let conflict = replay_context_utility_binding_if_present(
+            &project,
+            &vault,
+            &session_id,
+            &changed_task_retry,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            conflict,
+            LeyCoreError::SessionIdempotencyConflict(request_id)
+                if request_id == binding_input.request_id
+        ));
+
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &session_id,
+            checkpoint_input(request_id('3'), "Utility downstream checkpoint"),
+        )
+        .unwrap();
+        let finished =
+            finish_session(&project, &vault, &session_id, finish_input(request_id('4'))).unwrap();
+        assert_eq!(finished.session.status, SessionStatus::Completed);
+        assert_eq!(finished.session.event_count, 4);
+
+        let input = ContextUtilityObservationInput {
+            request_id: request_id('5'),
+            expected_event_count: finished.session.event_count,
+            binding_id: binding_id.clone(),
+            downstream_event_ids: vec![checkpoint.event_id.clone(), finished.event_id.clone()],
+        };
+        let observed =
+            record_context_utility_observation(&project, &vault, &session_id, input.clone())
+                .unwrap();
+
+        assert_eq!(
+            observed.session.schema_version,
+            SESSION_CONTEXT_UTILITY_SCHEMA_VERSION
+        );
+        assert_eq!(observed.session.status, SessionStatus::Completed);
+        assert_eq!(observed.session.event_count, 5);
+        assert_eq!(observed.session.context_utility_bindings.len(), 1);
+        assert_eq!(observed.session.context_utility_observations.len(), 1);
+        assert!(observed.session_path.ends_with(SESSION_V5_FILE));
+        let utility = &observed.session.context_utility_observations[0];
+        assert_eq!(utility.context_pack_id, pack.context_pack_id);
+        assert_eq!(utility.binding_id, binding_id);
+        assert_eq!(utility.expected_event_count, 4);
+        assert!(!utility.context_usage_proven);
+        assert!(!utility.causal_utility_proven);
+        assert!(!utility.trust_changes_applied);
+        assert!(!utility.ranking_changes_applied);
+        assert_eq!(utility.downstream_outcomes.len(), 2);
+        let checkpoint_outcome = utility
+            .downstream_outcomes
+            .iter()
+            .find(|outcome| outcome.kind == ContextUtilityOutcomeKind::Checkpoint)
+            .unwrap();
+        assert_eq!(checkpoint_outcome.completed_tasks, 1);
+        assert_eq!(checkpoint_outcome.resolved_problems, 1);
+        assert_eq!(checkpoint_outcome.helped_attempts, 1);
+        assert_eq!(checkpoint_outcome.passed_verifications, 1);
+        assert_eq!(checkpoint_outcome.unresolved_count, 1);
+        let finish_outcome = utility
+            .downstream_outcomes
+            .iter()
+            .find(|outcome| outcome.kind == ContextUtilityOutcomeKind::SessionFinish)
+            .unwrap();
+        assert_eq!(
+            finish_outcome.session_status,
+            Some(SessionStatus::Completed)
+        );
+        assert_eq!(finish_outcome.unresolved_count, 1);
+
+        let replayed =
+            record_context_utility_observation(&project, &vault, &session_id, input).unwrap();
+        assert!(replayed.replayed);
+        assert_eq!(replayed.event_id, observed.event_id);
+        assert_eq!(replayed.session.event_count, 5);
+
+        let rebuilt = read_session(&project, &vault, &session_id).unwrap();
+        assert_eq!(
+            rebuilt.context_utility_bindings,
+            observed.session.context_utility_bindings
+        );
+        assert_eq!(
+            rebuilt.context_utility_observations,
+            observed.session.context_utility_observations
+        );
+    }
+
+    #[test]
+    fn context_utility_rejects_unbound_non_downstream_or_non_outcome_evidence() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('5'))).unwrap();
+        let session_id = started.session.session_id.clone();
+        let pack = compile_test_pack(&base, &project, &vault, "session memory");
+
+        let forged = bind_context_utility_pack(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityBindingInput {
+                request_id: request_id('6'),
+                expected_event_count: 1,
+                expected_context_pack_id: format!("cpk_{}", "0".repeat(64)),
+                task: pack.task.clone(),
+                max_results: 8,
+                max_tokens: 1_500,
+            },
+            &pack,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            forged,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("context pack changed")
+        ));
+
+        let missing_binding = record_context_utility_observation(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityObservationInput {
+                request_id: request_id('7'),
+                expected_event_count: 1,
+                binding_id: format!("cub_{}", "0".repeat(32)),
+                downstream_event_ids: vec![started.event_id.clone()],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            missing_binding,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("binding is missing")
+        ));
+
+        let bound = bind_context_utility_pack(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityBindingInput {
+                request_id: request_id('8'),
+                expected_event_count: 1,
+                expected_context_pack_id: pack.context_pack_id.clone(),
+                task: pack.task.clone(),
+                max_results: 8,
+                max_tokens: 1_500,
+            },
+            &pack,
+        )
+        .unwrap();
+        let binding_id = bound.session.context_utility_bindings[0].id.clone();
+
+        let predates = record_context_utility_observation(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityObservationInput {
+                request_id: request_id('9'),
+                expected_event_count: 2,
+                binding_id: binding_id.clone(),
+                downstream_event_ids: vec![started.event_id],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            predates,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("does not occur after its bound context pack")
+        ));
+
+        let renamed = rename_session(
+            &project,
+            &vault,
+            &session_id,
+            RenameSessionInput {
+                request_id: request_id('a'),
+                expected_event_count: Some(2),
+                name: "Renamed utility session".to_owned(),
+                note: "Create a post-binding non-outcome event".to_owned(),
+            },
+        )
+        .unwrap();
+        let non_outcome = record_context_utility_observation(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityObservationInput {
+                request_id: request_id('b'),
+                expected_event_count: 3,
+                binding_id,
+                downstream_event_ids: vec![renamed.event_id],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            non_outcome,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("not a checkpoint or session finish outcome")
+        ));
     }
 
     #[test]

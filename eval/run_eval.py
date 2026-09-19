@@ -60,6 +60,7 @@ METRIC_NAMES = (
     "verification_evidence_links",
     "branch_worktree_controls",
     "graph_relation_retrieval",
+    "context_memory_utility",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -421,6 +422,28 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "graph-relative-import-test-impact",
             "graph_relation_retrieval",
+            "truthy",
+        ),
+    },
+    "context-memory-utility-feedback": {
+        "adversarial": (
+            "context-memory-utility-feedback",
+            "context_memory_utility",
+            "truthy",
+        ),
+        "downstream": (
+            "context-memory-utility-feedback",
+            "context_memory_utility",
+            "truthy",
+        ),
+        "privacy": (
+            "context-memory-utility-feedback",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "context-memory-utility-feedback",
+            "context_memory_utility",
             "truthy",
         ),
     },
@@ -2353,6 +2376,241 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not verification_evidence_ok:
             failures.append(
                 "verification evidence links did not remain bound to the captured snapshot/hash across live-source drift and derived state"
+            )
+
+    context_utility_expectation = scenario.get("expected_context_utility")
+    if isinstance(context_utility_expectation, dict):
+        task = str(context_utility_expectation.get("task", ""))
+        hidden_marker = str(context_utility_expectation.get("hidden_marker", ""))
+        max_results = int(context_utility_expectation.get("max_results", 8))
+        max_tokens = int(context_utility_expectation.get("max_tokens", 1_500))
+        started = mcp_call(
+            project,
+            "ley_session_start",
+            {
+                "requestId": request_id(f"{scenario['id']}:utility:start"),
+                "name": "Context utility evaluation",
+                "goal": str(scenario["goal"]),
+                "host": "codex",
+            },
+            WRITE_FLAGS,
+        )
+        utility_session_id = str(started.get("sessionId", ""))
+        start_event_id = str(started.get("eventId", ""))
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": task, "maxResults": max_results, "maxTokens": max_tokens},
+        )
+        context_pack_id = str(compiled.get("contextPackId", ""))
+        compiled_text = json.dumps(compiled, sort_keys=True)
+        bind_args = {
+            "sessionId": utility_session_id,
+            "requestId": request_id(f"{scenario['id']}:utility:bind"),
+            "expectedEventCount": 1,
+            "contextPackId": context_pack_id,
+            "task": task,
+            "maxResults": max_results,
+            "maxTokens": max_tokens,
+        }
+        bound = mcp_call(
+            project,
+            "ley_context_utility_bind",
+            bind_args,
+            WRITE_FLAGS,
+        )
+        bound_retry = mcp_call(
+            project,
+            "ley_context_utility_bind",
+            bind_args,
+            WRITE_FLAGS,
+        )
+        binding_id = str(bound.get("bindingId", ""))
+        checkpoint = mcp_call(
+            project,
+            "ley_session_checkpoint",
+            {
+                "sessionId": utility_session_id,
+                "requestId": request_id(f"{scenario['id']}:utility:checkpoint"),
+                "expectedEventCount": 2,
+                "summary": "Applied the bound context to the downstream utility task.",
+                "tasks": [
+                    {
+                        "title": "Complete utility-bound implementation",
+                        "status": "completed",
+                        "details": "The downstream implementation slice completed.",
+                    }
+                ],
+                "problems": [
+                    {
+                        "title": "Verify utility-bound outcome",
+                        "symptom": "The downstream result needed typed verification evidence.",
+                        "expected": "The verification should pass.",
+                        "attempts": [
+                            {
+                                "action": "Run the bounded downstream verification",
+                                "outcome": "helped",
+                                "evidence": "The typed verification completed.",
+                            }
+                        ],
+                        "resolution": {
+                            "rootCause": "Outcome correlation was previously absent.",
+                            "change": "Bind the supplied context before the work.",
+                            "verification": "The downstream verification passed.",
+                        },
+                    }
+                ],
+                "verification": [
+                    {
+                        "kind": "test",
+                        "status": "passed",
+                        "summary": "Context utility downstream verification passed.",
+                    }
+                ],
+            },
+            WRITE_FLAGS,
+        )
+        checkpoint_event_id = str(checkpoint.get("eventId", ""))
+        finished = mcp_call(
+            project,
+            "ley_session_finish",
+            {
+                "sessionId": utility_session_id,
+                "requestId": request_id(f"{scenario['id']}:utility:finish"),
+                "status": "completed",
+                "summary": "The utility-bound downstream task completed.",
+                "finalResponse": "Completed and verified the downstream task.",
+                "handoff": "",
+                "unresolved": [],
+            },
+            WRITE_FLAGS,
+        )
+        finish_event_id = str(finished.get("eventId", ""))
+
+        pre_binding_rejected = False
+        try:
+            mcp_call(
+                project,
+                "ley_context_utility_observe",
+                {
+                    "sessionId": utility_session_id,
+                    "requestId": request_id(f"{scenario['id']}:utility:invalid-before-binding"),
+                    "expectedEventCount": 4,
+                    "bindingId": binding_id,
+                    "downstreamEventIds": [start_event_id],
+                },
+                WRITE_FLAGS,
+            )
+        except RuntimeError as error:
+            pre_binding_rejected = "does not occur after its bound context pack" in str(error)
+
+        observe_args = {
+            "sessionId": utility_session_id,
+            "requestId": request_id(f"{scenario['id']}:utility:observe"),
+            "expectedEventCount": 4,
+            "bindingId": binding_id,
+            "downstreamEventIds": [checkpoint_event_id, finish_event_id],
+        }
+        observed = mcp_call(
+            project,
+            "ley_context_utility_observe",
+            observe_args,
+            WRITE_FLAGS,
+        )
+        observed_retry = mcp_call(
+            project,
+            "ley_context_utility_observe",
+            observe_args,
+            WRITE_FLAGS,
+        )
+        session_context = mcp_call(
+            project,
+            "ley_session_get",
+            {
+                "sessionId": utility_session_id,
+                "maxCheckpoints": 5,
+                "maxCharacters": 12_000,
+            },
+        )
+        utility_rows = [
+            item
+            for item in session_context.get("contextUtilityObservations", [])
+            if isinstance(item, dict)
+        ]
+        utility = utility_rows[0] if len(utility_rows) == 1 else None
+        outcomes = (
+            [
+                item
+                for item in utility.get("downstreamOutcomes", [])
+                if isinstance(item, dict)
+            ]
+            if isinstance(utility, dict)
+            else []
+        )
+        checkpoint_outcome = next(
+            (item for item in outcomes if item.get("kind") == "checkpoint"), None
+        )
+        finish_outcome = next(
+            (item for item in outcomes if item.get("kind") == "session-finish"), None
+        )
+        session_text = json.dumps(session_context, sort_keys=True)
+        context_utility_ok = (
+            context_pack_id.startswith("cpk_")
+            and len(context_pack_id) == 68
+            and (not hidden_marker or hidden_marker in compiled_text)
+            and binding_id.startswith("cub_")
+            and bound.get("contextPackId") == context_pack_id
+            and bound.get("eventCount") == 2
+            and bound.get("replayed") is False
+            and bound_retry.get("bindingId") == binding_id
+            and bound_retry.get("eventCount") == 2
+            and bound_retry.get("replayed") is True
+            and checkpoint.get("eventCount") == 3
+            and finished.get("eventCount") == 4
+            and pre_binding_rejected
+            and observed.get("eventCount") == 5
+            and observed.get("replayed") is False
+            and observed_retry.get("eventId") == observed.get("eventId")
+            and observed_retry.get("eventCount") == 5
+            and observed_retry.get("replayed") is True
+            and session_context.get("contextUtilityBindingCount") == 1
+            and session_context.get("contextUtilityObservationCount") == 1
+            and session_context.get("omittedContextUtilityObservations") == 0
+            and isinstance(utility, dict)
+            and utility.get("bindingId") == binding_id
+            and utility.get("contextPackId") == context_pack_id
+            and utility.get("contextPackRevalidated") is True
+            and utility.get("contextUsageProven") is False
+            and utility.get("causalUtilityProven") is False
+            and utility.get("trustChangesApplied") is False
+            and utility.get("rankingChangesApplied") is False
+            and bool(utility.get("includedRecords"))
+            and isinstance(checkpoint_outcome, dict)
+            and checkpoint_outcome.get("completedTasks") == 1
+            and checkpoint_outcome.get("resolvedProblems") == 1
+            and checkpoint_outcome.get("helpedAttempts") == 1
+            and checkpoint_outcome.get("passedVerifications") == 1
+            and isinstance(finish_outcome, dict)
+            and finish_outcome.get("sessionStatus") == "completed"
+            and session_context.get("liveSourceChecked") is False
+            and (not hidden_marker or hidden_marker not in session_text)
+            and str(project) not in session_text
+            and str(vault) not in session_text
+        )
+        scores["context_memory_utility"] = context_utility_ok
+        utility_privacy_canaries = [str(project), str(vault)]
+        if hidden_marker:
+            utility_privacy_canaries.append(hidden_marker)
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            utility_privacy_canaries,
+            [bound, bound_retry, checkpoint, finished, observed, observed_retry, session_context],
+        )
+        evidence_text.extend(
+            [compiled, bound, bound_retry, checkpoint, finished, observed, observed_retry, session_context]
+        )
+        if not context_utility_ok:
+            failures.append(
+                "context/memory utility feedback did not preserve exact pre-work pack binding, downstream-only outcome attribution, metadata-only privacy, retry safety, and non-authority semantics"
             )
 
     inspector_expectation = scenario.get("expected_context_pack_inspector")

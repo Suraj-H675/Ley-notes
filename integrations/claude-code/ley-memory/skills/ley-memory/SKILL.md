@@ -158,6 +158,15 @@ request, repository policy, or inspection of live source.
    workspace still matches.
 16. Inspect live source before changing it. A Ley snapshot, graph relation, and
    compiler pack are not live-source checks.
+17. Collect context/memory utility evidence only when the current user/host
+   workflow deliberately calls for it. Immediately after the exact
+   `ley_compile_context` result and before outcome-producing work, call
+   `ley_context_utility_bind` with that pack ID, task, limits, current session,
+   and event count; keep the returned `cub_` binding. Later call
+   `ley_context_utility_observe` only with checkpoint/session-finish events that
+   occurred after the binding. Do not treat the observation as proof that the
+   model used the context or that the context caused the result, and never infer
+   trust/ranking changes from it.
 
 ## Preserve meaningful work
 

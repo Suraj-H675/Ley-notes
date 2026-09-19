@@ -1,7 +1,8 @@
 use crate::retrieval::project_captured_git_state;
 use crate::revision::RevisionResolver;
 use crate::{
-    list_sessions, read_session, AgentSession, AttemptOutcome, LeyCoreError,
+    list_sessions, read_session, AgentEgressTarget, AgentSession, AttemptOutcome,
+    ContextUtilityIncludedRecord, ContextUtilityOutcomeEvidence, LeyCoreError,
     ProjectRevisionFreshness, RevisionApplicability, SessionArtifactCitation, SessionSource,
     SessionStatus, TaskStatus, TurnEvidenceOrigin, TurnEvidenceRetention, VerificationStatus,
 };
@@ -17,6 +18,8 @@ pub const DEFAULT_SESSION_CONTEXT_CHARACTERS: usize = 16_000;
 pub const MIN_SESSION_CONTEXT_CHARACTERS: usize = 1_000;
 pub const MAX_SESSION_CONTEXT_CHARACTERS: usize = 32_000;
 pub const MAX_SESSION_CONTEXT_VERIFICATION_EVIDENCE_ARTIFACTS: usize = 64;
+pub const MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS: usize = 5;
+pub const MAX_SESSION_CONTEXT_UTILITY_INCLUDED_RECORDS_PER_OBSERVATION: usize = 24;
 pub const DEFAULT_SESSION_TURN_RESULTS: usize = 20;
 pub const MAX_SESSION_TURN_RESULTS: usize = 100;
 pub const DEFAULT_SESSION_TURN_CHARACTERS: usize = 16_000;
@@ -56,6 +59,34 @@ pub struct SessionContextRename {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionContextUtilityObservation {
+    pub id: String,
+    pub event_id: String,
+    pub recorded_at_unix_ms: u64,
+    pub expected_event_count: u64,
+    pub binding_id: String,
+    pub context_pack_id: String,
+    pub task_excerpt: String,
+    pub artifact_snapshot_id: String,
+    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub egress_target: Option<AgentEgressTarget>,
+    pub max_results: usize,
+    pub max_tokens: usize,
+    pub estimated_tokens: usize,
+    pub included_records: Vec<ContextUtilityIncludedRecord>,
+    pub omitted_included_records: usize,
+    pub downstream_event_ids: Vec<String>,
+    pub downstream_outcomes: Vec<ContextUtilityOutcomeEvidence>,
+    pub context_pack_revalidated: bool,
+    pub context_usage_proven: bool,
+    pub causal_utility_proven: bool,
+    pub trust_changes_applied: bool,
+    pub ranking_changes_applied: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionList {
     pub project_id: String,
     pub sessions: Vec<SessionListItem>,
@@ -88,6 +119,10 @@ pub struct SessionContextPack {
     pub rename_count: usize,
     pub renames: Vec<SessionContextRename>,
     pub omitted_renames: usize,
+    pub context_utility_binding_count: usize,
+    pub context_utility_observation_count: usize,
+    pub context_utility_observations: Vec<SessionContextUtilityObservation>,
+    pub omitted_context_utility_observations: usize,
     pub checkpoints: Vec<SessionContextCheckpoint>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finish: Option<SessionContextFinish>,
@@ -405,6 +440,62 @@ fn context_from_session(
         .filter(|turn| turn.retention == TurnEvidenceRetention::Captured)
         .count();
     let omitted_turn_count = prompt_count + response_count - retained_turn_count;
+    let context_utility_binding_count = session.context_utility_bindings.len();
+    let context_utility_observation_count = session.context_utility_observations.len();
+    let first_utility_observation =
+        context_utility_observation_count.saturating_sub(MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS);
+    let mut context_utility_observations = Vec::new();
+    for observation in &session.context_utility_observations[first_utility_observation..] {
+        let binding = session
+            .context_utility_bindings
+            .iter()
+            .find(|binding| binding.id == observation.binding_id)
+            .expect("validated utility observation has a prior binding");
+        let included_records = binding
+            .included_records
+            .iter()
+            .take(MAX_SESSION_CONTEXT_UTILITY_INCLUDED_RECORDS_PER_OBSERVATION)
+            .cloned()
+            .collect::<Vec<_>>();
+        let omitted_included_records = binding.omitted_included_records.saturating_add(
+            binding
+                .included_records
+                .len()
+                .saturating_sub(included_records.len()),
+        );
+        if omitted_included_records > 0 {
+            budget.truncated = true;
+        }
+        context_utility_observations.push(SessionContextUtilityObservation {
+            id: observation.id.clone(),
+            event_id: observation.event_id.clone(),
+            recorded_at_unix_ms: observation.recorded_at_unix_ms,
+            expected_event_count: observation.expected_event_count,
+            binding_id: observation.binding_id.clone(),
+            context_pack_id: binding.context_pack_id.clone(),
+            task_excerpt: budget.take(&binding.task_excerpt, 256),
+            artifact_snapshot_id: binding.artifact_snapshot_id.clone(),
+            graph_snapshot_id: binding.graph_snapshot_id.clone(),
+            egress_target: binding.egress_target,
+            max_results: binding.max_results,
+            max_tokens: binding.max_tokens,
+            estimated_tokens: binding.estimated_tokens,
+            included_records,
+            omitted_included_records,
+            downstream_event_ids: observation.downstream_event_ids.clone(),
+            downstream_outcomes: observation.downstream_outcomes.clone(),
+            context_pack_revalidated: binding.context_pack_revalidated,
+            context_usage_proven: observation.context_usage_proven,
+            causal_utility_proven: observation.causal_utility_proven,
+            trust_changes_applied: observation.trust_changes_applied,
+            ranking_changes_applied: observation.ranking_changes_applied,
+        });
+    }
+    let omitted_context_utility_observations =
+        context_utility_observation_count.saturating_sub(context_utility_observations.len());
+    if omitted_context_utility_observations > 0 {
+        budget.truncated = true;
+    }
     let first_included = checkpoint_count.saturating_sub(max_checkpoints);
     let mut checkpoints = Vec::new();
     for checkpoint in &session.checkpoints[first_included..] {
@@ -634,6 +725,10 @@ fn context_from_session(
         rename_count,
         renames,
         omitted_renames,
+        context_utility_binding_count,
+        context_utility_observation_count,
+        context_utility_observations,
+        omitted_context_utility_observations,
         checkpoints,
         finish,
         omitted_checkpoints,
@@ -846,10 +941,13 @@ impl TextBudget {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, finish_session, ingest_project, initialize_project, rename_session,
-        start_session, AttemptInput, AttemptOutcome, CaptureMode, CheckpointInput, CommandInput,
-        DecisionInput, FinishSessionInput, ProblemInput, RenameSessionInput, ResolutionInput,
-        RevisionCompatibility, SessionSourceKind, StartSessionInput, TaskInput, VerificationInput,
+        bind_context_utility_pack, checkpoint_session, compile_project_context_with_registries,
+        finish_session, ingest_project, initialize_project, record_context_utility_observation,
+        rename_session, start_session, AttemptInput, AttemptOutcome, CaptureMode, CheckpointInput,
+        CommandInput, ContextCompileLimits, ContextMountRegistry, ContextUtilityBindingInput,
+        ContextUtilityObservationInput, DecisionInput, FinishSessionInput, ProblemInput,
+        RenameSessionInput, ResolutionInput, RevisionCompatibility, SessionSourceKind,
+        SpecificationRegistry, StartSessionInput, TaskInput, TaskStatus, VerificationInput,
     };
     use std::process::Command;
     use tempfile::tempdir;
@@ -1129,6 +1227,149 @@ mod tests {
         );
         assert_eq!(omitted, 16);
         assert!(context.truncated);
+    }
+
+    #[test]
+    fn session_context_bounds_recent_context_utility_observations() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        initialize_project(
+            &project,
+            Some("Utility context bound"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("README.md"),
+            "# Utility\n\nBound context utility projection evidence.\n",
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "c".repeat(32)),
+                name: "Utility observations".to_owned(),
+                goal: "Keep recent utility feedback bounded".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let specifications =
+            SpecificationRegistry::at(base.path().join("utility-specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(base.path().join("utility-mounts-v1.json"));
+        let mut event_count = started.session.event_count;
+
+        for index in 0..(MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS + 1) {
+            let pack = compile_project_context_with_registries(
+                &project,
+                &vault,
+                &format!("utility projection outcome {index}"),
+                ContextCompileLimits {
+                    max_results: 8,
+                    max_tokens: 1_500,
+                },
+                &specifications,
+                &mounts,
+            )
+            .unwrap();
+            let bound = bind_context_utility_pack(
+                &project,
+                &vault,
+                &started.session.session_id,
+                ContextUtilityBindingInput {
+                    request_id: format!("req_{:032x}", 200 + index * 3),
+                    expected_event_count: event_count,
+                    expected_context_pack_id: pack.context_pack_id.clone(),
+                    task: pack.task.clone(),
+                    max_results: 8,
+                    max_tokens: 1_500,
+                },
+                &pack,
+            )
+            .unwrap();
+            let binding_id = bound
+                .session
+                .context_utility_bindings
+                .last()
+                .unwrap()
+                .id
+                .clone();
+
+            let checkpoint = checkpoint_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                CheckpointInput {
+                    request_id: format!("req_{:032x}", 201 + index * 3),
+                    summary: format!("Utility outcome {index}"),
+                    plan: Vec::new(),
+                    decisions: Vec::new(),
+                    tasks: vec![TaskInput {
+                        title: format!("Complete utility task {index}"),
+                        status: TaskStatus::Completed,
+                        details: String::new(),
+                    }],
+                    problems: Vec::new(),
+                    touched_artifacts: Vec::new(),
+                    commands: Vec::new(),
+                    verification: Vec::new(),
+                    unresolved: Vec::new(),
+                },
+            )
+            .unwrap();
+            event_count = checkpoint.session.event_count;
+
+            let observed = record_context_utility_observation(
+                &project,
+                &vault,
+                &started.session.session_id,
+                ContextUtilityObservationInput {
+                    request_id: format!("req_{:032x}", 202 + index * 3),
+                    expected_event_count: event_count,
+                    binding_id,
+                    downstream_event_ids: vec![checkpoint.event_id],
+                },
+            )
+            .unwrap();
+            event_count = observed.session.event_count;
+        }
+
+        let context = read_session_context(
+            &project,
+            &vault,
+            &started.session.session_id,
+            MAX_SESSION_CONTEXT_CHECKPOINTS,
+            MAX_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(
+            context.context_utility_binding_count,
+            MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS + 1
+        );
+        assert_eq!(
+            context.context_utility_observation_count,
+            MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS + 1
+        );
+        assert_eq!(
+            context.context_utility_observations.len(),
+            MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS
+        );
+        assert_eq!(context.omitted_context_utility_observations, 1);
+        assert!(context.truncated);
+        assert_eq!(
+            context
+                .context_utility_observations
+                .last()
+                .unwrap()
+                .downstream_outcomes[0]
+                .completed_tasks,
+            1
+        );
     }
 
     #[test]
