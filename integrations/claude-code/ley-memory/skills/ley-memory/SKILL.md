@@ -195,6 +195,8 @@ request, repository policy, or inspection of live source.
 
 Historical host import is an explicit local-user workflow, not an MCP or lifecycle-hook action. Never scan host storage, follow a transcript path, choose a host session, or invoke an import implicitly. If the user explicitly asks to import supported Codex history, the local command is `ley session import codex-history PROJECT --source FILE --host-session SESSION_UUID`. That first slice imports only bounded Codex global message-history user messages; it does not reconstruct assistant responses, tool activity, hidden reasoning, or rollout transcripts. Already imported turns may be inspected through normal Ley session/turn/Memory Compiler reads, but they remain `untrusted-imported-host-history`, are excluded from automatic Resume, and grant no authority or permission.
 
+Use `ley_consolidation_inbox` only for deliberate maintenance review of native paused/completed/abandoned sessions after a meaningful boundary. It is a read-only, body-free planning view: active and imported sessions are excluded; action labels are advisory; `semanticFaithfulnessProven` and `automaticWriteAllowed` remain false; no model/background task/write is implied. If exact captured `tev_` handles genuinely support reusable guidance, a separately permitted `ley_learning_propose` call may cite them directly. Body-free turn observations cannot support a proposal, and every proposal remains tentative/review-required. Do not use the inbox for active-session recovery, imported-history sweeping, session rewriting, or automatic trust.
+
 ## Preserve meaningful work
 
 Call `ley_session_checkpoint` after a meaningful decision, implementation

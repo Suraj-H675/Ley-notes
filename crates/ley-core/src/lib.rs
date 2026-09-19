@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 mod agent_legibility;
 mod binding;
+mod consolidation_inbox;
 mod context_compiler;
 mod context_mount;
 mod context_pack_inspector;
@@ -55,6 +56,13 @@ pub use agent_legibility::{
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
+};
+pub use consolidation_inbox::{
+    consolidation_inbox, ConsolidationAction, ConsolidationInbox, ConsolidationInboxCoverage,
+    ConsolidationInboxItem, ConsolidationInboxLimits, CONSOLIDATION_INBOX_SCHEMA_VERSION,
+    DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
+    MAX_CONSOLIDATION_INBOX_ITEMS, MAX_CONSOLIDATION_INBOX_SESSIONS,
+    MAX_CONSOLIDATION_PROPOSAL_EVIDENCE_IDS,
 };
 pub use context_compiler::{
     compile_project_context, compile_project_context_for_agent_with_registries,

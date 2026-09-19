@@ -1,10 +1,10 @@
 # Review project learnings
 
-Ley turns evidence from structured sessions into project-level lessons without treating an agent’s statement as fact. A lesson can describe a procedure, constraint, pitfall, convention, or fact. Every proposal cites an existing session record and starts in the review inbox.
+Ley turns retained session evidence into project-level lessons without treating an agent’s statement as fact. A lesson can describe a procedure, constraint, pitfall, convention, or fact. Every proposal cites existing Ley session evidence and starts in the review inbox.
 
 ## Propose a cited lesson
 
-Use the session and record IDs shown by `ley session show --json`. Actor and provenance are required so a script cannot silently impersonate a user:
+Use a session ID plus an eligible structured record ID from `ley session show --json`, or an exact captured `tev_` user-prompt/assistant-response record surfaced by an explicit evidence workflow such as the local Consolidation Inbox. Body-free turn observations are not valid learning evidence. Actor and provenance are required so a script cannot silently impersonate a user:
 
 ```bash
 ley learning propose /path/to/project \
@@ -17,9 +17,9 @@ ley learning propose /path/to/project \
   --evidence ses_01234567890123456789012345678901:ckp_01234567890123456789012345678901
 ```
 
-Valid actor/provenance pairs are `user` with `user-authored`, or `agent` with `agent-authored`/`inferred`. One proposal can cite up to twenty distinct session records. It cannot cite arbitrary files or invent a record ID.
+Valid actor/provenance pairs are `user` with `user-authored`, or `agent` with `agent-authored`/`inferred`. One proposal can cite up to twenty distinct `(sessionId, recordId)` evidence references. It cannot cite arbitrary files or invent a record ID.
 
-For every new proposal, Ley preserves a bounded origin lineage in the immutable learning event. The mechanically known origins include the cited session record and any captured artifact snapshots attached to that record. If the cited record is a candidate-bound recovery checkpoint, lineage also reaches the exact recovery candidate fingerprint and `tev_` prompt/response evidence that produced the checkpoint. These recorded origins do not prove that Ley knows every causal influence on an agent-authored claim.
+For every new proposal, Ley preserves a bounded origin lineage in the immutable learning event. For structured records, the mechanically known origins include the cited session record and any captured artifact snapshots attached to that record. A direct captured turn citation records `turn-evidence` lineage to that exact session and `tev_` record. If the cited structured record is a candidate-bound recovery checkpoint, lineage also reaches the exact recovery candidate fingerprint and `tev_` prompt/response evidence that produced the checkpoint. These recorded origins do not prove that Ley knows every causal influence on an agent-authored claim or that a direct turn citation is semantically sufficient merely because it was mechanically retained.
 
 ## Inspect and review
 
@@ -50,7 +50,7 @@ ley learning correct lrn_01234567890123456789012345678901 \
 
 Ley Desktop exposes the same behavior under **Agent Memory → Lessons → Provenance inspector**. **Correct** edits the current title, guidance, and confidence, requires a reason, preserves the complete cited evidence set, and appends a new immutable version. It does not rewrite the old claim. The corrected version returns to review and must be confirmed separately.
 
-Corrections also preserve origin history: newly resolved origins are unioned with the prior lineage rather than replacing it. `automaticAuthorityCeiling: review-required` means the automatic derivation step cannot self-promote its output. Explicit user confirmation can establish trusted learning state, but it does not rewrite the origin chain or turn `causalCompletenessProven: false` into a stronger claim.
+Corrections also preserve origin history: newly resolved origins are unioned with the prior lineage rather than replacing it. `automaticAuthorityCeiling: review-required` means the derivation/proposal path cannot self-promote its output. Explicit user confirmation can establish trusted learning state, but it does not rewrite the origin chain or turn `causalCompletenessProven: false` into a stronger claim.
 
 Every desktop correction and review decision is tied to the ledger event count visible when the inspector opened. If another agent or window changes the learning first, Ley refuses the stale action and asks the user to reload rather than applying a decision to unseen text. If the bounded inspector had to truncate the claim, review controls remain unavailable until the complete projection is inspected through the CLI. Rejected and superseded learnings remain inspectable terminal history without non-working action buttons.
 

@@ -300,7 +300,10 @@ pub fn memory_health_report(
                         .map(|boundary| vec![boundary.checkpoint_id.clone()])
                         .unwrap_or_default(),
                     updated_at_unix_ms: session.updated_at_unix_ms,
-                    recommended_action: "Inspect the recovery evidence and perform the explicit memory transition/checkpoint workflow if the evidence should become structured memory.",
+                    recommended_action: match session.status {
+                        SessionStatus::Active => "Inspect the recovery evidence and perform the explicit memory transition/checkpoint workflow if the evidence should become structured memory.",
+                        SessionStatus::Paused | SessionStatus::Completed | SessionStatus::Abandoned => "Inspect the local Consolidation Inbox. If retained evidence supports reusable guidance, create a review-required learning proposal that cites the exact retained turn IDs; do not reopen or rewrite the terminal session.",
+                    },
                 });
             }
         }

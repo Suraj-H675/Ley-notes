@@ -67,6 +67,7 @@ METRIC_NAMES = (
     "knowledge_scope",
     "policy_bundle",
     "historical_host_import",
+    "consolidation_inbox",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -563,6 +564,28 @@ P2_CAPABILITY_COVERAGE = {
         "regression": (
             "explicit-codex-message-history-import",
             "historical_host_import",
+            "truthy",
+        ),
+    },
+    "local-consolidation-review": {
+        "adversarial": (
+            "local-consolidation-inbox",
+            "consolidation_inbox",
+            "truthy",
+        ),
+        "downstream": (
+            "local-consolidation-inbox",
+            "consolidation_inbox",
+            "truthy",
+        ),
+        "privacy": (
+            "local-consolidation-inbox",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "local-consolidation-inbox",
+            "consolidation_inbox",
             "truthy",
         ),
     },
@@ -3598,6 +3621,267 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             failures.append(
                 "historical Codex message import failed: "
                 + ", ".join(failed_checks)
+            )
+
+    consolidation_expectation = scenario.get("expected_consolidation_inbox")
+    if isinstance(consolidation_expectation, dict):
+        active_marker = str(consolidation_expectation.get("active_marker", ""))
+        prompt_marker = str(consolidation_expectation.get("prompt_marker", ""))
+        response_marker = str(consolidation_expectation.get("response_marker", ""))
+        if not active_marker or not prompt_marker or not response_marker:
+            raise RuntimeError("consolidation inbox fixture is incomplete")
+
+        active = cli_json(
+            [
+                "session",
+                "start",
+                str(project),
+                "--name",
+                "Active consolidation control",
+                "--goal",
+                "Remain outside meaningful-boundary consolidation",
+                "--json",
+            ]
+        )
+        if not isinstance(active, dict):
+            raise RuntimeError("consolidation fixture returned no active session")
+        active_session = active.get("session", {})
+        active_session_id = (
+            str(active_session.get("sessionId", ""))
+            if isinstance(active_session, dict)
+            else ""
+        )
+        json.loads(
+            run(
+                [
+                    "session",
+                    "prompt",
+                    active_session_id,
+                    str(project),
+                    "--stdin",
+                    "--json",
+                ],
+                stdin=active_marker,
+            )
+        )
+
+        terminal = cli_json(
+            [
+                "session",
+                "start",
+                str(project),
+                "--name",
+                "Completed consolidation boundary",
+                "--goal",
+                "Review retained evidence without rewriting terminal history",
+                "--json",
+            ]
+        )
+        if not isinstance(terminal, dict):
+            raise RuntimeError("consolidation fixture returned no terminal session")
+        terminal_session = terminal.get("session", {})
+        terminal_session_id = (
+            str(terminal_session.get("sessionId", ""))
+            if isinstance(terminal_session, dict)
+            else ""
+        )
+        json.loads(
+            run(
+                [
+                    "session",
+                    "prompt",
+                    terminal_session_id,
+                    str(project),
+                    "--stdin",
+                    "--json",
+                ],
+                stdin=prompt_marker,
+            )
+        )
+        json.loads(
+            run(
+                [
+                    "session",
+                    "response",
+                    terminal_session_id,
+                    str(project),
+                    "--stdin",
+                    "--json",
+                ],
+                stdin=response_marker,
+            )
+        )
+        turns = cli_json(
+            [
+                "session",
+                "turns",
+                terminal_session_id,
+                str(project),
+                "--json",
+            ]
+        )
+        if not isinstance(turns, dict):
+            raise RuntimeError("consolidation fixture returned no terminal turns")
+        retained_turn_ids = [
+            str(turn.get("recordId", ""))
+            for turn in turns.get("turns", [])
+            if isinstance(turn, dict)
+            and turn.get("kind") in {"user-prompt", "assistant-response"}
+            and isinstance(turn.get("recordId"), str)
+        ]
+        if len(retained_turn_ids) != 2:
+            raise RuntimeError("consolidation fixture did not retain exactly two turns")
+
+        finished = cli_json(
+            [
+                "session",
+                "finish",
+                terminal_session_id,
+                str(project),
+                "--summary",
+                "Completed without a final structured checkpoint",
+                "--status",
+                "completed",
+                "--json",
+            ]
+        )
+        if not isinstance(finished, dict):
+            raise RuntimeError("consolidation fixture returned no finish receipt")
+        finished_session = finished.get("session", {})
+        terminal_event_count = (
+            int(finished_session.get("eventCount", 0))
+            if isinstance(finished_session, dict)
+            else 0
+        )
+
+        inbox = mcp_call(
+            project,
+            "ley_consolidation_inbox",
+            {"maxItems": 20, "maxSessions": 30},
+        )
+        rebuilt = mcp_call(
+            project,
+            "ley_consolidation_inbox",
+            {"maxItems": 20, "maxSessions": 30},
+        )
+        candidates = [
+            item
+            for item in inbox.get("items", [])
+            if isinstance(item, dict)
+            and item.get("sessionId") == terminal_session_id
+        ]
+        candidate = candidates[0] if len(candidates) == 1 else {}
+        proposal_ids = (
+            [str(value) for value in candidate.get("proposalEvidenceRecordIds", [])]
+            if isinstance(candidate, dict)
+            else []
+        )
+        inbox_text = json.dumps([inbox, rebuilt], sort_keys=True)
+        inbox_ok = (
+            inbox.get("schemaVersion") == 1
+            and inbox.get("persisted") is False
+            and inbox.get("modelInvoked") is False
+            and inbox.get("backgroundWorkStarted") is False
+            and inbox.get("destructiveActionsTaken") is False
+            and inbox.get("liveSourceChecked") is False
+            and inbox.get("inboxFingerprint") == rebuilt.get("inboxFingerprint")
+            and int(inbox.get("coverage", {}).get("excludedActiveSessions", 0)) >= 1
+            and len(candidates) == 1
+            and candidate.get("sessionStatus") == "completed"
+            and candidate.get("automaticWriteAllowed") is False
+            and candidate.get("semanticFaithfulnessProven") is False
+            and set(proposal_ids) == set(retained_turn_ids)
+            and active_session_id not in {
+                str(item.get("sessionId", ""))
+                for item in inbox.get("items", [])
+                if isinstance(item, dict)
+            }
+            and active_marker not in inbox_text
+            and prompt_marker not in inbox_text
+            and response_marker not in inbox_text
+            and str(project) not in inbox_text
+            and str(vault) not in inbox_text
+        )
+
+        proposed = mcp_call(
+            project,
+            "ley_learning_propose",
+            {
+                "requestId": request_id(f"{scenario['id']}:consolidation:learning"),
+                "kind": "procedure",
+                "title": "Review completed retained evidence",
+                "guidance": "Inspect the retained evidence before reusing this completed workflow.",
+                "confidencePercent": 60,
+                "provenance": "inferred",
+                "evidence": [
+                    {
+                        "sessionId": terminal_session_id,
+                        "recordId": record_id,
+                        "note": "Selected from the read-only local consolidation inbox.",
+                    }
+                    for record_id in proposal_ids
+                ],
+            },
+            WRITE_FLAGS,
+        )
+        learning_id = str(proposed.get("learningId", ""))
+        learning = mcp_call(
+            project,
+            "ley_learning_get",
+            {"learningId": learning_id, "maxCharacters": 8_000},
+        )
+        lineage = learning.get("originLineage", {})
+        sources = lineage.get("sources", []) if isinstance(lineage, dict) else []
+        after = cli_json(
+            ["session", "show", terminal_session_id, str(project), "--json"]
+        )
+        after_event_count = (
+            int(after.get("eventCount", 0)) if isinstance(after, dict) else 0
+        )
+        proposal_ok = (
+            proposed.get("state") == "tentative"
+            and proposed.get("trustState") == "review-required"
+            and proposed.get("requiresUserReview") is True
+            and lineage.get("automaticAuthorityCeiling") == "review-required"
+            and lineage.get("causalCompletenessProven") is False
+            and len(sources) == 2
+            and all(
+                isinstance(source, dict)
+                and source.get("kind") == "turn-evidence"
+                and source.get("sessionId") == terminal_session_id
+                and source.get("recordId") in retained_turn_ids
+                for source in sources
+            )
+            and terminal_event_count > 0
+            and after_event_count == terminal_event_count
+        )
+        observable_outputs = [inbox, rebuilt, proposed, learning, after]
+        privacy_rate = privacy_violation_rate(
+            [
+                str(project),
+                str(vault),
+                active_marker,
+                prompt_marker,
+                response_marker,
+            ],
+            observable_outputs,
+        )
+        consolidation_ok = inbox_ok and proposal_ok and privacy_rate == 0.0
+        scores["consolidation_inbox"] = consolidation_ok
+        scores["privacy_violation_rate"] = privacy_rate
+        evidence_text.extend(observable_outputs)
+        if not consolidation_ok:
+            failed_checks = [
+                name
+                for name, passed in [
+                    ("read-only-inbox", inbox_ok),
+                    ("review-required-proposal", proposal_ok),
+                    ("privacy", privacy_rate == 0.0),
+                ]
+                if not passed
+            ]
+            failures.append(
+                "local consolidation inbox failed: " + ", ".join(failed_checks)
             )
 
     dossier_expectation = scenario.get("expected_topic_dossier")

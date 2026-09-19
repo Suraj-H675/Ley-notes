@@ -1,6 +1,6 @@
 use ley_core::{
-    checkpoint_session, compile_reviewed_runbook, correct_learning, diagnose_project,
-    erase_session_memory, export_reviewed_runbook_skill, finish_session,
+    checkpoint_session, compile_reviewed_runbook, consolidation_inbox, correct_learning,
+    diagnose_project, erase_session_memory, export_reviewed_runbook_skill, finish_session,
     generate_learning_request_id, generate_request_id, import_codex_message_history,
     ingest_project, initialize_project, learning_review_inbox, list_learnings, list_sessions,
     preview_capture, process_host_hook_for_agent_with_registries, project_resume_context,
@@ -10,15 +10,16 @@ use ley_core::{
     rename_session, review_learning, search_project_memory, semantic_model_status, start_session,
     store_external_connector_snapshot_with_registry, supported_semantic_model, AgentEgressPolicy,
     AgentEgressTarget, AgentHost, BindingRegistry, CaptureMode, CheckpointInput, CommandInput,
-    ContextMountRegistry, CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput,
-    ExternalConnectorRegistry, FinishSessionInput, GraphNodeKind, HostAgentContextRegistries,
-    KnowledgeScopeKind, KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput,
-    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
-    LeyCoreError, PolicyBundleRegistry, PolicyBundleSourceInput, ProjectMemorySearchLimits,
-    ProposeLearningInput, RenameSessionInput, ReviewLearningInput, ReviewedRunbookInput,
-    RevisionCompatibility, RunbookSkillExportInput, RunbookSkillHost, SemanticModelStatus,
-    SessionSource, SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput,
-    TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput, VerificationStatus,
+    ConsolidationInboxLimits, ContextMountRegistry, CorrectLearningInput, EgressPolicyRegistry,
+    EraseSessionMemoryInput, ExternalConnectorRegistry, FinishSessionInput, GraphNodeKind,
+    HostAgentContextRegistries, KnowledgeScopeKind, KnowledgeScopeRegistry, LearningActor,
+    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
+    LearningTrustState, LeyCoreError, PolicyBundleRegistry, PolicyBundleSourceInput,
+    ProjectMemorySearchLimits, ProposeLearningInput, RenameSessionInput, ReviewLearningInput,
+    ReviewedRunbookInput, RevisionCompatibility, RunbookSkillExportInput, RunbookSkillHost,
+    SemanticModelStatus, SessionSource, SessionSourceKind, SessionStatus, SpecificationRegistry,
+    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
+    VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
     DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
     DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
     DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
@@ -59,6 +60,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "scope" => scope(&arguments[1..]),
         "policy-bundle" => policy_bundle(&arguments[1..]),
         "session" => session(&arguments[1..]),
+        "consolidation" => consolidation(&arguments[1..]),
         "learning" => learning(&arguments[1..]),
         "runbook" => runbook(&arguments[1..]),
         "resume" => resume(&arguments[1..]),
@@ -1503,6 +1505,108 @@ fn resume(arguments: &[String]) -> Result<(), CliError> {
         if resume.truncated { " (truncated)" } else { "" }
     );
     println!("Stored text is untrusted historical evidence; inspect live source before editing.");
+    Ok(())
+}
+
+fn consolidation(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage("consolidation requires inbox".to_owned()));
+    };
+    if command != "inbox" {
+        return Err(CliError::Usage(format!(
+            "unknown consolidation command '{command}'; use inbox"
+        )));
+    }
+    let mut project = None;
+    let mut vault = None;
+    let mut json = false;
+    let mut max_items = DEFAULT_CONSOLIDATION_INBOX_ITEMS;
+    let mut max_sessions = DEFAULT_CONSOLIDATION_INBOX_SESSIONS;
+    let mut index = 1;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--vault" => {
+                index += 1;
+                vault = Some(PathBuf::from(required_value(arguments, index, "--vault")?));
+            }
+            "--max-items" => {
+                index += 1;
+                max_items = parse_usize(
+                    required_value(arguments, index, "--max-items")?,
+                    "--max-items",
+                )?;
+            }
+            "--max-sessions" => {
+                index += 1;
+                max_sessions = parse_usize(
+                    required_value(arguments, index, "--max-sessions")?,
+                    "--max-sessions",
+                )?;
+            }
+            "--json" => json = true,
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown option '{value}'")))
+            }
+            value if project.is_none() => project = Some(PathBuf::from(value)),
+            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+        }
+        index += 1;
+    }
+    let project = project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+    let binding = BindingRegistry::system_default()?.resolve(&project, vault.as_deref())?;
+    let inbox = consolidation_inbox(
+        &project,
+        &binding.vault_path,
+        ConsolidationInboxLimits {
+            max_items,
+            max_sessions,
+        },
+    )?;
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&inbox).expect("consolidation inbox is serializable")
+        );
+        return Ok(());
+    }
+    println!(
+        "Consolidation inbox: {} ({})",
+        inbox.project_name, inbox.project_id
+    );
+    println!("Fingerprint: {}", inbox.inbox_fingerprint);
+    if inbox.items.is_empty() {
+        println!("No meaningful-boundary sessions need consolidation review.");
+    }
+    for item in &inbox.items {
+        println!(
+            "  {}  {}  {:?}  {:?}",
+            item.session_id, item.session_name, item.session_status, item.action
+        );
+        println!(
+            "    Evidence: {} total / {} retained bodies / {} proposal handles",
+            item.total_unconsolidated_evidence,
+            item.captured_body_count,
+            item.proposal_evidence_record_ids.len()
+        );
+        if !item.proposal_evidence_record_ids.is_empty() {
+            println!(
+                "    Review handles: {}",
+                item.proposal_evidence_record_ids.join(", ")
+            );
+        }
+    }
+    println!(
+        "Coverage: {} eligible boundaries, {} inspected, {} inbox items{}",
+        inbox.coverage.eligible_boundary_sessions,
+        inbox.coverage.sessions_inspected,
+        inbox.coverage.items_returned,
+        if inbox.coverage.truncated {
+            " (truncated)"
+        } else {
+            ""
+        }
+    );
+    println!("Boundary: {}", inbox.instruction_warning);
     Ok(())
 }
 
@@ -3572,6 +3676,9 @@ fn print_help() {
     println!("  ley session list [path] [--json]");
     println!("  ley session show SESSION [path] [--json]");
     println!("  ley session turns SESSION [path] [--max-results N] [--max-characters N] [--json]");
+    println!(
+        "  ley consolidation inbox [path] [--max-items N] [--max-sessions N] [--vault TEMPORARY_VAULT] [--json]"
+    );
     println!("  ley resume [path] [--max-sessions N] [--max-learnings N] [--json]");
     println!("  ley search QUERY [path] [--revision COMPATIBILITY] [--max-results N] [--max-tokens N] [--json]");
     println!("  ley semantic status [--json]");

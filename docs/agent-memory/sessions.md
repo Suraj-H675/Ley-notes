@@ -173,6 +173,18 @@ Before writing reconstructed structure, call `ley_session_memory_verify` with th
 
 For the supported single-unresolved recovery case, pass the compiler pack's `sessionEventCount` and verifier `candidateFingerprint` to `ley_session_memory_commit_unresolved`. Ley re-verifies the candidate and complete evidence window under the session writer lock before appending. If any newer prompt, response, rename, checkpoint, or finish event arrived after inspection, the bound write fails and the caller must recompile and reverify. `ley_session_checkpoint` retains its optional `expectedEventCount` guard for ordinary deliberate checkpoints, but it is not candidate-bound recovery.
 
+## Review native sessions at lifecycle boundaries for reusable guidance
+
+Use the local Consolidation Inbox only when deliberately reviewing retained evidence after a meaningful pause/completion/abandonment boundary:
+
+```bash
+ley consolidation inbox /path/to/project --json
+```
+
+The inbox is an on-demand read-only view over native paused, completed, and abandoned sessions. It excludes active sessions and explicitly imported historical sessions, returns stable session/turn IDs plus bounded counts rather than prompt/response bodies, and does not invoke a model, start background work, persist state, reopen or mutate cited sessions, or claim semantic faithfulness. Re-running the unchanged view may surface the same evidence again because this slice has no durable "processed" marker.
+
+When a returned item contains exact captured `tev_` prompt/response handles and the retained evidence genuinely supports reusable guidance, a separate `learning propose` action may cite those turn IDs directly. Body-free observations cannot support a learning proposal. Every such proposal still starts tentative/review-required, carries direct turn-evidence origin lineage, and requires the normal learning review workflow; the inbox itself grants no learning-write or trust authority.
+
 ## Retry a write safely
 
 Supply `--request-id req_01234567890123456789012345678901` when another process may repeat a start, compact checkpoint, turn capture, or finish call. The same ID and retained content replay the original event. The same ID with different retained content fails instead of creating ambiguous history. Body-free Minimal/capacity disclosures deliberately retain no content fingerprint, so they can validate identity and metadata but cannot compare an omitted retry body.
@@ -212,9 +224,11 @@ mutate an already imported snapshot.
 
 Imported sessions do not become automatic Resume context and are not flagged by Memory Health
 as a missed-checkpoint backlog. Use explicit session list/show/turn inspection, project-memory
-search, or the read-only Memory Compiler when the history is relevant. Memory Compiler keeps
-the imported-history boundary/source timestamps and cannot checkpoint a completed imported
-session automatically.
+search, or the read-only per-session recovery compiler when the history is relevant. Imported
+sessions are deliberately excluded from the local Consolidation Inbox. Existing explicit
+inspection/proposal workflows remain separate; Ley does not sweep imported history for reusable
+knowledge automatically. Memory Compiler keeps the imported-history boundary/source timestamps
+and cannot checkpoint a completed imported session automatically.
 
 The existing `session erase` workflow applies to an imported Ley session exactly like any other
 private session memory. Removing the external Codex source file itself is outside Ley's erasure

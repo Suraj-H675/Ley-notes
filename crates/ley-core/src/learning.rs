@@ -748,21 +748,27 @@ fn resolve_evidence(
             ));
         }
         let session = read_session(project, vault, &input.session_id)?;
-        let (record_type, artifacts, checkpoint_event_id) =
-            locate_session_record(&session, &input.record_id)?;
-        lineage.push(LearningOriginSource::SessionRecord {
-            session_id: session.session_id.clone(),
-            record_id: input.record_id.clone(),
-            record_type: record_type.clone(),
-        });
-        for artifact in &artifacts {
+        let located = locate_session_record(&session, &input.record_id)?;
+        if located.direct_turn_evidence {
+            lineage.push(LearningOriginSource::TurnEvidence {
+                session_id: session.session_id.clone(),
+                record_id: input.record_id.clone(),
+            });
+        } else {
+            lineage.push(LearningOriginSource::SessionRecord {
+                session_id: session.session_id.clone(),
+                record_id: input.record_id.clone(),
+                record_type: located.record_type.clone(),
+            });
+        }
+        for artifact in &located.artifacts {
             lineage.push(LearningOriginSource::CapturedArtifact {
                 artifact_snapshot_id: artifact.artifact_snapshot_id.clone(),
                 artifact_path: artifact.artifact_path.clone(),
                 content_hash: artifact.content_hash.clone(),
             });
         }
-        if let Some(checkpoint_event_id) = checkpoint_event_id {
+        if let Some(checkpoint_event_id) = located.checkpoint_event_id {
             if let Some(recovery) = read_recovery_derivation_origin(
                 project,
                 vault,
@@ -784,7 +790,7 @@ fn resolve_evidence(
         evidence.push(LearningEvidence {
             session_id: session.session_id,
             record_id: input.record_id,
-            record_type,
+            record_type: located.record_type,
             session_status: session.status,
             session_updated_at_unix_ms: session.updated_at_unix_ms,
             note: sanitize_text(
@@ -794,7 +800,7 @@ fn resolve_evidence(
                 2_000,
                 redactions,
             )?,
-            artifacts,
+            artifacts: located.artifacts,
         });
     }
     evidence.sort_by(|left, right| {
@@ -805,19 +811,70 @@ fn resolve_evidence(
     Ok((evidence, lineage.finish(true)))
 }
 
+struct LocatedLearningEvidence {
+    record_type: String,
+    artifacts: Vec<SessionArtifactCitation>,
+    checkpoint_event_id: Option<String>,
+    direct_turn_evidence: bool,
+}
+
 fn locate_session_record(
     session: &crate::AgentSession,
     record_id: &str,
-) -> Result<(String, Vec<SessionArtifactCitation>, Option<String>), LeyCoreError> {
+) -> Result<LocatedLearningEvidence, LeyCoreError> {
+    if let Some(turn) = session
+        .prompts
+        .iter()
+        .find(|turn| turn.record_id == record_id)
+    {
+        if turn.retention != crate::TurnEvidenceRetention::Captured || turn.text.is_none() {
+            return Err(LeyCoreError::InvalidLearningRequest(
+                "learning evidence cannot cite body-free user turn evidence".to_owned(),
+            ));
+        }
+        return Ok(LocatedLearningEvidence {
+            record_type: "turn-user-prompt".to_owned(),
+            artifacts: Vec::new(),
+            checkpoint_event_id: None,
+            direct_turn_evidence: true,
+        });
+    }
+    if let Some(turn) = session
+        .responses
+        .iter()
+        .find(|turn| turn.record_id == record_id)
+    {
+        if turn.retention != crate::TurnEvidenceRetention::Captured || turn.text.is_none() {
+            return Err(LeyCoreError::InvalidLearningRequest(
+                "learning evidence cannot cite body-free assistant turn evidence".to_owned(),
+            ));
+        }
+        return Ok(LocatedLearningEvidence {
+            record_type: "turn-assistant-response".to_owned(),
+            artifacts: Vec::new(),
+            checkpoint_event_id: None,
+            direct_turn_evidence: true,
+        });
+    }
     if record_id == session.session_id {
-        return Ok(("session".to_owned(), Vec::new(), None));
+        return Ok(LocatedLearningEvidence {
+            record_type: "session".to_owned(),
+            artifacts: Vec::new(),
+            checkpoint_event_id: None,
+            direct_turn_evidence: false,
+        });
     }
     if session
         .finish
         .as_ref()
         .is_some_and(|finish| finish.event_id == record_id)
     {
-        return Ok(("session-finish".to_owned(), Vec::new(), None));
+        return Ok(LocatedLearningEvidence {
+            record_type: "session-finish".to_owned(),
+            artifacts: Vec::new(),
+            checkpoint_event_id: None,
+            direct_turn_evidence: false,
+        });
     }
     for checkpoint in &session.checkpoints {
         let record_type = if checkpoint.id == record_id {
@@ -866,11 +923,12 @@ fn locate_session_record(
             })
         };
         if let Some(record_type) = record_type {
-            return Ok((
-                record_type.to_owned(),
-                checkpoint.touched_artifacts.clone(),
-                Some(checkpoint.event_id.clone()),
-            ));
+            return Ok(LocatedLearningEvidence {
+                record_type: record_type.to_owned(),
+                artifacts: checkpoint.touched_artifacts.clone(),
+                checkpoint_event_id: Some(checkpoint.event_id.clone()),
+                direct_turn_evidence: false,
+            });
         }
     }
     Err(LeyCoreError::InvalidLearningRequest(format!(
@@ -2068,6 +2126,8 @@ fn validate_stored_evidence(evidence: &[LearningEvidence]) -> Result<(), LeyCore
                 | "problem"
                 | "attempt"
                 | "resolution"
+                | "turn-user-prompt"
+                | "turn-assistant-response"
         ) {
             return Err(LeyCoreError::InvalidLearningStore(
                 "learning evidence record type is invalid".to_owned(),
@@ -2248,6 +2308,7 @@ fn valid_record_id(value: &str) -> bool {
         ("res_", 32),
         ("cmd_", 32),
         ("ver_", 32),
+        ("tev_", 32),
     ]
     .iter()
     .any(|(prefix, length)| valid_prefixed_hex(value, prefix, *length))
@@ -2503,11 +2564,11 @@ mod tests {
     use super::*;
     use crate::{
         checkpoint_session, commit_unresolved_memory_transition, erase_session_memory,
-        ingest_project, initialize_project, project_memory_overview, read_session,
+        finish_session, ingest_project, initialize_project, project_memory_overview, read_session,
         record_session_prompt, record_session_response, start_session, AttemptInput,
         AttemptOutcome, CaptureMode, CheckpointInput, CommitUnresolvedMemoryTransitionInput,
-        EraseSessionMemoryInput, ProblemInput, ResolutionInput, SessionSource, SessionSourceKind,
-        StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
+        EraseSessionMemoryInput, FinishSessionInput, ProblemInput, ResolutionInput, SessionSource,
+        SessionSourceKind, SessionStatus, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
     };
     use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
@@ -2942,6 +3003,202 @@ mod tests {
                     )
                 }));
         }
+    }
+
+    #[test]
+    fn review_required_learning_can_cite_retained_terminal_turn_evidence_directly() {
+        let (_base, project, vault, _session_id, _record_id) = setup_learning();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('a'),
+                name: "Terminal consolidation".to_owned(),
+                goal: "Preserve a reusable lesson from retained turn evidence".to_owned(),
+                source: SessionSource {
+                    kind: SessionSourceKind::HostHook,
+                    host: Some("codex".to_owned()),
+                    agent: Some("gpt-5".to_owned()),
+                    source_reference: None,
+                },
+            },
+        )
+        .unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('b'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("terminal-turn".to_owned()),
+                text: "Remember to run the complete workspace check before release.".to_owned(),
+            },
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts.last().unwrap().record_id.clone();
+        let response = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('c'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("terminal-turn".to_owned()),
+                text: "The complete workspace check passed and caught the missing package."
+                    .to_owned(),
+            },
+        )
+        .unwrap();
+        let response_id = response.session.responses.last().unwrap().record_id.clone();
+        finish_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            FinishSessionInput {
+                request_id: request_id('d'),
+                status: SessionStatus::Completed,
+                summary: "Finished without a final structured checkpoint.".to_owned(),
+                final_response: String::new(),
+                handoff: "Review retained turn evidence before promoting a reusable lesson."
+                    .to_owned(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: request_id('e'),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Run the complete workspace check".to_owned(),
+                guidance: "Run the complete workspace check before release.".to_owned(),
+                confidence_percent: 70,
+                provenance: LearningProvenance::Inferred,
+                evidence: vec![
+                    LearningEvidenceInput {
+                        session_id: started.session.session_id.clone(),
+                        record_id: prompt_id.clone(),
+                        note: "Historical user request.".to_owned(),
+                    },
+                    LearningEvidenceInput {
+                        session_id: started.session.session_id.clone(),
+                        record_id: response_id.clone(),
+                        note: "Historical agent outcome; review required.".to_owned(),
+                    },
+                ],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(proposed.learning.state, LearningState::Tentative);
+        assert_eq!(
+            proposed.learning.trust_state,
+            LearningTrustState::ReviewRequired
+        );
+        let mut record_types = proposed
+            .learning
+            .evidence
+            .iter()
+            .map(|item| item.record_type.as_str())
+            .collect::<Vec<_>>();
+        record_types.sort_unstable();
+        assert_eq!(
+            record_types,
+            vec!["turn-assistant-response", "turn-user-prompt"]
+        );
+        for record_id in [&prompt_id, &response_id] {
+            assert!(proposed
+                .learning
+                .origin_lineage
+                .sources
+                .iter()
+                .any(|source| {
+                    matches!(
+                        source,
+                        LearningOriginSource::TurnEvidence {
+                            session_id,
+                            record_id: source_record_id,
+                        } if session_id == &started.session.session_id && source_record_id == record_id
+                    )
+                }));
+        }
+        assert!(proposed
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .all(|source| !matches!(source, LearningOriginSource::SessionRecord { .. })));
+        assert_eq!(
+            proposed.learning.origin_lineage.automatic_authority_ceiling,
+            LearningTrustState::ReviewRequired
+        );
+    }
+
+    #[test]
+    fn body_free_turn_evidence_cannot_support_a_learning_proposal() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        initialize_project(&project, Some("Minimal learning"), CaptureMode::Minimal).unwrap();
+        std::fs::write(project.join("README.md"), "# Minimal learning\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('f'),
+                name: "Metadata only".to_owned(),
+                goal: "Do not infer semantics from omitted turn bodies".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('7'),
+                origin: TurnEvidenceOrigin::ManualCli,
+                host: None,
+                correlation_material: None,
+                text: "This body must not be retained.".to_owned(),
+            },
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts.last().unwrap().record_id.clone();
+
+        let result = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: request_id('8'),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Fact,
+                title: "Unsafe metadata inference".to_owned(),
+                guidance: "Do not derive this from body-free evidence.".to_owned(),
+                confidence_percent: 10,
+                provenance: LearningProvenance::Inferred,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: started.session.session_id,
+                    record_id: prompt_id,
+                    note: String::new(),
+                }],
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(LeyCoreError::InvalidLearningRequest(message))
+                if message.contains("body-free user turn evidence")
+        ));
     }
 
     #[test]

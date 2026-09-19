@@ -3,31 +3,33 @@ use ley_core::{
     bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
     commit_unresolved_memory_transition, compile_agent_legibility_map,
     compile_project_context_for_agent_with_registries, compile_session_memory,
-    compile_topic_dossier, current_project_state, diagnose_project, evaluate_agent_egress,
-    find_project_context, find_project_graph_path, finish_session, inspect_context_pack,
-    list_learning_contexts, memory_health_report, project_activity_view, project_memory_overview,
-    project_resume_context, propose_learning, read_external_connector_snapshot_with_registry,
-    read_learning_context, read_project_cited_media, read_project_evidence, read_session_context,
+    compile_topic_dossier, consolidation_inbox, current_project_state, diagnose_project,
+    evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
+    inspect_context_pack, list_learning_contexts, memory_health_report, project_activity_view,
+    project_memory_overview, project_resume_context, propose_learning,
+    read_external_connector_snapshot_with_registry, read_learning_context,
+    read_project_cited_media, read_project_evidence, read_session_context,
     read_session_turns_context, record_context_utility_observation,
     replay_context_utility_binding_if_present, search_project_memory, start_session,
     traverse_project_graph, verify_memory_transition, AgentContextAuthorities,
     AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits,
     AttemptInput, AttemptOutcome, CheckpointInput, CommandInput,
-    CommitUnresolvedMemoryTransitionInput, ContextCompileLimits, ContextMountRegistry,
-    ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
-    DecisionInput, EgressPolicyRegistry, ExternalConnector, ExternalConnectorRegistry,
-    FinishSessionInput, GraphDirection, GraphEdgeKind, KnowledgeScopeRegistry, LearningActor,
-    LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
-    LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits,
-    MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry, ProblemInput,
-    ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput, ResolutionInput,
-    RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource, SessionSourceKind,
-    SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
-    TaskStatus, TopicDossierLimits, VerificationInput, VerificationStatus,
-    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
-    DEFAULT_AGENT_LEGIBILITY_SESSIONS, DEFAULT_CONTEXT_COMPILE_RESULTS,
-    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
-    DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
+    CommitUnresolvedMemoryTransitionInput, ConsolidationInboxLimits, ContextCompileLimits,
+    ContextMountRegistry, ContextUtilityBindingInput, ContextUtilityObservationInput,
+    CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, ExternalConnector,
+    ExternalConnectorRegistry, FinishSessionInput, GraphDirection, GraphEdgeKind,
+    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningKind, LearningListScope,
+    LearningMutation, LearningProvenance, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
+    MemoryHealthLimits, MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry,
+    ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
+    ResolutionInput, RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource,
+    SessionSourceKind, SessionStatus, SpecificationContextLimits, SpecificationRegistry,
+    StartSessionInput, TaskInput, TaskStatus, TopicDossierLimits, VerificationInput,
+    VerificationStatus, DEFAULT_AGENT_LEGIBILITY_CHARACTERS,
+    DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, DEFAULT_AGENT_LEGIBILITY_SESSIONS,
+    DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
+    DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS,
+    DEFAULT_CONTEXT_TOKENS, DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
     DEFAULT_CURRENT_STATE_SESSIONS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
@@ -92,7 +94,14 @@ no authority. Use \
 working state, and `recentDecisions` remain historical with `currentStateProven: false`. Use \
 `ley_memory_health` only for deliberate maintenance review: its signals are advisory triage, \
 `destructiveActionsTaken` remains false, and `unsupportedSignals` are evidence gaps rather than \
-permission to guess or auto-clean memory. Use `ley_agent_legibility` for compact project orientation: \
+permission to guess or auto-clean memory. Use `ley_consolidation_inbox` only for deliberate local \
+consolidation review at paused/completed/abandoned session boundaries. It is a disposable read-only \
+planner: `persisted`, `modelInvoked`, `backgroundWorkStarted`, `destructiveActionsTaken`, and each \
+item's `automaticWriteAllowed` remain false, and `semanticFaithfulnessProven` remains false. It returns \
+bounded retained turn IDs rather than turn bodies. Imported historical-host sessions are excluded. \
+If learning proposals were explicitly enabled at process startup, those IDs may support an agent-authored \
+review-required proposal after evidence inspection; the inbox itself never proposes, checkpoints, confirms, \
+or trusts memory. Use `ley_agent_legibility` for compact project orientation: \
 it is a source-bound table of contents, not a score. Respect `tableOfContentsNotScore` and \
 `selectionBasis`, keep `declaredCommands` separate from historical `observedCommands`, and do not \
 treat observed commands as canonical project instructions. The map is navigation, not authority or a \
@@ -406,6 +415,19 @@ pub struct MemoryHealthParams {
     #[serde(default)]
     #[schemars(range(min = 2_000, max = 32_000))]
     pub max_characters: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConsolidationInboxParams {
+    /// Maximum returned meaningful-boundary consolidation items. Defaults to 20; range 1–50.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 50))]
+    pub max_items: Option<usize>,
+    /// Maximum paused/completed/abandoned non-import sessions inspected. Defaults to 30; range 1–50.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 50))]
+    pub max_sessions: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1854,6 +1876,37 @@ impl LeyMcpServer {
         }))
     }
 
+    /// Inspect bounded local consolidation candidates at meaningful session boundaries without writing memory.
+    #[tool(
+        name = "ley_consolidation_inbox",
+        annotations(
+            title = "Inspect Ley consolidation inbox",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn consolidation_inbox(
+        &self,
+        Parameters(params): Parameters<ConsolidationInboxParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_historical_tool_result(|| {
+            consolidation_inbox(
+                self.project.as_path(),
+                self.vault.as_path(),
+                ConsolidationInboxLimits {
+                    max_items: params
+                        .max_items
+                        .unwrap_or(DEFAULT_CONSOLIDATION_INBOX_ITEMS),
+                    max_sessions: params
+                        .max_sessions
+                        .unwrap_or(DEFAULT_CONSOLIDATION_INBOX_SESSIONS),
+                },
+            )
+        }))
+    }
+
     /// Read a compact captured-project table of contents for understanding and operating this project.
     #[tool(
         name = "ley_agent_legibility",
@@ -3210,6 +3263,7 @@ mod tests {
             vec![
                 "ley_agent_legibility",
                 "ley_compile_context",
+                "ley_consolidation_inbox",
                 "ley_context_pack_inspect",
                 "ley_external_connector_get",
                 "ley_external_connectors_list",
@@ -3423,6 +3477,27 @@ mod tests {
             health_schema["properties"]["maxCharacters"]["maximum"],
             32_000
         );
+        let consolidation_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_consolidation_inbox")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(consolidation_schema["properties"]["maxItems"]["minimum"], 1);
+        assert_eq!(
+            consolidation_schema["properties"]["maxItems"]["maximum"],
+            50
+        );
+        assert_eq!(
+            consolidation_schema["properties"]["maxSessions"]["minimum"],
+            1
+        );
+        assert_eq!(
+            consolidation_schema["properties"]["maxSessions"]["maximum"],
+            50
+        );
         let legibility_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -3526,6 +3601,7 @@ mod tests {
             vec![
                 "ley_agent_legibility",
                 "ley_compile_context",
+                "ley_consolidation_inbox",
                 "ley_context_pack_inspect",
                 "ley_context_utility_bind",
                 "ley_context_utility_observe",
@@ -4635,6 +4711,125 @@ mod tests {
             .unwrap()
             .to_string()
             .contains("Remember MCP context"));
+    }
+
+    #[tokio::test]
+    async fn consolidation_inbox_is_body_free_read_only_and_respects_historical_egress() {
+        let (_temporary, project, vault, mut server) = fixture();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "7".repeat(32)),
+                name: "Completed consolidation boundary".to_owned(),
+                goal: "Review retained evidence after completion".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "8".repeat(32)),
+                origin: TurnEvidenceOrigin::ManualCli,
+                host: None,
+                correlation_material: None,
+                text: "MCP_CONSOLIDATION_BODY_CANARY".to_owned(),
+            },
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts.last().unwrap().record_id.clone();
+        finish_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            FinishSessionInput {
+                request_id: format!("req_{}", "9".repeat(32)),
+                status: SessionStatus::Completed,
+                summary: "Completed without a final structured checkpoint".to_owned(),
+                final_response: String::new(),
+                handoff: "Review retained evidence before proposing reusable memory.".to_owned(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let params = ConsolidationInboxParams {
+            max_items: Some(20),
+            max_sessions: Some(30),
+        };
+        let allowed = server
+            .consolidation_inbox(Parameters(ConsolidationInboxParams {
+                max_items: params.max_items,
+                max_sessions: params.max_sessions,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(allowed.is_error, Some(false));
+        let allowed = allowed.structured_content.unwrap();
+        assert_eq!(
+            allowed["schemaVersion"],
+            ley_core::CONSOLIDATION_INBOX_SCHEMA_VERSION
+        );
+        assert_eq!(allowed["persisted"], false);
+        assert_eq!(allowed["modelInvoked"], false);
+        assert_eq!(allowed["backgroundWorkStarted"], false);
+        assert_eq!(allowed["destructiveActionsTaken"], false);
+        assert_eq!(allowed["liveSourceChecked"], false);
+        assert_eq!(allowed["coverage"]["excludedActiveSessions"], 1);
+        let item = allowed["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["sessionId"] == started.session.session_id)
+            .unwrap();
+        assert_eq!(item["automaticWriteAllowed"], false);
+        assert_eq!(item["semanticFaithfulnessProven"], false);
+        assert!(item["proposalEvidenceRecordIds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == &serde_json::json!(prompt_id)));
+        let serialized = allowed.to_string();
+        assert!(!serialized.contains("MCP_CONSOLIDATION_BODY_CANARY"));
+        assert!(!serialized.contains(project.to_str().unwrap()));
+        assert!(!serialized.contains(vault.to_str().unwrap()));
+
+        let retained_specification_id = ley_core::generate_specification_id();
+        server
+            .egress_policy_registry
+            .set_specification_policy(
+                &project,
+                &retained_specification_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+        let blocked = server
+            .consolidation_inbox(Parameters(ConsolidationInboxParams {
+                max_items: params.max_items,
+                max_sessions: params.max_sessions,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(blocked.is_error, Some(true));
+        let blocked = blocked.structured_content.unwrap();
+        assert!(blocked["error"]
+            .as_str()
+            .unwrap()
+            .contains("historical Ley memory is withheld"));
+        assert!(!blocked
+            .to_string()
+            .contains("MCP_CONSOLIDATION_BODY_CANARY"));
+
+        server.egress_target = AgentEgressTarget::Local;
+        let local = server
+            .consolidation_inbox(Parameters(params))
+            .await
+            .unwrap();
+        assert_eq!(local.is_error, Some(false));
+        assert_eq!(local.structured_content.unwrap()["modelInvoked"], false);
     }
 
     #[tokio::test]
@@ -6178,7 +6373,10 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 25);
+        assert_eq!(tools.len(), 26);
+        assert!(tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == "ley_consolidation_inbox"));
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_external_connectors_list"));
