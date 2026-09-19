@@ -385,7 +385,9 @@ fn connector(arguments: &[String]) -> Result<(), CliError> {
                 }
             }
             let url = url.ok_or_else(|| {
-                CliError::Usage("connector add requires GITHUB_ISSUE_OR_PR_URL".to_owned())
+                CliError::Usage(
+                    "connector add requires GITHUB_ISSUE_PR_OR_PINNED_DOC_URL".to_owned(),
+                )
             })?;
             let project =
                 project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
@@ -508,15 +510,22 @@ fn connector(arguments: &[String]) -> Result<(), CliError> {
                 println!("External connector: {}", snapshot.connector_id);
                 println!("Source: {}", snapshot.source.canonical_url);
                 println!("Snapshot: {}", snapshot.snapshot_id);
-                println!("State: {:?}", snapshot.state);
+                if let Some(state) = snapshot.state {
+                    println!("State: {:?}", state);
+                }
+                if let Some(revision) = &snapshot.source.revision {
+                    println!("Pinned revision: {}", revision);
+                }
+                if let Some(path) = &snapshot.source.path {
+                    println!("Document path: {}", terminal_safe(path));
+                }
                 println!("Title: {}", terminal_safe(&snapshot.title));
                 if !snapshot.body.is_empty() {
                     println!("Body:\n{}", terminal_safe(&snapshot.body));
                 }
-                println!(
-                    "Updated upstream: {}",
-                    terminal_safe(&snapshot.source_updated_at)
-                );
+                if let Some(source_updated_at) = &snapshot.source_updated_at {
+                    println!("Updated upstream: {}", terminal_safe(source_updated_at));
+                }
                 println!("Live source checked by this read: no");
                 println!("Warning: {}", snapshot.instruction_warning);
             }
@@ -2997,7 +3006,7 @@ fn print_help() {
     println!("  ley egress specification SPECIFICATION_ID POLICY [PROJECT] [--json]");
     println!("  ley egress mount MOUNT_ID POLICY [PROJECT] [--json]");
     println!("  ley egress connector CONNECTOR_ID POLICY [PROJECT] [--json]");
-    println!("  ley connector add GITHUB_ISSUE_OR_PR_URL [PROJECT] [--json]");
+    println!("  ley connector add GITHUB_ISSUE_PR_OR_PINNED_DOC_URL [PROJECT] [--json]");
     println!("  ley connector list [PROJECT] [--json]");
     println!("  ley connector refresh CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley connector show CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");

@@ -52,12 +52,13 @@ The first external connector supports **public GitHub issues and pull requests o
 
 This slice proves a narrow provider boundary without turning Ley into a web crawler or background sync service. It supports useful issue/PR references while preserving explicit authority, local snapshot provenance, project erasure, exact egress control, and network-free MCP operation.
 
+ADR 0050 later extends this same authority/storage/egress model to public UTF-8 repository documents pinned to a full commit SHA. Mutable branch/tag documents and arbitrary web documentation remain out of scope.
+
 The following remain deliberately deferred:
 
 - arbitrary URLs or generic HTTP connectors;
 - private GitHub repositories or authentication tokens;
 - comments, reviews, timelines, attachments, or webhook/background refresh;
-- GitHub repository-document/docs connectors;
 - other issue trackers/document providers;
 - connector text directly entering the Context Compiler as a new first-class retrieval channel.
 

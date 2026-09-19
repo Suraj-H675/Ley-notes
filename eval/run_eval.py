@@ -451,14 +451,14 @@ P1_CAPABILITY_COVERAGE = {
 }
 
 P2_CAPABILITY_COVERAGE = {
-    "external-issue-pr-connectors": {
+    "external-reference-connectors": {
         "adversarial": (
             "external-github-connector-egress",
             "external_connector",
             "truthy",
         ),
         "downstream": (
-            "external-github-connector-egress",
+            "external-github-document-egress",
             "external_connector",
             "truthy",
         ),
@@ -468,7 +468,7 @@ P2_CAPABILITY_COVERAGE = {
             "zero",
         ),
         "regression": (
-            "external-github-connector-egress",
+            "external-github-document-egress",
             "external_connector",
             "truthy",
         ),
@@ -1999,7 +1999,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         ]
         allowed_discovery = (
             source.get("canonicalUrl") == source_url
-            and source.get("resourceKind") in {"issue", "pull-request"}
+            and source.get("resourceKind") in {"issue", "pull-request", "document"}
             and added_connector.get("agentContextEnabled") is True
             and allowed_list.get("networkRequested") is False
             and allowed_list.get("sourceBoundary") == "untrusted-external-reference"

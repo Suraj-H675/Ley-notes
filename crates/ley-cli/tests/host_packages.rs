@@ -259,6 +259,18 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             "{}",
             path.display()
         );
+        assert!(skill.contains("40-hex commit SHA"), "{}", path.display());
+        assert!(
+            normalized_skill.contains("branch/tag document URLs are deliberately unsupported"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill
+                .contains("does not prove the current branch still points to that commit"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("conflicting-state"), "{}", path.display());
         assert!(skill.contains("uncertain-state"), "{}", path.display());
         assert!(

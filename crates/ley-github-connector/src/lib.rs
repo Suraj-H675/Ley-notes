@@ -1,6 +1,7 @@
 //! Explicit network boundary for Ley's first external connector slice.
 //!
-//! This crate fetches only already-authorized public GitHub issue/pull-request references.
+//! This crate fetches only already-authorized public GitHub issue/pull-request references or
+//! commit-pinned text documentation.
 //! `ley-core` remains responsible for connector authority, source validation, redaction,
 //! persistence, deletion, and agent-egress policy. No authentication token or arbitrary URL is
 //! accepted here.
@@ -37,7 +38,7 @@ pub enum GitHubConnectorError {
     InvalidResponse(String),
 }
 
-/// Fetches one explicitly authorized public GitHub issue or pull request.
+/// Fetches one explicitly authorized public GitHub issue, pull request, or commit-pinned document.
 ///
 /// The canonical source is re-parsed before any request so caller-constructed structured fields
 /// cannot redirect this crate to another host/path. Redirects are disabled and rejected. The
@@ -52,13 +53,16 @@ pub fn fetch_public_github_reference(
         .timeout_write(WRITE_TIMEOUT)
         .redirects(0)
         .build();
-    let response = agent
-        .get(&source.api_url())
-        .set("Accept", "application/vnd.github+json")
-        .set("X-GitHub-Api-Version", GITHUB_API_VERSION)
-        .set("User-Agent", USER_AGENT)
-        .call()
-        .map_err(GitHubConnectorError::Request)?;
+    let request = agent.get(&source.api_url()).set("User-Agent", USER_AGENT);
+    let request = match source.resource_kind {
+        ExternalConnectorResourceKind::Issue | ExternalConnectorResourceKind::PullRequest => {
+            request
+                .set("Accept", "application/vnd.github+json")
+                .set("X-GitHub-Api-Version", GITHUB_API_VERSION)
+        }
+        ExternalConnectorResourceKind::Document => request.set("Accept", "text/plain"),
+    };
+    let response = request.call().map_err(GitHubConnectorError::Request)?;
     if (300..400).contains(&response.status()) {
         return Err(GitHubConnectorError::Redirect(response.status()));
     }
@@ -108,10 +112,10 @@ fn parse_github_response(
             Ok(ExternalConnectorSnapshotInput {
                 title: issue.title,
                 body: issue.body.unwrap_or_default(),
-                state: parse_state(&issue.state)?,
+                state: Some(parse_state(&issue.state)?),
                 author_login: issue.user.map(|user| user.login),
                 labels: issue.labels.into_iter().map(|label| label.name).collect(),
-                source_updated_at: issue.updated_at,
+                source_updated_at: Some(issue.updated_at),
                 merged: None,
             })
         }
@@ -121,11 +125,32 @@ fn parse_github_response(
             Ok(ExternalConnectorSnapshotInput {
                 title: pull.title,
                 body: pull.body.unwrap_or_default(),
-                state: parse_state(&pull.state)?,
+                state: Some(parse_state(&pull.state)?),
                 author_login: pull.user.map(|user| user.login),
                 labels: pull.labels.into_iter().map(|label| label.name).collect(),
-                source_updated_at: pull.updated_at,
+                source_updated_at: Some(pull.updated_at),
                 merged: Some(pull.merged),
+            })
+        }
+        ExternalConnectorResourceKind::Document => {
+            let content = std::str::from_utf8(body).map_err(|_| {
+                GitHubConnectorError::InvalidResponse(
+                    "GitHub document response must be valid UTF-8 text".to_owned(),
+                )
+            })?;
+            let path = source.path.clone().ok_or_else(|| {
+                GitHubConnectorError::InvalidResponse(
+                    "GitHub document source is missing its path".to_owned(),
+                )
+            })?;
+            Ok(ExternalConnectorSnapshotInput {
+                title: path,
+                body: content.to_owned(),
+                state: None,
+                author_login: None,
+                labels: Vec::new(),
+                source_updated_at: None,
+                merged: None,
             })
         }
     }
@@ -199,7 +224,7 @@ mod tests {
         .unwrap();
         assert_eq!(parsed.title, "Connector issue");
         assert_eq!(parsed.body, "Tracked body");
-        assert_eq!(parsed.state, ExternalConnectorState::Open);
+        assert_eq!(parsed.state, Some(ExternalConnectorState::Open));
         assert_eq!(parsed.author_login.as_deref(), Some("octocat"));
         assert_eq!(parsed.labels, vec!["memory", "connector"]);
         assert_eq!(parsed.merged, None);
@@ -243,8 +268,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(parsed.body, "");
-        assert_eq!(parsed.state, ExternalConnectorState::Closed);
+        assert_eq!(parsed.state, Some(ExternalConnectorState::Closed));
         assert_eq!(parsed.merged, Some(true));
+    }
+
+    #[test]
+    fn document_response_preserves_only_pinned_text_content() {
+        let source = parse_public_github_reference(
+            "https://github.com/openai/ley-test/blob/abcdef0123456789abcdef0123456789abcdef01/docs/Guide.md",
+        )
+        .unwrap();
+        let parsed = parse_github_response(&source, b"# Guide\n\nPinned documentation.\n").unwrap();
+        assert_eq!(parsed.title, "docs/Guide.md");
+        assert_eq!(parsed.body, "# Guide\n\nPinned documentation.\n");
+        assert!(parsed.state.is_none());
+        assert!(parsed.author_login.is_none());
+        assert!(parsed.labels.is_empty());
+        assert!(parsed.source_updated_at.is_none());
+        assert!(parsed.merged.is_none());
+
+        let invalid = parse_github_response(&source, &[0xff, 0xfe]).unwrap_err();
+        assert!(matches!(invalid, GitHubConnectorError::InvalidResponse(_)));
     }
 
     #[test]
@@ -254,6 +298,16 @@ mod tests {
         source.owner = "evil".to_owned();
         assert!(matches!(
             validate_source(&source),
+            Err(GitHubConnectorError::InvalidSource)
+        ));
+
+        let mut document = parse_public_github_reference(
+            "https://github.com/openai/ley-test/blob/abcdef0123456789abcdef0123456789abcdef01/README.md",
+        )
+        .unwrap();
+        document.path = Some("docs/Other.md".to_owned());
+        assert!(matches!(
+            validate_source(&document),
             Err(GitHubConnectorError::InvalidSource)
         ));
     }
