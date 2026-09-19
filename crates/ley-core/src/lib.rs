@@ -136,10 +136,10 @@ pub use host_adapter::{
     HostAgentContextRegistries, HostHookDisposition, HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
 };
 pub use ingestion::{
-    erase_project_memory, ingest_project, read_project_graph, ArtifactKind, ArtifactMediaType,
-    ArtifactRecord, ArtifactSkipReason, IngestionResult, ProjectMemoryErasure, RedactionFinding,
-    RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY, ARTIFACT_MANIFEST_LIMIT_BYTES,
-    ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    erase_project_memory, ingest_project, ingest_project_with_expected_capture_plan,
+    read_project_graph, ArtifactKind, ArtifactMediaType, ArtifactRecord, ArtifactSkipReason,
+    IngestionResult, ProjectMemoryErasure, RedactionFinding, RenamedArtifact, SkippedArtifact,
+    AGENT_MEMORY_DIRECTORY, ARTIFACT_MANIFEST_LIMIT_BYTES, ARTIFACT_MANIFEST_SCHEMA_VERSION,
 };
 pub use knowledge_scope::{
     KnowledgeScope, KnowledgeScopeAttachment, KnowledgeScopeAttachmentList,
@@ -450,6 +450,21 @@ pub struct CapturePreview {
     pub project_id: String,
     pub mode: CaptureMode,
     pub capture_fingerprint: String,
+    pub plan_fingerprint: String,
+    pub files: Vec<CaptureFile>,
+    pub included_bytes: u64,
+    pub skipped_oversized: Vec<CaptureFile>,
+    pub skipped_total_limit: Vec<CaptureFile>,
+    pub skipped_symlinks: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InitialCapturePreview {
+    pub root: PathBuf,
+    pub mode: CaptureMode,
+    pub capture_fingerprint: String,
+    pub plan_fingerprint: String,
     pub files: Vec<CaptureFile>,
     pub included_bytes: u64,
     pub skipped_oversized: Vec<CaptureFile>,
@@ -543,6 +558,8 @@ pub enum LeyCoreError {
     OverlappingProjectVault(PathBuf),
     #[error("project file changed after capture preview; rerun ingestion: {0}")]
     ProjectChangedDuringIngestion(String),
+    #[error("project capture plan changed after review; review the capture preview again")]
+    CapturePreviewChanged,
     #[error("invalid Ley artifact store: {0}")]
     InvalidArtifactStore(String),
     #[error("invalid Ley project graph: {0}")]
@@ -853,10 +870,70 @@ fn update_capture_mode_under_lock(
     })
 }
 
-pub fn preview_capture(start: impl AsRef<Path>) -> Result<CapturePreview, LeyCoreError> {
-    use ignore::gitignore::GitignoreBuilder;
-    use ignore::WalkBuilder;
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CapturePlanFingerprintInput<'a> {
+    capture_fingerprint: &'a str,
+    mode: CaptureMode,
+    files: &'a [CaptureFile],
+    included_bytes: u64,
+    skipped_oversized: &'a [CaptureFile],
+    skipped_total_limit: &'a [CaptureFile],
+    skipped_symlinks: &'a [String],
+}
 
+struct CapturePreviewData {
+    capture_fingerprint: String,
+    plan_fingerprint: String,
+    files: Vec<CaptureFile>,
+    included_bytes: u64,
+    skipped_oversized: Vec<CaptureFile>,
+    skipped_total_limit: Vec<CaptureFile>,
+    skipped_symlinks: Vec<String>,
+}
+
+pub fn preview_initial_capture(
+    root: impl AsRef<Path>,
+    mode: CaptureMode,
+) -> Result<InitialCapturePreview, LeyCoreError> {
+    let root = canonical_directory(root.as_ref())?;
+    let ley_directory = root.join(LEY_DIRECTORY);
+    match fs::symlink_metadata(&ley_directory) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => {
+            return Err(LeyCoreError::InvalidCapturePolicy(
+                "initial capture preview requires an uninitialized project".to_owned(),
+            ))
+        }
+        Err(source) => {
+            return Err(LeyCoreError::Io {
+                path: ley_directory,
+                source,
+            })
+        }
+    }
+    let capture = CapturePolicy::for_mode(mode);
+    validate_capture(&capture)?;
+    let preview = build_capture_preview(
+        &root,
+        &capture,
+        DEFAULT_IGNORE_RULES,
+        &root.join(LEY_DIRECTORY).join(IGNORE_FILE),
+    )?;
+    Ok(InitialCapturePreview {
+        root,
+        mode,
+        capture_fingerprint: preview.capture_fingerprint,
+        plan_fingerprint: preview.plan_fingerprint,
+        files: preview.files,
+        included_bytes: preview.included_bytes,
+        skipped_oversized: preview.skipped_oversized,
+        skipped_total_limit: preview.skipped_total_limit,
+        skipped_symlinks: preview.skipped_symlinks,
+    })
+}
+
+pub fn preview_capture(start: impl AsRef<Path>) -> Result<CapturePreview, LeyCoreError> {
     let diagnostic = diagnose_project(start)?;
     let root = &diagnostic.root;
     let ignore_path = root.join(LEY_DIRECTORY).join(IGNORE_FILE);
@@ -871,33 +948,55 @@ pub fn preview_capture(start: impl AsRef<Path>) -> Result<CapturePreview, LeyCor
         path: ignore_path.clone(),
         source,
     })?;
+    let preview = build_capture_preview(root, &diagnostic.capture, &ignore_body, &ignore_path)?;
+    Ok(CapturePreview {
+        root: diagnostic.root,
+        project_id: diagnostic.identity.project_id,
+        mode: diagnostic.capture.mode,
+        capture_fingerprint: preview.capture_fingerprint,
+        plan_fingerprint: preview.plan_fingerprint,
+        files: preview.files,
+        included_bytes: preview.included_bytes,
+        skipped_oversized: preview.skipped_oversized,
+        skipped_total_limit: preview.skipped_total_limit,
+        skipped_symlinks: preview.skipped_symlinks,
+    })
+}
+
+fn build_capture_preview(
+    root: &Path,
+    capture: &CapturePolicy,
+    ignore_body: &str,
+    ignore_path: &Path,
+) -> Result<CapturePreviewData, LeyCoreError> {
+    use ignore::gitignore::GitignoreBuilder;
+    use ignore::WalkBuilder;
+
     let mut fingerprint = Sha256::new();
-    fingerprint.update(
-        serde_json::to_vec(&diagnostic.capture).expect("validated capture policy is serializable"),
-    );
+    fingerprint
+        .update(serde_json::to_vec(capture).expect("validated capture policy is serializable"));
     fingerprint.update([0]);
     fingerprint.update(ignore_body.as_bytes());
     let capture_fingerprint = format!("sha256:{:x}", fingerprint.finalize());
     let mut ignore_builder = GitignoreBuilder::new(root);
     for line in ignore_body.lines() {
         ignore_builder
-            .add_line(Some(ignore_path.clone()), line)
+            .add_line(Some(ignore_path.to_path_buf()), line)
             .map_err(|error| LeyCoreError::InvalidIgnoreRule {
-                path: ignore_path.clone(),
+                path: ignore_path.to_path_buf(),
                 message: error.to_string(),
             })?;
     }
     let ley_ignore = ignore_builder
         .build()
         .map_err(|error| LeyCoreError::InvalidIgnoreRule {
-            path: ignore_path,
+            path: ignore_path.to_path_buf(),
             message: error.to_string(),
         })?;
 
     let mut candidates = BTreeMap::<String, u64>::new();
     let mut skipped_symlinks = Vec::new();
-    let approved_paths = diagnostic
-        .capture
+    let approved_paths = capture
         .approved_roots
         .iter()
         .map(|approved_root| {
@@ -905,14 +1004,14 @@ pub fn preview_capture(start: impl AsRef<Path>) -> Result<CapturePreview, LeyCor
             Ok(normalized_capture_relative(approved_root))
         })
         .collect::<Result<Vec<_>, LeyCoreError>>()?;
-    let filter_root = root.clone();
+    let filter_root = root.to_path_buf();
     let filter = ley_ignore.clone();
     let mut builder = WalkBuilder::new(root);
     builder
         .parents(false)
         .hidden(false)
         .ignore(false)
-        .git_ignore(diagnostic.capture.respect_gitignore)
+        .git_ignore(capture.respect_gitignore)
         .git_global(false)
         .git_exclude(false)
         .require_git(false)
@@ -958,9 +1057,9 @@ pub fn preview_capture(start: impl AsRef<Path>) -> Result<CapturePreview, LeyCor
     let mut included_bytes = 0_u64;
     for (path, bytes) in candidates {
         let file = CaptureFile { path, bytes };
-        if bytes > diagnostic.capture.max_file_bytes {
+        if bytes > capture.max_file_bytes {
             skipped_oversized.push(file);
-        } else if included_bytes.saturating_add(bytes) > diagnostic.capture.max_total_bytes {
+        } else if included_bytes.saturating_add(bytes) > capture.max_total_bytes {
             skipped_total_limit.push(file);
         } else {
             included_bytes += bytes;
@@ -968,11 +1067,23 @@ pub fn preview_capture(start: impl AsRef<Path>) -> Result<CapturePreview, LeyCor
         }
     }
 
-    Ok(CapturePreview {
-        root: diagnostic.root,
-        project_id: diagnostic.identity.project_id,
-        mode: diagnostic.capture.mode,
+    let plan_fingerprint = {
+        let bytes = serde_json::to_vec(&CapturePlanFingerprintInput {
+            capture_fingerprint: &capture_fingerprint,
+            mode: capture.mode,
+            files: &files,
+            included_bytes,
+            skipped_oversized: &skipped_oversized,
+            skipped_total_limit: &skipped_total_limit,
+            skipped_symlinks: &skipped_symlinks,
+        })
+        .expect("capture preview plan is serializable");
+        format!("sha256:{:x}", Sha256::digest(bytes))
+    };
+
+    Ok(CapturePreviewData {
         capture_fingerprint,
+        plan_fingerprint,
         files,
         included_bytes,
         skipped_oversized,
@@ -1480,6 +1591,39 @@ mod tests {
             diagnose_project(directory.path()),
             Err(LeyCoreError::MetadataTooLarge { .. })
         ));
+    }
+
+    #[test]
+    fn initial_capture_preview_is_non_mutating_and_matches_first_project_preview() {
+        let directory = tempdir().unwrap();
+        fs::create_dir_all(directory.path().join("src")).unwrap();
+        fs::create_dir_all(directory.path().join("target")).unwrap();
+        fs::write(directory.path().join("src/main.rs"), b"fn main() {}\n").unwrap();
+        fs::write(directory.path().join("ignored.txt"), b"ignored\n").unwrap();
+        fs::write(directory.path().join(".env"), b"TOKEN=secret\n").unwrap();
+        fs::write(directory.path().join("target/generated.rs"), b"generated\n").unwrap();
+        fs::write(directory.path().join(".gitignore"), b"ignored.txt\n").unwrap();
+
+        let initial = preview_initial_capture(directory.path(), CaptureMode::Structured).unwrap();
+        assert!(!directory.path().join(LEY_DIRECTORY).exists());
+        assert_eq!(initial.mode, CaptureMode::Structured);
+        assert!(initial.files.iter().any(|file| file.path == "src/main.rs"));
+        assert!(!initial.files.iter().any(|file| file.path == ".env"));
+        assert!(!initial.files.iter().any(|file| file.path == "ignored.txt"));
+        assert!(!initial
+            .files
+            .iter()
+            .any(|file| file.path.starts_with("target/")));
+
+        initialize_project(directory.path(), None, CaptureMode::Structured).unwrap();
+        let initialized = preview_capture(directory.path()).unwrap();
+        assert_eq!(initial.capture_fingerprint, initialized.capture_fingerprint);
+        assert_eq!(initial.plan_fingerprint, initialized.plan_fingerprint);
+        assert_eq!(initial.files, initialized.files);
+        assert_eq!(initial.included_bytes, initialized.included_bytes);
+        assert_eq!(initial.skipped_oversized, initialized.skipped_oversized);
+        assert_eq!(initial.skipped_total_limit, initialized.skipped_total_limit);
+        assert_eq!(initial.skipped_symlinks, initialized.skipped_symlinks);
     }
 
     #[test]

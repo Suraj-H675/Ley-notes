@@ -1,24 +1,25 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     correct_learning, diagnose_project, erase_project_memory, erase_session_memory,
-    generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
-    list_learning_contexts, list_sessions, project_activity_view, project_artifact_inventory,
+    generate_learning_request_id, generate_request_id, ingest_project,
+    ingest_project_with_expected_capture_plan, initialize_project, list_learning_contexts,
+    list_sessions, preview_initial_capture, project_activity_view, project_artifact_inventory,
     project_graph_history, project_graph_view_filtered, project_memory_overview,
     project_resume_context, project_session_stats, read_learning, read_learning_context,
     read_project_cited_evidence, read_project_cited_media, read_project_graph_evidence,
     read_session_context, read_session_turns_context, rename_session, review_learning,
     search_observed_projects, search_project_memory, update_capture_mode, ArtifactMediaType,
-    BindingRegistry, BindingSource, CaptureMode, CorrectLearningInput, CrossProjectSearch,
-    EraseSessionMemoryInput, EvidenceExcerpt, GraphCitation, IngestionResult, LearningActor,
-    LearningContextPack, LearningEvidenceInput, LearningFeedbackAction, LearningList,
-    LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory,
-    ProjectCatalog, ProjectDiagnostic, ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView,
-    ProjectMemorySearch, ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack,
-    ProjectVaultBinding, RenameSessionInput, ReviewLearningInput, RevisionCompatibility,
-    SessionContextPack, SessionMemoryErasure, SessionSummary, SessionTurnsContextPack,
-    SpecificationAuthorityList, SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS,
-    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
-    DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    BindingRegistry, BindingSource, CaptureFile, CaptureMode, CapturePolicy, CorrectLearningInput,
+    CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt, GraphCitation, IngestionResult,
+    LearningActor, LearningContextPack, LearningEvidenceInput, LearningFeedbackAction,
+    LearningList, LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView,
+    ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic, ProjectGraphFilters,
+    ProjectGraphHistory, ProjectGraphView, ProjectMemorySearch, ProjectMemorySearchLimits,
+    ProjectProblemScope, ProjectResumePack, ProjectVaultBinding, RenameSessionInput,
+    ReviewLearningInput, RevisionCompatibility, SessionContextPack, SessionMemoryErasure,
+    SessionSummary, SessionTurnsContextPack, SpecificationAuthorityList, SpecificationRegistry,
+    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS,
+    DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
     DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
@@ -37,6 +38,7 @@ use notify::{
     Config, Event, RecommendedWatcher, RecursiveMode, Watcher,
 };
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     fs,
@@ -167,16 +169,51 @@ struct AgentSessionErasure {
     erasure: SessionMemoryErasure,
 }
 
+const INITIAL_CAPTURE_PREVIEW_PATHS: usize = 8;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInitialCaptureSkippedPath {
+    path: String,
+    reason: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentInitialCapturePreview {
+    mode: CaptureMode,
+    approved_roots: Vec<String>,
+    respect_gitignore: bool,
+    max_file_bytes: u64,
+    max_total_bytes: u64,
+    capture_fingerprint: String,
+    plan_fingerprint: String,
+    approval_fingerprint: String,
+    eligible_files: usize,
+    eligible_bytes: u64,
+    included_paths: Vec<String>,
+    omitted_included_paths: usize,
+    skipped_oversized: usize,
+    skipped_total_limit: usize,
+    skipped_symlinks: usize,
+    skipped_paths: Vec<AgentInitialCaptureSkippedPath>,
+    omitted_skipped_paths: usize,
+    exclusion_notice: &'static str,
+    privacy_notice: &'static str,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 enum AgentProjectInspection {
     Uninitialized {
         suggested_name: String,
+        preview: AgentInitialCapturePreview,
     },
     Unbound {
         project_id: String,
         project_name: String,
         capture_mode: CaptureMode,
+        preview: AgentInitialCapturePreview,
     },
     VaultUnavailable {
         project_id: String,
@@ -655,17 +692,24 @@ fn inspect_agent_project(project_path: String) -> Result<AgentProjectInspection,
                 .and_then(|name| name.to_str())
                 .unwrap_or("New project")
                 .to_owned();
-            return Ok(AgentProjectInspection::Uninitialized { suggested_name });
+            let preview = agent_initial_capture_preview(path).map_err(|error| error.to_string())?;
+            return Ok(AgentProjectInspection::Uninitialized {
+                suggested_name,
+                preview,
+            });
         }
         Err(error) => return Err(error.to_string()),
     };
     let binding = match resolved_agent_binding(&diagnostic.root) {
         Ok(binding) => binding,
         Err(LeyCoreError::VaultNotBound(_)) => {
+            let preview =
+                agent_existing_capture_preview(&diagnostic).map_err(|error| error.to_string())?;
             return Ok(AgentProjectInspection::Unbound {
                 project_id: diagnostic.identity.project_id,
                 project_name: diagnostic.identity.name,
                 capture_mode: diagnostic.capture.mode,
+                preview,
             });
         }
         Err(LeyCoreError::BoundVaultUnavailable { path, .. }) => {
@@ -696,6 +740,128 @@ fn inspect_agent_project(project_path: String) -> Result<AgentProjectInspection,
         }
         Err(error) => Err(error.to_string()),
     }
+}
+
+fn agent_initial_capture_preview(
+    project_path: &Path,
+) -> Result<AgentInitialCapturePreview, LeyCoreError> {
+    let preview = preview_initial_capture(project_path, CaptureMode::Structured)?;
+    let policy = CapturePolicy::for_mode(CaptureMode::Structured);
+    agent_capture_preview_summary(
+        &preview.root,
+        &policy,
+        preview.mode,
+        preview.capture_fingerprint,
+        preview.plan_fingerprint,
+        preview.files,
+        preview.included_bytes,
+        preview.skipped_oversized,
+        preview.skipped_total_limit,
+        preview.skipped_symlinks,
+        "This preview inspects capture paths and file metadata only. It creates no .ley metadata, vault binding, or Agent Memory until you approve initialization.",
+    )
+}
+
+fn agent_existing_capture_preview(
+    diagnostic: &ProjectDiagnostic,
+) -> Result<AgentInitialCapturePreview, LeyCoreError> {
+    let preview = ley_core::preview_capture(&diagnostic.root)?;
+    agent_capture_preview_summary(
+        &diagnostic.root,
+        &diagnostic.capture,
+        preview.mode,
+        preview.capture_fingerprint,
+        preview.plan_fingerprint,
+        preview.files,
+        preview.included_bytes,
+        preview.skipped_oversized,
+        preview.skipped_total_limit,
+        preview.skipped_symlinks,
+        "This preview reads capture paths and file metadata only. The project is initialized, but Ley will not bind or create Agent Memory in the selected vault until you approve this capture plan.",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn agent_capture_preview_summary(
+    root: &Path,
+    policy: &CapturePolicy,
+    mode: CaptureMode,
+    capture_fingerprint: String,
+    plan_fingerprint: String,
+    files: Vec<CaptureFile>,
+    included_bytes: u64,
+    skipped_oversized: Vec<CaptureFile>,
+    skipped_total_limit: Vec<CaptureFile>,
+    skipped_symlinks: Vec<String>,
+    privacy_notice: &'static str,
+) -> Result<AgentInitialCapturePreview, LeyCoreError> {
+    let approval_fingerprint = agent_capture_approval_fingerprint(root, &plan_fingerprint)?;
+    let included_paths = files
+        .iter()
+        .take(INITIAL_CAPTURE_PREVIEW_PATHS)
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>();
+    let mut skipped_paths = skipped_oversized
+        .iter()
+        .map(|file| AgentInitialCaptureSkippedPath {
+            path: file.path.clone(),
+            reason: "oversized",
+        })
+        .chain(
+            skipped_total_limit
+                .iter()
+                .map(|file| AgentInitialCaptureSkippedPath {
+                    path: file.path.clone(),
+                    reason: "total-limit",
+                }),
+        )
+        .chain(
+            skipped_symlinks
+                .iter()
+                .map(|path| AgentInitialCaptureSkippedPath {
+                    path: path.clone(),
+                    reason: "symlink",
+                }),
+        )
+        .collect::<Vec<_>>();
+    let total_skipped_paths = skipped_paths.len();
+    skipped_paths.truncate(INITIAL_CAPTURE_PREVIEW_PATHS);
+    Ok(AgentInitialCapturePreview {
+        mode,
+        approved_roots: policy.approved_roots.clone(),
+        respect_gitignore: policy.respect_gitignore,
+        max_file_bytes: policy.max_file_bytes,
+        max_total_bytes: policy.max_total_bytes,
+        capture_fingerprint,
+        plan_fingerprint,
+        approval_fingerprint,
+        eligible_files: files.len(),
+        eligible_bytes: included_bytes,
+        omitted_included_paths: files.len().saturating_sub(included_paths.len()),
+        included_paths,
+        skipped_oversized: skipped_oversized.len(),
+        skipped_total_limit: skipped_total_limit.len(),
+        skipped_symlinks: skipped_symlinks.len(),
+        omitted_skipped_paths: total_skipped_paths.saturating_sub(skipped_paths.len()),
+        skipped_paths,
+        exclusion_notice: "Ley respects .gitignore and its local defaults exclude .ley, .git, dependency/build output folders, dotenv files, private keys, package-manager credentials, and credentials.json.",
+        privacy_notice,
+    })
+}
+
+fn agent_capture_approval_fingerprint(
+    root: &Path,
+    plan_fingerprint: &str,
+) -> Result<String, LeyCoreError> {
+    let canonical_root = root
+        .to_str()
+        .ok_or_else(|| LeyCoreError::NonUtf8Path(root.to_path_buf()))?;
+    let mut digest = Sha256::new();
+    digest.update(b"ley:desktop-capture-approval:v1\0");
+    digest.update(canonical_root.as_bytes());
+    digest.update([0]);
+    digest.update(plan_fingerprint.as_bytes());
+    Ok(format!("sha256:{:x}", digest.finalize()))
 }
 
 #[tauri::command]
@@ -804,29 +970,72 @@ fn revoke_agent_project_specification(
 fn initialize_agent_project(
     project_path: String,
     vault_path: String,
+    expected_approval_fingerprint: String,
 ) -> Result<AgentMemoryDashboard, String> {
-    initialize_project(&project_path, None, CaptureMode::Structured)
-        .and_then(|initialization| {
-            let binding =
-                BindingRegistry::system_default()?.bind(&initialization.root, &vault_path)?;
-            ingest_project(&initialization.root, &binding.vault_path)?;
-            load_agent_memory_dashboard(&initialization.root, binding)
-        })
-        .map_err(|error| error.to_string())
+    let reviewed = agent_initial_capture_preview(Path::new(&project_path))
+        .map_err(|error| error.to_string())?;
+    if reviewed.approval_fingerprint != expected_approval_fingerprint {
+        return Err(LeyCoreError::CapturePreviewChanged.to_string());
+    }
+    let initialization = initialize_project(&project_path, None, CaptureMode::Structured)
+        .map_err(|error| error.to_string())?;
+    if !initialization.created {
+        return Err(LeyCoreError::CapturePreviewChanged.to_string());
+    }
+    ingest_project_with_expected_capture_plan(
+        &initialization.root,
+        &vault_path,
+        &reviewed.plan_fingerprint,
+    )
+    .map_err(|error| error.to_string())?;
+    let binding = BindingRegistry::system_default()
+        .and_then(|registry| registry.bind(&initialization.root, &vault_path))
+        .map_err(|error| error.to_string())?;
+    load_agent_memory_dashboard(&initialization.root, binding).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn connect_agent_project(
     project_path: String,
     vault_path: String,
+    expected_approval_fingerprint: Option<String>,
 ) -> Result<AgentMemoryDashboard, String> {
-    BindingRegistry::system_default()
-        .and_then(|registry| registry.bind(&project_path, &vault_path))
-        .and_then(|binding| {
-            ingest_project(&project_path, &binding.vault_path)?;
-            load_agent_memory_dashboard(Path::new(&project_path), binding)
-        })
-        .map_err(|error| error.to_string())
+    let registry = BindingRegistry::system_default().map_err(|error| error.to_string())?;
+    connect_agent_project_with_registry(
+        Path::new(&project_path),
+        Path::new(&vault_path),
+        expected_approval_fingerprint.as_deref(),
+        &registry,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn connect_agent_project_with_registry(
+    project_path: &Path,
+    vault_path: &Path,
+    expected_approval_fingerprint: Option<&str>,
+    registry: &BindingRegistry,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let diagnostic = diagnose_project(project_path)?;
+    match registry.resolve_observed(&diagnostic) {
+        Err(LeyCoreError::VaultNotBound(_)) => {
+            let reviewed = agent_existing_capture_preview(&diagnostic)?;
+            if expected_approval_fingerprint != Some(reviewed.approval_fingerprint.as_str()) {
+                return Err(LeyCoreError::CapturePreviewChanged);
+            }
+            ingest_project_with_expected_capture_plan(
+                &diagnostic.root,
+                vault_path,
+                &reviewed.plan_fingerprint,
+            )?;
+        }
+        Err(LeyCoreError::BoundVaultUnavailable { .. }) | Ok(_) => {
+            ingest_project(&diagnostic.root, vault_path)?;
+        }
+        Err(error) => return Err(error),
+    }
+    let binding = registry.bind(&diagnostic.root, vault_path)?;
+    load_agent_memory_dashboard(&diagnostic.root, binding)
 }
 
 #[tauri::command]
@@ -2223,6 +2432,164 @@ mod tests {
         assert!(relevant_change_path(&root, &root.join("image.png")).is_none());
 
         drop(watcher);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uninitialized_project_inspection_previews_capture_without_writing_metadata() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-initial-preview-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("target")).unwrap();
+        fs::write(root.join("README.md"), "# Preview\n").unwrap();
+        fs::write(root.join("src/main.ts"), "export const ready = true;\n").unwrap();
+        fs::write(root.join(".env"), "TOKEN=secret\n").unwrap();
+        fs::write(root.join("target/generated.js"), "generated\n").unwrap();
+
+        let inspection = inspect_agent_project(root.to_string_lossy().into_owned()).unwrap();
+        assert!(!root.join(ley_core::LEY_DIRECTORY).exists());
+        let AgentProjectInspection::Uninitialized {
+            suggested_name,
+            preview,
+        } = inspection
+        else {
+            panic!("expected uninitialized inspection");
+        };
+        assert!(suggested_name.contains("ley-initial-preview-test"));
+        assert_eq!(preview.mode, CaptureMode::Structured);
+        assert_eq!(preview.approved_roots, vec!["."]);
+        assert!(preview.respect_gitignore);
+        assert_eq!(preview.eligible_files, 2);
+        assert!(preview
+            .included_paths
+            .iter()
+            .any(|path| path == "README.md"));
+        assert!(preview
+            .included_paths
+            .iter()
+            .any(|path| path == "src/main.ts"));
+        assert!(preview.privacy_notice.contains("creates no .ley metadata"));
+
+        let other = root.with_file_name(format!(
+            "{}-other",
+            root.file_name().unwrap().to_string_lossy()
+        ));
+        fs::create_dir_all(other.join("src")).unwrap();
+        fs::create_dir_all(other.join("target")).unwrap();
+        fs::write(other.join("README.md"), "# Preview\n").unwrap();
+        fs::write(other.join("src/main.ts"), "export const ready = true;\n").unwrap();
+        fs::write(other.join(".env"), "TOKEN=secret\n").unwrap();
+        fs::write(other.join("target/generated.js"), "generated\n").unwrap();
+        let other_preview = agent_initial_capture_preview(&other).unwrap();
+        assert_eq!(preview.plan_fingerprint, other_preview.plan_fingerprint);
+        assert_ne!(
+            preview.approval_fingerprint,
+            other_preview.approval_fingerprint
+        );
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(other).unwrap();
+    }
+
+    #[test]
+    fn stale_initial_capture_approval_rejects_before_project_or_vault_write() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-stale-initial-preview-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("project");
+        let vault = root.join("vault");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(project.join("README.md"), "# Reviewed\n").unwrap();
+        let reviewed = agent_initial_capture_preview(&project).unwrap();
+        fs::write(
+            project.join("new-after-review.ts"),
+            "export const changed = true;\n",
+        )
+        .unwrap();
+
+        let error = match initialize_agent_project(
+            project.to_string_lossy().into_owned(),
+            vault.to_string_lossy().into_owned(),
+            reviewed.approval_fingerprint,
+        ) {
+            Ok(_) => panic!("stale approval unexpectedly initialized the project"),
+            Err(error) => error,
+        };
+        assert!(error.contains("capture plan changed"));
+        assert!(!project.join(ley_core::LEY_DIRECTORY).exists());
+        assert!(fs::read_dir(&vault).unwrap().next().is_none());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unbound_connect_requires_fresh_project_bound_capture_approval() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-unbound-review-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("project");
+        let vault = root.join("vault");
+        let config = root.join("config");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        fs::write(project.join("README.md"), "# Reviewed\n").unwrap();
+        initialize_project(&project, Some("Unbound review"), CaptureMode::Structured).unwrap();
+        let diagnostic = diagnose_project(&project).unwrap();
+        let reviewed = agent_existing_capture_preview(&diagnostic).unwrap();
+        let registry = BindingRegistry::at(config.join("bindings.json"));
+        fs::write(
+            project.join("new-after-review.ts"),
+            "export const changed = true;\n",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            connect_agent_project_with_registry(
+                &project,
+                &vault,
+                Some(&reviewed.approval_fingerprint),
+                &registry,
+            ),
+            Err(LeyCoreError::CapturePreviewChanged)
+        ));
+        assert!(matches!(
+            registry.resolve_observed(&diagnostic),
+            Err(LeyCoreError::VaultNotBound(_))
+        ));
+        assert!(fs::read_dir(&vault).unwrap().next().is_none());
+
+        let refreshed = agent_existing_capture_preview(&diagnostic).unwrap();
+        let dashboard = connect_agent_project_with_registry(
+            &project,
+            &vault,
+            Some(&refreshed.approval_fingerprint),
+            &registry,
+        )
+        .unwrap();
+        assert_eq!(dashboard.binding.project_id, diagnostic.identity.project_id);
+        assert!(vault.join(".ley").exists());
+
         fs::remove_dir_all(root).unwrap();
     }
 

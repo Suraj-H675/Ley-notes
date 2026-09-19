@@ -19,6 +19,7 @@ ley-semantic-installer = { path = "../crates/ley-semantic-installer" }
 notify = "8.2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = { workspace = true }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 walkdir = "2"

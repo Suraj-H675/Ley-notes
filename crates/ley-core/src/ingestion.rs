@@ -392,6 +392,22 @@ pub fn ingest_project(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<IngestionResult, LeyCoreError> {
+    ingest_project_inner(project_start, vault, None)
+}
+
+pub fn ingest_project_with_expected_capture_plan(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    expected_plan_fingerprint: &str,
+) -> Result<IngestionResult, LeyCoreError> {
+    ingest_project_inner(project_start, vault, Some(expected_plan_fingerprint))
+}
+
+fn ingest_project_inner(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    expected_plan_fingerprint: Option<&str>,
+) -> Result<IngestionResult, LeyCoreError> {
     let diagnostic = diagnose_project(project_start)?;
     let vault_path = vault
         .as_ref()
@@ -405,6 +421,11 @@ pub fn ingest_project(
     }
     if vault_path.starts_with(&diagnostic.root) {
         return Err(LeyCoreError::OverlappingProjectVault(vault_path));
+    }
+
+    let preview = preview_capture(&diagnostic.root)?;
+    if expected_plan_fingerprint.is_some_and(|expected| expected != preview.plan_fingerprint) {
+        return Err(LeyCoreError::CapturePreviewChanged);
     }
 
     let store = ArtifactStore::open(&vault_path, &diagnostic.identity.project_id)?;
@@ -421,7 +442,6 @@ pub fn ingest_project(
         store.verify_graph_snapshot(graph)?;
     }
 
-    let preview = preview_capture(&diagnostic.root)?;
     let root_dir =
         Dir::open_ambient_dir(&diagnostic.root, ambient_authority()).map_err(|source| {
             LeyCoreError::Io {
@@ -2181,6 +2201,30 @@ mod tests {
         let recaptured = ingest_project(&project, &vault).unwrap();
         assert!(recaptured.changed);
         assert!(project_store.is_dir());
+    }
+
+    #[test]
+    fn expected_capture_plan_fails_closed_before_private_memory_is_created() {
+        let (_base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(project.join("README.md"), "# Reviewed capture\n").unwrap();
+        let reviewed = preview_capture(&project).unwrap();
+        std::fs::write(project.join("new-after-review.txt"), "new scope\n").unwrap();
+
+        assert!(matches!(
+            ingest_project_with_expected_capture_plan(&project, &vault, &reviewed.plan_fingerprint),
+            Err(LeyCoreError::CapturePreviewChanged)
+        ));
+        assert!(!vault.join(STORE_ROOT).exists());
+
+        let refreshed = preview_capture(&project).unwrap();
+        assert_ne!(reviewed.plan_fingerprint, refreshed.plan_fingerprint);
+        let ingested = ingest_project_with_expected_capture_plan(
+            &project,
+            &vault,
+            &refreshed.plan_fingerprint,
+        )
+        .unwrap();
+        assert!(ingested.changed);
     }
 
     #[test]

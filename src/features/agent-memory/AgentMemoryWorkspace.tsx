@@ -53,6 +53,7 @@ import {
 } from "./api";
 import { ProjectsHub } from "./ProjectsHub";
 import type {
+  AgentInitialCapturePreview,
   AgentMemoryDashboard,
   AgentProjectCatalog,
   AgentProjectInspection,
@@ -362,16 +363,42 @@ export function AgentMemoryWorkspace({
     setBusy(true);
     setError(null);
     try {
-      const dashboard =
-        kind === "initialize"
-          ? await initializeAgentProject(projectPath, vaultPath)
-          : kind === "connect"
-            ? await connectAgentProject(projectPath, vaultPath)
-            : await refreshAgentProject(projectPath);
+      let dashboard: AgentMemoryDashboard;
+      if (kind === "initialize") {
+        if (inspection?.status !== "uninitialized") {
+          throw new Error(
+            "Review the current capture preview before initializing Agent Memory.",
+          );
+        }
+        dashboard = await initializeAgentProject(
+          projectPath,
+          vaultPath,
+          inspection.preview.approvalFingerprint,
+        );
+      } else if (kind === "connect") {
+        dashboard = await connectAgentProject(
+          projectPath,
+          vaultPath,
+          inspection?.status === "unbound"
+            ? inspection.preview.approvalFingerprint
+            : undefined,
+        );
+      } else {
+        dashboard = await refreshAgentProject(projectPath);
+      }
       setInspection({ status: "ready", dashboard });
       setSection("overview");
     } catch (cause) {
       setError(errorMessage(cause));
+      if (kind === "initialize" || kind === "connect") {
+        try {
+          const next = await inspectAgentProject(projectPath);
+          setInspection(next);
+          setInspectedPath(projectPath);
+        } catch {
+          // Preserve the original initialization error; a later reopen retries inspection.
+        }
+      }
     } finally {
       setBusy(false);
     }
@@ -3222,13 +3249,13 @@ function onboardingCopy(
   switch (inspection.status) {
     case "uninitialized":
       return {
-        title: "Initialize Agent Memory",
-        body: `Ley will add a small .ley folder to “${inspection.suggestedName}”, use Structured capture, bind durable memory to “${vaultName}”, and create the first redacted snapshot.`,
+        title: "Review capture before enabling Agent Memory",
+        body: `Nothing has been initialized or written yet. Review what Ley would capture from “${inspection.suggestedName}” and where durable memory would live before approving setup.`,
       };
     case "unbound":
       return {
-        title: "Connect this project",
-        body: `“${inspection.projectName}” is initialized but has no private vault binding. Connect it to “${vaultName}” and capture its approved files.`,
+        title: "Review capture before connecting",
+        body: `“${inspection.projectName}” is initialized but has no private vault binding. Review its current capture boundary before connecting durable memory to “${vaultName}”.`,
       };
     case "vault-unavailable":
       return {
@@ -3243,6 +3270,91 @@ function onboardingCopy(
     case "ready":
       return { title: "Project ready", body: "This project is ready." };
   }
+}
+
+function InitialCapturePreviewCard({
+  preview,
+  vaultName,
+}: {
+  preview: AgentInitialCapturePreview;
+  vaultName: string;
+}) {
+  const hasHardBoundSkips =
+    preview.skippedOversized > 0 ||
+    preview.skippedTotalLimit > 0 ||
+    preview.skippedSymlinks > 0;
+  return (
+    <div className="mt-4 rounded-md border border-border bg-background/35 p-4">
+      <div className="flex items-start gap-3">
+        <ShieldCheck size={16} className="mt-0.5 shrink-0 text-primary" />
+        <div className="min-w-0 flex-1">
+          <p className="text-meta font-semibold">Proposed capture boundary</p>
+          <p className="mt-1 text-micro leading-5 text-muted-foreground">
+            Structured capture · {preview.eligibleFiles.toLocaleString()}{" "}
+            eligible {preview.eligibleFiles === 1 ? "file" : "files"} ·{" "}
+            {formatOnboardingBytes(preview.eligibleBytes)} · durable memory in “
+            {vaultName}”
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-2 text-micro sm:grid-cols-2">
+        <div className="rounded-sm bg-surface-1 px-3 py-2">
+          <span className="text-muted-foreground">Approved roots</span>
+          <p className="mt-0.5 font-mono text-foreground">
+            {preview.approvedRoots.join(", ")}
+          </p>
+        </div>
+        <div className="rounded-sm bg-surface-1 px-3 py-2">
+          <span className="text-muted-foreground">Capture limits</span>
+          <p className="mt-0.5 text-foreground">
+            {formatOnboardingBytes(preview.maxFileBytes)} per file ·{" "}
+            {formatOnboardingBytes(preview.maxTotalBytes)} total
+          </p>
+        </div>
+      </div>
+
+      {preview.includedPaths.length > 0 && (
+        <div className="mt-3">
+          <p className="text-micro font-medium text-muted-foreground">
+            Eligible path sample
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {preview.includedPaths.map((path) => (
+              <span
+                key={path}
+                className="max-w-full truncate rounded bg-surface-2 px-2 py-1 font-mono text-micro text-muted-foreground-strong"
+                title={path}
+              >
+                {path}
+              </span>
+            ))}
+            {preview.omittedIncludedPaths > 0 && (
+              <span className="rounded bg-surface-2 px-2 py-1 text-micro text-muted-foreground">
+                +{preview.omittedIncludedPaths.toLocaleString()} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {hasHardBoundSkips && (
+        <p className="mt-3 text-micro leading-5 text-muted-foreground">
+          Also skipped by hard bounds:{" "}
+          {preview.skippedOversized.toLocaleString()} oversized,{" "}
+          {preview.skippedTotalLimit.toLocaleString()} beyond total limit,{" "}
+          {preview.skippedSymlinks.toLocaleString()} symlink
+          {preview.skippedSymlinks === 1 ? "" : "s"}.
+        </p>
+      )}
+      <p className="mt-3 text-micro leading-5 text-muted-foreground">
+        {preview.exclusionNotice}
+      </p>
+      <p className="mt-2 text-micro leading-5 text-muted-foreground-strong">
+        {preview.privacyNotice}
+      </p>
+    </div>
+  );
 }
 
 function ProjectOnboarding({
@@ -3289,6 +3401,13 @@ function ProjectOnboarding({
             >
               {projectPath}
             </p>
+          )}
+          {(inspection?.status === "uninitialized" ||
+            inspection?.status === "unbound") && (
+            <InitialCapturePreviewCard
+              preview={inspection.preview}
+              vaultName={vaultName}
+            />
           )}
           {error && (
             <div className="mt-4">
@@ -3340,9 +3459,9 @@ function ProjectOnboarding({
                   {busy
                     ? "Preparing memory…"
                     : inspection.status === "uninitialized"
-                      ? "Initialize & capture"
+                      ? "Approve, initialize & capture"
                       : inspection.status === "unbound"
-                        ? "Connect & capture"
+                        ? "Approve, connect & capture"
                         : inspection.status === "vault-unavailable"
                           ? "Reconnect & capture"
                           : "Capture project"}
@@ -3903,6 +4022,18 @@ function ErrorNotice({ message }: { message: string }) {
       <span>{message}</span>
     </div>
   );
+}
+
+function formatOnboardingBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && value >= 1024; index += 1) {
+    value /= 1024;
+    unit = units[index];
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`;
 }
 
 function relativeTime(unixMs: number): string {

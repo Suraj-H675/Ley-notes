@@ -151,15 +151,25 @@ export function revokeAgentProjectSpecification(
 export function initializeAgentProject(
   projectPath: string,
   vaultPath: string,
+  expectedApprovalFingerprint: string,
 ): Promise<AgentMemoryDashboard> {
-  return invoke("initialize_agent_project", { projectPath, vaultPath });
+  return invoke("initialize_agent_project", {
+    projectPath,
+    vaultPath,
+    expectedApprovalFingerprint,
+  });
 }
 
 export function connectAgentProject(
   projectPath: string,
   vaultPath: string,
+  expectedApprovalFingerprint?: string,
 ): Promise<AgentMemoryDashboard> {
-  return invoke("connect_agent_project", { projectPath, vaultPath });
+  return invoke("connect_agent_project", {
+    projectPath,
+    vaultPath,
+    expectedApprovalFingerprint,
+  });
 }
 
 export function refreshAgentProject(

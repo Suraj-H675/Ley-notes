@@ -104,11 +104,7 @@ export interface SessionSummary {
 }
 
 export type RevisionCompatibility =
-  | "current-lineage"
-  | "ancestor"
-  | "merged"
-  | "divergent"
-  | "unknown";
+  "current-lineage" | "ancestor" | "merged" | "divergent" | "unknown";
 
 export interface RevisionApplicability {
   compatibility: RevisionCompatibility;
@@ -390,6 +386,33 @@ export interface AgentCaptureSettings {
   skippedOversized: number;
   skippedTotalLimit: number;
   skippedSymlinks: number;
+  privacyNotice: string;
+}
+
+export interface AgentInitialCaptureSkippedPath {
+  path: string;
+  reason: "oversized" | "total-limit" | "symlink";
+}
+
+export interface AgentInitialCapturePreview {
+  mode: CaptureMode;
+  approvedRoots: string[];
+  respectGitignore: boolean;
+  maxFileBytes: number;
+  maxTotalBytes: number;
+  captureFingerprint: string;
+  planFingerprint: string;
+  approvalFingerprint: string;
+  eligibleFiles: number;
+  eligibleBytes: number;
+  includedPaths: string[];
+  omittedIncludedPaths: number;
+  skippedOversized: number;
+  skippedTotalLimit: number;
+  skippedSymlinks: number;
+  skippedPaths: AgentInitialCaptureSkippedPath[];
+  omittedSkippedPaths: number;
+  exclusionNotice: string;
   privacyNotice: string;
 }
 
@@ -819,12 +842,17 @@ export interface ProjectActivityView {
 }
 
 export type AgentProjectInspection =
-  | { status: "uninitialized"; suggestedName: string }
+  | {
+      status: "uninitialized";
+      suggestedName: string;
+      preview: AgentInitialCapturePreview;
+    }
   | {
       status: "unbound";
       projectId: string;
       projectName: string;
       captureMode: CaptureMode;
+      preview: AgentInitialCapturePreview;
     }
   | {
       status: "vault-unavailable";

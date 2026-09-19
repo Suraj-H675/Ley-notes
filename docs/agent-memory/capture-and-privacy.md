@@ -2,6 +2,14 @@
 
 Every initialized project owns a small, portable `.ley/capture.json` policy. Durable evidence still lives in the bound filesystem vault. In the desktop app, open **Agent Memory → Capture & privacy** to inspect the policy, preview its current filesystem boundary, and change evidence retention.
 
+## Review the first capture before initialization
+
+Choosing an uninitialized project folder in Ley Desktop performs a read-only preview before setup. Ley evaluates the same default Structured policy and default `.leyignore` rules it would create, then shows eligible file/byte totals, approved roots, limits, bounded path samples, hard-bound skips, default exclusion categories, and the open vault that would receive durable Agent Memory. This step creates no project `.ley` metadata, private binding, or Agent Memory store.
+
+The approval action is bound to the canonical selected project plus a deterministic capture-plan fingerprint covering the reviewed policy, observed candidate paths/sizes, and hard-bound exclusions. If the project changes before initialization or before first ingestion fixes its candidate set, Ley fails closed and asks the user to review the refreshed boundary rather than silently capturing a broader plan. If `.ley` was already created before that later drift was detected, the now-unbound project still requires a fresh reviewed preview before Ley may bind and perform its first capture. Existing scoped file reads still reject a candidate whose size changes while ingestion is reading it.
+
+The preview is not a content secret scanner. Default ignored credential-oriented paths plus post-capture pattern redaction remain defense in depth; custom project privacy still depends on appropriate roots and ignore rules. See [ADR 0056](../adr/0056-reviewed-first-capture-onboarding.md).
+
 ## Choose a mode
 
 | Mode | Project evidence retained in the vault | Automatic turn bodies | Structured checkpoints | Raw host transcript permission |

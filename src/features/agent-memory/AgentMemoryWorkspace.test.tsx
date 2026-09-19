@@ -4,10 +4,13 @@ import { AgentMemoryWorkspace } from "./AgentMemoryWorkspace";
 import type { AgentMemoryDashboard } from "./types";
 
 const api = vi.hoisted(() => ({
+  chooseAgentProject: vi.fn(),
+  connectAgentProject: vi.fn(),
   correctAgentLearning: vi.fn(),
   eraseAgentProjectMemory: vi.fn(),
   eraseAgentSession: vi.fn(),
   forgetAgentProject: vi.fn(),
+  initializeAgentProject: vi.fn(),
   inspectAgentProject: vi.fn(),
   listAgentProjects: vi.fn(),
   readAgentProjectActivity: vi.fn(),
@@ -23,13 +26,13 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock("./api", () => ({
-  chooseAgentProject: vi.fn(),
-  connectAgentProject: vi.fn(),
+  chooseAgentProject: api.chooseAgentProject,
+  connectAgentProject: api.connectAgentProject,
   correctAgentLearning: api.correctAgentLearning,
   eraseAgentProjectMemory: api.eraseAgentProjectMemory,
   eraseAgentSession: api.eraseAgentSession,
   forgetAgentProject: api.forgetAgentProject,
-  initializeAgentProject: vi.fn(),
+  initializeAgentProject: api.initializeAgentProject,
   inspectAgentProject: api.inspectAgentProject,
   listAgentProjects: api.listAgentProjects,
   readAgentProjectActivity: api.readAgentProjectActivity,
@@ -185,6 +188,119 @@ describe("Agent Memory workspace boundaries", () => {
     const scrollRoot = screen.getByRole("main");
     expect(scrollRoot).toHaveClass("min-h-0", "overflow-y-auto");
     expect(api.inspectAgentProject).not.toHaveBeenCalled();
+  });
+
+  it("reviews first capture and requires fresh approval after initialization drift", async () => {
+    api.listAgentProjects.mockResolvedValue({
+      projects: [],
+      totalProjects: 0,
+      omittedProjects: 0,
+      readyProjects: 0,
+      attentionProjects: 0,
+      privacyNotice: "Only explicitly opened projects.",
+    });
+    api.chooseAgentProject.mockResolvedValue("/projects/new-app");
+    const initialPreview = {
+      mode: "structured" as const,
+      approvedRoots: ["."],
+      respectGitignore: true,
+      maxFileBytes: 1_048_576,
+      maxTotalBytes: 536_870_912,
+      captureFingerprint: "sha256:policy",
+      planFingerprint: "sha256:plan-before",
+      approvalFingerprint: "sha256:approval-before",
+      eligibleFiles: 1,
+      eligibleBytes: 1024,
+      includedPaths: ["README.md"],
+      omittedIncludedPaths: 0,
+      skippedOversized: 0,
+      skippedTotalLimit: 0,
+      skippedSymlinks: 0,
+      skippedPaths: [],
+      omittedSkippedPaths: 0,
+      exclusionNotice: "Default exclusions apply.",
+      privacyNotice:
+        "This preview creates no .ley metadata, vault binding, or Agent Memory until approval.",
+    };
+    const refreshedPreview = {
+      ...initialPreview,
+      planFingerprint: "sha256:plan-after",
+      approvalFingerprint: "sha256:approval-after",
+      eligibleFiles: 2,
+      eligibleBytes: 2048,
+      includedPaths: ["README.md", "src/new.ts"],
+    };
+    api.inspectAgentProject
+      .mockResolvedValueOnce({
+        status: "uninitialized",
+        suggestedName: "new-app",
+        preview: initialPreview,
+      })
+      .mockResolvedValueOnce({
+        status: "unbound",
+        projectId: "prj_new",
+        projectName: "new-app",
+        captureMode: "structured",
+        preview: refreshedPreview,
+      });
+    api.initializeAgentProject.mockRejectedValue(
+      new Error("project capture plan changed after review"),
+    );
+    api.connectAgentProject.mockResolvedValue(dashboard);
+
+    render(
+      <AgentMemoryWorkspace
+        open
+        vaultMode="desktop"
+        vaultPath="/vault"
+        vaultName="Private vault"
+        onClose={vi.fn()}
+        onPromoteLearning={vi.fn()}
+        onPromoteSession={vi.fn()}
+        onLinkSessionCanvas={vi.fn()}
+      />,
+    );
+    await screen.findByRole("heading", {
+      name: "Pick up any project without starting over",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+    expect(
+      await screen.findByRole("heading", {
+        name: "Review capture before enabling Agent Memory",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("README.md")).toBeVisible();
+    expect(screen.getByText(/creates no \.ley metadata/i)).toBeVisible();
+    expect(api.initializeAgentProject).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve, initialize & capture" }),
+    );
+    await waitFor(() =>
+      expect(api.initializeAgentProject).toHaveBeenCalledWith(
+        "/projects/new-app",
+        "/vault",
+        "sha256:approval-before",
+      ),
+    );
+    expect(
+      await screen.findByRole("heading", {
+        name: "Review capture before connecting",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText("src/new.ts")).toBeVisible();
+    expect(api.connectAgentProject).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Approve, connect & capture" }),
+    );
+    await waitFor(() =>
+      expect(api.connectAgentProject).toHaveBeenCalledWith(
+        "/projects/new-app",
+        "/vault",
+        "sha256:approval-after",
+      ),
+    );
   });
 
   it("migrates the last selection into Projects and opens a scrollable dashboard", { timeout: 10_000 }, async () => {
