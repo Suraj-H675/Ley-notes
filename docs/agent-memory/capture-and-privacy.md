@@ -7,10 +7,12 @@ Every initialized project owns a small, portable `.ley/capture.json` policy. Dur
 | Mode | Project evidence retained in the vault | Automatic turn bodies | Structured checkpoints | Raw host transcript permission |
 | --- | --- | --- | --- | --- |
 | Minimal | Paths, classifications, post-redaction hashes, deterministic graph; no source blobs | Omitted with a body-free disclosure event | Yes | No |
-| Structured | Minimal plus post-redaction UTF-8 source evidence and citations | Bounded and pattern-redacted | Yes | No |
-| Full Evidence | Structured evidence | Bounded and pattern-redacted | Yes | Explicitly permitted for a future, separately invoked compatible adapter |
+| Structured | Minimal plus post-redaction UTF-8 source evidence and citations; supported image originals remain excluded | Bounded and pattern-redacted | Yes | No |
+| Full Evidence | Structured evidence plus supported PNG/JPEG/WebP original image evidence | Bounded and pattern-redacted | Yes | Explicitly permitted for a future, separately invoked compatible adapter |
 
-Structured is the recommended default. Full Evidence does not make Ley scrape chats. It allows a future, explicit transcript-capable adapter to submit raw evidence, so the desktop app requires a separate acknowledgement before enabling it. Current lifecycle adapters never read transcript paths in any mode.
+Structured is the recommended default. Full Evidence does not make Ley scrape chats. It is the explicit higher-sensitivity boundary required before Ley retains supported project image originals, and it also preserves the existing permission for a future explicit transcript-capable adapter. The desktop app therefore requires a separate acknowledgement before enabling it. Current lifecycle adapters never read transcript paths in any mode.
+
+Image evidence is intentionally different from UTF-8 evidence: Ley validates supported PNG/JPEG/WebP signatures and stores the exact original bytes in the private content-addressed artifact store, but it does not OCR, visually redact, caption, embed, or otherwise interpret those pixels. Minimal and Structured report such files as `media-requires-full-evidence`. Use capture roots, `.leyignore`, preview, and Full Evidence consent as the primary privacy boundary for screenshots or images that may contain sensitive visual content.
 
 ## Inspect the boundary
 
@@ -27,6 +29,8 @@ To forget one session instead, open that session’s desktop inspector and choos
 Session erasure deliberately preserves ordinary Markdown handoffs and JSON Canvas documents because those are explicit user-owned copies rather than private Agent Memory projections. Delete those through the normal note or Canvas workflow when they should also be removed. Neither project nor session erasure can remove external copies, cloud-provider context, backups, storage snapshots, or device remnants.
 
 The desktop project graph indexes changed immutable graph/artifact pairs so an earlier capture remains inspectable. Selecting a historical capture never reads today's working tree. A node or relationship can reveal only an exact citation already present in that selected graph, from its matching retained artifact snapshot. Excerpts stay redacted and bounded. Minimal captures can still show graph structure and citations, but source inspection is unavailable because that mode intentionally retains no source blob.
+
+The Artifact surface can also open retained original image evidence. Browsing the inventory does not eagerly load image bytes; **View original retained media** performs the bounded local read on demand. A media citation from session/activity history carries its exact artifact snapshot ID and content hash so the desktop opens that historical original rather than substituting today's file. The viewer labels it as original evidence and explicitly reports that no OCR/vision description or live-source check was performed. See [ADR 0051](../adr/0051-bounded-original-image-evidence.md).
 
 ## Cloud-agent boundary
 

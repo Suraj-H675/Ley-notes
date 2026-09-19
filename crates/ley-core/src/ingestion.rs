@@ -42,6 +42,25 @@ pub enum ArtifactKind {
     Manifest,
     Configuration,
     Text,
+    Image,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArtifactMediaType {
+    Png,
+    Jpeg,
+    Webp,
+}
+
+impl ArtifactMediaType {
+    pub const fn mime_type(self) -> &'static str {
+        match self {
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+            Self::Webp => "image/webp",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +77,8 @@ pub struct ArtifactRecord {
     pub kind: ArtifactKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<ArtifactMediaType>,
     pub source_bytes: u64,
     pub stored_bytes: u64,
     pub line_count: u64,
@@ -71,6 +92,8 @@ pub struct ArtifactRecord {
 #[serde(rename_all = "kebab-case")]
 pub enum ArtifactSkipReason {
     Binary,
+    InvalidMedia,
+    MediaRequiresFullEvidence,
     NonUtf8,
     Oversized,
     TotalLimit,
@@ -439,6 +462,46 @@ pub fn ingest_project(
             candidate.bytes,
             diagnostic.capture.max_file_bytes,
         )?;
+        if let Some(media_type) = image_media_type_for_path(&candidate.path) {
+            if diagnostic.capture.mode != CaptureMode::FullEvidence {
+                skipped.push(SkippedArtifact {
+                    path: candidate.path.clone(),
+                    reason: ArtifactSkipReason::MediaRequiresFullEvidence,
+                    bytes: candidate.bytes,
+                });
+                continue;
+            }
+            if !image_signature_matches(media_type, &bytes) {
+                skipped.push(SkippedArtifact {
+                    path: candidate.path.clone(),
+                    reason: ArtifactSkipReason::InvalidMedia,
+                    bytes: candidate.bytes,
+                });
+                continue;
+            }
+            let digest = sha256_hex(&bytes);
+            let content_hash = format!("sha256:{digest}");
+            let content_blob = if diagnostic.capture.mode == CaptureMode::Minimal {
+                None
+            } else {
+                let name = format!("{digest}.bin");
+                store.write_blob_if_absent(&name, &bytes)?;
+                Some(format!("{CONTENT_DIRECTORY}/{name}"))
+            };
+            files.push(ArtifactRecord {
+                path: candidate.path.clone(),
+                kind: ArtifactKind::Image,
+                language: None,
+                media_type: Some(media_type),
+                source_bytes: candidate.bytes,
+                stored_bytes: bytes.len() as u64,
+                line_count: 0,
+                content_hash,
+                content_blob,
+                redactions: Vec::new(),
+            });
+            continue;
+        }
         if bytes.contains(&0) {
             skipped.push(SkippedArtifact {
                 path: candidate.path.clone(),
@@ -474,6 +537,7 @@ pub fn ingest_project(
             path: candidate.path.clone(),
             kind,
             language: language.map(str::to_owned),
+            media_type: None,
             source_bytes: candidate.bytes,
             stored_bytes: stored.len() as u64,
             line_count: line_count(&redacted),
@@ -740,6 +804,9 @@ impl LoadedProjectMemory {
         &self,
         artifact: &ArtifactRecord,
     ) -> Result<Option<String>, LeyCoreError> {
+        if artifact.kind == ArtifactKind::Image {
+            return Ok(None);
+        }
         let Some(blob) = &artifact.content_blob else {
             return Ok(None);
         };
@@ -772,6 +839,42 @@ impl LoadedProjectMemory {
                 artifact.path
             ))
         })
+    }
+
+    pub(crate) fn read_artifact_media(
+        &self,
+        artifact: &ArtifactRecord,
+    ) -> Result<Option<Vec<u8>>, LeyCoreError> {
+        if artifact.kind != ArtifactKind::Image {
+            return Ok(None);
+        }
+        let Some(blob) = &artifact.content_blob else {
+            return Ok(None);
+        };
+        let name = blob
+            .strip_prefix(&format!("{CONTENT_DIRECTORY}/"))
+            .ok_or_else(|| {
+                LeyCoreError::InvalidArtifactStore(format!(
+                    "invalid content blob for {}",
+                    artifact.path
+                ))
+            })?;
+        let stored = read_optional_store_file(&self.content_dir, name, artifact.stored_bytes)?
+            .ok_or_else(|| {
+                LeyCoreError::InvalidArtifactStore(format!(
+                    "content blob is missing for {}",
+                    artifact.path
+                ))
+            })?;
+        if stored.len() as u64 != artifact.stored_bytes
+            || format!("sha256:{}", sha256_hex(&stored)) != artifact.content_hash
+        {
+            return Err(LeyCoreError::InvalidArtifactStore(format!(
+                "content blob failed integrity verification for {}",
+                artifact.path
+            )));
+        }
+        Ok(Some(stored))
     }
 }
 
@@ -1439,11 +1542,38 @@ fn validate_manifest(
             )));
         }
         if let Some(blob) = &file.content_blob {
-            if blob != &format!("{CONTENT_DIRECTORY}/{hash}.txt") {
+            let extension = if file.kind == ArtifactKind::Image {
+                "bin"
+            } else {
+                "txt"
+            };
+            if blob != &format!("{CONTENT_DIRECTORY}/{hash}.{extension}") {
                 return Err(LeyCoreError::InvalidArtifactStore(format!(
                     "content blob does not match hash for {}",
                     file.path
                 )));
+            }
+        }
+        match file.kind {
+            ArtifactKind::Image => {
+                if file.language.is_some()
+                    || file.media_type.is_none()
+                    || file.line_count != 0
+                    || !file.redactions.is_empty()
+                {
+                    return Err(LeyCoreError::InvalidArtifactStore(format!(
+                        "image artifact metadata is invalid for {}",
+                        file.path
+                    )));
+                }
+            }
+            _ => {
+                if file.media_type.is_some() {
+                    return Err(LeyCoreError::InvalidArtifactStore(format!(
+                        "non-image artifact cannot carry media metadata: {}",
+                        file.path
+                    )));
+                }
             }
         }
         if (manifest.capture_mode == CaptureMode::Minimal) != file.content_blob.is_none() {
@@ -1839,6 +1969,44 @@ fn classify_artifact(path: &str) -> (ArtifactKind, Option<&'static str>) {
     (ArtifactKind::Text, None)
 }
 
+fn image_media_type_for_path(path: &str) -> Option<ArtifactMediaType> {
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())?
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some(ArtifactMediaType::Png),
+        "jpg" | "jpeg" => Some(ArtifactMediaType::Jpeg),
+        "webp" => Some(ArtifactMediaType::Webp),
+        _ => None,
+    }
+}
+
+fn image_signature_matches(media_type: ArtifactMediaType, bytes: &[u8]) -> bool {
+    match media_type {
+        ArtifactMediaType::Png => {
+            bytes.len() >= 45
+                && bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+                && bytes[8..16] == [0, 0, 0, 13, b'I', b'H', b'D', b'R']
+                && bytes.ends_with(&[0, 0, 0, 0, b'I', b'E', b'N', b'D', 0xae, 0x42, 0x60, 0x82])
+        }
+        ArtifactMediaType::Jpeg => {
+            bytes.len() >= 4
+                && bytes.starts_with(&[0xff, 0xd8, 0xff])
+                && bytes.ends_with(&[0xff, 0xd9])
+        }
+        ArtifactMediaType::Webp => {
+            if bytes.len() < 16 || !bytes.starts_with(b"RIFF") || &bytes[8..12] != b"WEBP" {
+                return false;
+            }
+            let declared = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+            let payload = &bytes[12..16];
+            declared.saturating_add(8) == bytes.len()
+                && matches!(payload, b"VP8 " | b"VP8L" | b"VP8X")
+        }
+    }
+}
+
 fn language_for_path(path: &Path) -> Option<&'static str> {
     let extension = path
         .extension()
@@ -1957,6 +2125,19 @@ mod tests {
             .join(project_id)
             .join(GRAPH_DIRECTORY)
             .join(GRAPH_MANIFEST_FILE)
+    }
+
+    fn png_fixture(marker: u8) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, marker]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(b"IEND");
+        bytes.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
+        bytes
     }
 
     #[test]
@@ -2104,6 +2285,66 @@ mod tests {
         assert!(blob_body.contains("[REDACTED:credential-assignment]"));
         assert!(blob_body.contains("[REDACTED:credential-url]"));
         assert!(!blob_body.contains("hunter2"));
+    }
+
+    #[test]
+    fn ingestion_retains_image_originals_without_text_or_graph_projection() {
+        let (_base, project, vault) = setup_project(CaptureMode::FullEvidence);
+        std::fs::write(project.join("README.md"), "# Image evidence\n").unwrap();
+        let image = png_fixture(0);
+        std::fs::write(project.join("screenshot.png"), &image).unwrap();
+        std::fs::write(project.join("spoofed.png"), b"not a png").unwrap();
+
+        let result = ingest_project(&project, &vault).unwrap();
+        assert_eq!(result.files, 2);
+        assert!(result.skipped.iter().any(|item| {
+            item.path == "spoofed.png" && item.reason == ArtifactSkipReason::InvalidMedia
+        }));
+
+        let memory = load_project_memory(&project, &vault).unwrap();
+        let captured = memory
+            .manifest
+            .files
+            .iter()
+            .find(|artifact| artifact.path == "screenshot.png")
+            .unwrap();
+        assert_eq!(captured.kind, ArtifactKind::Image);
+        assert_eq!(captured.media_type, Some(ArtifactMediaType::Png));
+        assert_eq!(captured.line_count, 0);
+        assert!(captured.language.is_none());
+        assert!(captured.redactions.is_empty());
+        assert!(captured
+            .content_blob
+            .as_deref()
+            .is_some_and(|blob| blob.ends_with(".bin")));
+        assert!(memory.read_artifact_text(captured).unwrap().is_none());
+        assert_eq!(memory.read_artifact_media(captured).unwrap(), Some(image));
+        assert!(!memory
+            .graph
+            .nodes
+            .iter()
+            .any(|node| { node.path.as_deref() == Some("screenshot.png") }));
+    }
+
+    #[test]
+    fn structured_capture_does_not_silently_retain_image_originals() {
+        let (_base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(project.join("README.md"), "# Structured privacy\n").unwrap();
+        std::fs::write(project.join("screenshot.png"), png_fixture(0)).unwrap();
+
+        let result = ingest_project(&project, &vault).unwrap();
+        assert_eq!(result.files, 1);
+        assert!(result.skipped.iter().any(|item| {
+            item.path == "screenshot.png"
+                && item.reason == ArtifactSkipReason::MediaRequiresFullEvidence
+        }));
+
+        let memory = load_project_memory(&project, &vault).unwrap();
+        assert!(!memory
+            .manifest
+            .files
+            .iter()
+            .any(|artifact| artifact.path == "screenshot.png"));
     }
 
     #[test]

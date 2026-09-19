@@ -88,7 +88,11 @@ type Section =
   | "review"
   | "privacy";
 
-type ArtifactFocus = { path: string; requestId: number };
+type ArtifactFocus = {
+  path: string;
+  evidence?: ArtifactEvidenceReference;
+  requestId: number;
+};
 type GraphFocus = {
   evidence?: ArtifactEvidenceReference;
   graphSnapshotId?: string;
@@ -317,8 +321,17 @@ export function AgentMemoryWorkspace({
   function openEvidence(evidence: ArtifactEvidenceReference) {
     setSessionId(null);
     setLearningId(null);
-    setGraphFocus({ evidence, requestId: Date.now() });
-    setSection("graph");
+    if (evidence.mediaType) {
+      setArtifactFocus({
+        path: evidence.artifactPath,
+        evidence,
+        requestId: Date.now(),
+      });
+      setSection("artifacts");
+    } else {
+      setGraphFocus({ evidence, requestId: Date.now() });
+      setSection("graph");
+    }
   }
 
   function openProjectRevision(graphSnapshotId: string) {
@@ -2348,11 +2361,18 @@ function SessionCheckpointCard({
               <button
                 type="button"
                 key={`${artifact.artifactPath}:${artifact.startLine}`}
-                title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
+                title={
+                  artifact.mediaType
+                    ? `Original ${artifact.mediaType} evidence · snapshot ${artifact.artifactSnapshotId}`
+                    : `${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`
+                }
                 onClick={() => onEvidence(artifact)}
                 className="max-w-full touch-manipulation truncate rounded-sm border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
               >
-                {artifact.artifactPath}:{artifact.startLine}
+                {artifact.artifactPath}
+                {artifact.mediaType
+                  ? ` · ${artifact.mediaType}`
+                  : `:${artifact.startLine}`}
               </button>
             ))}
           </div>

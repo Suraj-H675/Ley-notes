@@ -16,6 +16,7 @@ authors = ["Suraj"]
 
 [workspace.dependencies]
 atomic-write-file = "0.3"
+base64 = "0.22"
 cap-fs-ext = "4"
 cap-std = "4"
 cap-tempfile = "4"

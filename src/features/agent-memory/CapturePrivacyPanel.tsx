@@ -58,9 +58,9 @@ const modes: Array<{
     name: "Full Evidence",
     eyebrow: "Explicit permission",
     description:
-      "Keeps bounded turn evidence and permits a future explicit adapter to submit versioned raw evidence.",
+      "Keeps bounded turn evidence and retains supported captured image originals for multimodal evidence.",
     retention:
-      "Highest sensitivity and storage; Ley itself still does not scrape chats.",
+      "Highest sensitivity and storage; images are stored as original evidence without OCR or visual redaction, and Ley itself still does not scrape chats.",
     tone: "bg-warning/10 text-warning",
   },
 ];

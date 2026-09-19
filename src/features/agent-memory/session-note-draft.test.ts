@@ -160,6 +160,36 @@ describe("session note draft", () => {
     );
   });
 
+  it("labels multimodal citations as original media instead of text lines", () => {
+    const draft = buildSessionNoteDraft(
+      "Ley",
+      {
+        ...session,
+        checkpoints: [
+          {
+            ...session.checkpoints[0],
+            touchedArtifacts: [
+              {
+                artifactPath: "verification.png",
+                artifactSnapshotId: "art_media",
+                contentHash: "b".repeat(64),
+                mediaType: "png",
+                startLine: 0,
+                endLine: 0,
+              },
+            ],
+          },
+        ],
+      },
+      "Visual verification handoff",
+    );
+
+    expect(draft.content).toContain(
+      "`verification.png` · original media `png` · snapshot `art_media`",
+    );
+    expect(draft.content).not.toContain("verification.png`:0–0");
+  });
+
   it("requires a useful title", () => {
     expect(() => buildSessionNoteDraft("Ley", session, "  ")).toThrow(
       "Give this session note a title",

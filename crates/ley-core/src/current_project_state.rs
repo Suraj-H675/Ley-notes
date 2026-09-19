@@ -851,7 +851,10 @@ mod tests {
         let verification = first
             .recent_verification
             .iter()
-            .find(|verification| verification.summary.contains("smoke test passed"))
+            .find(|verification| {
+                verification.summary.contains("smoke test passed")
+                    && verification.evidence_artifacts.len() == 4
+            })
             .unwrap();
         assert_eq!(verification.status, VerificationStatus::Passed);
         assert_eq!(verification.evidence_artifacts.len(), 4);

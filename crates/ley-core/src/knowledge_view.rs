@@ -4,7 +4,7 @@ use crate::graph::{
 };
 use crate::ingestion::{
     load_project_graph_history, load_project_memory, load_project_memory_at_graph_snapshot,
-    ArtifactKind, ArtifactManifest, ArtifactSkipReason, RedactionFinding,
+    ArtifactKind, ArtifactManifest, ArtifactMediaType, ArtifactSkipReason, RedactionFinding,
 };
 use crate::{CaptureMode, LeyCoreError};
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,9 @@ pub struct ArtifactInventoryItem {
     pub kind: ArtifactKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<ArtifactMediaType>,
+    pub content_hash: String,
     pub source_bytes: u64,
     pub stored_bytes: u64,
     pub line_count: u64,
@@ -275,6 +278,8 @@ fn project_artifact_inventory_from_manifest(
             path: artifact.path.clone(),
             kind: artifact.kind,
             language: artifact.language.clone(),
+            media_type: artifact.media_type,
+            content_hash: artifact.content_hash.clone(),
             source_bytes: artifact.source_bytes,
             stored_bytes: artifact.stored_bytes,
             line_count: artifact.line_count,
@@ -673,12 +678,15 @@ fn artifact_kind_label(kind: ArtifactKind) -> &'static str {
         ArtifactKind::Manifest => "manifest",
         ArtifactKind::Configuration => "configuration",
         ArtifactKind::Text => "text",
+        ArtifactKind::Image => "image",
     }
 }
 
 fn skip_reason_label(reason: ArtifactSkipReason) -> &'static str {
     match reason {
         ArtifactSkipReason::Binary => "binary",
+        ArtifactSkipReason::InvalidMedia => "invalid-media",
+        ArtifactSkipReason::MediaRequiresFullEvidence => "media-requires-full-evidence",
         ArtifactSkipReason::NonUtf8 => "non-utf8",
         ArtifactSkipReason::Oversized => "oversized",
         ArtifactSkipReason::TotalLimit => "total-limit",
@@ -733,6 +741,7 @@ mod tests {
             path: path.to_owned(),
             kind,
             language: language.map(str::to_owned),
+            media_type: None,
             source_bytes: 12,
             stored_bytes: 12,
             line_count: 2,

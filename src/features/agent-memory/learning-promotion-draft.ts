@@ -16,7 +16,9 @@ export function buildPromotionDraft(
   const citations = learning.evidence.flatMap((evidence) =>
     evidence.artifacts.map(
       (artifact) =>
-        `${inlineCode(artifact.artifactPath)}:${artifact.startLine}–${artifact.endLine} · session ${inlineCode(evidence.sessionId)} · record ${inlineCode(evidence.recordId)}`,
+        artifact.mediaType
+          ? `${inlineCode(artifact.artifactPath)} · original media ${inlineCode(artifact.mediaType)} · session ${inlineCode(evidence.sessionId)} · record ${inlineCode(evidence.recordId)}`
+          : `${inlineCode(artifact.artifactPath)}:${artifact.startLine}–${artifact.endLine} · session ${inlineCode(evidence.sessionId)} · record ${inlineCode(evidence.recordId)}`,
     ),
   );
   const sourceTrail =

@@ -2201,6 +2201,7 @@ dependencies = [
 name = "ley-mcp"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "ley-core",
  "rmcp",
  "schemars 1.2.1",
@@ -2215,6 +2216,7 @@ dependencies = [
 name = "ley-notes"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "ley-core",
  "ley-semantic-installer",
  "notify",

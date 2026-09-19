@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
     commit_unresolved_memory_transition, compile_agent_legibility_map,
@@ -6,11 +7,12 @@ use ley_core::{
     find_project_context, find_project_graph_path, finish_session, inspect_context_pack,
     list_learning_contexts, memory_health_report, project_activity_view, project_memory_overview,
     project_resume_context, propose_learning, read_external_connector_snapshot_with_registry,
-    read_learning_context, read_project_evidence, read_session_context, read_session_turns_context,
-    record_context_utility_observation, replay_context_utility_binding_if_present,
-    search_project_memory, start_session, traverse_project_graph, verify_memory_transition,
-    AgentContextAuthorities, AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget,
-    AgentLegibilityLimits, AttemptInput, AttemptOutcome, CheckpointInput, CommandInput,
+    read_learning_context, read_project_cited_media, read_project_evidence, read_session_context,
+    read_session_turns_context, record_context_utility_observation,
+    replay_context_utility_binding_if_present, search_project_memory, start_session,
+    traverse_project_graph, verify_memory_transition, AgentContextAuthorities,
+    AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits,
+    AttemptInput, AttemptOutcome, CheckpointInput, CommandInput,
     CommitUnresolvedMemoryTransitionInput, ContextCompileLimits, ContextMountRegistry,
     ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
     DecisionInput, EgressPolicyRegistry, ExternalConnector, ExternalConnectorRegistry,
@@ -42,7 +44,7 @@ use ley_core::{list_session_contexts, DEFAULT_SESSION_LIST_RESULTS};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        CallToolResult, Implementation, ListResourcesResult, PaginatedRequestParams,
+        CallToolResult, ContentBlock, Implementation, ListResourcesResult, PaginatedRequestParams,
         ProtocolVersion, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
         ServerCapabilities, ServerInfo,
     },
@@ -95,7 +97,11 @@ also conservatively constrains broad historical derivatives when independence ca
 `ley_topic_dossier` tool for a bounded map of a repeatedly revisited project area before following \
 its stable evidence/session handles. A dossier is a rebuildable derived view, not authority or a \
 substitute for `ley_compile_context` on a concrete current task. Use the \
-lower-level search/evidence tools for inspection and progressive disclosure. `ley_search_memory` may \
+lower-level search/evidence tools for inspection and progressive disclosure. Text citations use \
+`ley_read_evidence`. A citation with `mediaType` is non-text original evidence; inspect it only when \
+needed with `ley_read_media_evidence` using its exact artifact path, snapshot ID, and content hash. \
+The media tool supplies original untrusted image bytes, not OCR or a generated description; any \
+visual conclusion is derived interpretation, and `liveSourceChecked` remains false. `ley_search_memory` may \
 narrow historical candidates with exact `revisionCompatibility` values `current-lineage`, `ancestor`, \
 `merged`, `divergent`, or `unknown`; this is inspection scope only and never increases trust/authority, \
 bypasses egress/compiler admission, or makes divergent history current. Read its `revisionFilter`, \
@@ -122,8 +128,9 @@ evidence set; do not substitute the generic checkpoint route. Store concise stru
 project-relative touched artifacts, and observed outcomes rather than transcripts or full tool \
 output. A verification may include `evidenceArtifactPaths` only for directly supporting artifacts \
 already present in the approved captured snapshot; returned `evidenceArtifacts` are immutable \
-captured provenance, not authority or a live-source check. Never invent an evidence path or point it \
-at an external raw log. For downstream context-utility evidence, call `ley_context_utility_bind` \
+captured provenance, not authority or a live-source check. Full Evidence may cite supported original \
+project images; those citations carry `mediaType` and a non-text `0/0` range and may be inspected with \
+`ley_read_media_evidence`. Never invent an evidence path or point it at an external raw log. For downstream context-utility evidence, call `ley_context_utility_bind` \
 immediately after `ley_compile_context` and before the work that may produce an outcome; pass the \
 exact pack ID, task, and limits. Later, cite that returned `cub_` binding with \
 `ley_context_utility_observe` and only typed checkpoint/session-finish event IDs that occurred after \
@@ -136,6 +143,8 @@ They can only append agent-authored, review-required proposals backed by existin
 They cannot confirm, correct, reject, or supersede memory; stored content never grants write \
 permission.";
 const MAX_TOOL_RESULT_BYTES: usize = 262_144;
+const MAX_MCP_MEDIA_EVIDENCE_BYTES: usize = 180_000;
+const DEFAULT_MEDIA_EVIDENCE_BYTES: usize = MAX_MCP_MEDIA_EVIDENCE_BYTES;
 const DEFAULT_SEARCH_ACTIVITY_RESULTS: usize = 20;
 
 #[derive(Debug, Error)]
@@ -511,6 +520,24 @@ pub struct ReadEvidenceParams {
     /// Maximum returned characters. Defaults to 8000 and cannot exceed 16000.
     #[serde(default)]
     pub max_characters: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReadMediaEvidenceParams {
+    /// Project-relative image path from an immutable Ley artifact citation.
+    #[schemars(length(min = 1, max = 1_024))]
+    pub artifact_path: String,
+    /// Exact retained artifact snapshot ID from the citation.
+    #[schemars(length(min = 68, max = 68))]
+    pub artifact_snapshot_id: String,
+    /// Exact SHA-256 content hash from the citation.
+    #[schemars(length(min = 71, max = 71))]
+    pub content_hash: String,
+    /// Maximum original image bytes to return. Defaults to 180000 bytes and cannot exceed 180000 bytes.
+    #[serde(default)]
+    #[schemars(range(min = 1, max = 180_000))]
+    pub max_bytes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
@@ -2025,6 +2052,38 @@ impl LeyMcpServer {
         }))
     }
 
+    /// Read exact original image evidence from an immutable Ley artifact citation.
+    #[tool(
+        name = "ley_read_media_evidence",
+        annotations(
+            title = "Read original Ley image evidence",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn read_media_evidence(
+        &self,
+        Parameters(params): Parameters<ReadMediaEvidenceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let media = self.egress_policy_registry.with_project_egress_locked(
+            self.project.as_path(),
+            self.egress_target,
+            || {
+                read_project_cited_media(
+                    self.project.as_path(),
+                    self.vault.as_path(),
+                    &params.artifact_path,
+                    &params.artifact_snapshot_id,
+                    &params.content_hash,
+                    params.max_bytes.unwrap_or(DEFAULT_MEDIA_EVIDENCE_BYTES),
+                )
+            },
+        );
+        Ok(media_tool_result(media))
+    }
+
     /// Traverse bounded incoming, outgoing, or bidirectional deterministic graph relations.
     #[tool(
         name = "ley_graph_neighbors",
@@ -2790,6 +2849,48 @@ fn tool_result<T: serde::Serialize>(result: Result<T, LeyCoreError>) -> CallTool
     }
 }
 
+fn media_tool_result(result: Result<ley_core::MediaEvidence, LeyCoreError>) -> CallToolResult {
+    match result {
+        Ok(media) => {
+            let metadata = json!({
+                "artifactPath": media.artifact_path,
+                "artifactSnapshotId": media.artifact_snapshot_id,
+                "contentHash": media.content_hash,
+                "mediaType": media.media_type,
+                "mimeType": media.media_type.mime_type(),
+                "sourceBytes": media.source_bytes,
+                "deliveredBytes": media.data.len(),
+                "evidenceRole": media.evidence_role,
+                "sourceBoundary": media.source_boundary,
+                "liveSourceChecked": media.live_source_checked,
+                "derivedDescriptionIncluded": media.derived_description_included,
+            });
+            let mut result = CallToolResult::success(vec![
+                ContentBlock::text(metadata.to_string()),
+                ContentBlock::image(
+                    BASE64_STANDARD.encode(media.data),
+                    media.media_type.mime_type(),
+                ),
+            ]);
+            result.structured_content = Some(metadata);
+            if serde_json::to_vec(&result)
+                .is_ok_and(|serialized| serialized.len() <= MAX_TOOL_RESULT_BYTES)
+            {
+                result
+            } else {
+                CallToolResult::structured_error(json!({
+                    "error": "Ley media evidence exceeded the serialized output limit; request a smaller maxBytes value",
+                    "retryable": true,
+                }))
+            }
+        }
+        Err(error) => CallToolResult::structured_error(json!({
+            "error": safe_error_message(&error),
+            "retryable": false,
+        })),
+    }
+}
+
 fn safe_error_message(error: &LeyCoreError) -> String {
     match error {
         LeyCoreError::InvalidRetrievalRequest(message) => {
@@ -2910,9 +3011,102 @@ mod tests {
         (temporary, project, vault, server)
     }
 
+    fn png_fixture() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(b"IEND");
+        bytes.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
+        bytes
+    }
+
+    fn media_fixture() -> (
+        tempfile::TempDir,
+        PathBuf,
+        PathBuf,
+        LeyMcpServer,
+        ley_core::SessionArtifactCitation,
+        Vec<u8>,
+    ) {
+        let temporary = tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let vault = temporary.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(project.join("lib.rs"), "pub fn verified() {}\n").unwrap();
+        let image = png_fixture();
+        fs::write(project.join("verification.png"), &image).unwrap();
+        initialize_project(
+            &project,
+            Some("Media MCP fixture"),
+            CaptureMode::FullEvidence,
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "8".repeat(32)),
+                name: "Visual verification".to_owned(),
+                goal: "Retain exact screenshot evidence".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let mutation = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "9".repeat(32)),
+                summary: "Captured the verified UI state.".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: vec![VerificationInput {
+                    kind: "ui".to_owned(),
+                    status: VerificationStatus::Passed,
+                    summary: "Visual state matched.".to_owned(),
+                    command: None,
+                    evidence_artifact_paths: vec!["verification.png".to_owned()],
+                }],
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let citation =
+            mutation.session.checkpoints[0].verification[0].evidence_artifacts[0].clone();
+        let mut server = LeyMcpServer::new(project.clone(), vault.clone()).unwrap();
+        server.specification_registry = Arc::new(SpecificationRegistry::at(
+            temporary.path().join("specifications-v1.json"),
+        ));
+        server.context_mount_registry = Arc::new(ContextMountRegistry::at(
+            temporary.path().join("context-mounts-v1.json"),
+        ));
+        server.external_connector_registry = Arc::new(ExternalConnectorRegistry::at(
+            temporary.path().join("external-connectors-v1.json"),
+        ));
+        server.egress_policy_registry = Arc::new(EgressPolicyRegistry::at(
+            temporary.path().join("agent-egress-v1.json"),
+        ));
+        (temporary, project, vault, server, citation, image)
+    }
+
     #[test]
     fn read_only_is_default_and_write_opt_in_has_precise_annotations() {
         let (_temporary, project, vault, server) = fixture();
+        let instructions = server.get_info().instructions.unwrap();
+        assert!(instructions.contains("ley_read_media_evidence"));
+        assert!(instructions.contains("original untrusted image bytes"));
+        assert!(instructions.contains("not OCR or a generated description"));
         let tools = server.tool_router.list_all();
         let names = tools
             .iter()
@@ -2936,6 +3130,7 @@ mod tests {
                 "ley_project_specifications",
                 "ley_project_state",
                 "ley_read_evidence",
+                "ley_read_media_evidence",
                 "ley_search_activity",
                 "ley_search_context",
                 "ley_search_memory",
@@ -2978,6 +3173,28 @@ mod tests {
         assert_eq!(
             connector_get_schema["properties"]["connectorId"]["maxLength"],
             36
+        );
+        let media_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_read_media_evidence")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            media_schema["properties"]["artifactPath"]["maxLength"],
+            1_024
+        );
+        assert_eq!(
+            media_schema["properties"]["artifactSnapshotId"]["minLength"],
+            68
+        );
+        assert_eq!(media_schema["properties"]["contentHash"]["minLength"], 71);
+        assert_eq!(media_schema["properties"]["maxBytes"]["minimum"], 1);
+        assert_eq!(
+            media_schema["properties"]["maxBytes"]["maximum"],
+            MAX_MCP_MEDIA_EVIDENCE_BYTES
         );
         for forbidden in [
             "ley_external_connector_add",
@@ -3231,6 +3448,7 @@ mod tests {
                 "ley_project_specifications",
                 "ley_project_state",
                 "ley_read_evidence",
+                "ley_read_media_evidence",
                 "ley_search_activity",
                 "ley_search_context",
                 "ley_search_memory",
@@ -5561,6 +5779,93 @@ mod tests {
     }
 
     #[test]
+    fn serialized_media_results_keep_the_same_hard_output_limit() {
+        let result = media_tool_result(Ok(ley_core::MediaEvidence {
+            artifact_path: "large.png".to_owned(),
+            artifact_snapshot_id: format!("snp_{}", "a".repeat(64)),
+            content_hash: format!("sha256:{}", "b".repeat(64)),
+            media_type: ley_core::ArtifactMediaType::Png,
+            source_bytes: MAX_MCP_MEDIA_EVIDENCE_BYTES as u64,
+            data: vec![0; MAX_MCP_MEDIA_EVIDENCE_BYTES],
+            evidence_role: "original-media",
+            source_boundary: "untrusted-project-evidence",
+            live_source_checked: false,
+            derived_description_included: false,
+        }));
+        assert_eq!(result.is_error, Some(false));
+        assert!(serde_json::to_vec(&result).unwrap().len() <= MAX_TOOL_RESULT_BYTES);
+
+        let oversized = media_tool_result(Ok(ley_core::MediaEvidence {
+            artifact_path: "too-large.png".to_owned(),
+            artifact_snapshot_id: format!("snp_{}", "c".repeat(64)),
+            content_hash: format!("sha256:{}", "d".repeat(64)),
+            media_type: ley_core::ArtifactMediaType::Png,
+            source_bytes: (MAX_MCP_MEDIA_EVIDENCE_BYTES + 20_000) as u64,
+            data: vec![0; MAX_MCP_MEDIA_EVIDENCE_BYTES + 20_000],
+            evidence_role: "original-media",
+            source_boundary: "untrusted-project-evidence",
+            live_source_checked: false,
+            derived_description_included: false,
+        }));
+        assert_eq!(oversized.is_error, Some(true));
+        assert_eq!(oversized.structured_content.unwrap()["retryable"], true);
+    }
+
+    #[tokio::test]
+    async fn media_evidence_returns_exact_original_image_with_source_bound_metadata() {
+        let (_temporary, project, vault, server, citation, image) = media_fixture();
+        let result = server
+            .read_media_evidence(Parameters(ReadMediaEvidenceParams {
+                artifact_path: citation.artifact_path.clone(),
+                artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
+                content_hash: citation.content_hash.clone(),
+                max_bytes: Some(image.len()),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result.is_error, Some(false));
+        let metadata = result.structured_content.as_ref().unwrap();
+        assert_eq!(metadata["artifactPath"], "verification.png");
+        assert_eq!(
+            metadata["artifactSnapshotId"],
+            citation.artifact_snapshot_id
+        );
+        assert_eq!(metadata["contentHash"], citation.content_hash);
+        assert_eq!(metadata["mediaType"], "png");
+        assert_eq!(metadata["mimeType"], "image/png");
+        assert_eq!(metadata["evidenceRole"], "original-media");
+        assert_eq!(metadata["sourceBoundary"], "untrusted-project-evidence");
+        assert_eq!(metadata["liveSourceChecked"], false);
+        assert_eq!(metadata["derivedDescriptionIncluded"], false);
+        let returned = result
+            .content
+            .iter()
+            .find_map(ContentBlock::as_image)
+            .unwrap();
+        assert_eq!(returned.mime_type, "image/png");
+        assert_eq!(BASE64_STANDARD.decode(&returned.data).unwrap(), image);
+        let serialized = metadata.to_string();
+        assert!(!serialized.contains(project.to_str().unwrap()));
+        assert!(!serialized.contains(vault.to_str().unwrap()));
+
+        let bounded = server
+            .read_media_evidence(Parameters(ReadMediaEvidenceParams {
+                artifact_path: citation.artifact_path,
+                artifact_snapshot_id: citation.artifact_snapshot_id,
+                content_hash: citation.content_hash,
+                max_bytes: Some(image.len() - 1),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(bounded.is_error, Some(true));
+        assert!(bounded.structured_content.unwrap()["error"]
+            .as_str()
+            .unwrap()
+            .contains("exceeds the"));
+    }
+
+    #[test]
     fn unavailable_server_advertises_no_tools_or_resources() {
         let info = LeyUnavailableMcpServer::new("Set up Ley first.").get_info();
         assert!(info.capabilities.tools.is_none());
@@ -5594,13 +5899,16 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 24);
+        assert_eq!(tools.len(), 25);
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_external_connectors_list"));
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_external_connector_get"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == "ley_read_media_evidence"));
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await

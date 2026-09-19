@@ -7,6 +7,7 @@ is a failed scenario and makes this command exit non-zero.
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -62,6 +63,7 @@ METRIC_NAMES = (
     "graph_relation_retrieval",
     "context_memory_utility",
     "external_connector",
+    "multimodal_evidence",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -473,6 +475,28 @@ P2_CAPABILITY_COVERAGE = {
             "truthy",
         ),
     },
+    "multimodal-agent-memory-evidence": {
+        "adversarial": (
+            "multimodal-original-image-evidence",
+            "multimodal_evidence",
+            "truthy",
+        ),
+        "downstream": (
+            "multimodal-original-image-evidence",
+            "multimodal_evidence",
+            "truthy",
+        ),
+        "privacy": (
+            "multimodal-original-image-evidence",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "multimodal-original-image-evidence",
+            "multimodal_evidence",
+            "truthy",
+        ),
+    },
 }
 
 
@@ -570,8 +594,36 @@ def write_project_files(project: Path, files: dict[str, str]) -> None:
         destination.write_text(content, encoding="utf-8")
 
 
-def init_project(project: Path, name: str, vault: Path) -> None:
-    run(["init", str(project), "--name", name, "--json"])
+def write_project_binary_files(project: Path, files: dict[str, str]) -> None:
+    for relative, encoded in files.items():
+        path = Path(relative)
+        if path.is_absolute() or ".." in path.parts:
+            raise RuntimeError(f"fixture contains unsafe binary project path: {relative}")
+        destination = project / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            body = base64.b64decode(encoded, validate=True)
+        except ValueError as error:
+            raise RuntimeError(
+                f"fixture contains invalid base64 binary project file: {relative}"
+            ) from error
+        destination.write_bytes(body)
+
+
+def init_project(
+    project: Path, name: str, vault: Path, capture_mode: str = "structured"
+) -> None:
+    run(
+        [
+            "init",
+            str(project),
+            "--name",
+            name,
+            "--capture",
+            capture_mode,
+            "--json",
+        ]
+    )
     run(["bind", str(project), "--vault", str(vault), "--json"])
     run(["ingest", str(project), "--json"])
 
@@ -627,12 +679,12 @@ def install_specification_approvals(
     registry_path.chmod(0o600)
 
 
-def mcp_call(
+def mcp_call_result(
     project: Path,
     name: str,
     arguments: dict[str, object],
     flags: tuple[str, ...] = (),
-) -> dict[str, object]:
+) -> tuple[dict[str, object], dict[str, object]]:
     """Drive one real tools/call through a fresh stdout-clean stdio server."""
     proc = subprocess.Popen(
         [LEY, "mcp", str(project), *flags],
@@ -755,6 +807,16 @@ def mcp_call(
         raise RuntimeError(f"MCP call {name} returned invalid JSON text: {text!r}") from error
     if not isinstance(payload, dict):
         raise RuntimeError(f"MCP call {name} returned a non-object payload")
+    return payload, result
+
+
+def mcp_call(
+    project: Path,
+    name: str,
+    arguments: dict[str, object],
+    flags: tuple[str, ...] = (),
+) -> dict[str, object]:
+    payload, _ = mcp_call_result(project, name, arguments, flags)
     return payload
 
 
@@ -1192,6 +1254,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     files = scenario.get("project_files", {})
     if isinstance(files, dict):
         write_project_files(project, files)
+    binary_files = scenario.get("project_binary_files", {})
+    if isinstance(binary_files, dict):
+        write_project_binary_files(project, binary_files)
     revision_flow = scenario.get("git_revision_flow")
     if isinstance(revision_flow, dict):
         git_run(project, ["init", "-b", "main"])
@@ -1208,7 +1273,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     if isinstance(events, list):
         ensure_learning_citations(project, [event for event in events if isinstance(event, dict)])
 
-    init_project(project, str(scenario["goal"]), vault)
+    init_project(
+        project,
+        str(scenario["goal"]),
+        vault,
+        str(scenario.get("capture_mode", "structured")),
+    )
     specification_definitions = [
         item
         for item in scenario.get("specifications", [])
@@ -2642,6 +2712,112 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not verification_evidence_ok:
             failures.append(
                 "verification evidence links did not remain bound to the captured snapshot/hash across live-source drift and derived state"
+            )
+
+    multimodal_expectation = scenario.get("expected_multimodal_evidence")
+    if isinstance(multimodal_expectation, dict):
+        if not session_id:
+            raise RuntimeError("multimodal evidence fixture created no structured session")
+        evidence_path = str(multimodal_expectation.get("evidence_path", ""))
+        expected_media_type = str(multimodal_expectation.get("media_type", ""))
+        expected_mime_type = str(multimodal_expectation.get("mime_type", ""))
+        binary_definition = scenario.get("project_binary_files", {})
+        if (
+            not isinstance(binary_definition, dict)
+            or not isinstance(binary_definition.get(evidence_path), str)
+        ):
+            raise RuntimeError(
+                "multimodal evidence fixture requires a matching base64 project binary file"
+            )
+        expected_bytes = base64.b64decode(
+            str(binary_definition[evidence_path]), validate=True
+        )
+        expected_hash = "sha256:" + hashlib.sha256(expected_bytes).hexdigest()
+
+        session_context = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": session_id, "maxCheckpoints": 5, "maxCharacters": 12000},
+        )
+        citation = next(
+            (
+                evidence
+                for checkpoint in session_context.get("checkpoints", [])
+                if isinstance(checkpoint, dict)
+                for verification in checkpoint.get("verification", [])
+                if isinstance(verification, dict)
+                for evidence in verification.get("evidenceArtifacts", [])
+                if isinstance(evidence, dict)
+                and evidence.get("artifactPath") == evidence_path
+            ),
+            None,
+        )
+        if not isinstance(citation, dict):
+            raise RuntimeError("multimodal evidence fixture produced no media citation")
+
+        live_marker = b"live-source-drift-after-media-capture"
+        (project / evidence_path).write_bytes(live_marker)
+        media_payload, media_result = mcp_call_result(
+            project,
+            "ley_read_media_evidence",
+            {
+                "artifactPath": evidence_path,
+                "artifactSnapshotId": citation.get("artifactSnapshotId"),
+                "contentHash": citation.get("contentHash"),
+                "maxBytes": len(expected_bytes),
+            },
+        )
+        image_block = next(
+            (
+                item
+                for item in media_result.get("content", [])
+                if isinstance(item, dict) and item.get("type") == "image"
+            ),
+            None,
+        )
+        returned_bytes = b""
+        if isinstance(image_block, dict) and isinstance(image_block.get("data"), str):
+            returned_bytes = base64.b64decode(str(image_block["data"]), validate=True)
+        tool_names = {
+            str(tool.get("name", ""))
+            for tool in mcp_tools_list(project)
+            if isinstance(tool, dict)
+        }
+        serialized_media = json.dumps(media_payload, sort_keys=True)
+        multimodal_ok = (
+            "ley_read_media_evidence" in tool_names
+            and session_context.get("schemaVersion") == 6
+            and citation.get("contentHash") == expected_hash
+            and citation.get("mediaType") == expected_media_type
+            and citation.get("startLine") == 0
+            and citation.get("endLine") == 0
+            and media_payload.get("artifactPath") == evidence_path
+            and media_payload.get("artifactSnapshotId") == citation.get("artifactSnapshotId")
+            and media_payload.get("contentHash") == expected_hash
+            and media_payload.get("mediaType") == expected_media_type
+            and media_payload.get("mimeType") == expected_mime_type
+            and media_payload.get("sourceBytes") == len(expected_bytes)
+            and media_payload.get("deliveredBytes") == len(expected_bytes)
+            and media_payload.get("evidenceRole") == "original-media"
+            and media_payload.get("sourceBoundary") == "untrusted-project-evidence"
+            and media_payload.get("liveSourceChecked") is False
+            and media_payload.get("derivedDescriptionIncluded") is False
+            and isinstance(image_block, dict)
+            and image_block.get("mimeType") == expected_mime_type
+            and returned_bytes == expected_bytes
+            and returned_bytes != live_marker
+            and str(project) not in serialized_media
+            and str(vault) not in serialized_media
+        )
+        scores["multimodal_evidence"] = multimodal_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault), live_marker.decode("ascii")],
+            [session_context, media_payload],
+        )
+        evidence_text.extend([session_context, media_payload])
+        if not multimodal_ok:
+            failures.append(
+                "multimodal evidence did not preserve exact original media, immutable citation provenance, non-text semantics, or bounded MCP image delivery"
             )
 
     context_utility_expectation = scenario.get("expected_context_utility")

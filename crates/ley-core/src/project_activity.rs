@@ -1,5 +1,8 @@
 use crate::session::visit_session_records;
-use crate::{AgentSession, AttemptOutcome, LeyCoreError, SessionArtifactCitation, SessionStatus};
+use crate::{
+    AgentSession, ArtifactMediaType, AttemptOutcome, LeyCoreError, SessionArtifactCitation,
+    SessionStatus,
+};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -107,6 +110,8 @@ pub struct ProjectActivityCitation {
     pub artifact_path: String,
     pub artifact_snapshot_id: String,
     pub content_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<ArtifactMediaType>,
     pub start_line: u64,
     pub end_line: u64,
 }
@@ -403,6 +408,7 @@ fn bounded_citations(
                 artifact_path: citation.artifact_path.clone(),
                 artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
                 content_hash: citation.content_hash.clone(),
+                media_type: citation.media_type,
                 start_line: citation.start_line,
                 end_line: citation.end_line,
             })

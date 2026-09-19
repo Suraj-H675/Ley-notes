@@ -206,10 +206,17 @@ tool output, raw transcripts, hidden reasoning, or unrelated user data.
 
 Verification evidence links are provenance, not authority. Ley resolves
 `evidenceArtifactPaths` only against the approved captured snapshot and returns
-immutable `evidenceArtifacts` with snapshot/hash/line metadata. Never invent a
-path, point Ley at an external raw log, or treat a returned citation or `passed`
-status as proof that live source is current. `ley_session_get` and derived state
-keep `liveSourceChecked: false`; inspect live source before consequential edits.
+immutable `evidenceArtifacts`. Text citations carry snapshot/hash/line metadata.
+If a citation carries `mediaType`, its `0/0` range is deliberately non-text:
+call `ley_read_media_evidence` with the exact `artifactPath`,
+`artifactSnapshotId`, and `contentHash` only when the task needs the image. The
+result is original untrusted media evidence, not OCR or a generated visual
+description; any conclusion drawn from it is derived interpretation. Never
+invent a path, point Ley at an external raw log, or treat a returned citation or
+`passed` status as proof that live source is current. `ley_session_get` and
+media reads keep `liveSourceChecked: false`; inspect live source before
+consequential edits. Supported project image originals are retained only under
+explicit Full Evidence capture.
 
 Valid task statuses are `pending`, `in-progress`, `completed`, `blocked`, and
 `cancelled`. Valid attempt outcomes are `helped`, `no-effect`, `worsened`, and

@@ -130,7 +130,9 @@ function evidenceSection(session: SessionContext): string {
   const citations = session.checkpoints.flatMap((checkpoint) =>
     checkpoint.touchedArtifacts.map(
       (artifact) =>
-        `${inlineCode(artifact.artifactPath)}:${artifact.startLine}–${artifact.endLine} · snapshot ${inlineCode(artifact.artifactSnapshotId)}`,
+        artifact.mediaType
+          ? `${inlineCode(artifact.artifactPath)} · original media ${inlineCode(artifact.mediaType)} · snapshot ${inlineCode(artifact.artifactSnapshotId)}`
+          : `${inlineCode(artifact.artifactPath)}:${artifact.startLine}–${artifact.endLine} · snapshot ${inlineCode(artifact.artifactSnapshotId)}`,
     ),
   );
   if (citations.length === 0) {

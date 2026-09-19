@@ -171,6 +171,19 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(skill.contains("evidenceArtifacts"), "{}", path.display());
+        assert!(
+            skill.contains("ley_read_media_evidence"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("mediaType"), "{}", path.display());
+        assert!(
+            normalized_skill.contains("original untrusted media evidence"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("OCR"), "{}", path.display());
+        assert!(skill.contains("Full Evidence"), "{}", path.display());
         assert!(skill.contains("ley_topic_dossier"), "{}", path.display());
         assert!(skill.contains("currentStateProven"), "{}", path.display());
         assert!(skill.contains("premiseAdjudication"), "{}", path.display());

@@ -4,15 +4,24 @@ import {
   ArchiveX,
   FileCode2,
   FileLock2,
+  ImageIcon,
   Search,
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/shared/lib/classnames";
-import { readAgentArtifacts } from "./api";
-import type { ProjectArtifactInventory } from "./types";
+import { readAgentArtifacts, readAgentMediaEvidence } from "./api";
+import type {
+  AgentMediaEvidence,
+  ArtifactEvidenceReference,
+  ProjectArtifactInventory,
+} from "./types";
 
 type InventoryView = "captured" | "skipped";
-type ArtifactFocus = { path: string; requestId: number };
+type ArtifactFocus = {
+  path: string;
+  evidence?: ArtifactEvidenceReference;
+  requestId: number;
+};
 
 export function ArtifactExplorer({
   projectPath,
@@ -68,6 +77,7 @@ export function ArtifactExplorer({
 
   return (
     <ArtifactExplorerContent
+      projectPath={projectPath}
       query={query}
       setQuery={setQuery}
       view={view}
@@ -83,6 +93,7 @@ export function ArtifactExplorer({
 }
 
 function ArtifactExplorerContent({
+  projectPath,
   query,
   setQuery,
   view,
@@ -94,6 +105,7 @@ function ArtifactExplorerContent({
   shown,
   matching,
 }: {
+  projectPath: string;
   query: string;
   setQuery: (value: string) => void;
   view: InventoryView;
@@ -178,12 +190,28 @@ function ArtifactExplorerContent({
         </div>
       )}
 
+      {focus?.evidence?.mediaType && (
+        <MediaEvidencePreview
+          projectPath={projectPath}
+          artifactPath={focus.evidence.artifactPath}
+          artifactSnapshotId={focus.evidence.artifactSnapshotId}
+          contentHash={focus.evidence.contentHash}
+        />
+      )}
+
       {error && !loading ? (
         <ErrorState message={error} />
       ) : !inventory && loading ? (
         <ArtifactSkeleton />
       ) : view === "captured" ? (
-        <CapturedArtifacts inventory={inventory} focusPath={focus?.path} />
+        <CapturedArtifacts
+          projectPath={projectPath}
+          inventory={inventory}
+          focusPath={focus?.path}
+          suppressMediaPath={
+            focus?.evidence?.mediaType ? focus.evidence.artifactPath : undefined
+          }
+        />
       ) : (
         <SkippedArtifacts inventory={inventory} />
       )}
@@ -207,11 +235,15 @@ function ArtifactExplorerContent({
 }
 
 function CapturedArtifacts({
+  projectPath,
   inventory,
   focusPath,
+  suppressMediaPath,
 }: {
+  projectPath: string;
   inventory: ProjectArtifactInventory | null;
   focusPath?: string;
+  suppressMediaPath?: string;
 }) {
   if (!inventory || inventory.artifacts.length === 0) {
     return (
@@ -254,7 +286,9 @@ function CapturedArtifacts({
                   <span className="text-micro text-muted-foreground sm:hidden">
                     {humanize(artifact.kind)} ·{" "}
                     {formatBytes(artifact.sourceBytes)} ·{" "}
-                    {artifact.lineCount.toLocaleString()} lines
+                    {artifact.mediaType
+                      ? artifact.mediaType.toUpperCase()
+                      : `${artifact.lineCount.toLocaleString()} lines`}
                   </span>
                 </span>
                 {artifact.redactions.length > 0 && (
@@ -273,7 +307,7 @@ function CapturedArtifacts({
                 {formatBytes(artifact.sourceBytes)}
               </span>
               <span className="hidden text-meta text-muted-foreground sm:block">
-                {artifact.lineCount.toLocaleString()}
+                {artifact.mediaType ? "Media" : artifact.lineCount.toLocaleString()}
               </span>
             </summary>
             <div className="grid gap-3 bg-surface-2/60 px-4 py-3 text-micro text-muted-foreground sm:grid-cols-3">
@@ -284,8 +318,10 @@ function CapturedArtifacts({
               <Metric
                 label="Evidence"
                 value={
-                  artifact.retainedSource
-                    ? "Source retained locally"
+                  artifact.mediaType && artifact.retainedSource
+                    ? "Original media retained locally"
+                    : artifact.retainedSource
+                      ? "Source retained locally"
                     : "Metadata only"
                 }
               />
@@ -302,6 +338,18 @@ function CapturedArtifacts({
                         .join(", ")
                 }
               />
+              {artifact.mediaType &&
+                artifact.retainedSource &&
+                artifact.path !== suppressMediaPath && (
+                  <div className="sm:col-span-3">
+                    <MediaArtifactPreviewDisclosure
+                      projectPath={projectPath}
+                      artifactPath={artifact.path}
+                      artifactSnapshotId={inventory.artifactSnapshotId}
+                      contentHash={artifact.contentHash}
+                    />
+                  </div>
+                )}
             </div>
           </details>
         ))}
@@ -316,6 +364,124 @@ function CapturedArtifacts({
   );
 }
 
+function MediaArtifactPreviewDisclosure({
+  projectPath,
+  artifactPath,
+  artifactSnapshotId,
+  contentHash,
+}: {
+  projectPath: string;
+  artifactPath: string;
+  artifactSnapshotId: string;
+  contentHash: string;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-2 rounded-md border border-border bg-background/55 px-3 py-2 text-meta font-medium text-foreground outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary"
+      >
+        <ImageIcon size={15} className="text-primary" aria-hidden="true" />
+        View original retained media
+      </button>
+    );
+  }
+  return (
+    <MediaEvidencePreview
+      projectPath={projectPath}
+      artifactPath={artifactPath}
+      artifactSnapshotId={artifactSnapshotId}
+      contentHash={contentHash}
+    />
+  );
+}
+
+function MediaEvidencePreview({
+  projectPath,
+  artifactPath,
+  artifactSnapshotId,
+  contentHash,
+}: {
+  projectPath: string;
+  artifactPath: string;
+  artifactSnapshotId: string;
+  contentHash: string;
+}) {
+  const requestKey = `${projectPath}\u0000${artifactPath}\u0000${artifactSnapshotId}\u0000${contentHash}`;
+  const [load, setLoad] = useState<{
+    key: string;
+    evidence?: AgentMediaEvidence;
+    error?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    void readAgentMediaEvidence(
+      projectPath,
+      artifactPath,
+      artifactSnapshotId,
+      contentHash,
+    )
+      .then((next) => {
+        if (current) setLoad({ key: requestKey, evidence: next });
+      })
+      .catch((cause) => {
+        if (current) setLoad({ key: requestKey, error: errorMessage(cause) });
+      });
+    return () => {
+      current = false;
+    };
+  }, [artifactPath, artifactSnapshotId, contentHash, projectPath, requestKey]);
+
+  const evidence = load?.key === requestKey ? load.evidence : undefined;
+  const error = load?.key === requestKey ? load.error : undefined;
+
+  if (error) {
+    return (
+      <div className="rounded-md border border-destructive/25 bg-destructive/8 p-3 text-meta text-destructive">
+        Could not read retained image evidence: {error}
+      </div>
+    );
+  }
+  if (!evidence) {
+    return (
+      <div className="flex min-h-28 items-center justify-center rounded-md border border-border bg-background/50 text-meta text-muted-foreground">
+        Reading original retained media…
+      </div>
+    );
+  }
+
+  return (
+    <figure className="overflow-hidden rounded-md border border-border bg-background/55">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-micro text-muted-foreground">
+        <span className="inline-flex min-w-0 items-center gap-2 font-medium text-foreground">
+          <ImageIcon size={14} className="shrink-0 text-primary" aria-hidden="true" />
+          <span className="truncate">{evidence.artifactPath}</span>
+        </span>
+        <span className="shrink-0">{formatBytes(evidence.sourceBytes)}</span>
+      </div>
+      <div className="flex min-h-40 items-center justify-center bg-surface-2/55 p-4">
+        <img
+          src={evidence.dataUrl}
+          alt={`Captured original evidence: ${evidence.artifactPath}`}
+          className="max-h-[32rem] max-w-full rounded object-contain"
+        />
+      </div>
+      <figcaption className="space-y-1 border-t border-border px-3 py-2 text-micro text-muted-foreground">
+        <p>
+          Original {evidence.mimeType} evidence · snapshot{" "}
+          {shortId(evidence.artifactSnapshotId)}
+        </p>
+        <p>
+          No OCR or vision description included · live source not checked
+        </p>
+      </figcaption>
+    </figure>
+  );
+}
+
 function SkippedArtifacts({
   inventory,
 }: {
@@ -326,7 +492,7 @@ function SkippedArtifacts({
       <EmptyState
         icon={ArchiveX}
         title="No excluded artifacts match"
-        detail="Binary, oversized, non-UTF-8, symlink, and capture-limit exclusions appear here."
+        detail="Binary, media-consent, invalid-media, oversized, non-UTF-8, symlink, and capture-limit exclusions appear here."
       />
     );
   }

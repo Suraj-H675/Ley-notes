@@ -98,4 +98,32 @@ describe("learning promotion draft", () => {
       }, "Clipped promotion"),
     ).toThrow("fully visible");
   });
+
+  it("labels multimodal learning evidence as original media", () => {
+    const draft = buildPromotionDraft(
+      "Ley",
+      {
+        ...learning,
+        evidence: [
+          {
+            ...learning.evidence[0],
+            artifacts: [
+              {
+                artifactPath: "verification.png",
+                mediaType: "png",
+                startLine: 0,
+                endLine: 0,
+              },
+            ],
+          },
+        ],
+      },
+      "Visual verification",
+    );
+
+    expect(draft.content).toContain(
+      "`verification.png` · original media `png` · session `ses_test` · record `ver_test`",
+    );
+    expect(draft.content).not.toContain("verification.png`:0–0");
+  });
 });

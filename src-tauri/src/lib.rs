@@ -1,29 +1,31 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     correct_learning, diagnose_project, erase_project_memory, erase_session_memory,
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
     list_learning_contexts, list_sessions, project_activity_view, project_artifact_inventory,
     project_graph_history, project_graph_view_filtered, project_memory_overview,
     project_resume_context, project_session_stats, read_learning, read_learning_context,
-    read_project_cited_evidence, read_project_graph_evidence, read_session_context,
-    read_session_turns_context, rename_session, review_learning, search_observed_projects,
-    search_project_memory, update_capture_mode, BindingRegistry, BindingSource, CaptureMode,
-    CorrectLearningInput, CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt,
-    GraphCitation, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
-    LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
-    ProjectActivityView, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
-    ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView, ProjectMemorySearch,
-    ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
-    RenameSessionInput, ReviewLearningInput, RevisionCompatibility, SessionContextPack,
-    SessionMemoryErasure, SessionSummary, SessionTurnsContextPack, SpecificationAuthorityList,
-    SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS,
-    DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
-    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
-    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
-    DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_PROJECT_CATALOG_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
-    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
-    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
-    DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS,
+    read_project_cited_evidence, read_project_cited_media, read_project_graph_evidence,
+    read_session_context, read_session_turns_context, rename_session, review_learning,
+    search_observed_projects, search_project_memory, update_capture_mode, ArtifactMediaType,
+    BindingRegistry, BindingSource, CaptureMode, CorrectLearningInput, CrossProjectSearch,
+    EraseSessionMemoryInput, EvidenceExcerpt, GraphCitation, IngestionResult, LearningActor,
+    LearningContextPack, LearningEvidenceInput, LearningFeedbackAction, LearningList,
+    LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory,
+    ProjectCatalog, ProjectDiagnostic, ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView,
+    ProjectMemorySearch, ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack,
+    ProjectVaultBinding, RenameSessionInput, ReviewLearningInput, RevisionCompatibility,
+    SessionContextPack, SessionMemoryErasure, SessionSummary, SessionTurnsContextPack,
+    SpecificationAuthorityList, SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS,
+    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES,
+    DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
+    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
+    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
+    DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS, MAX_MEDIA_EVIDENCE_BYTES,
 };
 use ley_core::{
     semantic_model_status as local_semantic_model_status, supported_semantic_model,
@@ -61,6 +63,22 @@ struct CanvasFile {
     path: String,
     content: String,
     updated_at: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentMediaEvidence {
+    artifact_path: String,
+    artifact_snapshot_id: String,
+    content_hash: String,
+    media_type: ArtifactMediaType,
+    mime_type: String,
+    source_bytes: u64,
+    data_url: String,
+    evidence_role: &'static str,
+    source_boundary: &'static str,
+    live_source_checked: bool,
+    derived_description_included: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -1182,6 +1200,47 @@ fn read_agent_cited_evidence(
 }
 
 #[tauri::command]
+fn read_agent_media_evidence(
+    project_path: String,
+    vault_override: Option<String>,
+    artifact_path: String,
+    artifact_snapshot_id: String,
+    content_hash: String,
+    max_bytes: Option<usize>,
+) -> Result<AgentMediaEvidence, String> {
+    let override_path = vault_override.as_deref().map(Path::new);
+    let binding = BindingRegistry::system_default()
+        .and_then(|registry| registry.resolve(&project_path, override_path))
+        .map_err(|error| error.to_string())?;
+    let media = read_project_cited_media(
+        project_path,
+        binding.vault_path,
+        &artifact_path,
+        &artifact_snapshot_id,
+        &content_hash,
+        max_bytes.unwrap_or(MAX_MEDIA_EVIDENCE_BYTES),
+    )
+    .map_err(|error| error.to_string())?;
+    let mime_type = media.media_type.mime_type().to_owned();
+    Ok(AgentMediaEvidence {
+        artifact_path: media.artifact_path,
+        artifact_snapshot_id: media.artifact_snapshot_id,
+        content_hash: media.content_hash,
+        media_type: media.media_type,
+        mime_type: mime_type.clone(),
+        source_bytes: media.source_bytes,
+        data_url: format!(
+            "data:{mime_type};base64,{}",
+            BASE64_STANDARD.encode(media.data)
+        ),
+        evidence_role: media.evidence_role,
+        source_boundary: media.source_boundary,
+        live_source_checked: media.live_source_checked,
+        derived_description_included: media.derived_description_included,
+    })
+}
+
+#[tauri::command]
 fn read_agent_project_activity(
     project_path: String,
     vault_override: Option<String>,
@@ -1898,6 +1957,7 @@ pub fn run() {
             read_agent_project_graph_view,
             read_agent_project_graph_evidence,
             read_agent_cited_evidence,
+            read_agent_media_evidence,
             read_agent_project_activity,
             scan_vault,
             scan_trashed_vault_files,

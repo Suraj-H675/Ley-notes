@@ -631,14 +631,18 @@ function CitationList({
             key={`${citation.artifactPath}:${citation.startLine}:${citation.endLine}`}
             onClick={() => onEvidence(citation)}
             className="inline-flex max-w-full touch-manipulation items-center gap-1.5 rounded-sm border border-border bg-background/55 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-            title={`Snapshot ${citation.artifactSnapshotId} · ${shortId(citation.contentHash)}`}
+            title={
+              citation.mediaType
+                ? `Original ${citation.mediaType} evidence · Snapshot ${citation.artifactSnapshotId} · ${shortId(citation.contentHash)}`
+                : `Snapshot ${citation.artifactSnapshotId} · ${shortId(citation.contentHash)}`
+            }
           >
             <FileCode2 size={11} className="shrink-0" aria-hidden="true" />
             <span className="truncate">
-              {citation.artifactPath}:{citation.startLine}
-              {citation.endLine !== citation.startLine
-                ? `–${citation.endLine}`
-                : ""}
+              {citation.artifactPath}
+              {citation.mediaType
+                ? ` · ${citation.mediaType}`
+                : `:${citation.startLine}${citation.endLine !== citation.startLine ? `–${citation.endLine}` : ""}`}
             </span>
           </button>
         ))}

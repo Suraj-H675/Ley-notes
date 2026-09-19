@@ -1851,6 +1851,7 @@ mod tests {
                 path: path.to_owned(),
                 kind,
                 language: Some(language.to_owned()),
+                media_type: None,
                 source_bytes: text.len() as u64,
                 stored_bytes: text.len() as u64,
                 line_count: text.lines().count() as u64,

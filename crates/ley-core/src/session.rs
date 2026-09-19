@@ -1,5 +1,6 @@
 use crate::ingestion::{
-    load_project_memory, lock_project_memory_lifecycle, redact_secrets, ProjectMemoryLifecycleLock,
+    load_project_memory, lock_project_memory_lifecycle, redact_secrets, ArtifactMediaType,
+    ProjectMemoryLifecycleLock,
 };
 use crate::learning::erase_learnings_citing_session_under_lifecycle;
 use crate::retrieval::{project_artifact_snapshot_id, validate_project_memory};
@@ -28,6 +29,7 @@ const SESSION_V1_SCHEMA_VERSION: u32 = 1;
 pub const SESSION_RECOVERY_SCHEMA_VERSION: u32 = 3;
 pub const SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION: u32 = 4;
 pub const SESSION_CONTEXT_UTILITY_SCHEMA_VERSION: u32 = 5;
+pub const SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION: u32 = 6;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
@@ -49,6 +51,7 @@ const SESSION_V2_FILE: &str = "session-v2.json";
 const SESSION_V3_FILE: &str = "session-v3.json";
 const SESSION_V4_FILE: &str = "session-v4.json";
 const SESSION_V5_FILE: &str = "session-v5.json";
+const SESSION_V6_FILE: &str = "session-v6.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,6 +345,8 @@ pub struct SessionArtifactCitation {
     pub artifact_path: String,
     pub artifact_snapshot_id: String,
     pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<ArtifactMediaType>,
     pub start_line: u64,
     pub end_line: u64,
 }
@@ -878,12 +883,28 @@ fn checkpoint_session_with_expected_count(
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
     let request_id = input.request_id.clone();
+    let diagnostic = diagnose_project(&project_start)?;
+    let memory = load_project_memory(&diagnostic.root, &vault)?;
     let has_verification_evidence = input
         .verification
         .iter()
         .any(|verification| !verification.evidence_artifact_paths.is_empty());
-    let diagnostic = diagnose_project(&project_start)?;
-    let memory = load_project_memory(&diagnostic.root, &vault)?;
+    let has_multimodal_evidence = input
+        .touched_artifacts
+        .iter()
+        .chain(
+            input
+                .verification
+                .iter()
+                .flat_map(|verification| verification.evidence_artifact_paths.iter()),
+        )
+        .any(|path| {
+            memory
+                .manifest
+                .files
+                .iter()
+                .any(|artifact| artifact.path == *path && artifact.media_type.is_some())
+        });
     let event_id = deterministic_id(
         "evt",
         &format!("{session_id}:{}:checkpoint-recorded", input.request_id),
@@ -899,7 +920,9 @@ fn checkpoint_session_with_expected_count(
             request_id,
             redactions,
             payload: SessionEventPayload::CheckpointRecorded(Box::new(checkpoint)),
-            schema_version: if has_verification_evidence {
+            schema_version: if has_multimodal_evidence {
+                SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION
+            } else if has_verification_evidence {
                 SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
             } else {
                 SESSION_V1_SCHEMA_VERSION
@@ -2013,8 +2036,13 @@ fn artifact_citations_for_paths(
             artifact_path: artifact.path.clone(),
             artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
             content_hash: artifact.content_hash.clone(),
-            start_line: 1,
-            end_line: artifact.line_count.max(1),
+            media_type: artifact.media_type,
+            start_line: if artifact.media_type.is_some() { 0 } else { 1 },
+            end_line: if artifact.media_type.is_some() {
+                0
+            } else {
+                artifact.line_count.max(1)
+            },
         });
     }
     citations.sort_by(|left, right| left.artifact_path.cmp(&right.artifact_path));
@@ -2697,7 +2725,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_CONTEXT_UTILITY_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION {
+        SESSION_V6_FILE
+    } else if session.schema_version >= SESSION_CONTEXT_UTILITY_SCHEMA_VERSION {
         SESSION_V5_FILE
     } else if session.schema_version >= SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION {
         SESSION_V4_FILE
@@ -3218,6 +3248,7 @@ fn validate_event(
             | SESSION_RECOVERY_SCHEMA_VERSION
             | SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
             | SESSION_CONTEXT_UTILITY_SCHEMA_VERSION
+            | SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -3354,6 +3385,20 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
                 .iter()
                 .any(|verification| !verification.evidence_artifacts.is_empty())
     );
+    let is_multimodal_evidence_checkpoint = matches!(
+        &event.payload,
+        SessionEventPayload::CheckpointRecorded(checkpoint)
+            if checkpoint
+                .touched_artifacts
+                .iter()
+                .chain(
+                    checkpoint
+                        .verification
+                        .iter()
+                        .flat_map(|verification| verification.evidence_artifacts.iter())
+                )
+                .any(|citation| citation.media_type.is_some())
+    );
     let is_context_utility = matches!(
         event.payload,
         SessionEventPayload::ContextUtilityBound(_)
@@ -3363,7 +3408,8 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
         && (is_turn_event
             || is_recovery_checkpoint
             || is_verification_evidence_checkpoint
-            || is_context_utility)
+            || is_context_utility
+            || is_multimodal_evidence_checkpoint)
     {
         return invalid_session_store(
             "schema version 1 cannot store turn evidence, bound recovery checkpoints, verification evidence links, or context utility observations",
@@ -3387,6 +3433,20 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
     if event.schema_version == SESSION_CONTEXT_UTILITY_SCHEMA_VERSION && !is_context_utility {
         return invalid_session_store(
             "schema version 5 is reserved for context utility bindings and observations",
+        );
+    }
+    if is_multimodal_evidence_checkpoint
+        && event.schema_version != SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION
+    {
+        return invalid_session_store(
+            "multimodal artifact citations require session event schema version 6",
+        );
+    }
+    if event.schema_version == SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION
+        && !is_multimodal_evidence_checkpoint
+    {
+        return invalid_session_store(
+            "schema version 6 is reserved for checkpoints with multimodal artifact citations",
         );
     }
     Ok(())
@@ -3832,6 +3892,11 @@ fn validate_child_id(
 
 fn validate_artifact_citation(citation: &SessionArtifactCitation) -> Result<(), LeyCoreError> {
     let path = Path::new(&citation.artifact_path);
+    let valid_range = if citation.media_type.is_some() {
+        citation.start_line == 0 && citation.end_line == 0
+    } else {
+        citation.start_line > 0 && citation.end_line >= citation.start_line
+    };
     if citation.artifact_path.is_empty()
         || path.is_absolute()
         || path.components().any(|component| {
@@ -3842,8 +3907,7 @@ fn validate_artifact_citation(citation: &SessionArtifactCitation) -> Result<(), 
         })
         || !valid_prefixed_hex(&citation.artifact_snapshot_id, "snp_", 64)
         || !is_sha256(&citation.content_hash)
-        || citation.start_line == 0
-        || citation.end_line < citation.start_line
+        || !valid_range
     {
         return invalid_session_store("session artifact citation is invalid");
     }
@@ -4331,14 +4395,24 @@ fn render_session_markdown(session: &AgentSession) -> String {
                     output.push_str(&format!("  - command: `{}`\n", markdown_inline(command)));
                 }
                 for citation in &verification.evidence_artifacts {
-                    output.push_str(&format!(
-                        "  - evidence: `{}` · snapshot `{}` · `{}` · lines {}–{}\n",
-                        markdown_inline(&citation.artifact_path),
-                        markdown_inline(&citation.artifact_snapshot_id),
-                        markdown_inline(&citation.content_hash),
-                        citation.start_line,
-                        citation.end_line
-                    ));
+                    if let Some(media_type) = citation.media_type {
+                        output.push_str(&format!(
+                            "  - evidence: `{}` · snapshot `{}` · `{}` · original media `{}`\n",
+                            markdown_inline(&citation.artifact_path),
+                            markdown_inline(&citation.artifact_snapshot_id),
+                            markdown_inline(&citation.content_hash),
+                            media_type.mime_type()
+                        ));
+                    } else {
+                        output.push_str(&format!(
+                            "  - evidence: `{}` · snapshot `{}` · `{}` · lines {}–{}\n",
+                            markdown_inline(&citation.artifact_path),
+                            markdown_inline(&citation.artifact_snapshot_id),
+                            markdown_inline(&citation.content_hash),
+                            citation.start_line,
+                            citation.end_line
+                        ));
+                    }
                 }
             }
         }
@@ -4692,6 +4766,19 @@ mod tests {
         format!("req_{}", digit.to_string().repeat(32))
     }
 
+    fn png_fixture(marker: u8) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, marker]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(b"IEND");
+        bytes.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
+        bytes
+    }
+
     fn numbered_request_id(number: usize) -> String {
         format!("req_{number:032x}")
     }
@@ -4898,6 +4985,58 @@ mod tests {
             replayed.checkpoints[0].verification[0].evidence_artifacts,
             evidence.as_slice()
         );
+    }
+
+    #[test]
+    fn multimodal_verification_evidence_uses_v6_and_non_text_citations() {
+        let (_base, project, vault) = setup_memory_with_mode(CaptureMode::FullEvidence);
+        let image = png_fixture(0);
+        std::fs::write(project.join("verification.png"), &image).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let started = start_session(&project, &vault, start_input(request_id('6'))).unwrap();
+        let directory = session_directory(&project, &vault, &started.session.session_id);
+        let mut input = checkpoint_input(request_id('7'), "Visual verification evidence");
+        input.verification[0].evidence_artifact_paths = vec!["verification.png".to_owned()];
+
+        let mutation =
+            checkpoint_session(&project, &vault, &started.session.session_id, input).unwrap();
+        assert_eq!(
+            mutation.session.schema_version,
+            SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION
+        );
+        assert!(directory.join(SESSION_V6_FILE).exists());
+        assert!(mutation.session_path.ends_with(SESSION_V6_FILE));
+
+        let verification = &mutation.session.checkpoints[0].verification[0];
+        let citation = &verification.evidence_artifacts[0];
+        assert_eq!(citation.artifact_path, "verification.png");
+        assert_eq!(citation.media_type, Some(ArtifactMediaType::Png));
+        assert_eq!(citation.start_line, 0);
+        assert_eq!(citation.end_line, 0);
+
+        let media = crate::read_verification_media_evidence(
+            &project,
+            &vault,
+            &started.session.session_id,
+            &verification.id,
+            "verification.png",
+            image.len(),
+        )
+        .unwrap();
+        assert_eq!(media.data, image);
+        assert_eq!(media.evidence_role, "original-media");
+        assert!(!media.derived_description_included);
+        assert!(!media.live_source_checked);
+
+        let replayed = read_session(&project, &vault, &started.session.session_id).unwrap();
+        assert_eq!(
+            replayed.checkpoints[0].verification[0].evidence_artifacts,
+            verification.evidence_artifacts
+        );
+        let markdown = std::fs::read_to_string(directory.join(SESSION_MARKDOWN_FILE)).unwrap();
+        assert!(markdown.contains("original media `image/png`"));
+        assert!(!markdown.contains("lines 0–0"));
     }
 
     #[test]

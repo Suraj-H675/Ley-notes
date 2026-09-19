@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AgentCaptureSettings,
+  AgentMediaEvidence,
   AgentMemoryDashboard,
   AgentSessionErasure,
   AgentProjectSearch,
@@ -226,6 +227,21 @@ export function readAgentArtifacts(
     projectPath,
     query,
     maxResults: 300,
+  });
+}
+
+export function readAgentMediaEvidence(
+  projectPath: string,
+  artifactPath: string,
+  artifactSnapshotId: string,
+  contentHash: string,
+): Promise<AgentMediaEvidence> {
+  return invoke("read_agent_media_evidence", {
+    projectPath,
+    artifactPath,
+    artifactSnapshotId,
+    contentHash,
+    maxBytes: 1_048_576,
   });
 }
 

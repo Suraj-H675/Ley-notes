@@ -1,8 +1,8 @@
 use crate::retrieval::project_captured_git_state;
 use crate::revision::RevisionResolver;
 use crate::{
-    list_sessions, read_session, AgentEgressTarget, AgentSession, AttemptOutcome,
-    ContextUtilityIncludedRecord, ContextUtilityOutcomeEvidence, LeyCoreError,
+    list_sessions, read_session, AgentEgressTarget, AgentSession, ArtifactMediaType,
+    AttemptOutcome, ContextUtilityIncludedRecord, ContextUtilityOutcomeEvidence, LeyCoreError,
     ProjectRevisionFreshness, RevisionApplicability, SessionArtifactCitation, SessionSource,
     SessionStatus, TaskStatus, TurnEvidenceOrigin, TurnEvidenceRetention, VerificationStatus,
 };
@@ -258,6 +258,8 @@ pub struct SessionContextCitation {
     pub artifact_path: String,
     pub artifact_snapshot_id: String,
     pub content_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<ArtifactMediaType>,
     pub start_line: u64,
     pub end_line: u64,
 }
@@ -778,7 +780,7 @@ fn turns_context_from_session(
                 .map(|turn| (SessionTurnKind::AssistantResponse, turn)),
         )
         .collect::<Vec<_>>();
-    ordered.sort_by(|left, right| left.1.sequence.cmp(&right.1.sequence));
+    ordered.sort_by_key(|item| item.1.sequence);
     let total_turns = ordered.len();
     let first_included = total_turns.saturating_sub(max_results);
     let mut budget = TextBudget::new(max_text_characters);
@@ -863,6 +865,7 @@ fn take_citations(
                 artifact_path: budget.take(&citation.artifact_path, 1_024),
                 artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
                 content_hash: citation.content_hash.clone(),
+                media_type: citation.media_type,
                 start_line: citation.start_line,
                 end_line: citation.end_line,
             })

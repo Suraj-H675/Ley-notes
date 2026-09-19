@@ -6,6 +6,7 @@ authors.workspace = true
 description = "Fixed-project local stdio MCP server for Ley project memory"
 
 [dependencies]
+base64.workspace = true
 ley-core = { path = "../ley-core" }
 rmcp.workspace = true
 schemars.workspace = true

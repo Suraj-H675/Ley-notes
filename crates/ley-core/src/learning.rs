@@ -2082,6 +2082,11 @@ fn validate_stored_evidence(evidence: &[LearningEvidence]) -> Result<(), LeyCore
         let mut paths = BTreeSet::new();
         for citation in &item.artifacts {
             let path = Path::new(&citation.artifact_path);
+            let valid_range = if citation.media_type.is_some() {
+                citation.start_line == 0 && citation.end_line == 0
+            } else {
+                citation.start_line > 0 && citation.end_line >= citation.start_line
+            };
             if citation.artifact_path.is_empty()
                 || path.is_absolute()
                 || path.components().any(|component| {
@@ -2094,8 +2099,7 @@ fn validate_stored_evidence(evidence: &[LearningEvidence]) -> Result<(), LeyCore
                 })
                 || !valid_prefixed_hex(&citation.artifact_snapshot_id, "snp_", 64)
                 || !is_sha256(&citation.content_hash)
-                || citation.start_line == 0
-                || citation.end_line < citation.start_line
+                || !valid_range
                 || !paths.insert(&citation.artifact_path)
             {
                 return Err(LeyCoreError::InvalidLearningStore(
@@ -2512,6 +2516,93 @@ mod tests {
 
     fn request_id(digit: char) -> String {
         format!("req_{}", digit.to_string().repeat(32))
+    }
+
+    fn png_fixture() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(b"IEND");
+        bytes.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
+        bytes
+    }
+
+    #[test]
+    fn learning_evidence_preserves_multimodal_artifact_citations() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        initialize_project(&project, Some("Media learning"), CaptureMode::FullEvidence).unwrap();
+        std::fs::write(project.join("README.md"), "# Media learning\n").unwrap();
+        std::fs::write(project.join("verification.png"), png_fixture()).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('a'),
+                name: "Verify the interface".to_owned(),
+                goal: "Preserve reusable visual verification evidence".to_owned(),
+                source: SessionSource {
+                    kind: SessionSourceKind::HostHook,
+                    host: Some("codex".to_owned()),
+                    agent: Some("gpt-5".to_owned()),
+                },
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: request_id('b'),
+                summary: "Captured the verified interface state".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["verification.png".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let checkpoint_id = checkpoint.session.checkpoints[0].id.clone();
+
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: request_id('c'),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Check the verified interface".to_owned(),
+                guidance: "Compare the interface against the retained visual evidence.".to_owned(),
+                confidence_percent: 80,
+                provenance: LearningProvenance::Inferred,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: started.session.session_id,
+                    record_id: checkpoint_id,
+                    note: "The checkpoint retained exact original image evidence.".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+
+        let citation = &proposed.learning.evidence[0].artifacts[0];
+        assert_eq!(citation.artifact_path, "verification.png");
+        assert_eq!(citation.media_type, Some(crate::ArtifactMediaType::Png));
+        assert_eq!(citation.start_line, 0);
+        assert_eq!(citation.end_line, 0);
     }
 
     fn setup_learning() -> (tempfile::TempDir, PathBuf, PathBuf, String, String) {

@@ -117,9 +117,9 @@ pub use host_adapter::{
     HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
 };
 pub use ingestion::{
-    erase_project_memory, ingest_project, read_project_graph, ArtifactKind, ArtifactRecord,
-    ArtifactSkipReason, IngestionResult, ProjectMemoryErasure, RedactionFinding, RenamedArtifact,
-    SkippedArtifact, AGENT_MEMORY_DIRECTORY, ARTIFACT_MANIFEST_LIMIT_BYTES,
+    erase_project_memory, ingest_project, read_project_graph, ArtifactKind, ArtifactMediaType,
+    ArtifactRecord, ArtifactSkipReason, IngestionResult, ProjectMemoryErasure, RedactionFinding,
+    RenamedArtifact, SkippedArtifact, AGENT_MEMORY_DIRECTORY, ARTIFACT_MANIFEST_LIMIT_BYTES,
     ARTIFACT_MANIFEST_SCHEMA_VERSION,
 };
 pub use knowledge_view::{
@@ -205,11 +205,13 @@ pub use resume_context::{
 };
 pub use retrieval::{
     find_project_context, find_project_graph_path, find_project_hybrid_context,
-    project_memory_overview, read_project_cited_evidence, read_project_evidence,
-    read_project_graph_evidence, traverse_project_graph, ContextItem, ContextItemKind, ContextPack,
-    EvidenceExcerpt, GraphDirection, GraphPath, GraphTraversal, HybridConflictProjection,
-    HybridContextPack, HybridRetrievalMetadata, MemoryOverview, RetrievalLimits, RetrievalMode,
+    project_memory_overview, read_project_cited_evidence, read_project_cited_media,
+    read_project_evidence, read_project_graph_evidence, read_verification_media_evidence,
+    traverse_project_graph, ContextItem, ContextItemKind, ContextPack, EvidenceExcerpt,
+    GraphDirection, GraphPath, GraphTraversal, HybridConflictProjection, HybridContextPack,
+    HybridRetrievalMetadata, MediaEvidence, MemoryOverview, RetrievalLimits, RetrievalMode,
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
+    MAX_MEDIA_EVIDENCE_BYTES,
 };
 pub use revision::{ProjectRevisionFreshness, RevisionApplicability, RevisionCompatibility};
 pub use runbook::{
@@ -244,10 +246,10 @@ pub use session::{
     TurnEvidenceRetention, VerificationInput, VerificationRecord, VerificationStatus,
     SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT, SESSION_CONTEXT_UTILITY_OUTCOME_LIMIT,
     SESSION_CONTEXT_UTILITY_SCHEMA_VERSION, SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES,
-    SESSION_PROJECTION_LIMIT_BYTES, SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS,
-    SESSION_RECOVERY_SCHEMA_VERSION, SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS,
-    SESSION_SCHEMA_VERSION, SESSION_TURN_EVIDENCE_LIMIT_BYTES,
-    SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION,
+    SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION, SESSION_PROJECTION_LIMIT_BYTES,
+    SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS, SESSION_RECOVERY_SCHEMA_VERSION,
+    SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS, SESSION_SCHEMA_VERSION,
+    SESSION_TURN_EVIDENCE_LIMIT_BYTES, SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION,
 };
 pub use session_context::{
     list_session_contexts, read_session_context, read_session_turns_context, SessionContextAttempt,

@@ -194,6 +194,7 @@ export interface SessionContext {
       artifactPath: string;
       artifactSnapshotId: string;
       contentHash: string;
+      mediaType?: ArtifactMediaType;
       startLine: number;
       endLine: number;
     }>;
@@ -541,7 +542,9 @@ export interface SemanticModelInstallation {
 }
 
 export type ArtifactKind =
-  "source" | "documentation" | "manifest" | "configuration" | "text";
+  "source" | "documentation" | "manifest" | "configuration" | "text" | "image";
+
+export type ArtifactMediaType = "png" | "jpeg" | "webp";
 
 export interface ProjectArtifactInventory {
   projectId: string;
@@ -554,6 +557,8 @@ export interface ProjectArtifactInventory {
     path: string;
     kind: ArtifactKind;
     language?: string;
+    mediaType?: ArtifactMediaType;
+    contentHash: string;
     sourceBytes: number;
     storedBytes: number;
     lineCount: number;
@@ -564,7 +569,14 @@ export interface ProjectArtifactInventory {
   omittedArtifacts: number;
   skipped: Array<{
     path: string;
-    reason: "binary" | "non-utf8" | "oversized" | "total-limit" | "symlink";
+    reason:
+      | "binary"
+      | "invalid-media"
+      | "media-requires-full-evidence"
+      | "non-utf8"
+      | "oversized"
+      | "total-limit"
+      | "symlink";
     bytes: number;
   }>;
   totalMatchingSkipped: number;
@@ -707,12 +719,27 @@ export interface ProjectGraphEvidenceExcerpt {
   warning: string;
 }
 
+export interface AgentMediaEvidence {
+  artifactPath: string;
+  artifactSnapshotId: string;
+  contentHash: string;
+  mediaType: ArtifactMediaType;
+  mimeType: string;
+  sourceBytes: number;
+  dataUrl: string;
+  evidenceRole: "original-media";
+  sourceBoundary: string;
+  liveSourceChecked: false;
+  derivedDescriptionIncluded: false;
+}
+
 export type ProjectProblemScope = "all" | "open" | "resolved";
 
 export interface ProjectActivityCitation {
   artifactPath: string;
   artifactSnapshotId: string;
   contentHash: string;
+  mediaType?: ArtifactMediaType;
   startLine: number;
   endLine: number;
 }
@@ -721,6 +748,7 @@ export interface ArtifactEvidenceReference {
   artifactPath: string;
   artifactSnapshotId: string;
   contentHash: string;
+  mediaType?: ArtifactMediaType;
   startLine: number;
   endLine: number;
 }
@@ -841,6 +869,7 @@ export interface LearningContext {
     note: string;
     artifacts: Array<{
       artifactPath: string;
+      mediaType?: ArtifactMediaType;
       startLine: number;
       endLine: number;
     }>;
