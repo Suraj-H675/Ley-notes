@@ -14,14 +14,14 @@ use ley_core::{
     ExternalConnectorRegistry, FinishSessionInput, GraphNodeKind, HostAgentContextRegistries,
     KnowledgeScopeKind, KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput,
     LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
-    LeyCoreError, ProjectMemorySearchLimits, ProposeLearningInput, RenameSessionInput,
-    ReviewLearningInput, ReviewedRunbookInput, RevisionCompatibility, RunbookSkillExportInput,
-    RunbookSkillHost, SemanticModelStatus, SessionSource, SessionSourceKind, SessionStatus,
-    SpecificationRegistry, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
-    VerificationInput, VerificationStatus, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    LeyCoreError, PolicyBundleRegistry, PolicyBundleSourceInput, ProjectMemorySearchLimits,
+    ProposeLearningInput, RenameSessionInput, ReviewLearningInput, ReviewedRunbookInput,
+    RevisionCompatibility, RunbookSkillExportInput, RunbookSkillHost, SemanticModelStatus,
+    SessionSource, SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput,
+    TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput, VerificationStatus,
+    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_github_connector::{fetch_public_github_reference, GitHubConnectorError};
 use ley_mcp::{run_stdio_with_egress_target, run_unavailable_stdio};
@@ -57,6 +57,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "connector" => connector(&arguments[1..]),
         "mount" => mount(&arguments[1..]),
         "scope" => scope(&arguments[1..]),
+        "policy-bundle" => policy_bundle(&arguments[1..]),
         "session" => session(&arguments[1..]),
         "learning" => learning(&arguments[1..]),
         "runbook" => runbook(&arguments[1..]),
@@ -937,6 +938,256 @@ fn scope(arguments: &[String]) -> Result<(), CliError> {
     }
 }
 
+fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "policy-bundle requires create, list, attach, attached, status, or detach".to_owned(),
+        ));
+    };
+    let registry = PolicyBundleRegistry::system_default()?;
+    let scopes = KnowledgeScopeRegistry::system_default()?;
+    match command {
+        "create" => {
+            let scope_id = arguments.get(1).ok_or_else(|| {
+                CliError::Usage(
+                    "policy-bundle create requires SCOPE_ID NAME --source PROJECT SPECIFICATION_ID..."
+                        .to_owned(),
+                )
+            })?;
+            let name = arguments.get(2).ok_or_else(|| {
+                CliError::Usage(
+                    "policy-bundle create requires SCOPE_ID NAME --source PROJECT SPECIFICATION_ID..."
+                        .to_owned(),
+                )
+            })?;
+            let specifications = SpecificationRegistry::system_default()?;
+            let mut sources = Vec::new();
+            let mut json = false;
+            let mut index = 3;
+            while index < arguments.len() {
+                match arguments[index].as_str() {
+                    "--source" => {
+                        let project = PathBuf::from(required_value(
+                            arguments,
+                            index + 1,
+                            "--source PROJECT",
+                        )?);
+                        let specification_id = required_value(
+                            arguments,
+                            index + 2,
+                            "--source PROJECT SPECIFICATION_ID",
+                        )?
+                        .to_owned();
+                        sources.push(PolicyBundleSourceInput {
+                            source_project: project,
+                            specification_id,
+                        });
+                        index += 2;
+                    }
+                    "--json" => json = true,
+                    value => {
+                        return Err(CliError::Usage(format!(
+                            "unexpected policy-bundle create argument '{value}'"
+                        )))
+                    }
+                }
+                index += 1;
+            }
+            if sources.is_empty() {
+                return Err(CliError::Usage(
+                    "policy-bundle create requires at least one --source PROJECT SPECIFICATION_ID"
+                        .to_owned(),
+                ));
+            }
+            let result =
+                registry.create(scope_id, name, &sources, &scopes, &specifications)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("policy bundle result is serializable")
+                );
+            } else {
+                println!(
+                    "Policy bundle: {} ({})",
+                    result.bundle.name, result.bundle.bundle_id
+                );
+                println!(
+                    "Scope: {} {:?} {}",
+                    result.bundle.scope_id, result.bundle.scope_kind, result.bundle.scope_name
+                );
+                println!("Sources: {}", result.bundle.sources.len());
+                println!("Authority: exact approved Specification revisions");
+                println!(
+                    "Precedence: active-project Specifications override conflicting bundled policy"
+                );
+                if !result.created {
+                    println!("Existing immutable policy bundle reused.");
+                }
+            }
+            Ok(())
+        }
+        "list" => {
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let result = registry.list(&scopes)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("policy bundle list is serializable")
+                );
+            } else if result.bundles.is_empty() {
+                println!("No policy bundles.");
+            } else {
+                println!("Policy bundles: {}", result.bundles.len());
+                for bundle in &result.bundles {
+                    let ready = bundle
+                        .sources
+                        .iter()
+                        .filter(|source| {
+                            source.status == ley_core::PolicyBundleSourceStatus::Ready
+                        })
+                        .count();
+                    println!(
+                        "  {}  {:?}  {}  scope:{}  sources:{}/{} ready",
+                        bundle.bundle_id,
+                        bundle.scope_kind,
+                        bundle.name,
+                        bundle.scope_id,
+                        ready,
+                        bundle.sources.len()
+                    );
+                }
+                println!("Privacy: {}", result.privacy_notice);
+            }
+            Ok(())
+        }
+        "attach" => {
+            let mut bundle_id = None;
+            let mut active = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if bundle_id.is_none() => bundle_id = Some(value.to_owned()),
+                    value if active.is_none() => active = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let bundle_id = bundle_id.ok_or_else(|| {
+                CliError::Usage("policy-bundle attach requires BUNDLE_ID".to_owned())
+            })?;
+            let active =
+                active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.attach(&active, &bundle_id, &scopes)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("policy bundle attachment is serializable")
+                );
+            } else {
+                println!(
+                    "Attached policy bundle: {} ({})",
+                    result.attachment.bundle_name, result.attachment.bundle_id
+                );
+                println!("Scope: {}", result.attachment.scope_id);
+                println!("Sources: {}", result.attachment.source_count);
+                if !result.created {
+                    println!("Existing attachment reused.");
+                }
+            }
+            Ok(())
+        }
+        "attached" | "status" => {
+            let mut active = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if active.is_none() => active = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let active =
+                active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.attached(&active, &scopes)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("policy bundle attachment list is serializable")
+                );
+            } else if result.attachments.is_empty() {
+                println!("No policy bundles attached.");
+            } else {
+                println!("Attached policy bundles: {}", result.attachments.len());
+                for attachment in &result.attachments {
+                    println!(
+                        "  {}  {}  scope:{}  sources:{}  {:?}",
+                        attachment.bundle_id,
+                        attachment.bundle_name,
+                        attachment.scope_id,
+                        attachment.source_count,
+                        attachment.state
+                    );
+                }
+                println!("Privacy: {}", result.privacy_notice);
+            }
+            Ok(())
+        }
+        "detach" => {
+            let mut bundle_id = None;
+            let mut active = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if bundle_id.is_none() => bundle_id = Some(value.to_owned()),
+                    value if active.is_none() => active = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let bundle_id = bundle_id.ok_or_else(|| {
+                CliError::Usage("policy-bundle detach requires BUNDLE_ID".to_owned())
+            })?;
+            let active =
+                active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let removed = registry.detach(&active, &bundle_id)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&removed)
+                        .expect("policy bundle detachment is serializable")
+                );
+            } else if removed.is_some() {
+                println!("Detached policy bundle: {bundle_id}");
+            } else {
+                println!("Policy bundle was not attached: {bundle_id}");
+            }
+            Ok(())
+        }
+        other => Err(CliError::Usage(format!(
+            "unknown policy-bundle command '{other}'; use create, list, attach, attached, status, or detach"
+        ))),
+    }
+}
+
 fn search(arguments: &[String]) -> Result<(), CliError> {
     let mut query = None;
     let mut project = None;
@@ -1113,6 +1364,7 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
     let egress_registry = EgressPolicyRegistry::system_default()?;
     let mount_registry = ContextMountRegistry::system_default()?;
     let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
+    let policy_bundle_registry = PolicyBundleRegistry::system_default()?;
     let result = process_host_hook_for_agent_with_registries(
         &project,
         &binding.vault_path,
@@ -1122,6 +1374,7 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
             egress: &egress_registry,
             mounts: &mount_registry,
             knowledge_scopes: &knowledge_scope_registry,
+            policy_bundles: &policy_bundle_registry,
         },
         egress_target,
     )?;
@@ -1699,6 +1952,7 @@ fn runbook_export_skill(arguments: &[String]) -> Result<(), CliError> {
     let egress_registry = EgressPolicyRegistry::system_default()?;
     let mount_registry = ContextMountRegistry::system_default()?;
     let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
+    let policy_bundle_registry = PolicyBundleRegistry::system_default()?;
     let exported = export_reviewed_runbook_skill(
         common.project_path()?,
         &binding.vault_path,
@@ -1724,6 +1978,7 @@ fn runbook_export_skill(arguments: &[String]) -> Result<(), CliError> {
         &egress_registry,
         &mount_registry,
         &knowledge_scope_registry,
+        &policy_bundle_registry,
     )?;
     if common.json {
         println!(
@@ -3220,6 +3475,14 @@ fn print_help() {
     println!("  ley scope attach SCOPE_ID [ACTIVE_PROJECT] [--json]");
     println!("  ley scope attached [ACTIVE_PROJECT] [--json]");
     println!("  ley scope detach SCOPE_ID [ACTIVE_PROJECT] [--json]");
+    println!(
+        "  ley policy-bundle create SCOPE_ID NAME --source SOURCE_PROJECT SPECIFICATION_ID... [--json]"
+    );
+    println!("  ley policy-bundle list [--json]");
+    println!("  ley policy-bundle attach BUNDLE_ID [ACTIVE_PROJECT] [--json]");
+    println!("  ley policy-bundle attached [ACTIVE_PROJECT] [--json]");
+    println!("  ley policy-bundle status [ACTIVE_PROJECT] [--json]");
+    println!("  ley policy-bundle detach BUNDLE_ID [ACTIVE_PROJECT] [--json]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
     println!("  ley session prompt SESSION [path] --stdin [--request-id REQUEST] [--json]");
     println!("  ley session response SESSION [path] --stdin [--request-id REQUEST] [--json]");

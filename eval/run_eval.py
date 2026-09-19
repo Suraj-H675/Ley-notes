@@ -65,6 +65,7 @@ METRIC_NAMES = (
     "external_connector",
     "multimodal_evidence",
     "knowledge_scope",
+    "policy_bundle",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -517,6 +518,28 @@ P2_CAPABILITY_COVERAGE = {
         "regression": (
             "team-organization-knowledge-scope",
             "knowledge_scope",
+            "truthy",
+        ),
+    },
+    "team-organization-policy-bundles": {
+        "adversarial": (
+            "team-organization-policy-bundle",
+            "policy_bundle",
+            "truthy",
+        ),
+        "downstream": (
+            "team-organization-policy-bundle",
+            "policy_bundle",
+            "truthy",
+        ),
+        "privacy": (
+            "team-organization-policy-bundle",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "team-organization-policy-bundle",
+            "policy_bundle",
             "truthy",
         ),
     },
@@ -2535,7 +2558,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and no_paths
             and compiled.get("sharedKnowledgePrecedence")
             == "explicit-mount-over-shared-knowledge"
-            and scope_inspection.get("schemaVersion") == 2
+            and scope_inspection.get("schemaVersion") == 3
             and scope_inspection.get("matchesExpectedContextPack") is True
             and scope_inspection.get("sharedKnowledgePrecedence")
             == "explicit-mount-over-shared-knowledge"
@@ -2685,6 +2708,499 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not knowledge_scope_ok:
             failures.append(
                 "team/organization knowledge scope failed explicit authority, isolation, egress, detach, or historical non-laundering checks"
+            )
+
+    policy_bundle_definitions = [
+        item
+        for item in scenario.get("policy_bundle_projects", [])
+        if isinstance(item, dict)
+    ]
+    policy_bundle_expectation = scenario.get("expected_policy_bundle_compiler")
+    if isinstance(policy_bundle_expectation, dict):
+        policy_projects: list[tuple[Path, Path]] = []
+        for index, definition in enumerate(policy_bundle_definitions):
+            source_project = base_dir / f"policy-bundle-project-{index}"
+            source_vault = base_dir / f"policy-bundle-vault-{index}"
+            source_project.mkdir()
+            source_vault.mkdir()
+            write_project_files(source_project, definition.get("files", {}))
+            init_project(source_project, str(definition["name"]), source_vault)
+            source_specifications = [
+                item
+                for item in definition.get("specifications", [])
+                if isinstance(item, dict)
+            ]
+            install_specification_approvals(
+                source_project, source_vault, source_specifications
+            )
+            policy_projects.append((source_project, source_vault))
+
+        query = str(policy_bundle_expectation.get("query", ""))
+        historical_query = str(
+            policy_bundle_expectation.get("historical_query", "")
+        )
+        historical_marker = str(
+            policy_bundle_expectation.get("historical_marker", "")
+        )
+        bundle_kind = str(policy_bundle_expectation.get("kind", "team"))
+        bundle_name = str(
+            policy_bundle_expectation.get("name", "Shared policy bundle")
+        )
+        source_indices = [
+            int(value)
+            for value in policy_bundle_expectation.get("source_indices", [])
+        ]
+        unrelated_index = int(
+            policy_bundle_expectation.get("unrelated_index", -1)
+        )
+        conflicting_index = int(
+            policy_bundle_expectation.get("conflicting_index", -1)
+        )
+        restricted_index = int(
+            policy_bundle_expectation.get("restricted_index", -1)
+        )
+        active_specification_index = int(
+            policy_bundle_expectation.get("active_specification_index", 0)
+        )
+        allowed_marker = str(
+            policy_bundle_expectation.get("allowed_marker", "")
+        )
+        unrelated_marker = str(
+            policy_bundle_expectation.get("unrelated_marker", "")
+        )
+        conflict_private_marker = str(
+            policy_bundle_expectation.get("conflict_private_marker", "")
+        )
+        if (
+            not query
+            or not historical_query
+            or not historical_marker
+            or not allowed_marker
+            or not source_indices
+            or any(index < 0 or index >= len(policy_projects) for index in source_indices)
+            or unrelated_index < 0
+            or unrelated_index >= len(policy_projects)
+            or conflicting_index not in source_indices
+            or restricted_index not in source_indices
+            or active_specification_index < 0
+            or active_specification_index >= len(specification_definitions)
+        ):
+            raise RuntimeError("policy bundle fixture indices/query are invalid")
+
+        source_specification_ids: dict[int, str] = {}
+        source_specification_paths: dict[int, str] = {}
+        source_specification_sources: dict[int, str] = {}
+        for index in source_indices:
+            definitions = [
+                item
+                for item in policy_bundle_definitions[index].get("specifications", [])
+                if isinstance(item, dict)
+            ]
+            if len(definitions) != 1:
+                raise RuntimeError(
+                    "policy bundle fixture requires exactly one Specification per selected source"
+                )
+            resolved = definitions[0].get("resolved_specification_id")
+            if not isinstance(resolved, str):
+                raise RuntimeError(
+                    "policy bundle source Specification has no stable ID"
+                )
+            source_specification_ids[index] = resolved
+            source_specification_paths[index] = str(definitions[0]["path"])
+            source_specification_sources[index] = str(definitions[0]["source"])
+
+        active_specification_id = specification_definitions[
+            active_specification_index
+        ].get("resolved_specification_id")
+        if not isinstance(active_specification_id, str):
+            raise RuntimeError("active policy precedence Specification has no stable ID")
+
+        before = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+        )
+        create_scope = cli_json(
+            [
+                "scope",
+                "create",
+                bundle_kind,
+                f"{bundle_name} scope",
+                *[str(policy_projects[index][0]) for index in source_indices],
+                "--json",
+            ]
+        )
+        if not isinstance(create_scope, dict) or not isinstance(
+            create_scope.get("scope"), dict
+        ):
+            raise RuntimeError("policy bundle parent scope returned no receipt")
+        scope_id = str(create_scope["scope"].get("scopeId", ""))
+        scope_attached = cli_json(
+            ["scope", "attach", scope_id, str(project), "--json"]
+        )
+        scope_only = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+        )
+
+        create_bundle_args = [
+            "policy-bundle",
+            "create",
+            scope_id,
+            bundle_name,
+        ]
+        for index in source_indices:
+            create_bundle_args.extend(
+                [
+                    "--source",
+                    str(policy_projects[index][0]),
+                    source_specification_ids[index],
+                ]
+            )
+        create_bundle_args.append("--json")
+        created_bundle = cli_json(create_bundle_args)
+        if not isinstance(created_bundle, dict) or not isinstance(
+            created_bundle.get("bundle"), dict
+        ):
+            raise RuntimeError("policy bundle create returned no bundle receipt")
+        bundle = created_bundle["bundle"]
+        bundle_id = str(bundle.get("bundleId", ""))
+        listed_bundles = cli_json(["policy-bundle", "list", "--json"])
+        attached_bundle = cli_json(
+            [
+                "policy-bundle",
+                "attach",
+                bundle_id,
+                str(project),
+                "--json",
+            ]
+        )
+        retry_bundle_attach = cli_json(
+            [
+                "policy-bundle",
+                "attach",
+                bundle_id,
+                str(project),
+                "--json",
+            ]
+        )
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+        )
+        inspection = mcp_call(
+            project,
+            "ley_context_pack_inspect",
+            {
+                "task": query,
+                "maxResults": 12,
+                "maxTokens": 3_000,
+                "expectedContextPackId": str(compiled.get("contextPackId", "")),
+            },
+        )
+        compiled_text = json.dumps(compiled, sort_keys=True)
+        inspection_text = json.dumps(inspection, sort_keys=True)
+        listed_text = json.dumps(listed_bundles, sort_keys=True)
+        policies = [
+            item
+            for item in compiled.get("policyBundlePolicies", [])
+            if isinstance(item, dict)
+        ]
+        bundle_exclusions = [
+            item
+            for item in compiled.get("policyBundleExclusions", [])
+            if isinstance(item, dict)
+        ]
+        memory_exclusions = [
+            item for item in compiled.get("exclusions", []) if isinstance(item, dict)
+        ]
+        conflict_specification_id = source_specification_ids[conflicting_index]
+        restricted_specification_id = source_specification_ids[restricted_index]
+        admitted_active_specifications = {
+            str(item.get("specificationId", ""))
+            for item in compiled.get("specifications", [])
+            if isinstance(item, dict)
+        }
+        policy_visible = any(
+            item.get("bundleId") == bundle_id
+            and item.get("specificationId") == restricted_specification_id
+            and item.get("authority") == "human-intent"
+            and item.get("sourceBoundary")
+            == "user-approved-policy-bundle-specification"
+            and allowed_marker in json.dumps(item)
+            for item in policies
+        )
+        active_precedence = any(
+            item.get("bundleId") == bundle_id
+            and item.get("specificationId") == conflict_specification_id
+            and item.get("reason") == "contradicts-active-specification"
+            and active_specification_id
+            in item.get("conflictingSpecificationIds", [])
+            for item in bundle_exclusions
+        )
+        historical_conflict = any(
+            item.get("reason") == "contradicts-human-intent"
+            and active_specification_id in item.get("specificationIds", [])
+            for item in memory_exclusions
+        )
+        bundle_context_visible = any(
+            isinstance(item, dict)
+            and item.get("bundleId") == bundle_id
+            and item.get("scopeId") == scope_id
+            and item.get("name") == bundle_name
+            for item in compiled.get("policyBundles", [])
+        )
+        unrelated_hidden = (
+            not unrelated_marker
+            or unrelated_marker.lower() not in compiled_text.lower()
+        )
+        no_paths = (
+            all(
+                str(path) not in compiled_text
+                and str(path) not in inspection_text
+                and str(path) not in listed_text
+                for pair in policy_projects
+                for path in pair
+            )
+            and str(project) not in compiled_text
+            and str(vault) not in compiled_text
+        )
+        inspector_metadata = any(
+            isinstance(item, dict)
+            and item.get("source") == "policy-bundle-specification"
+            and item.get("bundleId") == bundle_id
+            and item.get("scopeId") == scope_id
+            and item.get("specificationId") == restricted_specification_id
+            for item in inspection.get("includedRecords", [])
+        )
+        inspector_body_hidden = (
+            allowed_marker not in inspection_text
+            and (
+                not conflict_private_marker
+                or conflict_private_marker not in inspection_text
+            )
+        )
+        authority_ok = (
+            not before.get("policyBundles")
+            and not before.get("policyBundlePolicies")
+            and isinstance(scope_attached, dict)
+            and scope_attached.get("created") is True
+            and not scope_only.get("policyBundles")
+            and not scope_only.get("policyBundlePolicies")
+            and created_bundle.get("created") is True
+            and isinstance(attached_bundle, dict)
+            and attached_bundle.get("created") is True
+            and isinstance(retry_bundle_attach, dict)
+            and retry_bundle_attach.get("created") is False
+            and bundle_context_visible
+            and policy_visible
+            and active_specification_id in admitted_active_specifications
+            and active_precedence
+            and historical_conflict
+            and unrelated_hidden
+            and no_paths
+            and compiled.get("policyBundlePrecedence")
+            == "active-project-specification-over-policy-bundle"
+            and compiled.get("authorityPrecedence")
+            == "human-intent-over-historical-memory"
+            and inspection.get("schemaVersion") == 3
+            and inspection.get("matchesExpectedContextPack") is True
+            and inspection.get("policyBundlePrecedence")
+            == "active-project-specification-over-policy-bundle"
+            and inspector_metadata
+            and inspector_body_hidden
+            and int(compiled.get("estimatedTokens", 0))
+            <= int(compiled.get("maxTokens", 0))
+        )
+
+        restricted_project, restricted_vault = policy_projects[restricted_index]
+        run(
+            [
+                "egress",
+                "specification",
+                restricted_specification_id,
+                "local-model-only",
+                str(restricted_project),
+                "--json",
+            ]
+        )
+        restricted_relative_path = source_specification_paths[restricted_index]
+        restricted_source = source_specification_sources[restricted_index]
+        restricted_path = restricted_vault / restricted_relative_path
+        restricted_path.unlink()
+        cloud_restricted = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+        )
+        cloud_restricted_text = json.dumps(cloud_restricted, sort_keys=True)
+        cloud_egress_ok = (
+            allowed_marker not in cloud_restricted_text
+            and any(
+                isinstance(item, dict)
+                and item.get("scopeKind") == "specification"
+                and item.get("scopeId") == restricted_specification_id
+                and item.get("policyOrigin")
+                == "policy-bundle-source-specification"
+                and item.get("policy") == "local-model-only"
+                for item in cloud_restricted.get("egressExclusions", [])
+            )
+            and any(
+                isinstance(item, dict)
+                and item.get("bundleId") == bundle_id
+                and item.get("specificationId") == restricted_specification_id
+                and item.get("reason") == "egress-blocked-specification"
+                for item in cloud_restricted.get("policyBundleExclusions", [])
+            )
+            and int(
+                cloud_restricted.get("egressCoverage", {}).get(
+                    "blockedPolicyBundleSources", 0
+                )
+            )
+            >= 1
+        )
+        restricted_path.parent.mkdir(parents=True, exist_ok=True)
+        restricted_path.write_text(restricted_source, encoding="utf-8")
+        local_flags = ("--egress-target", "local")
+        local_restricted = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+            flags=local_flags,
+        )
+        local_egress_ok = allowed_marker in json.dumps(
+            local_restricted.get("policyBundlePolicies", []), sort_keys=True
+        )
+
+        detached_bundle = cli_json(
+            [
+                "policy-bundle",
+                "detach",
+                bundle_id,
+                str(project),
+                "--json",
+            ]
+        )
+        after = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 12, "maxTokens": 3_000},
+        )
+        after_clean = (
+            not after.get("policyBundles")
+            and not after.get("policyBundlePolicies")
+        )
+        cloud_history = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": historical_query, "maxResults": 8, "maxTokens": 1_500},
+        )
+        cloud_history_text = json.dumps(cloud_history, sort_keys=True)
+        cloud_history_coverage = cloud_history.get("egressCoverage", {})
+        historical_withheld = (
+            historical_marker not in json.dumps(
+                cloud_history.get("items", []), sort_keys=True
+            )
+            and isinstance(cloud_history_coverage, dict)
+            and cloud_history_coverage.get("historicalMemoryWithheld") is True
+            and int(cloud_history_coverage.get("blockedPolicyBundleSources", 0)) >= 1
+            and int(cloud_history_coverage.get("withheldDerivedResults", 0)) >= 1
+            and any(
+                isinstance(item, dict)
+                and item.get("scopeId") == restricted_specification_id
+                and item.get("policyOrigin")
+                == "policy-bundle-source-specification"
+                for item in cloud_history.get("egressExclusions", [])
+            )
+        )
+        historical_reader_error = ""
+        try:
+            mcp_call(
+                project,
+                "ley_project_resume",
+                {"maxSessions": 3, "maxLearnings": 3, "maxCharacters": 8_000},
+            )
+        except RuntimeError as error:
+            historical_reader_error = str(error)
+        historical_reader_blocked = (
+            "historical Ley memory is withheld" in historical_reader_error
+            and historical_marker not in historical_reader_error
+        )
+        local_history = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": historical_query, "maxResults": 8, "maxTokens": 1_500},
+            flags=local_flags,
+        )
+        local_history_ok = historical_marker in json.dumps(
+            local_history.get("items", []), sort_keys=True
+        )
+
+        policy_bundle_ok = (
+            authority_ok
+            and cloud_egress_ok
+            and local_egress_ok
+            and isinstance(detached_bundle, dict)
+            and detached_bundle.get("bundleId") == bundle_id
+            and after_clean
+            and historical_withheld
+            and historical_reader_blocked
+            and local_history_ok
+        )
+        scores["policy_bundle"] = policy_bundle_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)]
+            + [str(path) for pair in policy_projects for path in pair]
+            + ([unrelated_marker] if unrelated_marker else []),
+            [
+                before,
+                scope_only,
+                compiled,
+                inspection,
+                cloud_restricted,
+                after,
+                cloud_history,
+            ],
+        )
+        evidence_text.extend(
+            [
+                before,
+                create_scope,
+                scope_attached,
+                scope_only,
+                created_bundle,
+                listed_bundles,
+                attached_bundle,
+                compiled,
+                inspection,
+                cloud_restricted,
+                local_restricted,
+                detached_bundle,
+                after,
+                cloud_history,
+                local_history,
+            ]
+        )
+        if not policy_bundle_ok:
+            failed_checks = [
+                name
+                for name, passed in [
+                    ("authority", authority_ok),
+                    ("cloud-egress-before-read", cloud_egress_ok),
+                    ("local-egress", local_egress_ok),
+                    ("detach", isinstance(detached_bundle, dict)
+                     and detached_bundle.get("bundleId") == bundle_id),
+                    ("after-clean", after_clean),
+                    ("historical-withheld", historical_withheld),
+                    ("historical-reader-blocked", historical_reader_blocked),
+                    ("local-history", local_history_ok),
+                ]
+                if not passed
+            ]
+            failures.append(
+                "team/organization policy bundle failed: " + ", ".join(failed_checks)
             )
 
     dossier_expectation = scenario.get("expected_topic_dossier")
@@ -3421,7 +3937,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and len(pack_id) == 68
             and int(compiled.get("createdAtUnixMs", 0)) > 0
             and compiled.get("liveSourceChecked") is False
-            and inspection.get("schemaVersion") == 2
+            and inspection.get("schemaVersion") == 3
             and inspection.get("persisted") is False
             and inspection.get("inspectionBasis")
             == "current-recompiled-context-pack-manifest"

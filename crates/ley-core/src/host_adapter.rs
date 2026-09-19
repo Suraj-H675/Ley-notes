@@ -2,9 +2,9 @@ use crate::{
     compile_session_memory, diagnose_project, evaluate_agent_egress, project_resume_context,
     read_session, record_session_prompt, record_session_response, start_session, AgentEgressTarget,
     AgentSession, ContextMountRegistry, EgressPolicyRegistry, KnowledgeScopeRegistry, LeyCoreError,
-    MemoryCompilationState, ProjectResumePack, SessionSource, SessionSourceKind, SessionStatus,
-    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, DEFAULT_MEMORY_COMPILE_RESULTS,
-    MIN_MEMORY_COMPILE_CHARACTERS,
+    MemoryCompilationState, PolicyBundleRegistry, ProjectResumePack, SessionSource,
+    SessionSourceKind, SessionStatus, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
+    DEFAULT_MEMORY_COMPILE_RESULTS, MIN_MEMORY_COMPILE_CHARACTERS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -78,6 +78,7 @@ pub struct HostAgentContextRegistries<'a> {
     pub egress: &'a EgressPolicyRegistry,
     pub mounts: &'a ContextMountRegistry,
     pub knowledge_scopes: &'a KnowledgeScopeRegistry,
+    pub policy_bundles: &'a PolicyBundleRegistry,
 }
 
 pub fn process_host_hook_for_agent_with_registries(
@@ -92,6 +93,7 @@ pub fn process_host_hook_for_agent_with_registries(
         egress: egress_registry,
         mounts: mount_registry,
         knowledge_scopes: knowledge_scope_registry,
+        policy_bundles: policy_bundle_registry,
     } = registries;
     let project_start = project_start.as_ref();
     let vault = vault.as_ref();
@@ -134,7 +136,33 @@ pub fn process_host_hook_for_agent_with_registries(
                     }))
                 },
             )?;
-            if blocked_fine_grained || blocked_mount_source || blocked_scope_source {
+            let blocked_policy_bundle_source = policy_bundle_registry
+                .with_agent_context_sources_locked(
+                    project_start,
+                    &std::collections::BTreeSet::new(),
+                    |sources| {
+                        Ok(sources.historical.iter().any(|source| {
+                            !evaluate_agent_egress(
+                                policies.project_policy(&source.source_project_id),
+                                target,
+                            )
+                            .allowed
+                                || !evaluate_agent_egress(
+                                    policies.specification_policy(
+                                        &source.source_project_id,
+                                        &source.specification_id,
+                                    ),
+                                    target,
+                                )
+                                .allowed
+                        }))
+                    },
+                )?;
+            if blocked_fine_grained
+                || blocked_mount_source
+                || blocked_scope_source
+                || blocked_policy_bundle_source
+            {
                 let session =
                     ensure_host_session(project_start, vault, host, &external_session_id)?;
                 return Ok(HostHookResult {
@@ -722,6 +750,7 @@ mod tests {
         let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
         let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
         let scopes = KnowledgeScopeRegistry::at(config.join("knowledge-scopes-v1.json"));
+        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
         let specification_id = generate_specification_id();
         egress
             .set_specification_policy(
@@ -746,6 +775,7 @@ mod tests {
                 egress: &egress,
                 mounts: &mounts,
                 knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
             },
             AgentEgressTarget::Cloud,
         )
@@ -767,6 +797,7 @@ mod tests {
                 egress: &egress,
                 mounts: &mounts,
                 knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
             },
             AgentEgressTarget::Local,
         )
@@ -792,6 +823,7 @@ mod tests {
                 egress: &egress,
                 mounts: &mounts,
                 knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
             },
             AgentEgressTarget::Cloud,
         )
@@ -844,6 +876,7 @@ mod tests {
         let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
         let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
         let scopes = KnowledgeScopeRegistry::at(config.join("knowledge-scopes-v1.json"));
+        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
         let scope = scopes
             .create(
                 crate::KnowledgeScopeKind::Team,
@@ -875,6 +908,7 @@ mod tests {
                 egress: &egress,
                 mounts: &mounts,
                 knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
             },
             AgentEgressTarget::Cloud,
         )
@@ -891,6 +925,131 @@ mod tests {
                 egress: &egress,
                 mounts: &mounts,
                 knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
+            },
+            AgentEgressTarget::Local,
+        )
+        .unwrap();
+        assert_eq!(local.disposition, HostHookDisposition::ContextLoaded);
+        assert!(local.output.to_string().contains(prior_marker));
+    }
+
+    #[test]
+    fn detached_policy_bundle_source_specification_still_withholds_host_startup_history() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        let source = base.path().join("policy-source");
+        let source_vault = base.path().join("policy-source-vault");
+        let config = base.path().join("config");
+        for path in [&project, &vault, &source, &source_vault, &config] {
+            fs::create_dir(path).unwrap();
+        }
+        fs::write(project.join("README.md"), "# Active\n").unwrap();
+        fs::write(source.join("README.md"), "# Policy source\n").unwrap();
+        fs::write(
+            source_vault.join("Release.md"),
+            "# Release policy\n\nUse signed releases.\n",
+        )
+        .unwrap();
+        initialize_project(&project, Some("Hook active"), CaptureMode::Structured).unwrap();
+        initialize_project(&source, Some("Hook policy source"), CaptureMode::Structured).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let prior_marker = "policy_bundle_derived_host_history_marker";
+        start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "d".repeat(32)),
+                name: "Policy-derived prior work".to_owned(),
+                goal: prior_marker.to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+
+        let bindings = crate::BindingRegistry::at(config.join(crate::BINDING_REGISTRY_FILE));
+        bindings.bind(&project, &vault).unwrap();
+        bindings.bind(&source, &source_vault).unwrap();
+        let specifications =
+            crate::SpecificationRegistry::at(config.join(crate::SPECIFICATION_REGISTRY_FILE));
+        let specification_id = generate_specification_id();
+        specifications
+            .approve(&source, &source_vault, &specification_id, "Release.md")
+            .unwrap();
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
+        let scopes = KnowledgeScopeRegistry::at(config.join("knowledge-scopes-v1.json"));
+        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
+        let scope = scopes
+            .create(
+                crate::KnowledgeScopeKind::Organization,
+                "Release organization",
+                std::slice::from_ref(&source),
+            )
+            .unwrap();
+        scopes.attach(&project, &scope.scope.scope_id).unwrap();
+        let bundle = policy_bundles
+            .create(
+                &scope.scope.scope_id,
+                "Release policy",
+                &[crate::PolicyBundleSourceInput {
+                    source_project: source.clone(),
+                    specification_id: specification_id.clone(),
+                }],
+                &scopes,
+                &specifications,
+            )
+            .unwrap();
+        policy_bundles
+            .attach(&project, &bundle.bundle.bundle_id, &scopes)
+            .unwrap();
+        policy_bundles
+            .detach(&project, &bundle.bundle.bundle_id)
+            .unwrap()
+            .unwrap();
+        egress
+            .set_specification_policy(
+                &source,
+                &specification_id,
+                AgentEgressPolicy::LocalModelOnly,
+            )
+            .unwrap();
+
+        let payload = json!({
+            "session_id": "codex-policy-bundle-history-thread",
+            "cwd": project,
+            "hook_event_name": "SessionStart",
+            "source": "startup"
+        });
+        let cloud = process_host_hook_for_agent_with_registries(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            payload.clone(),
+            HostAgentContextRegistries {
+                egress: &egress,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
+            },
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(cloud.disposition, HostHookDisposition::ContextWithheld);
+        assert!(!cloud.output.to_string().contains(prior_marker));
+
+        let local = process_host_hook_for_agent_with_registries(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            payload,
+            HostAgentContextRegistries {
+                egress: &egress,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
             },
             AgentEgressTarget::Local,
         )

@@ -110,6 +110,52 @@ pub(crate) struct TaskSpecificationScan {
     pub low_relevance_approved: usize,
 }
 
+pub(crate) struct SpecificationAuthoritySnapshot<'a> {
+    approvals: &'a BTreeMap<String, BTreeMap<String, SpecificationApprovalEntry>>,
+}
+
+impl SpecificationAuthoritySnapshot<'_> {
+    pub(crate) fn read_approved_source(
+        &self,
+        project_id: &str,
+        vault: &Path,
+        specification_id: &str,
+    ) -> Result<ApprovedSpecificationSource, LeyCoreError> {
+        validate_project_id(project_id)
+            .map_err(|error| LeyCoreError::InvalidSpecificationRequest(error.to_string()))?;
+        validate_specification_id(specification_id)
+            .map_err(LeyCoreError::InvalidSpecificationRequest)?;
+        let entry = self
+            .approvals
+            .get(project_id)
+            .and_then(|approvals| approvals.get(specification_id))
+            .ok_or_else(|| LeyCoreError::SpecificationNotApproved(specification_id.to_owned()))?;
+        let source = read_stable_specification_bytes(vault, &entry.relative_path)?;
+        let content_hash = specification_content_hash(&source);
+        if content_hash != entry.content_hash {
+            return Err(LeyCoreError::SpecificationApprovalStale {
+                specification_id: specification_id.to_owned(),
+                path: entry.relative_path.clone(),
+            });
+        }
+        let source = String::from_utf8(source).map_err(|_| {
+            LeyCoreError::InvalidSpecificationRequest(
+                "approved Specification Markdown must be valid UTF-8".to_owned(),
+            )
+        })?;
+        Ok(ApprovedSpecificationSource {
+            project_id: project_id.to_owned(),
+            specification_id: specification_id.to_owned(),
+            relative_path: entry.relative_path.clone(),
+            content_hash,
+            approved_at_unix_ms: entry.approved_at_unix_ms,
+            source,
+            source_boundary: "user-approved-specification",
+            authority: "human-intent",
+        })
+    }
+}
+
 pub const DEFAULT_SPECIFICATION_CONTEXT_RESULTS: usize = 8;
 pub const MAX_SPECIFICATION_CONTEXT_RESULTS: usize = 20;
 pub const DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS: usize = 16_000;
@@ -546,7 +592,7 @@ impl SpecificationRegistry {
             vault.as_ref(),
             task,
             None,
-            |scan, _| operation(scan),
+            |scan, _, _| operation(scan),
         )
     }
 
@@ -560,6 +606,7 @@ impl SpecificationRegistry {
         operation: impl FnOnce(
             TaskSpecificationScan,
             Vec<SpecificationEgressExclusion>,
+            &SpecificationAuthoritySnapshot<'_>,
         ) -> Result<T, LeyCoreError>,
     ) -> Result<T, LeyCoreError> {
         self.with_task_scan_policy_locked(
@@ -580,6 +627,7 @@ impl SpecificationRegistry {
         operation: impl FnOnce(
             TaskSpecificationScan,
             Vec<SpecificationEgressExclusion>,
+            &SpecificationAuthoritySnapshot<'_>,
         ) -> Result<T, LeyCoreError>,
     ) -> Result<T, LeyCoreError> {
         let normalized_task = task.trim().to_lowercase();
@@ -695,6 +743,9 @@ impl SpecificationRegistry {
                     })
             });
 
+            let authority_snapshot = SpecificationAuthoritySnapshot {
+                approvals: &document.approvals,
+            };
             operation(
                 TaskSpecificationScan {
                     project_id: project_id.clone(),
@@ -707,6 +758,7 @@ impl SpecificationRegistry {
                     low_relevance_approved,
                 },
                 egress_exclusions,
+                &authority_snapshot,
             )
         })
     }
@@ -1212,7 +1264,7 @@ fn validate_specification_context_limits(
     Ok(())
 }
 
-fn specification_task_terms(query: &str) -> Vec<String> {
+pub(crate) fn specification_task_terms(query: &str) -> Vec<String> {
     const STOPWORDS: &[&str] = &[
         "a",
         "add",

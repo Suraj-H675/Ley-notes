@@ -50,6 +50,8 @@ If the same source is also an explicit Context Mount, the explicit mount wins an
 
 Context Pack Inspector schema v2 includes shared-scope IDs, source IDs, precedence, coverage, exclusions, and included-record metadata while continuing to omit the supplied shared reference bodies.
 
+ADR 0053 later extends the current Inspector contract to schema v3 for Policy Bundle attribution; the schema-v2 statement above records this ADR's original Knowledge Scope slice.
+
 ## Egress and non-laundering
 
 Each shared source inherits its source project's agent-egress ceiling. Ley checks that project policy **before** searching the source project's captured memory. A blocked source contributes no text and cannot steer ranking/admission indirectly.
@@ -71,7 +73,7 @@ Missing projects, changed project identity, and unavailable vault bindings remai
 
 ## Deliberately deferred
 
-This ADR does **not** implement the second half of the roadmap item: reusable team/organization **policy bundles**. It also does not add:
+This ADR deliberately did **not** implement the second half of the roadmap item: reusable team/organization **policy bundles**. That follow-up is now implemented separately by [ADR 0053](0053-explicit-reusable-team-organization-policy-bundles.md), preserving this ADR's original scope and rationale. This ADR still does not add:
 
 - shared writable sessions/learnings or cross-project mutation;
 - remote accounts, synchronization, membership/role management, or collaboration servers;
@@ -79,7 +81,7 @@ This ADR does **not** implement the second half of the roadmap item: reusable te
 - shared Specifications/notes/folders/Canvas bundles beyond captured project-reference scopes;
 - a dedicated desktop scope manager.
 
-Those require separate authority, conflict, UX, synchronization, and evaluation decisions. A future policy-bundle slice should compose this explicit scope model rather than turning retrieved scope content into policy.
+Policy Bundles therefore compose this explicit scope model rather than turning retrieved scope content into policy. Remote collaboration, shared writes, automatic project enumeration, and dedicated desktop scope management remain outside this ADR.
 
 ## Evaluation
 

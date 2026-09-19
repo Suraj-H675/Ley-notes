@@ -27,6 +27,7 @@ mod learning_context;
 mod memory_compiler;
 mod memory_health;
 mod memory_transition;
+mod policy_bundle;
 mod project_activity;
 mod project_catalog;
 mod project_memory_search;
@@ -58,16 +59,17 @@ pub use context_compiler::{
     compile_project_context, compile_project_context_for_agent_with_registries,
     compile_project_context_with_registries, compile_project_context_with_registry,
     AgentContextAuthorities, CompiledContextItem, CompiledContextPack,
-    CompiledMountedReferenceItem, CompiledSharedKnowledgeReference, CompiledSpecificationItem,
-    ContextAdmissionBasis, ContextAuthority, ContextCompileCoverage, ContextCompileLimits,
-    ContextEgressCoverage, ContextEgressExclusion, ContextEgressPolicyOrigin, ContextEvidenceState,
-    ContextExclusion, ContextExclusionReason, ContextExclusionStage, ContextFollowUp,
-    ContextFollowUpKind, ContextGap, ContextGapKind, ContextPremiseAdjudication,
+    CompiledMountedReferenceItem, CompiledPolicyBundleItem, CompiledSharedKnowledgeReference,
+    CompiledSpecificationItem, ContextAdmissionBasis, ContextAuthority, ContextCompileCoverage,
+    ContextCompileLimits, ContextEgressCoverage, ContextEgressExclusion, ContextEgressPolicyOrigin,
+    ContextEvidenceState, ContextExclusion, ContextExclusionReason, ContextExclusionStage,
+    ContextFollowUp, ContextFollowUpKind, ContextGap, ContextGapKind, ContextPremiseAdjudication,
     ContextPremiseState, ContextPremiseWarning, ContextPremiseWarningKind,
     MountedReferenceCoverage, MountedReferenceExclusion, MountedReferenceScope,
-    MountedReferenceScopeState, SharedKnowledgeCoverage, SharedKnowledgeExclusion,
-    SharedKnowledgeScope, SharedKnowledgeSource, SharedKnowledgeSourceState,
-    SpecificationCompileCoverage, SpecificationCompileExclusion,
+    MountedReferenceScopeState, PolicyBundleCompileCoverage, PolicyBundleCompileExclusion,
+    PolicyBundleCompileExclusionReason, PolicyBundleContext, SharedKnowledgeCoverage,
+    SharedKnowledgeExclusion, SharedKnowledgeScope, SharedKnowledgeSource,
+    SharedKnowledgeSourceState, SpecificationCompileCoverage, SpecificationCompileExclusion,
     SpecificationCompileExclusionReason, DEFAULT_CONTEXT_COMPILE_RESULTS,
     DEFAULT_CONTEXT_COMPILE_TOKENS, MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
     MIN_CONTEXT_COMPILE_TOKENS, MIN_SEMANTIC_ADMISSION_SIMILARITY,
@@ -187,6 +189,15 @@ pub use memory_transition::{
     MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM, MAX_MEMORY_TRANSITION_OVERLAPS,
     MAX_MEMORY_TRANSITION_OVERLAP_STATEMENT_CHARACTERS, MAX_MEMORY_TRANSITION_STATEMENT_CHARACTERS,
     MAX_MEMORY_TRANSITION_SUBJECT_CHARACTERS,
+};
+pub use policy_bundle::{
+    validate_policy_bundle_id, PolicyBundle, PolicyBundleAttachment, PolicyBundleAttachmentList,
+    PolicyBundleAttachmentMutation, PolicyBundleAttachmentState, PolicyBundleEgressSource,
+    PolicyBundleEgressSources, PolicyBundleList, PolicyBundleMutation, PolicyBundleRegistry,
+    PolicyBundleSource, PolicyBundleSourceInput, PolicyBundleSourceRef, PolicyBundleSourceStatus,
+    MAX_ATTACHED_POLICY_BUNDLES_PER_PROJECT, MAX_POLICY_BUNDLES,
+    MAX_POLICY_BUNDLE_HISTORY_PER_PROJECT, MAX_POLICY_BUNDLE_SOURCES, POLICY_BUNDLE_REGISTRY_FILE,
+    POLICY_BUNDLE_REGISTRY_SCHEMA_VERSION,
 };
 pub use project_activity::{
     project_activity_view, ProjectActivityCitation, ProjectActivityView, ProjectDecision,
@@ -468,6 +479,12 @@ pub enum LeyCoreError {
     InvalidKnowledgeScopeRequest(String),
     #[error("Ley knowledge scope not found: {0}")]
     KnowledgeScopeNotFound(String),
+    #[error("invalid Ley policy bundle registry: {0}")]
+    InvalidPolicyBundleRegistry(String),
+    #[error("invalid Ley policy bundle request: {0}")]
+    InvalidPolicyBundleRequest(String),
+    #[error("Ley policy bundle not found: {0}")]
+    PolicyBundleNotFound(String),
     #[error("invalid Ley agent egress policy registry: {0}")]
     InvalidEgressPolicyRegistry(String),
     #[error("invalid Ley agent egress policy request: {0}")]

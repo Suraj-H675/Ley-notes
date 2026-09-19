@@ -268,6 +268,18 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             "{}",
             path.display()
         );
+        assert!(
+            skill.contains("policyBundlePrecedence"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("policyBundlePolicies"), "{}", path.display());
+        assert!(
+            skill.contains("policyBundleExclusions"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("ley policy-bundle"), "{}", path.display());
         assert!(skill.contains("local-model-only"), "{}", path.display());
         assert!(skill.contains("confirm-per-use"), "{}", path.display());
         assert!(skill.contains("never-send"), "{}", path.display());

@@ -3,6 +3,7 @@ use crate::{
     ContextCompileCoverage, ContextEgressCoverage, ContextEgressExclusion, ContextExclusion,
     ContextFollowUp, ContextGap, ContextPremiseAdjudication, GraphCitation,
     MountedReferenceCoverage, MountedReferenceExclusion, MountedReferenceScope,
+    PolicyBundleCompileCoverage, PolicyBundleCompileExclusion, PolicyBundleContext,
     ProjectMemoryConflict, ProjectMemoryResultKind, ProjectMemorySearchRetrieval,
     ProjectRevisionFreshness, RevisionApplicability, SharedKnowledgeCoverage,
     SharedKnowledgeExclusion, SharedKnowledgeScope, SpecificationCompileCoverage,
@@ -10,17 +11,18 @@ use crate::{
 };
 use serde::Serialize;
 
-pub const CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION: u32 = 2;
+pub const CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION: u32 = 3;
 
 const INSPECTION_BASIS: &str = "current-recompiled-context-pack-manifest";
 const SOURCE_BOUNDARY: &str = "derived-context-pack-inspection";
 const INSTRUCTION_WARNING: &str = "This Inspector manifest explains one compiled Ley context pack. It does not make stored text authoritative, does not prove live source is unchanged, and does not reconstruct an older pack when the expected contextPackId differs.";
-const PRIVACY_NOTICE: &str = "The Inspector manifest omits included active-project, Specification, mounted-reference, and shared-scope text/excerpts. It exposes only diagnostic metadata already represented by the compiled pack: stable IDs, project-relative citations/paths, mount/scope/source identities, authority/admission reasoning, exclusions, conflicts, retrieval/revision signals, budget composition, coverage, and follow-up handles.";
+const PRIVACY_NOTICE: &str = "The Inspector manifest omits included active-project, Specification, Policy Bundle, mounted-reference, and shared-scope text/excerpts. It exposes only diagnostic metadata already represented by the compiled pack: stable IDs, project-relative citations/paths, bundle/mount/scope/source identities, authority/admission reasoning, exclusions, conflicts, retrieval/revision signals, budget composition, coverage, and follow-up handles.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ContextPackRecordSource {
     Specification,
+    PolicyBundleSpecification,
     ActiveProjectMemory,
     MountedReference,
     SharedKnowledgeReference,
@@ -39,6 +41,8 @@ pub struct ContextPackIncludedRecord {
     pub relative_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mount_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -74,6 +78,7 @@ pub struct ContextPackBudgetBreakdown {
     pub max_tokens: usize,
     pub estimated_tokens: usize,
     pub specification_tokens: usize,
+    pub policy_bundle_tokens: usize,
     pub active_project_item_tokens: usize,
     pub mounted_reference_tokens: usize,
     pub shared_knowledge_reference_tokens: usize,
@@ -103,10 +108,12 @@ pub struct ContextPackInspection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub egress_target: Option<AgentEgressTarget>,
     pub authority_precedence: &'static str,
+    pub policy_bundle_precedence: &'static str,
     pub reference_precedence: &'static str,
     pub shared_knowledge_precedence: &'static str,
     pub included_records: Vec<ContextPackIncludedRecord>,
     pub specification_exclusions: Vec<SpecificationCompileExclusion>,
+    pub policy_bundle_exclusions: Vec<PolicyBundleCompileExclusion>,
     pub active_project_exclusions: Vec<ContextExclusion>,
     pub mounted_reference_exclusions: Vec<MountedReferenceExclusion>,
     pub shared_knowledge_exclusions: Vec<SharedKnowledgeExclusion>,
@@ -119,11 +126,13 @@ pub struct ContextPackInspection {
     pub budget: ContextPackBudgetBreakdown,
     pub coverage: ContextCompileCoverage,
     pub specification_coverage: SpecificationCompileCoverage,
+    pub policy_bundle_coverage: PolicyBundleCompileCoverage,
     pub mounted_reference_coverage: MountedReferenceCoverage,
     pub shared_knowledge_coverage: SharedKnowledgeCoverage,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub egress_coverage: Option<ContextEgressCoverage>,
     pub mounted_reference_scopes: Vec<MountedReferenceScope>,
+    pub policy_bundles: Vec<PolicyBundleContext>,
     pub shared_knowledge_scopes: Vec<SharedKnowledgeScope>,
     pub follow_ups: Vec<ContextFollowUp>,
     pub live_source_checked: bool,
@@ -139,6 +148,7 @@ pub fn inspect_context_pack(
     let mut included_records = Vec::with_capacity(
         pack.specifications
             .len()
+            .saturating_add(pack.policy_bundle_policies.len())
             .saturating_add(pack.items.len())
             .saturating_add(pack.mounted_references.len())
             .saturating_add(pack.shared_knowledge_references.len()),
@@ -151,6 +161,7 @@ pub fn inspect_context_pack(
             specification_id: Some(specification.specification_id.clone()),
             relative_path: Some(specification.relative_path.clone()),
             content_hash: Some(specification.content_hash.clone()),
+            bundle_id: None,
             mount_id: None,
             scope_id: None,
             source_project_id: None,
@@ -172,6 +183,36 @@ pub fn inspect_context_pack(
             estimated_tokens: specification.estimated_tokens,
         });
     }
+    for policy in &pack.policy_bundle_policies {
+        included_records.push(ContextPackIncludedRecord {
+            source: ContextPackRecordSource::PolicyBundleSpecification,
+            entity_id: policy.specification_id.clone(),
+            kind: None,
+            specification_id: Some(policy.specification_id.clone()),
+            relative_path: Some(policy.relative_path.clone()),
+            content_hash: Some(policy.content_hash.clone()),
+            bundle_id: Some(policy.bundle_id.clone()),
+            mount_id: None,
+            scope_id: Some(policy.scope_id.clone()),
+            source_project_id: Some(policy.source_project_id.clone()),
+            session_id: None,
+            learning_id: None,
+            citation: None,
+            authority: policy.authority.to_owned(),
+            source_authority: None,
+            admission_basis: None,
+            inclusion_reason: if policy.exact_match {
+                "approved-policy-bundle-specification-exact-task-match".to_owned()
+            } else {
+                "approved-policy-bundle-specification-task-relevant".to_owned()
+            },
+            relevance_score: Some(policy.relevance_score),
+            exact_match: Some(policy.exact_match),
+            trusted_for_reuse: None,
+            revision_applicability: None,
+            estimated_tokens: policy.estimated_tokens,
+        });
+    }
     for item in &pack.items {
         included_records.push(ContextPackIncludedRecord {
             source: ContextPackRecordSource::ActiveProjectMemory,
@@ -180,6 +221,7 @@ pub fn inspect_context_pack(
             specification_id: None,
             relative_path: None,
             content_hash: None,
+            bundle_id: None,
             mount_id: None,
             scope_id: None,
             source_project_id: None,
@@ -209,6 +251,7 @@ pub fn inspect_context_pack(
             specification_id: None,
             relative_path: None,
             content_hash: None,
+            bundle_id: None,
             mount_id: Some(item.mount_id.clone()),
             scope_id: None,
             source_project_id: Some(item.source_project_id.clone()),
@@ -238,6 +281,7 @@ pub fn inspect_context_pack(
             specification_id: None,
             relative_path: None,
             content_hash: None,
+            bundle_id: None,
             mount_id: None,
             scope_id: Some(item.scope_id.clone()),
             source_project_id: Some(item.source_project_id.clone()),
@@ -265,6 +309,11 @@ pub fn inspect_context_pack(
         .iter()
         .map(|item| item.estimated_tokens)
         .sum::<usize>();
+    let policy_bundle_tokens = pack
+        .policy_bundle_policies
+        .iter()
+        .map(|item| item.estimated_tokens)
+        .sum::<usize>();
     let active_project_item_tokens = pack
         .items
         .iter()
@@ -281,6 +330,7 @@ pub fn inspect_context_pack(
         .map(|item| item.estimated_tokens)
         .sum::<usize>();
     let known_item_tokens = specification_tokens
+        .saturating_add(policy_bundle_tokens)
         .saturating_add(active_project_item_tokens)
         .saturating_add(mounted_reference_tokens)
         .saturating_add(shared_knowledge_reference_tokens);
@@ -292,6 +342,10 @@ pub fn inspect_context_pack(
         || pack.coverage.omitted_follow_ups > 0
         || pack.specification_coverage.omitted_specifications > 0
         || pack.specification_coverage.omitted_exclusions > 0
+        || pack.policy_bundle_coverage.omitted_bundles > 0
+        || pack.policy_bundle_coverage.omitted_exclusions > 0
+        || pack.policy_bundle_coverage.omitted_by_result_limit > 0
+        || pack.policy_bundle_coverage.omitted_by_token_budget > 0
         || pack.mounted_reference_coverage.omitted_scopes > 0
         || pack.mounted_reference_coverage.omitted_exclusions > 0
         || pack.mounted_reference_coverage.omitted_by_result_limit > 0
@@ -333,10 +387,12 @@ pub fn inspect_context_pack(
         task: pack.task.clone(),
         egress_target: pack.egress_target,
         authority_precedence: pack.authority_precedence,
+        policy_bundle_precedence: pack.policy_bundle_precedence,
         reference_precedence: pack.reference_precedence,
         shared_knowledge_precedence: pack.shared_knowledge_precedence,
         included_records,
         specification_exclusions: pack.specification_exclusions.clone(),
+        policy_bundle_exclusions: pack.policy_bundle_exclusions.clone(),
         active_project_exclusions: pack.exclusions.clone(),
         mounted_reference_exclusions: pack.mounted_reference_exclusions.clone(),
         shared_knowledge_exclusions: pack.shared_knowledge_exclusions.clone(),
@@ -350,6 +406,7 @@ pub fn inspect_context_pack(
             max_tokens: pack.max_tokens,
             estimated_tokens: pack.estimated_tokens,
             specification_tokens,
+            policy_bundle_tokens,
             active_project_item_tokens,
             mounted_reference_tokens,
             shared_knowledge_reference_tokens,
@@ -358,10 +415,12 @@ pub fn inspect_context_pack(
         },
         coverage: pack.coverage.clone(),
         specification_coverage: pack.specification_coverage.clone(),
+        policy_bundle_coverage: pack.policy_bundle_coverage.clone(),
         mounted_reference_coverage: pack.mounted_reference_coverage.clone(),
         shared_knowledge_coverage: pack.shared_knowledge_coverage.clone(),
         egress_coverage: pack.egress_coverage.clone(),
         mounted_reference_scopes: pack.mounted_reference_scopes.clone(),
+        policy_bundles: pack.policy_bundles.clone(),
         shared_knowledge_scopes: pack.shared_knowledge_scopes.clone(),
         follow_ups: pack.follow_ups.clone(),
         live_source_checked: pack.live_source_checked,
@@ -391,8 +450,12 @@ fn admission_basis_label(basis: ContextAdmissionBasis) -> &'static str {
 mod tests {
     use super::*;
     use crate::{
-        compile_project_context_with_registries, ingest_project, initialize_project, CaptureMode,
-        ContextCompileLimits, ContextMountRegistry, SpecificationRegistry,
+        compile_project_context_for_agent_with_registries, compile_project_context_with_registries,
+        ingest_project, initialize_project, AgentContextAuthorities, AgentEgressTarget,
+        BindingRegistry, CaptureMode, ContextCompileLimits, ContextMountRegistry,
+        EgressPolicyRegistry, KnowledgeScopeKind, KnowledgeScopeRegistry, PolicyBundleRegistry,
+        PolicyBundleSourceInput, SpecificationRegistry, BINDING_REGISTRY_FILE,
+        CONTEXT_MOUNT_REGISTRY_FILE, KNOWLEDGE_SCOPE_REGISTRY_FILE,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -463,6 +526,119 @@ mod tests {
         assert!(!serialized.contains("inspector_private_body_marker_7d91"));
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));
+    }
+
+    #[test]
+    fn inspector_attributes_policy_bundle_without_copying_policy_body_or_private_paths() {
+        let root = tempdir().unwrap();
+        let config = root.path().join("config");
+        let active = root.path().join("active");
+        let active_vault = root.path().join("active-vault");
+        let source = root.path().join("source");
+        let source_vault = root.path().join("source-vault");
+        for path in [&config, &active, &active_vault, &source, &source_vault] {
+            fs::create_dir_all(path).unwrap();
+        }
+        initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
+        initialize_project(&source, Some("Policy source"), CaptureMode::Structured).unwrap();
+        fs::write(active.join("README.md"), "inspector policy baseline\n").unwrap();
+        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
+        bindings.bind(&active, &active_vault).unwrap();
+        bindings.bind(&source, &source_vault).unwrap();
+        ingest_project(&active, &active_vault).unwrap();
+        fs::create_dir_all(source_vault.join("Specs")).unwrap();
+        let private_policy_marker = "inspector_policy_body_marker_49f1";
+        fs::write(
+            source_vault.join("Specs/Release.md"),
+            format!("# Release policy\n\n{private_policy_marker} signed release process\n"),
+        )
+        .unwrap();
+
+        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let source_specification_id = crate::generate_specification_id();
+        specifications
+            .approve(
+                &source,
+                &source_vault,
+                &source_specification_id,
+                "Specs/Release.md",
+            )
+            .unwrap();
+        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
+        let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
+        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let scope = scopes
+            .create(
+                KnowledgeScopeKind::Team,
+                "Release team",
+                std::slice::from_ref(&source),
+            )
+            .unwrap();
+        scopes.attach(&active, &scope.scope.scope_id).unwrap();
+        let bundle = policy_bundles
+            .create(
+                &scope.scope.scope_id,
+                "Release policy",
+                &[PolicyBundleSourceInput {
+                    source_project: source.clone(),
+                    specification_id: source_specification_id.clone(),
+                }],
+                &scopes,
+                &specifications,
+            )
+            .unwrap();
+        policy_bundles
+            .attach(&active, &bundle.bundle.bundle_id, &scopes)
+            .unwrap();
+
+        let pack = compile_project_context_for_agent_with_registries(
+            &active,
+            &active_vault,
+            "signed release process",
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 2_000,
+            },
+            AgentContextAuthorities {
+                specifications: &specifications,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
+                egress: &egress,
+            },
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(pack.policy_bundle_policies.len(), 1);
+        assert!(pack.policy_bundle_policies[0]
+            .source
+            .contains(private_policy_marker));
+
+        let inspection = inspect_context_pack(&pack, Some(&pack.context_pack_id));
+        assert_eq!(inspection.schema_version, 3);
+        assert_eq!(inspection.policy_bundles.len(), 1);
+        assert_eq!(inspection.policy_bundle_coverage.returned_policies, 1);
+        assert!(inspection.included_records.iter().any(|record| {
+            record.source == ContextPackRecordSource::PolicyBundleSpecification
+                && record.bundle_id.as_deref() == Some(bundle.bundle.bundle_id.as_str())
+                && record.scope_id.as_deref() == Some(scope.scope.scope_id.as_str())
+                && record.source_project_id.as_deref()
+                    == Some(bundle.bundle.sources[0].source_project_id.as_str())
+                && record.specification_id.as_deref() == Some(source_specification_id.as_str())
+                && record.relative_path.as_deref() == Some("Specs/Release.md")
+                && record.content_hash.as_deref()
+                    == Some(bundle.bundle.sources[0].content_hash.as_str())
+                && record.authority == "human-intent"
+        }));
+        assert!(inspection.budget.policy_bundle_tokens > 0);
+
+        let serialized = serde_json::to_string(&inspection).unwrap();
+        assert!(!serialized.contains(private_policy_marker));
+        assert!(!serialized.contains(active.to_str().unwrap()));
+        assert!(!serialized.contains(source.to_str().unwrap()));
+        assert!(!serialized.contains(active_vault.to_str().unwrap()));
+        assert!(!serialized.contains(source_vault.to_str().unwrap()));
     }
 
     #[test]

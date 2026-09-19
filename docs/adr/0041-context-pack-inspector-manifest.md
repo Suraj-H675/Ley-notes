@@ -6,6 +6,8 @@ Accepted.
 
 Extended by ADR 0052: Inspector schema v2 adds reusable team/organization Knowledge Scope attribution without copying shared reference bodies.
 
+Extended by ADR 0053: Inspector schema v3 adds Policy Bundle precedence, bundle/scope/source/Specification attribution, exclusions, coverage, and token accounting without copying bundled policy bodies.
+
 ## Context
 
 Ley's third P1 roadmap item is a Context Pack Inspector. The Context Compiler already exposes most of the raw diagnostics needed to understand a pack—authority, admission basis, exclusions, premise warnings, conflicts, retrieval mode, revision freshness, budgets, omissions, mounts, egress exclusions, and follow-up handles—but there is no stable identity for one compiled pack and no compact manifest that answers “why was this supplied?” without copying all supplied text again.
