@@ -179,8 +179,49 @@ Supply `--request-id req_01234567890123456789012345678901` when another process 
 
 Generated request IDs are safe for interactive commands. Host adapters should persist their request ID until they receive a successful response.
 
+## Import selected historical Codex message history
+
+Historical import is explicit and separate from automatic lifecycle capture:
+
+```bash
+ley session import codex-history /path/to/project \
+  --source /path/to/history.jsonl \
+  --host-session 11111111-1111-4111-8111-111111111111 \
+  --json
+```
+
+The first supported format is Codex's global message-history JSONL: one object per line with
+`session_id`, Unix-second `ts`, and user-message `text`. The user supplies both the file
+and the exact session UUID. Ley does not search `~/.codex`, does not follow a supplied
+symlink, and does not treat Codex rollout/session transcript JSONL as this format.
+
+The import is intentionally narrow:
+
+- at most 64 MiB of source file, 100,000 JSONL records, 1 MiB per line, and 512 messages for the selected session;
+- selected user messages only — assistant responses, tools, hidden reasoning, model identity, and rollout metadata are not reconstructed;
+- an opaque `hsi_` source reference is retained instead of the raw host UUID or source path;
+- original message timestamps are retained as `sourceRecordedAtUnixMs`;
+- Structured/Full Evidence apply normal per-turn redaction and retention; Minimal records body-free imported observations;
+- imported turns are schema-v7 events with `origin: import` and `sourceBoundary: untrusted-imported-host-history`;
+- the resulting Ley session is completed immediately and reports `liveSourceChecked: false`.
+
+Re-importing the exact same selected-message snapshot is an idempotent replay. If the selected
+Codex history changed, Ley creates a new immutable imported Ley session while preserving the
+same opaque source reference. Deleting or changing the external history file later does not
+mutate an already imported snapshot.
+
+Imported sessions do not become automatic Resume context and are not flagged by Memory Health
+as a missed-checkpoint backlog. Use explicit session list/show/turn inspection, project-memory
+search, or the read-only Memory Compiler when the history is relevant. Memory Compiler keeps
+the imported-history boundary/source timestamps and cannot checkpoint a completed imported
+session automatically.
+
+The existing `session erase` workflow applies to an imported Ley session exactly like any other
+private session memory. Removing the external Codex source file itself is outside Ley's erasure
+authority.
+
 ## Understand the privacy boundary
 
 Ley applies local credential-pattern redaction before it writes session text. It also bounds event size and collection counts, rejects symlinks and malformed history, and serializes concurrent writers.
 
-Redaction cannot guarantee that arbitrary private text is safe. Use Minimal mode when automatic prompt/response bodies should not be retained. Structured and Full Evidence keep only bounded, pattern-redacted turn bodies; neither reads a complete transcript automatically. Ley does not send session data anywhere, but a cloud agent can receive context that you intentionally retrieve through that agent.
+Redaction cannot guarantee that arbitrary private text is safe. Use Minimal mode when automatic prompt/response bodies or explicitly imported historical message bodies should not be retained. Structured and Full Evidence keep only bounded, pattern-redacted turn bodies. Lifecycle adapters still never read a complete transcript automatically; the separate Codex history importer reads only the explicitly selected bounded message-history source described above. Ley does not send session data anywhere, but a cloud agent can receive context that you intentionally retrieve through that agent.

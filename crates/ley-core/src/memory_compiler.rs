@@ -39,6 +39,8 @@ pub struct MemoryCompilationEvidence {
     pub event_id: String,
     pub sequence: u64,
     pub recorded_at_unix_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_recorded_at_unix_ms: Option<u64>,
     pub kind: MemoryCompilationEvidenceKind,
     pub origin: TurnEvidenceOrigin,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -304,6 +306,7 @@ fn compile_evidence(
         event_id: turn.event_id.clone(),
         sequence: turn.sequence,
         recorded_at_unix_ms: turn.recorded_at_unix_ms,
+        source_recorded_at_unix_ms: turn.source_recorded_at_unix_ms,
         kind,
         origin: turn.origin,
         host: turn.host.clone(),
@@ -315,9 +318,10 @@ fn compile_evidence(
         paired_within_window: is_paired(kind, turn, prompt_refs, response_refs),
         truncated_at_capture: turn.truncated,
         truncated_for_compilation: text.is_some_and(|(_, truncated)| truncated),
-        source_boundary: match kind {
-            MemoryCompilationEvidenceKind::UserPrompt => "untrusted-user-prompt",
-            MemoryCompilationEvidenceKind::AssistantResponse => "untrusted-agent-output",
+        source_boundary: match (kind, turn.origin) {
+            (_, TurnEvidenceOrigin::Import) => "untrusted-imported-host-history",
+            (MemoryCompilationEvidenceKind::UserPrompt, _) => "untrusted-user-prompt",
+            (MemoryCompilationEvidenceKind::AssistantResponse, _) => "untrusted-agent-output",
         },
     }
 }

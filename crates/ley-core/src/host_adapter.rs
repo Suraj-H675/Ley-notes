@@ -349,6 +349,7 @@ fn ensure_host_session(
                 // during one host thread. Keeping the start payload stable is
                 // required for crash-safe replay.
                 agent: None,
+                source_reference: None,
             },
         },
     )?;

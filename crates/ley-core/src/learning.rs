@@ -2554,6 +2554,7 @@ mod tests {
                     kind: SessionSourceKind::HostHook,
                     host: Some("codex".to_owned()),
                     agent: Some("gpt-5".to_owned()),
+                    source_reference: None,
                 },
             },
         )
@@ -2629,6 +2630,7 @@ mod tests {
                     kind: SessionSourceKind::HostHook,
                     host: Some("codex".to_owned()),
                     agent: Some("gpt-5".to_owned()),
+                    source_reference: None,
                 },
             },
         )
@@ -2709,6 +2711,7 @@ mod tests {
                     kind: SessionSourceKind::HostHook,
                     host: Some("claude-code".to_owned()),
                     agent: Some("claude".to_owned()),
+                    source_reference: None,
                 },
             },
         )
@@ -2855,6 +2858,7 @@ mod tests {
                     kind: SessionSourceKind::HostHook,
                     host: Some("codex".to_owned()),
                     agent: Some("gpt-5".to_owned()),
+                    source_reference: None,
                 },
             },
         )

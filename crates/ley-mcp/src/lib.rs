@@ -2547,6 +2547,7 @@ impl LeyMcpServer {
                         kind: SessionSourceKind::Mcp,
                         host: params.host,
                         agent: params.agent,
+                        source_reference: None,
                     },
                 },
             )

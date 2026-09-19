@@ -23,12 +23,19 @@ The equivalent default MCP tool is `ley_project_resume`. It is read-only and req
 Normal resume context does not include:
 
 - complete transcripts or every historical checkpoint;
+- explicitly imported historical-host sessions;
 - tentative, contested, rejected, superseded, or stale lessons;
 - previously trusted lessons whose cited source changed;
 - user-confirmed lessons with no artifact citation;
 - live filesystem claims.
 
 Use `ley_session_get`, `ley_learning_get`, project search, graph traversal, and cited evidence reads only when the task needs more detail.
+
+`totalSessions` still counts retained imported sessions, while
+`excludedImportedSessions` reports how many were deliberately kept out of the automatic
+resume selection. This prevents an old host history snapshot imported today from masquerading
+as recent work. Imported sessions remain available through explicit session list/show/turn
+inspection and project-memory search.
 
 `liveSourceChecked: false` means the pack describes the latest approved ingestion, not necessarily the current working tree. Inspect live files through the current workspace before editing, and rerun `ley ingest` when the durable snapshot should advance.
 

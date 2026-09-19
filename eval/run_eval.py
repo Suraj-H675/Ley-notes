@@ -66,6 +66,7 @@ METRIC_NAMES = (
     "multimodal_evidence",
     "knowledge_scope",
     "policy_bundle",
+    "historical_host_import",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -540,6 +541,28 @@ P2_CAPABILITY_COVERAGE = {
         "regression": (
             "team-organization-policy-bundle",
             "policy_bundle",
+            "truthy",
+        ),
+    },
+    "explicit-historical-host-import": {
+        "adversarial": (
+            "explicit-codex-message-history-import",
+            "historical_host_import",
+            "truthy",
+        ),
+        "downstream": (
+            "explicit-codex-message-history-import",
+            "historical_host_import",
+            "truthy",
+        ),
+        "privacy": (
+            "explicit-codex-message-history-import",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "explicit-codex-message-history-import",
+            "historical_host_import",
             "truthy",
         ),
     },
@@ -3201,6 +3224,380 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             ]
             failures.append(
                 "team/organization policy bundle failed: " + ", ".join(failed_checks)
+            )
+
+    historical_import_expectation = scenario.get("expected_historical_host_import")
+    if isinstance(historical_import_expectation, dict):
+        selected_session_id = str(
+            historical_import_expectation.get("selected_session_id", "")
+        )
+        unrelated_session_id = str(
+            historical_import_expectation.get("unrelated_session_id", "")
+        )
+        selected_markers = [
+            str(value)
+            for value in historical_import_expectation.get("selected_markers", [])
+        ]
+        unrelated_marker = str(
+            historical_import_expectation.get("unrelated_marker", "")
+        )
+        secret_marker = str(
+            historical_import_expectation.get("secret_marker", "")
+        )
+        changed_marker = str(
+            historical_import_expectation.get("changed_marker", "")
+        )
+        source_timestamps = [
+            int(value)
+            for value in historical_import_expectation.get(
+                "source_timestamps", []
+            )
+        ]
+        if (
+            not selected_session_id
+            or not unrelated_session_id
+            or len(selected_markers) != 2
+            or len(source_timestamps) != 2
+            or not unrelated_marker
+            or not secret_marker
+            or not changed_marker
+        ):
+            raise RuntimeError("historical host import fixture is incomplete")
+
+        history_path = base_dir / "codex-history.jsonl"
+        history_rows = [
+            {
+                "session_id": unrelated_session_id,
+                "ts": source_timestamps[0] - 1,
+                "text": unrelated_marker,
+            },
+            {
+                "session_id": selected_session_id,
+                "ts": source_timestamps[0],
+                "text": f"{selected_markers[0]} api_key={secret_marker}",
+            },
+            {
+                "session_id": selected_session_id,
+                "ts": source_timestamps[1],
+                "text": selected_markers[1],
+            },
+        ]
+        history_path.write_text(
+            "".join(
+                json.dumps(row, separators=(",", ":")) + "\n"
+                for row in history_rows
+            ),
+            encoding="utf-8",
+        )
+
+        before_resume = cli_json(["resume", str(project), "--json"])
+        imported = cli_json(
+            [
+                "session",
+                "import",
+                "codex-history",
+                str(project),
+                "--source",
+                str(history_path),
+                "--host-session",
+                selected_session_id,
+                "--json",
+            ]
+        )
+        if not isinstance(imported, dict):
+            raise RuntimeError("historical host import returned no receipt")
+        imported_session_id = str(imported.get("sessionId", ""))
+        source_reference = str(imported.get("sourceReference", ""))
+        session_context = cli_json(
+            [
+                "session",
+                "show",
+                imported_session_id,
+                str(project),
+                "--json",
+            ]
+        )
+        turns = cli_json(
+            [
+                "session",
+                "turns",
+                imported_session_id,
+                str(project),
+                "--max-results",
+                "20",
+                "--max-characters",
+                "12000",
+                "--json",
+            ]
+        )
+        memory_compilation = mcp_call(
+            project,
+            "ley_session_memory_compile",
+            {
+                "sessionId": imported_session_id,
+                "maxResults": 20,
+                "maxCharacters": 12000,
+            },
+        )
+        resume = cli_json(["resume", str(project), "--json"])
+        search = cli_json(
+            [
+                "search",
+                "Imported Codex history",
+                str(project),
+                "--max-results",
+                "8",
+                "--max-tokens",
+                "1500",
+                "--json",
+            ]
+        )
+        retry = cli_json(
+            [
+                "session",
+                "import",
+                "codex-history",
+                str(project),
+                "--source",
+                str(history_path),
+                "--host-session",
+                selected_session_id,
+                "--json",
+            ]
+        )
+
+        history_rows.append(
+            {
+                "session_id": selected_session_id,
+                "ts": source_timestamps[1] + 1,
+                "text": changed_marker,
+            }
+        )
+        history_path.write_text(
+            "".join(
+                json.dumps(row, separators=(",", ":")) + "\n"
+                for row in history_rows
+            ),
+            encoding="utf-8",
+        )
+        changed_import = cli_json(
+            [
+                "session",
+                "import",
+                "codex-history",
+                str(project),
+                "--source",
+                str(history_path),
+                "--host-session",
+                selected_session_id,
+                "--json",
+            ]
+        )
+        changed_session_id = (
+            str(changed_import.get("sessionId", ""))
+            if isinstance(changed_import, dict)
+            else ""
+        )
+        history_path.unlink()
+        changed_turns_after_delete = cli_json(
+            [
+                "session",
+                "turns",
+                changed_session_id,
+                str(project),
+                "--max-results",
+                "20",
+                "--max-characters",
+                "12000",
+                "--json",
+            ]
+        )
+
+        import_shape_ok = (
+            imported.get("schemaVersion") == 1
+            and imported.get("host") == "codex"
+            and imported.get("sessionSourceKind") == "import"
+            and imported.get("sourceKind") == "codex-message-history"
+            and imported.get("matchedPrompts") == 2
+            and imported.get("capturedPrompts") == 2
+            and imported.get("assistantMessagesImported") == 0
+            and imported.get("replayed") is False
+            and imported.get("sourcePathRetained") is False
+            and imported.get("rawHostSessionIdRetained") is False
+            and imported.get("liveSourceChecked") is False
+            and imported.get("authority") == "untrusted-historical-evidence"
+            and source_reference.startswith("hsi_")
+            and imported_session_id.startswith("ses_")
+        )
+        expected_source_ms = [value * 1000 for value in source_timestamps]
+        session_source_ok = (
+            isinstance(session_context, dict)
+            and session_context.get("schemaVersion") == 7
+            and session_context.get("status") == "completed"
+            and session_context.get("promptCount") == 2
+            and session_context.get("responseCount") == 0
+            and isinstance(session_context.get("source"), dict)
+            and session_context["source"].get("kind") == "import"
+            and session_context["source"].get("host") == "codex"
+            and session_context["source"].get("sourceReference")
+            == source_reference
+            and session_context["source"].get("agent") is None
+        )
+        returned_turns = (
+            turns.get("turns", []) if isinstance(turns, dict) else []
+        )
+        turns_ok = (
+            isinstance(turns, dict)
+            and turns.get("schemaVersion") == 7
+            and turns.get("promptCount") == 2
+            and turns.get("responseCount") == 0
+            and turns.get("retainedTurnCount") == 2
+            and turns.get("liveSourceChecked") is False
+            and len(returned_turns) == 2
+            and all(
+                isinstance(turn, dict)
+                and turn.get("origin") == "import"
+                and turn.get("host") == "codex"
+                and turn.get("sourceBoundary")
+                == "untrusted-imported-host-history"
+                for turn in returned_turns
+            )
+            and [
+                int(turn.get("sourceRecordedAtUnixMs", 0))
+                for turn in returned_turns
+                if isinstance(turn, dict)
+            ]
+            == expected_source_ms
+            and all(
+                marker in json.dumps(returned_turns, sort_keys=True)
+                for marker in selected_markers
+            )
+        )
+        compilation_evidence = (
+            memory_compilation.get("evidence", [])
+            if isinstance(memory_compilation, dict)
+            else []
+        )
+        memory_compiler_ok = (
+            isinstance(memory_compilation, dict)
+            and memory_compilation.get("sessionId") == imported_session_id
+            and memory_compilation.get("canCheckpoint") is False
+            and memory_compilation.get("returnedEvidence") == 2
+            and memory_compilation.get("liveSourceChecked") is False
+            and len(compilation_evidence) == 2
+            and all(
+                isinstance(item, dict)
+                and item.get("origin") == "import"
+                and item.get("sourceBoundary")
+                == "untrusted-imported-host-history"
+                for item in compilation_evidence
+            )
+            and [
+                int(item.get("sourceRecordedAtUnixMs", 0))
+                for item in compilation_evidence
+                if isinstance(item, dict)
+            ]
+            == expected_source_ms
+        )
+        resume_ok = (
+            isinstance(before_resume, dict)
+            and before_resume.get("totalSessions") == 0
+            and isinstance(resume, dict)
+            and resume.get("totalSessions") == 1
+            and resume.get("excludedImportedSessions") == 1
+            and resume.get("sessions") == []
+        )
+        search_results = (
+            search.get("results", []) if isinstance(search, dict) else []
+        )
+        historical_search_ok = any(
+            isinstance(item, dict)
+            and item.get("kind") == "session"
+            and item.get("entityId") == imported_session_id
+            and item.get("updatedAtUnixMs") == expected_source_ms[-1]
+            for item in search_results
+        )
+        replay_ok = (
+            isinstance(retry, dict)
+            and retry.get("replayed") is True
+            and retry.get("sessionId") == imported_session_id
+            and retry.get("sourceReference") == source_reference
+        )
+        changed_snapshot_ok = (
+            isinstance(changed_import, dict)
+            and changed_import.get("replayed") is False
+            and changed_import.get("sessionId") != imported_session_id
+            and changed_import.get("sourceReference") == source_reference
+            and changed_import.get("matchedPrompts") == 3
+            and isinstance(changed_turns_after_delete, dict)
+            and changed_turns_after_delete.get("promptCount") == 3
+            and changed_turns_after_delete.get("responseCount") == 0
+            and changed_turns_after_delete.get("liveSourceChecked") is False
+            and changed_marker
+            in json.dumps(
+                changed_turns_after_delete.get("turns", []), sort_keys=True
+            )
+        )
+        observable_outputs = [
+            imported,
+            session_context,
+            turns,
+            memory_compilation,
+            resume,
+            search,
+            retry,
+            changed_import,
+            changed_turns_after_delete,
+        ]
+        privacy_rate = privacy_violation_rate(
+            [
+                str(history_path),
+                selected_session_id,
+                unrelated_session_id,
+                unrelated_marker,
+                secret_marker,
+            ],
+            observable_outputs,
+        )
+        history_text = json.dumps(observable_outputs, sort_keys=True)
+        privacy_ok = (
+            privacy_rate == 0.0
+            and unrelated_marker not in history_text
+            and secret_marker not in history_text
+        )
+        historical_host_import_ok = (
+            import_shape_ok
+            and session_source_ok
+            and turns_ok
+            and memory_compiler_ok
+            and resume_ok
+            and historical_search_ok
+            and replay_ok
+            and changed_snapshot_ok
+            and privacy_ok
+        )
+        scores["historical_host_import"] = historical_host_import_ok
+        scores["privacy_violation_rate"] = privacy_rate
+        evidence_text.extend(observable_outputs)
+        if not historical_host_import_ok:
+            failed_checks = [
+                name
+                for name, passed in [
+                    ("import-shape", import_shape_ok),
+                    ("session-source", session_source_ok),
+                    ("turns", turns_ok),
+                    ("memory-compiler", memory_compiler_ok),
+                    ("resume-exclusion", resume_ok),
+                    ("historical-search-time", historical_search_ok),
+                    ("idempotent-replay", replay_ok),
+                    ("immutable-changed-snapshot", changed_snapshot_ok),
+                    ("privacy", privacy_ok),
+                ]
+                if not passed
+            ]
+            failures.append(
+                "historical Codex message import failed: "
+                + ", ".join(failed_checks)
             )
 
     dossier_expectation = scenario.get("expected_topic_dossier")

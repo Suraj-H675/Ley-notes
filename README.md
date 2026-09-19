@@ -138,6 +138,17 @@ automatic startup context. See
 [Connect Ley to coding agents](docs/agent-memory/host-integrations.md) and
 [ADR 0018](docs/adr/0018-stable-lifecycle-host-adapters.md).
 
+Historical host data is a separate explicit local workflow. The first supported importer is
+`ley session import codex-history PROJECT --source FILE --host-session UUID`, which accepts
+the documented Codex message-history JSONL shape only and selects one exact session UUID. It
+imports user messages only as a completed `Import` session, preserves source timestamps,
+uses an opaque `hsi_` source reference instead of storing the host UUID/path, applies the
+project's existing capture/redaction bounds, and never invents assistant/tool history.
+Imported sessions are excluded from automatic Resume and remain explicit historical evidence
+for session inspection/search/Memory Compiler review. Ley does not discover `~/.codex`,
+parse Codex rollout transcripts, or expose an MCP import mutation route. See
+[ADR 0054](docs/adr/0054-explicit-codex-message-history-import.md).
+
 ## Data model
 
 Filesystem-backed vaults are portable folders containing ordinary `.md` files. YAML frontmatter stores note properties. Dexie/IndexedDB holds derived indexes and recovery metadata; deleting it never invalidates the underlying filesystem vault.

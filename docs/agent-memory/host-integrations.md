@@ -131,6 +131,22 @@ It does not automatically store:
 - environment variables;
 - arbitrary files outside the approved project capture boundary.
 
+Historical import is intentionally **not** another lifecycle hook. When the user explicitly wants
+to bring older Codex CLI message history into Ley, the local CLI supports:
+
+```bash
+ley session import codex-history PROJECT --source FILE --host-session SESSION_UUID
+```
+
+This reads only Codex's documented global message-history JSONL shape and only the selected
+session's user messages. It does not auto-discover Codex storage, parse the richer rollout
+transcript/session files, reconstruct assistant/tool history, or run because a hook supplied a
+`transcript_path`. The imported Ley session is a completed `Import` snapshot with opaque
+`hsi_` provenance and original source timestamps; it is excluded from automatic Resume.
+There is no equivalent MCP mutation tool and no Claude historical importer in this first slice.
+Agents should not initiate this import unless the user explicitly asks for that local history
+operation.
+
 Turn evidence is not a checkpoint and is never promoted into startup context. If a crash or missed checkpoint leaves later turn evidence, Ley can deterministically expose that post-checkpoint window through `ley_session_memory_compile`. The tool is read-only, preserves prompt/response text as untrusted evidence, and distinguishes complete paired evidence from partial or metadata-only capture. Before reconstructing structure, the agent must run `ley_session_memory_verify`: every current recovery record is cited or explicitly deferred, stale/invalid/duplicate/revision cases fail closed, and even `review-required` does not prove semantic faithfulness or live-source correctness. `review-required` is emitted only when no current recovery evidence remains deferred; if any record is intentionally deferred, do not advance the checkpoint boundary. For one unresolved candidate, reconstruction uses `ley_session_memory_commit_unresolved`, which re-verifies the same event count and exact evidence set under the writer lock and stores binding provenance. Concurrent newer evidence forces a recompile and reverify; generic checkpointing is not a substitute for this bound recovery path. For substantive work the bundled skill asks the agent to write typed decisions, tasks, problems, attempts, outcomes, solutions, verification, touched artifacts, unresolved items, and handoff through MCP.
 
 Ley deliberately does not add a global tool logger. Tool calls can contain

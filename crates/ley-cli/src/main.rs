@@ -1,13 +1,13 @@
 use ley_core::{
     checkpoint_session, compile_reviewed_runbook, correct_learning, diagnose_project,
     erase_session_memory, export_reviewed_runbook_skill, finish_session,
-    generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
-    learning_review_inbox, list_learnings, list_sessions, preview_capture,
-    process_host_hook_for_agent_with_registries, project_resume_context, propose_learning,
-    read_external_connector_snapshot_with_registry, read_learning, read_project_graph,
-    read_session, read_session_context, read_session_turns_context, record_session_prompt,
-    record_session_response, remove_external_connector_with_registry, rename_session,
-    review_learning, search_project_memory, semantic_model_status, start_session,
+    generate_learning_request_id, generate_request_id, import_codex_message_history,
+    ingest_project, initialize_project, learning_review_inbox, list_learnings, list_sessions,
+    preview_capture, process_host_hook_for_agent_with_registries, project_resume_context,
+    propose_learning, read_external_connector_snapshot_with_registry, read_learning,
+    read_project_graph, read_session, read_session_context, read_session_turns_context,
+    record_session_prompt, record_session_response, remove_external_connector_with_registry,
+    rename_session, review_learning, search_project_memory, semantic_model_status, start_session,
     store_external_connector_snapshot_with_registry, supported_semantic_model, AgentEgressPolicy,
     AgentEgressTarget, AgentHost, BindingRegistry, CaptureMode, CheckpointInput, CommandInput,
     ContextMountRegistry, CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput,
@@ -2347,11 +2347,12 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
 fn session(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "session requires start, prompt, response, checkpoint, finish, rename, erase, list, show, or turns".to_owned(),
+            "session requires start, import, prompt, response, checkpoint, finish, rename, erase, list, show, or turns".to_owned(),
         ));
     };
     match command {
         "start" => session_start(&arguments[1..]),
+        "import" => session_import(&arguments[1..]),
         "prompt" => session_turn_record(&arguments[1..], true),
         "response" => session_turn_record(&arguments[1..], false),
         "checkpoint" => session_checkpoint(&arguments[1..]),
@@ -2365,6 +2366,79 @@ fn session(arguments: &[String]) -> Result<(), CliError> {
             "unknown session command '{other}'"
         ))),
     }
+}
+
+fn session_import(arguments: &[String]) -> Result<(), CliError> {
+    let Some(format) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "session import requires codex-history".to_owned(),
+        ));
+    };
+    if format != "codex-history" {
+        return Err(CliError::Usage(format!(
+            "unsupported historical host import '{format}'; use codex-history"
+        )));
+    }
+    let mut common = SessionArguments::default();
+    let mut source = None;
+    let mut host_session = None;
+    let mut index = 1;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--source" => {
+                index += 1;
+                source = Some(PathBuf::from(required_value(arguments, index, "--source")?));
+            }
+            "--host-session" => {
+                index += 1;
+                host_session = Some(required_value(arguments, index, "--host-session")?.to_owned());
+            }
+            value => parse_session_common(arguments, &mut index, value, &mut common)?,
+        }
+        index += 1;
+    }
+    let source = source.ok_or_else(|| {
+        CliError::Usage("session import codex-history requires --source FILE".to_owned())
+    })?;
+    let host_session = host_session.ok_or_else(|| {
+        CliError::Usage(
+            "session import codex-history requires --host-session SESSION_UUID".to_owned(),
+        )
+    })?;
+    let project = common.project_path()?;
+    let binding = resolve_session_binding(&common)?;
+    let result =
+        import_codex_message_history(&project, &binding.vault_path, &source, &host_session)?;
+    if common.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result)
+                .expect("historical host import result is serializable")
+        );
+    } else {
+        println!("Imported historical Codex message history.");
+        println!("Ley session: {}", result.session_id);
+        println!("Source reference: {}", result.source_reference);
+        println!(
+            "User messages: {} matched / {} captured / {} omitted by Minimal / {} omitted by capacity / {} truncated",
+            result.matched_prompts,
+            result.captured_prompts,
+            result.omitted_minimal_prompts,
+            result.omitted_capacity_prompts,
+            result.truncated_prompts
+        );
+        println!("Assistant messages imported: 0");
+        println!(
+            "Write: {}",
+            if result.replayed {
+                "idempotent replay"
+            } else {
+                "recorded"
+            }
+        );
+        println!("Boundary: {}", result.notice);
+    }
+    Ok(())
 }
 
 fn session_turn_record(arguments: &[String], is_prompt: bool) -> Result<(), CliError> {
@@ -2564,6 +2638,7 @@ fn session_start(arguments: &[String]) -> Result<(), CliError> {
                 },
                 host,
                 agent,
+                source_reference: None,
             },
         },
     )?;
@@ -3484,6 +3559,9 @@ fn print_help() {
     println!("  ley policy-bundle status [ACTIVE_PROJECT] [--json]");
     println!("  ley policy-bundle detach BUNDLE_ID [ACTIVE_PROJECT] [--json]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
+    println!(
+        "  ley session import codex-history [path] --source FILE --host-session SESSION_UUID [--vault TEMPORARY_VAULT] [--json]"
+    );
     println!("  ley session prompt SESSION [path] --stdin [--request-id REQUEST] [--json]");
     println!("  ley session response SESSION [path] --stdin [--request-id REQUEST] [--json]");
     println!("  ley session checkpoint SESSION [path] --summary TEXT [--touched PATH]...");
@@ -3515,6 +3593,9 @@ fn print_help() {
     println!();
     println!(
         "Structured capture is the default. Ley never reads or stores complete host transcripts automatically."
+    );
+    println!(
+        "Historical host import is explicit. The first supported format reads Codex history.jsonl user messages only; it does not invent assistant/tool history."
     );
 }
 

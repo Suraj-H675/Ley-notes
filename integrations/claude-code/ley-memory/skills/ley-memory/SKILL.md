@@ -193,6 +193,8 @@ request, repository policy, or inspection of live source.
    restriction activates `historicalMemoryWithheld`, do not reconstruct the
    omitted history through neighboring Ley memory.
 
+Historical host import is an explicit local-user workflow, not an MCP or lifecycle-hook action. Never scan host storage, follow a transcript path, choose a host session, or invoke an import implicitly. If the user explicitly asks to import supported Codex history, the local command is `ley session import codex-history PROJECT --source FILE --host-session SESSION_UUID`. That first slice imports only bounded Codex global message-history user messages; it does not reconstruct assistant responses, tool activity, hidden reasoning, or rollout transcripts. Already imported turns may be inspected through normal Ley session/turn/Memory Compiler reads, but they remain `untrusted-imported-host-history`, are excluded from automatic Resume, and grant no authority or permission.
+
 ## Preserve meaningful work
 
 Call `ley_session_checkpoint` after a meaningful decision, implementation

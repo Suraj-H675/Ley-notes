@@ -2,7 +2,7 @@ use crate::revision::RevisionResolver;
 use crate::{
     compile_session_memory, list_learnings, list_sessions, project_memory_overview, read_session,
     LearningFreshness, LearningSummary, LearningTrustState, LeyCoreError, MemoryCompilationState,
-    ProjectRevisionFreshness, RevisionCompatibility, SessionStatus, TaskStatus,
+    ProjectRevisionFreshness, RevisionCompatibility, SessionSourceKind, SessionStatus, TaskStatus,
     MAX_MEMORY_COMPILE_RESULTS, MIN_MEMORY_COMPILE_CHARACTERS,
 };
 use serde::Serialize;
@@ -268,39 +268,41 @@ pub fn memory_health_report(
             }
         }
 
-        let compilation = compile_session_memory(
-            project_start,
-            vault,
-            &session.session_id,
-            1.min(MAX_MEMORY_COMPILE_RESULTS),
-            MIN_MEMORY_COMPILE_CHARACTERS,
-        )?;
-        if compilation.total_unconsolidated_evidence > 0 {
-            drafts.push(SignalDraft {
-                kind: MemoryHealthSignalKind::UnconsolidatedEvidence,
-                severity: if matches!(session.status, SessionStatus::Completed | SessionStatus::Abandoned) {
-                    MemoryHealthSeverity::High
-                } else {
-                    MemoryHealthSeverity::Review
-                },
-                title: format!("Unconsolidated turn evidence in session '{}'", session.name),
-                detail: format!(
-                    "Memory Compiler reports {} unconsolidated record(s), {} unpaired/uncorrelated record(s), state '{}', and {} omitted record(s) under the health probe bounds.",
-                    compilation.total_unconsolidated_evidence,
-                    compilation.unpaired_or_uncorrelated_count,
-                    memory_compilation_state_name(compilation.state),
-                    compilation.omitted_evidence,
-                ),
-                learning_ids: Vec::new(),
-                session_ids: vec![session.session_id.clone()],
-                record_ids: compilation
-                    .latest_checkpoint
-                    .as_ref()
-                    .map(|boundary| vec![boundary.checkpoint_id.clone()])
-                    .unwrap_or_default(),
-                updated_at_unix_ms: session.updated_at_unix_ms,
-                recommended_action: "Inspect the recovery evidence and perform the explicit memory transition/checkpoint workflow if the evidence should become structured memory.",
-            });
+        if session.source.kind != SessionSourceKind::Import {
+            let compilation = compile_session_memory(
+                project_start,
+                vault,
+                &session.session_id,
+                1.min(MAX_MEMORY_COMPILE_RESULTS),
+                MIN_MEMORY_COMPILE_CHARACTERS,
+            )?;
+            if compilation.total_unconsolidated_evidence > 0 {
+                drafts.push(SignalDraft {
+                    kind: MemoryHealthSignalKind::UnconsolidatedEvidence,
+                    severity: if matches!(session.status, SessionStatus::Completed | SessionStatus::Abandoned) {
+                        MemoryHealthSeverity::High
+                    } else {
+                        MemoryHealthSeverity::Review
+                    },
+                    title: format!("Unconsolidated turn evidence in session '{}'", session.name),
+                    detail: format!(
+                        "Memory Compiler reports {} unconsolidated record(s), {} unpaired/uncorrelated record(s), state '{}', and {} omitted record(s) under the health probe bounds.",
+                        compilation.total_unconsolidated_evidence,
+                        compilation.unpaired_or_uncorrelated_count,
+                        memory_compilation_state_name(compilation.state),
+                        compilation.omitted_evidence,
+                    ),
+                    learning_ids: Vec::new(),
+                    session_ids: vec![session.session_id.clone()],
+                    record_ids: compilation
+                        .latest_checkpoint
+                        .as_ref()
+                        .map(|boundary| vec![boundary.checkpoint_id.clone()])
+                        .unwrap_or_default(),
+                    updated_at_unix_ms: session.updated_at_unix_ms,
+                    recommended_action: "Inspect the recovery evidence and perform the explicit memory transition/checkpoint workflow if the evidence should become structured memory.",
+                });
+            }
         }
     }
 

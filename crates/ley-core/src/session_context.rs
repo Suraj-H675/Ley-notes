@@ -149,6 +149,8 @@ pub struct SessionTurnContext {
     pub record_id: String,
     pub event_id: String,
     pub recorded_at_unix_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_recorded_at_unix_ms: Option<u64>,
     pub kind: SessionTurnKind,
     pub origin: TurnEvidenceOrigin,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -805,6 +807,7 @@ fn turns_context_from_session(
                 record_id: turn.record_id.clone(),
                 event_id: turn.event_id.clone(),
                 recorded_at_unix_ms: turn.recorded_at_unix_ms,
+                source_recorded_at_unix_ms: turn.source_recorded_at_unix_ms,
                 kind: *kind,
                 origin: turn.origin,
                 host: turn.host.clone(),
@@ -816,9 +819,10 @@ fn turns_context_from_session(
                     .and_then(|(text, _)| (!text.is_empty()).then(|| text.clone())),
                 truncated_at_capture: turn.truncated,
                 truncated_for_context: text.is_some_and(|(_, truncated)| truncated),
-                source_boundary: match kind {
-                    SessionTurnKind::UserPrompt => "untrusted-user-prompt",
-                    SessionTurnKind::AssistantResponse => "untrusted-agent-output",
+                source_boundary: match (kind, turn.origin) {
+                    (_, TurnEvidenceOrigin::Import) => "untrusted-imported-host-history",
+                    (SessionTurnKind::UserPrompt, _) => "untrusted-user-prompt",
+                    (SessionTurnKind::AssistantResponse, _) => "untrusted-agent-output",
                 },
             }
         })
@@ -994,6 +998,7 @@ mod tests {
                     kind: SessionSourceKind::HostHook,
                     host: Some("codex".to_owned()),
                     agent: None,
+                    source_reference: None,
                 },
             },
         )

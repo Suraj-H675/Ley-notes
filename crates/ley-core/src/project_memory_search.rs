@@ -11,7 +11,7 @@ use crate::{
     find_project_hybrid_context, list_learnings, ContextItemKind, GraphCitation, LearningFreshness,
     LearningKind, LearningOriginSummary, LearningState, LearningSummary, LearningTrustState,
     LeyCoreError, ProjectRevisionFreshness, RetrievalLimits, RetrievalMode, RevisionApplicability,
-    RevisionCompatibility, SessionArtifactCitation,
+    RevisionCompatibility, SessionArtifactCitation, SessionSourceKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -508,13 +508,24 @@ fn collect_session_candidates(
         .last()
         .and_then(|checkpoint| checkpoint.project_revision.as_ref())
         .map(|revision| revision_resolver.applicability(revision));
+    let session_updated_at_unix_ms = if session.source.kind == SessionSourceKind::Import {
+        session
+            .prompts
+            .iter()
+            .chain(&session.responses)
+            .filter_map(|turn| turn.source_recorded_at_unix_ms)
+            .max()
+            .unwrap_or(session.updated_at_unix_ms)
+    } else {
+        session.updated_at_unix_ms
+    };
     let mut session_candidate = new_candidate(
         ProjectMemoryResultKind::Session,
         session.session_id.clone(),
         session.name.clone(),
         session.goal.clone(),
         join_bounded_fields([session.name.as_str(), session.goal.as_str()]),
-        session.updated_at_unix_ms,
+        session_updated_at_unix_ms,
         Some(session.session_id.clone()),
         None,
         None,

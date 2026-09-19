@@ -30,6 +30,7 @@ pub const SESSION_RECOVERY_SCHEMA_VERSION: u32 = 3;
 pub const SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION: u32 = 4;
 pub const SESSION_CONTEXT_UTILITY_SCHEMA_VERSION: u32 = 5;
 pub const SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION: u32 = 6;
+pub const SESSION_IMPORTED_TURN_SCHEMA_VERSION: u32 = 7;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
@@ -52,6 +53,7 @@ const SESSION_V3_FILE: &str = "session-v3.json";
 const SESSION_V4_FILE: &str = "session-v4.json";
 const SESSION_V5_FILE: &str = "session-v5.json";
 const SESSION_V6_FILE: &str = "session-v6.json";
+const SESSION_V7_FILE: &str = "session-v7.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +82,8 @@ pub struct SessionSource {
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_reference: Option<String>,
 }
 
 impl Default for SessionSource {
@@ -88,6 +92,7 @@ impl Default for SessionSource {
             kind: SessionSourceKind::ManualCli,
             host: None,
             agent: None,
+            source_reference: None,
         }
     }
 }
@@ -274,6 +279,7 @@ pub struct RenameSessionInput {
 pub enum TurnEvidenceOrigin {
     HostHook,
     ManualCli,
+    Import,
 }
 
 /// Whether a turn body was retained. Minimal capture and an exhausted
@@ -312,6 +318,8 @@ pub struct SessionTurnEvidence {
     pub event_id: String,
     pub sequence: u64,
     pub recorded_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_recorded_at_unix_ms: Option<u64>,
     pub origin: TurnEvidenceOrigin,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
@@ -639,6 +647,7 @@ pub struct SessionSummary {
     pub name: String,
     pub goal: String,
     pub status: SessionStatus,
+    pub source_kind: SessionSourceKind,
     pub started_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
     pub event_count: u64,
@@ -735,7 +744,7 @@ pub fn record_session_prompt(
     session_id: &str,
     input: TurnEvidenceInput,
 ) -> Result<SessionMutation, LeyCoreError> {
-    record_session_turn(project_start, vault, session_id, input, true)
+    record_session_turn(project_start, vault, session_id, input, None, true)
 }
 
 /// Records an observed assistant response as a first-class immutable event.
@@ -745,7 +754,29 @@ pub fn record_session_response(
     session_id: &str,
     input: TurnEvidenceInput,
 ) -> Result<SessionMutation, LeyCoreError> {
-    record_session_turn(project_start, vault, session_id, input, false)
+    record_session_turn(project_start, vault, session_id, input, None, false)
+}
+
+pub(crate) fn record_imported_session_prompt(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: TurnEvidenceInput,
+    source_recorded_at_unix_ms: u64,
+) -> Result<SessionMutation, LeyCoreError> {
+    if input.origin != TurnEvidenceOrigin::Import {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "imported turn evidence must use import origin".to_owned(),
+        ));
+    }
+    record_session_turn(
+        project_start,
+        vault,
+        session_id,
+        input,
+        Some(source_recorded_at_unix_ms),
+        true,
+    )
 }
 
 fn record_session_turn(
@@ -753,6 +784,7 @@ fn record_session_turn(
     vault: impl AsRef<Path>,
     session_id: &str,
     input: TurnEvidenceInput,
+    source_recorded_at_unix_ms: Option<u64>,
     is_prompt: bool,
 ) -> Result<SessionMutation, LeyCoreError> {
     validate_session_id(session_id)?;
@@ -774,6 +806,7 @@ fn record_session_turn(
         input,
         &event_id,
         diagnostic.capture.mode,
+        source_recorded_at_unix_ms,
         if is_prompt {
             SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS
         } else {
@@ -793,7 +826,11 @@ fn record_session_turn(
             request_id,
             redactions,
             payload,
-            schema_version: SESSION_SCHEMA_VERSION,
+            schema_version: if source_recorded_at_unix_ms.is_some() {
+                SESSION_IMPORTED_TURN_SCHEMA_VERSION
+            } else {
+                SESSION_SCHEMA_VERSION
+            },
             allow_create: false,
             expected_event_count: None,
         },
@@ -1720,6 +1757,7 @@ impl From<&AgentSession> for SessionSummary {
             name: session.name.clone(),
             goal: session.goal.clone(),
             status: session.status,
+            source_kind: session.source.kind,
             started_at_unix_ms: session.started_at_unix_ms,
             updated_at_unix_ms: session.updated_at_unix_ms,
             event_count: session.event_count,
@@ -2053,6 +2091,7 @@ fn normalize_turn_evidence(
     input: TurnEvidenceInput,
     event_id: &str,
     capture_mode: crate::CaptureMode,
+    source_recorded_at_unix_ms: Option<u64>,
     maximum_characters: usize,
 ) -> Result<(SessionTurnEvidence, Vec<MemoryRedaction>), LeyCoreError> {
     let host = input.host.map(sanitize_turn_host).transpose()?;
@@ -2063,6 +2102,27 @@ fn normalize_turn_evidence(
         .transpose()?;
     let recorded_at_unix_ms = unix_time_ms();
     let record_id = child_id("tev", event_id, 0);
+    match input.origin {
+        TurnEvidenceOrigin::Import => {
+            if host.is_none() {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "imported turn evidence must identify its supported host".to_owned(),
+                ));
+            }
+            if source_recorded_at_unix_ms.is_none_or(|value| value == 0) {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "imported turn evidence must include a positive source timestamp".to_owned(),
+                ));
+            }
+        }
+        TurnEvidenceOrigin::HostHook | TurnEvidenceOrigin::ManualCli => {
+            if source_recorded_at_unix_ms.is_some() {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "only imported turn evidence may carry a source timestamp".to_owned(),
+                ));
+            }
+        }
+    }
     if capture_mode == crate::CaptureMode::Minimal {
         return Ok((
             SessionTurnEvidence {
@@ -2070,6 +2130,7 @@ fn normalize_turn_evidence(
                 event_id: event_id.to_owned(),
                 sequence: 0,
                 recorded_at_unix_ms,
+                source_recorded_at_unix_ms,
                 origin: input.origin,
                 host,
                 turn_reference,
@@ -2095,6 +2156,7 @@ fn normalize_turn_evidence(
             event_id: event_id.to_owned(),
             sequence: 0,
             recorded_at_unix_ms,
+            source_recorded_at_unix_ms,
             origin: input.origin,
             host,
             turn_reference,
@@ -2661,6 +2723,7 @@ fn retry_payload_matches(stored: &SessionEventPayload, pending: &SessionEventPay
             stored.record_id == pending.record_id
                 && stored.event_id == pending.event_id
                 && stored.sequence == pending.sequence
+                && stored.source_recorded_at_unix_ms == pending.source_recorded_at_unix_ms
                 && stored.origin == pending.origin
                 && stored.host == pending.host
                 && stored.turn_reference == pending.turn_reference
@@ -2725,7 +2788,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_IMPORTED_TURN_SCHEMA_VERSION {
+        SESSION_V7_FILE
+    } else if session.schema_version >= SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION {
         SESSION_V6_FILE
     } else if session.schema_version >= SESSION_CONTEXT_UTILITY_SCHEMA_VERSION {
         SESSION_V5_FILE
@@ -3249,6 +3314,7 @@ fn validate_event(
             | SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
             | SESSION_CONTEXT_UTILITY_SCHEMA_VERSION
             | SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION
+            | SESSION_IMPORTED_TURN_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -3317,6 +3383,32 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
             if let Some(agent) = &source.agent {
                 validate_stored_text("source.agent", agent, 1, 128)?;
             }
+            if let Some(source_reference) = &source.source_reference {
+                validate_stored_text("source.sourceReference", source_reference, 1, 80)?;
+            }
+            match source.kind {
+                SessionSourceKind::Import => {
+                    if let Some(source_reference) = source.source_reference.as_deref() {
+                        if source.host.as_deref() != Some("codex")
+                            || source.agent.is_some()
+                            || !valid_prefixed_hex(source_reference, "hsi_", 64)
+                        {
+                            return invalid_session_store(
+                                "imported session source provenance is invalid",
+                            );
+                        }
+                    }
+                }
+                SessionSourceKind::ManualCli
+                | SessionSourceKind::HostHook
+                | SessionSourceKind::Mcp => {
+                    if source.source_reference.is_some() {
+                        return invalid_session_store(
+                            "non-imported session cannot carry historical source provenance",
+                        );
+                    }
+                }
+            }
             if !valid_prefixed_hex(artifact_snapshot_id, "snp_", 64) {
                 return invalid_session_store("session artifact snapshot ID is invalid");
             }
@@ -3373,6 +3465,12 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
         SessionEventPayload::UserPromptObserved(_)
             | SessionEventPayload::AssistantResponseObserved(_)
     );
+    let is_imported_turn_event = matches!(
+        &event.payload,
+        SessionEventPayload::UserPromptObserved(evidence)
+            | SessionEventPayload::AssistantResponseObserved(evidence)
+            if evidence.origin == TurnEvidenceOrigin::Import
+    );
     let is_recovery_checkpoint = matches!(
         event.payload,
         SessionEventPayload::RecoveryCheckpointRecorded(_)
@@ -3415,8 +3513,11 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
             "schema version 1 cannot store turn evidence, bound recovery checkpoints, verification evidence links, or context utility observations",
         );
     }
-    if event.schema_version == SESSION_SCHEMA_VERSION && !is_turn_event {
-        return invalid_session_store("schema version 2 is reserved for turn evidence");
+    if event.schema_version == SESSION_SCHEMA_VERSION && (!is_turn_event || is_imported_turn_event)
+    {
+        return invalid_session_store(
+            "schema version 2 is reserved for non-imported turn evidence",
+        );
     }
     if event.schema_version == SESSION_RECOVERY_SCHEMA_VERSION && !is_recovery_checkpoint {
         return invalid_session_store(
@@ -3448,6 +3549,14 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
         return invalid_session_store(
             "schema version 6 is reserved for checkpoints with multimodal artifact citations",
         );
+    }
+    if is_imported_turn_event && event.schema_version != SESSION_IMPORTED_TURN_SCHEMA_VERSION {
+        return invalid_session_store(
+            "imported turn evidence requires session event schema version 7",
+        );
+    }
+    if event.schema_version == SESSION_IMPORTED_TURN_SCHEMA_VERSION && !is_imported_turn_event {
+        return invalid_session_store("schema version 7 is reserved for imported turn evidence");
     }
     Ok(())
 }
@@ -3720,6 +3829,24 @@ fn validate_turn_evidence(
             return invalid_session_store("turn evidence reference is invalid");
         }
     }
+    match evidence.origin {
+        TurnEvidenceOrigin::Import => {
+            if evidence.host.as_deref() != Some("codex")
+                || evidence
+                    .source_recorded_at_unix_ms
+                    .is_none_or(|value| value == 0)
+            {
+                return invalid_session_store("imported turn provenance is invalid");
+            }
+        }
+        TurnEvidenceOrigin::HostHook | TurnEvidenceOrigin::ManualCli => {
+            if evidence.source_recorded_at_unix_ms.is_some() {
+                return invalid_session_store(
+                    "non-imported turn evidence cannot carry a source timestamp",
+                );
+            }
+        }
+    }
     match evidence.retention {
         TurnEvidenceRetention::Captured => {
             if evidence.capture_mode == crate::CaptureMode::Minimal {
@@ -3978,16 +4105,52 @@ fn sanitize_source(
     source: SessionSource,
     redactions: &mut Vec<MemoryRedaction>,
 ) -> Result<SessionSource, LeyCoreError> {
+    let host = source
+        .host
+        .map(|value| sanitize_text("source.host", &value, 1, 128, redactions))
+        .transpose()?;
+    let agent = source
+        .agent
+        .map(|value| sanitize_text("source.agent", &value, 1, 128, redactions))
+        .transpose()?;
+    let source_reference = source
+        .source_reference
+        .map(|value| sanitize_text("source.sourceReference", &value, 1, 80, redactions))
+        .transpose()?;
+    match source.kind {
+        SessionSourceKind::Import => {
+            if host.as_deref() != Some("codex") {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "historical session import must identify the supported codex host".to_owned(),
+                ));
+            }
+            if agent.is_some() {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "codex message-history import cannot claim an agent/model identity".to_owned(),
+                ));
+            }
+            if source_reference
+                .as_deref()
+                .is_none_or(|value| !valid_prefixed_hex(value, "hsi_", 64))
+            {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "historical session import requires an opaque hsi_ source reference".to_owned(),
+                ));
+            }
+        }
+        SessionSourceKind::ManualCli | SessionSourceKind::HostHook | SessionSourceKind::Mcp => {
+            if source_reference.is_some() {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "only imported sessions may carry a historical source reference".to_owned(),
+                ));
+            }
+        }
+    }
     Ok(SessionSource {
         kind: source.kind,
-        host: source
-            .host
-            .map(|value| sanitize_text("source.host", &value, 1, 128, redactions))
-            .transpose()?,
-        agent: source
-            .agent
-            .map(|value| sanitize_text("source.agent", &value, 1, 128, redactions))
-            .transpose()?,
+        host,
+        agent,
+        source_reference,
     })
 }
 
@@ -4260,6 +4423,11 @@ fn render_session_markdown(session: &AgentSession) -> String {
     if let Some(agent) = &session.source.agent {
         output.push_str(&format!("- Agent: {}\n", markdown_inline(agent)));
     }
+    if let Some(source_reference) = &session.source.source_reference {
+        output.push_str(&format!(
+            "- Historical source reference: `{source_reference}`\n"
+        ));
+    }
     if !session.prompts.is_empty() || !session.responses.is_empty() {
         output.push_str("\n## Observed turn evidence\n");
         for evidence in &session.prompts {
@@ -4458,6 +4626,11 @@ fn render_turn_evidence_markdown(output: &mut String, label: &str, evidence: &Se
     if let Some(host) = &evidence.host {
         output.push_str(&format!("- Host: `{}`\n", markdown_inline(host)));
     }
+    if let Some(source_recorded_at_unix_ms) = evidence.source_recorded_at_unix_ms {
+        output.push_str(&format!(
+            "- Source recorded at: `{source_recorded_at_unix_ms}`\n"
+        ));
+    }
     if let Some(turn_reference) = &evidence.turn_reference {
         output.push_str(&format!("- Turn reference: `{turn_reference}`\n"));
     }
@@ -4545,6 +4718,7 @@ enum_labels!(SessionSourceKind, {
 enum_labels!(TurnEvidenceOrigin, {
     HostHook => "host-hook",
     ManualCli => "manual-cli",
+    Import => "import",
 });
 enum_labels!(TurnEvidenceRetention, {
     Captured => "captured",
@@ -4835,6 +5009,7 @@ mod tests {
                 kind: SessionSourceKind::HostHook,
                 host: Some("codex".to_owned()),
                 agent: Some("gpt-5".to_owned()),
+                source_reference: None,
             },
         }
     }

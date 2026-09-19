@@ -18,6 +18,7 @@ mod current_project_state;
 mod egress_policy;
 mod external_connector;
 mod graph;
+mod historical_host_import;
 mod host_adapter;
 mod ingestion;
 mod knowledge_scope;
@@ -116,6 +117,11 @@ pub use graph::{
     FactProvenance, GitChange, GitState, GraphCitation, GraphDiagnostic, GraphEdge, GraphEdgeKind,
     GraphNode, GraphNodeKind, ProjectGraph, PROJECT_GRAPH_LIMIT_BYTES,
     PROJECT_GRAPH_SCHEMA_VERSION,
+};
+pub use historical_host_import::{
+    import_codex_message_history, HistoricalHostImport, HISTORICAL_HOST_IMPORT_SCHEMA_VERSION,
+    MAX_CODEX_HISTORY_IMPORT_BYTES, MAX_CODEX_HISTORY_IMPORT_PROMPTS,
+    MAX_CODEX_HISTORY_IMPORT_RECORDS,
 };
 pub use host_adapter::{
     process_host_hook, process_host_hook_for_agent_with_registries, AgentHost,
@@ -269,10 +275,11 @@ pub use session::{
     TurnEvidenceRetention, VerificationInput, VerificationRecord, VerificationStatus,
     SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT, SESSION_CONTEXT_UTILITY_OUTCOME_LIMIT,
     SESSION_CONTEXT_UTILITY_SCHEMA_VERSION, SESSION_EVENT_LIMIT, SESSION_EVENT_LIMIT_BYTES,
-    SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION, SESSION_PROJECTION_LIMIT_BYTES,
-    SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS, SESSION_RECOVERY_SCHEMA_VERSION,
-    SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS, SESSION_SCHEMA_VERSION,
-    SESSION_TURN_EVIDENCE_LIMIT_BYTES, SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION,
+    SESSION_IMPORTED_TURN_SCHEMA_VERSION, SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION,
+    SESSION_PROJECTION_LIMIT_BYTES, SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS,
+    SESSION_RECOVERY_SCHEMA_VERSION, SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS,
+    SESSION_SCHEMA_VERSION, SESSION_TURN_EVIDENCE_LIMIT_BYTES,
+    SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION,
 };
 pub use session_context::{
     list_session_contexts, read_session_context, read_session_turns_context, SessionContextAttempt,
@@ -544,6 +551,8 @@ pub enum LeyCoreError {
     InvalidSessionStore(String),
     #[error("invalid Ley session request: {0}")]
     InvalidSessionRequest(String),
+    #[error("invalid Ley historical host import: {0}")]
+    InvalidHistoricalHostImport(String),
     #[error("Ley session not found: {0}")]
     SessionNotFound(String),
     #[error("session request ID was reused with different content: {0}")]

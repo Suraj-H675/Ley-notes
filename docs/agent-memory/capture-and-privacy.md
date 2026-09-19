@@ -12,6 +12,8 @@ Every initialized project owns a small, portable `.ley/capture.json` policy. Dur
 
 Structured is the recommended default. Full Evidence does not make Ley scrape chats. It is the explicit higher-sensitivity boundary required before Ley retains supported project image originals, and it also preserves the existing permission for a future explicit transcript-capable adapter. The desktop app therefore requires a separate acknowledgement before enabling it. Current lifecycle adapters never read transcript paths in any mode.
 
+The explicit `ley session import codex-history` workflow is intentionally **not** raw-host-transcript capture and does not depend on the Full Evidence transcript permission. It reads only a user-supplied, bounded Codex global message-history JSONL source and one explicitly selected session UUID. Minimal stores body-free imported observations; Structured and Full Evidence apply the same bounded redaction/turn-retention rules used for ordinary submitted turn evidence. The importer does not scan Codex storage, parse rollout/session transcript files, or reconstruct assistant/tool/hidden-reasoning history.
+
 Image evidence is intentionally different from UTF-8 evidence: Ley validates supported PNG/JPEG/WebP signatures and stores the exact original bytes in the private content-addressed artifact store, but it does not OCR, visually redact, caption, embed, or otherwise interpret those pixels. Minimal and Structured report such files as `media-requires-full-evidence`. Use capture roots, `.leyignore`, preview, and Full Evidence consent as the primary privacy boundary for screenshots or images that may contain sensitive visual content.
 
 ## Inspect the boundary

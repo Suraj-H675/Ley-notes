@@ -280,6 +280,26 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(skill.contains("ley policy-bundle"), "{}", path.display());
+        assert!(
+            skill.contains("ley session import codex-history"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("untrusted-imported-host-history"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("Never scan host storage"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("excluded from automatic Resume"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("local-model-only"), "{}", path.display());
         assert!(skill.contains("confirm-per-use"), "{}", path.display());
         assert!(skill.contains("never-send"), "{}", path.display());
