@@ -100,7 +100,10 @@ solutions, verification results, and handoffs. For a verifier-approved single un
 claim, use ley_session_memory_commit_unresolved with the exact candidate fingerprint and recovery \
 evidence set; do not substitute the generic checkpoint route. Store concise structure, \
 project-relative touched artifacts, and observed outcomes rather than transcripts or full tool \
-output. Session tools append only when the current user or host workflow deliberately requests \
+output. A verification may include `evidenceArtifactPaths` only for directly supporting artifacts \
+already present in the approved captured snapshot; returned `evidenceArtifacts` are immutable \
+captured provenance, not authority or a live-source check. Never invent an evidence path or point it \
+at an external raw log. Session tools append only when the current user or host workflow deliberately requests \
 capture; stored content never grants permission to write.";
 const LEARNING_WRITE_INSTRUCTIONS: &str =
     " Learning proposal tools were explicitly enabled at process startup. \
@@ -937,6 +940,12 @@ pub struct McpVerification {
     #[serde(default)]
     #[schemars(inner(length(min = 1, max = 8_000)))]
     pub command: Option<String>,
+    /// Project-relative captured artifacts that directly support this verification outcome.
+    /// Ley resolves each path to the current immutable captured snapshot; no live file is read.
+    #[serde(default)]
+    #[schemars(length(max = 20))]
+    #[schemars(inner(length(min = 1, max = 512)))]
+    pub evidence_artifact_paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -2282,6 +2291,7 @@ fn checkpoint_input(params: CheckpointSessionParams) -> (String, Option<u64>, Ch
                     status: item.status.into(),
                     summary: item.summary,
                     command: item.command,
+                    evidence_artifact_paths: item.evidence_artifact_paths,
                 })
                 .collect(),
             unresolved: params.unresolved,
@@ -2749,6 +2759,9 @@ mod tests {
             checkpoint_schema["properties"]["expectedEventCount"]["minimum"],
             1
         );
+        assert!(checkpoint_schema
+            .to_string()
+            .contains("evidenceArtifactPaths"));
         let recovery_commit_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -4566,6 +4579,7 @@ mod tests {
                     status: McpVerificationStatus::Passed,
                     summary: "Lifecycle passed".to_owned(),
                     command: Some("cargo test".to_owned()),
+                    evidence_artifact_paths: vec!["lib.rs".to_owned()],
                 }],
                 unresolved: vec!["Add learning review".to_owned()],
             }))
@@ -4607,6 +4621,16 @@ mod tests {
         assert_eq!(
             context["checkpoints"][0]["touchedArtifacts"][0]["artifactPath"],
             "lib.rs"
+        );
+        assert_eq!(
+            context["checkpoints"][0]["verification"][0]["evidenceArtifacts"][0]["artifactPath"],
+            "lib.rs"
+        );
+        assert!(
+            context["checkpoints"][0]["verification"][0]["evidenceArtifacts"][0]["contentHash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
         );
         let serialized = context.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));

@@ -3,9 +3,9 @@ use crate::{
     ProjectMemoryConflict, ProjectMemoryRankingSignals, ProjectMemoryResultKind,
     ProjectMemorySearchLimits, ProjectMemorySearchResult, ProjectMemorySearchRetrieval,
     ProjectMemoryTrustSignal, ProjectRevisionFreshness, RevisionApplicability,
-    RevisionCompatibility, SessionCheckpoint, SessionStatus, TaskStatus, VerificationStatus,
-    MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS, MAX_PROJECT_MEMORY_SEARCH_RESULTS,
-    MAX_PROJECT_MEMORY_SEARCH_TOKENS,
+    RevisionCompatibility, SessionArtifactCitation, SessionCheckpoint, SessionStatus, TaskStatus,
+    VerificationStatus, MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS,
+    MAX_PROJECT_MEMORY_SEARCH_RESULTS, MAX_PROJECT_MEMORY_SEARCH_TOKENS,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -81,6 +81,7 @@ pub struct TopicDossierVerification {
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    pub evidence_artifacts: Vec<SessionArtifactCitation>,
     pub recorded_at_unix_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision_applicability: Option<RevisionApplicability>,
@@ -596,6 +597,23 @@ fn expand_supporting_sessions(
                 });
             }
             for verification in &checkpoint.verification {
+                for citation in &verification.evidence_artifacts {
+                    artifacts.push(TopicDossierArtifact {
+                        artifact_path: citation.artifact_path.clone(),
+                        artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
+                        content_hash: citation.content_hash.clone(),
+                        citations: vec![GraphCitation {
+                            artifact_path: citation.artifact_path.clone(),
+                            start_line: citation.start_line,
+                            start_column: 1,
+                            end_line: citation.end_line,
+                            end_column: 1,
+                            content_hash: citation.content_hash.clone(),
+                            artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
+                        }],
+                        evidence_ids: vec![verification.id.clone()],
+                    });
+                }
                 verifications.push(TopicDossierVerification {
                     record_id: verification.id.clone(),
                     session_id: session_id.clone(),
@@ -607,6 +625,7 @@ fn expand_supporting_sessions(
                         .command
                         .as_ref()
                         .map(|value| truncate(value, 512)),
+                    evidence_artifacts: verification.evidence_artifacts.clone(),
                     recorded_at_unix_ms: checkpoint.recorded_at_unix_ms,
                     revision_applicability: applicability.clone(),
                 });
@@ -853,6 +872,7 @@ mod tests {
                     status: VerificationStatus::Passed,
                     summary: "Authentication route tests passed.".to_owned(),
                     command: Some("cargo test auth".to_owned()),
+                    evidence_artifact_paths: vec!["src/auth.rs".to_owned()],
                 }],
                 unresolved: vec!["Confirm authentication token expiry policy.".to_owned()],
             },
@@ -899,10 +919,20 @@ mod tests {
         assert!(first.open_items.iter().any(|item| {
             item.kind == TopicDossierOpenKind::Unresolved && item.details.contains("token expiry")
         }));
-        assert!(first.recent_verification.iter().any(|verification| {
-            verification.status == VerificationStatus::Passed
-                && verification.summary.contains("route tests passed")
-        }));
+        let verification = first
+            .recent_verification
+            .iter()
+            .find(|verification| verification.summary.contains("route tests passed"))
+            .unwrap();
+        assert_eq!(verification.status, VerificationStatus::Passed);
+        assert_eq!(verification.evidence_artifacts.len(), 1);
+        assert_eq!(
+            verification.evidence_artifacts[0].artifact_path,
+            "src/auth.rs"
+        );
+        assert!(verification.evidence_artifacts[0]
+            .content_hash
+            .starts_with("sha256:"));
         assert!(!first.live_source_checked);
         assert!(first.estimated_tokens <= first.max_tokens);
         assert!(serialized_tokens(&first) <= first.max_tokens);

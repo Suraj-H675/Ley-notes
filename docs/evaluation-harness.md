@@ -58,7 +58,7 @@ not every representative scenario was executed.
 ## P1 capability coverage
 
 Implemented P1 capabilities get a separate matrix rather than weakening the completed P0 contract. The
-current entries are **Topic Dossiers**, **Current Project State**, **Context Pack Inspector**, **Memory Health / Hygiene**, **Agent Legibility Map**, and **Reviewed Runbooks / Skill Export**. Their matrices require:
+current entries are **Topic Dossiers**, **Current Project State**, **Context Pack Inspector**, **Memory Health / Hygiene**, **Agent Legibility Map**, **Reviewed Runbooks / Skill Export**, and **Verification Evidence Links**. Their matrices require:
 
 - adversarial deletion/forgetting evidence from the session-erasure scenario;
 - downstream/regression success from the real authentication dossier journey;
@@ -70,6 +70,7 @@ current entries are **Topic Dossiers**, **Current Project State**, **Context Pac
 - Memory Health advisory/non-destructive semantics, review/uncited/duplicate/session/unresolved/recovery signals, explicit unsupported-metric disclosure, private recovery-body omission, deletion fidelity, and zero path leakage through the real MCP path.
 - Agent Legibility coverage for captured architecture, important directory, declared command, observed command, policy, schema/migration, API candidate, observability reference, current plan, and approved Specification metadata; deterministic source binding; explicit no-score semantics; private Specification-body omission; deletion fidelity; and zero local-path leakage through the real MCP path.
 - Reviewed Runbook coverage for explicit user-confirmed current procedure/pitfall/convention selection, deterministic runbook/source identity, no authority increase, unrelated-session omission, exact-ID stale-export rejection, explicit host/egress selection, cloud blocking under local-only policy, non-installing Skill output, and zero local-path leakage through the real CLI path.
+- Verification Evidence coverage for a real structured test outcome with an immutable captured-artifact citation; propagation through `ley_session_get` and Current Project State; deliberate live-file drift after the checkpoint without hash drift in Ley; explicit `liveSourceChecked: false`; and zero live-canary or local-path leakage. Unknown/uncaptured evidence paths are rejected by focused core coverage.
 
 As later P1 capabilities land, each should add its own adversarial, downstream, privacy, and regression
 representatives before the slice is considered complete.

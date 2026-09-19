@@ -49,7 +49,7 @@
     },
     "verification": {
       "type": "object", "additionalProperties": false, "required": ["kind", "status", "summary"],
-      "properties": { "kind": { "type": "string", "minLength": 1, "maxLength": 64 }, "status": { "type": "string", "enum": ["passed", "failed", "skipped", "unknown"] }, "summary": { "type": "string", "minLength": 1, "maxLength": 8000 }, "command": { "type": ["string", "null"], "maxLength": 8000 } }
+      "properties": { "kind": { "type": "string", "minLength": 1, "maxLength": 64 }, "status": { "type": "string", "enum": ["passed", "failed", "skipped", "unknown"] }, "summary": { "type": "string", "minLength": 1, "maxLength": 8000 }, "command": { "type": ["string", "null"], "maxLength": 8000 }, "evidenceArtifactPaths": { "type": "array", "maxItems": 20, "items": { "type": "string", "minLength": 1, "maxLength": 512 } } }
     },
     "planStatus": { "type": "string", "enum": ["pending", "in-progress", "completed", "blocked"] }
   }

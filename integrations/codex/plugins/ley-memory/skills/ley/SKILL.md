@@ -38,9 +38,12 @@ Store concise structure instead of a transcript:
 - verified root cause, solution, and verification;
 - project-relative touched artifacts;
 - important commands with bounded outcomes;
+- project-relative `evidenceArtifactPaths` on a verification only when those already-captured artifacts directly support that outcome;
 - unresolved work and a precise handoff.
 
 Use a new valid request ID for each new write and reuse that exact ID only when retrying the same content. Never store secrets, environment dumps, complete tool output, raw transcripts, hidden reasoning, or unrelated user data.
+
+Verification evidence links are provenance, not authority. Ley resolves `evidenceArtifactPaths` only against the approved captured snapshot and returns immutable `evidenceArtifacts` with snapshot/hash/line metadata. Never invent a path, point Ley at an external raw log, or treat a returned citation or `passed` status as proof that live source is current. `ley_session_get` and derived state keep `liveSourceChecked: false`; inspect live source before consequential edits.
 
 Use the MCP tool schema exactly. This compact example shows the accepted nested shapes; omit optional collections that have nothing meaningful to add:
 
@@ -96,7 +99,8 @@ Use the MCP tool schema exactly. This compact example shows the accepted nested 
       "kind": "test",
       "status": "passed",
       "summary": "All retry policy tests passed.",
-      "command": "npm test"
+      "command": "npm test",
+      "evidenceArtifactPaths": ["test-results/retry-policy.txt"]
     }
   ],
   "unresolved": []

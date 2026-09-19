@@ -57,6 +57,7 @@ METRIC_NAMES = (
     "memory_health",
     "agent_legibility",
     "reviewed_runbook",
+    "verification_evidence_links",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -352,6 +353,28 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "reviewed-runbook-skill-export",
             "reviewed_runbook",
+            "truthy",
+        ),
+    },
+    "verification-evidence-links": {
+        "adversarial": (
+            "verification-evidence-links",
+            "verification_evidence_links",
+            "truthy",
+        ),
+        "downstream": (
+            "verification-evidence-links",
+            "verification_evidence_links",
+            "truthy",
+        ),
+        "privacy": (
+            "verification-evidence-links",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "verification-evidence-links",
+            "verification_evidence_links",
             "truthy",
         ),
     },
@@ -821,6 +844,9 @@ def checkpoint_from_events(events: list[dict[str, object]], artifact_paths: list
             }
             if event.get("command") is not None:
                 item["command"] = str(event.get("command"))
+            evidence_paths = event.get("evidence_artifact_paths")
+            if isinstance(evidence_paths, list):
+                item["evidenceArtifactPaths"] = [str(path) for path in evidence_paths]
             verification.append(item)
         elif kind == "unresolved":
             unresolved.append(str(event.get("text", "")))
@@ -1922,6 +1948,122 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not state_ok:
             failures.append(
                 "Current Project State did not preserve working-state boundaries, historical decision semantics, privacy, or source binding"
+            )
+
+    verification_evidence_expectation = scenario.get("expected_verification_evidence")
+    if isinstance(verification_evidence_expectation, dict):
+        if not session_id:
+            raise RuntimeError("verification evidence fixture created no structured session")
+        evidence_path = str(verification_evidence_expectation.get("evidence_path", ""))
+        verification_marker = str(
+            verification_evidence_expectation.get("verification_marker", "")
+        )
+        live_mutation_marker = str(
+            verification_evidence_expectation.get("live_mutation_marker", "")
+        )
+        evidence_file = project / evidence_path
+        captured_bytes = evidence_file.read_bytes()
+        captured_hash = "sha256:" + hashlib.sha256(captured_bytes).hexdigest()
+        if live_mutation_marker:
+            evidence_file.write_text(
+                f"{live_mutation_marker}\nThis live file changed after the Ley capture.\n",
+                encoding="utf-8",
+            )
+        live_hash = "sha256:" + hashlib.sha256(evidence_file.read_bytes()).hexdigest()
+        session_context = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": session_id, "maxCheckpoints": 5, "maxCharacters": 12000},
+        )
+        state = mcp_call(
+            project,
+            "ley_project_state",
+            {"maxSessions": 5, "maxKnowledge": 12, "maxCharacters": 12000},
+        )
+        checkpoint_rows = session_context.get("checkpoints", [])
+        verification_rows = [
+            item
+            for checkpoint in checkpoint_rows
+            if isinstance(checkpoint, dict)
+            for item in checkpoint.get("verification", [])
+            if isinstance(item, dict)
+        ]
+        matching = next(
+            (
+                item
+                for item in verification_rows
+                if not verification_marker
+                or verification_marker in json.dumps(item, sort_keys=True)
+            ),
+            None,
+        )
+        evidence_rows = (
+            matching.get("evidenceArtifacts", []) if isinstance(matching, dict) else []
+        )
+        citation = next(
+            (
+                item
+                for item in evidence_rows
+                if isinstance(item, dict) and item.get("artifactPath") == evidence_path
+            ),
+            None,
+        )
+        state_verification = next(
+            (
+                item
+                for item in state.get("recentVerification", [])
+                if isinstance(item, dict)
+                and (
+                    not verification_marker
+                    or verification_marker in json.dumps(item, sort_keys=True)
+                )
+            ),
+            None,
+        )
+        state_citation = next(
+            (
+                item
+                for item in (
+                    state_verification.get("evidenceArtifacts", [])
+                    if isinstance(state_verification, dict)
+                    else []
+                )
+                if isinstance(item, dict) and item.get("artifactPath") == evidence_path
+            ),
+            None,
+        )
+        session_text = json.dumps(session_context, sort_keys=True)
+        state_text = json.dumps(state, sort_keys=True)
+        verification_evidence_ok = (
+            matching is not None
+            and citation is not None
+            and citation.get("contentHash") == captured_hash
+            and str(citation.get("artifactSnapshotId", "")).startswith("snp_")
+            and int(citation.get("startLine", 0)) >= 1
+            and int(citation.get("endLine", 0)) >= int(citation.get("startLine", 0))
+            and state_citation is not None
+            and state_citation.get("contentHash") == captured_hash
+            and captured_hash != live_hash
+            and session_context.get("liveSourceChecked") is False
+            and state.get("liveSourceChecked") is False
+            and (not live_mutation_marker or live_mutation_marker not in session_text)
+            and (not live_mutation_marker or live_mutation_marker not in state_text)
+            and str(project) not in session_text
+            and str(vault) not in session_text
+            and str(project) not in state_text
+            and str(vault) not in state_text
+        )
+        scores["verification_evidence_links"] = verification_evidence_ok
+        privacy_canaries = [str(project), str(vault)]
+        if live_mutation_marker:
+            privacy_canaries.append(live_mutation_marker)
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            privacy_canaries, [session_context, state]
+        )
+        evidence_text.extend([session_context, state])
+        if not verification_evidence_ok:
+            failures.append(
+                "verification evidence links did not remain bound to the captured snapshot/hash across live-source drift and derived state"
             )
 
     inspector_expectation = scenario.get("expected_context_pack_inspector")

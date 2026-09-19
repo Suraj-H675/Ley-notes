@@ -1082,6 +1082,7 @@ mod tests {
                     status: VerificationStatus::Passed,
                     summary: "Lint passed.".to_owned(),
                     command: Some("npm run lint".to_owned()),
+                    evidence_artifact_paths: Vec::new(),
                 }],
                 unresolved: Vec::new(),
             },

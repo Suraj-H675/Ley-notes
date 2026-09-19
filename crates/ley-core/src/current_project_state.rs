@@ -3,7 +3,7 @@ use crate::{
     learning_review_inbox, list_learning_contexts, list_sessions, project_memory_overview,
     read_session, CaptureMode, LearningFreshness, LearningKind, LearningListScope,
     LearningProvenance, LearningState, LearningTrustState, LeyCoreError, ProjectRevisionFreshness,
-    RevisionApplicability, SessionStatus, TaskStatus, VerificationStatus,
+    RevisionApplicability, SessionArtifactCitation, SessionStatus, TaskStatus, VerificationStatus,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -17,6 +17,7 @@ pub const MAX_CURRENT_STATE_KNOWLEDGE: usize = 50;
 pub const DEFAULT_CURRENT_STATE_CHARACTERS: usize = 16_000;
 pub const MIN_CURRENT_STATE_CHARACTERS: usize = 2_000;
 pub const MAX_CURRENT_STATE_CHARACTERS: usize = 32_000;
+pub const MAX_CURRENT_STATE_VERIFICATION_EVIDENCE_ARTIFACTS: usize = 64;
 
 const SELECTION: &str = "active-paused-first-then-recent-history";
 const WORKING_STATE_BOUNDARY: &str = "latest-checkpoint-of-active-or-paused-session";
@@ -123,6 +124,8 @@ pub struct CurrentVerification {
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    pub evidence_artifacts: Vec<SessionArtifactCitation>,
+    pub evidence_artifacts_omitted: usize,
     pub recorded_at_unix_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision_applicability: Option<RevisionApplicability>,
@@ -177,6 +180,9 @@ pub struct CurrentProjectStateCoverage {
     pub selected_verification_records: usize,
     pub verification_records_returned: usize,
     pub verification_records_omitted: usize,
+    pub selected_verification_evidence_artifacts: usize,
+    pub verification_evidence_artifacts_returned: usize,
+    pub verification_evidence_artifacts_omitted: usize,
     pub current_trusted_knowledge_total: usize,
     pub current_trusted_knowledge_returned: usize,
     pub current_trusted_knowledge_omitted: usize,
@@ -271,6 +277,9 @@ pub fn current_project_state(
     let mut selected_decision_records = 0usize;
     let mut selected_open_work_records = 0usize;
     let mut selected_verification_records = 0usize;
+    let mut selected_verification_evidence_artifacts = 0usize;
+    let mut remaining_verification_evidence_artifacts =
+        MAX_CURRENT_STATE_VERIFICATION_EVIDENCE_ARTIFACTS;
 
     for summary in selected {
         if budget.remaining() == 0 {
@@ -327,11 +336,31 @@ pub fn current_project_state(
 
         selected_verification_records =
             selected_verification_records.saturating_add(checkpoint.verification.len());
+        selected_verification_evidence_artifacts = selected_verification_evidence_artifacts
+            .saturating_add(
+                checkpoint
+                    .verification
+                    .iter()
+                    .map(|verification| verification.evidence_artifacts.len())
+                    .sum::<usize>(),
+            );
         for verification in checkpoint.verification.iter().take(20) {
             if budget.remaining() == 0 {
                 budget.truncated = true;
                 break;
             }
+            let evidence_artifacts = verification
+                .evidence_artifacts
+                .iter()
+                .take(remaining_verification_evidence_artifacts)
+                .cloned()
+                .collect::<Vec<_>>();
+            remaining_verification_evidence_artifacts =
+                remaining_verification_evidence_artifacts.saturating_sub(evidence_artifacts.len());
+            let evidence_artifacts_omitted = verification
+                .evidence_artifacts
+                .len()
+                .saturating_sub(evidence_artifacts.len());
             recent_verification.push(CurrentVerification {
                 record_id: verification.id.clone(),
                 session_id: session.session_id.clone(),
@@ -344,6 +373,8 @@ pub fn current_project_state(
                     .command
                     .as_ref()
                     .map(|command| budget.take(command, 512)),
+                evidence_artifacts,
+                evidence_artifacts_omitted,
                 recorded_at_unix_ms: checkpoint.recorded_at_unix_ms,
                 revision_applicability: applicability.clone(),
             });
@@ -503,6 +534,18 @@ pub fn current_project_state(
         verification_records_returned: recent_verification.len(),
         verification_records_omitted: selected_verification_records
             .saturating_sub(recent_verification.len()),
+        selected_verification_evidence_artifacts,
+        verification_evidence_artifacts_returned: recent_verification
+            .iter()
+            .map(|verification| verification.evidence_artifacts.len())
+            .sum(),
+        verification_evidence_artifacts_omitted: selected_verification_evidence_artifacts
+            .saturating_sub(
+                recent_verification
+                    .iter()
+                    .map(|verification| verification.evidence_artifacts.len())
+                    .sum(),
+            ),
         current_trusted_knowledge_total,
         current_trusted_knowledge_returned: trusted_knowledge.len(),
         current_trusted_knowledge_omitted: current_trusted_knowledge_total
@@ -516,6 +559,11 @@ pub fn current_project_state(
             || selected_decision_records > recent_decisions.len()
             || selected_open_work_records > open_work.len()
             || selected_verification_records > recent_verification.len()
+            || selected_verification_evidence_artifacts
+                > recent_verification
+                    .iter()
+                    .map(|verification| verification.evidence_artifacts.len())
+                    .sum()
             || current_trusted_knowledge_total > trusted_knowledge.len()
             || attention_needed_total > attention_needed.len(),
     };
@@ -688,6 +736,13 @@ mod tests {
         fs::create_dir(&project).unwrap();
         fs::create_dir(&vault).unwrap();
         fs::write(project.join("README.md"), "# Storage\n\nUse SQLite WAL.\n").unwrap();
+        for index in 0..4 {
+            fs::write(
+                project.join(format!("verification-{index}.txt")),
+                format!("verification evidence {index}\n"),
+            )
+            .unwrap();
+        }
         initialize_project(&project, Some("Current state"), CaptureMode::Structured).unwrap();
         ingest_project(&project, &vault).unwrap();
         let started = start_session(
@@ -729,12 +784,19 @@ mod tests {
                 }],
                 touched_artifacts: vec!["README.md".to_owned()],
                 commands: Vec::new(),
-                verification: vec![VerificationInput {
-                    kind: "test".to_owned(),
-                    status: VerificationStatus::Passed,
-                    summary: "Migration smoke test passed for new rows.".to_owned(),
-                    command: Some("cargo test migration".to_owned()),
-                }],
+                verification: (0..20)
+                    .map(|index| VerificationInput {
+                        kind: "test".to_owned(),
+                        status: VerificationStatus::Passed,
+                        summary: format!(
+                            "Migration smoke test passed for new rows, shard {index}."
+                        ),
+                        command: Some("cargo test migration".to_owned()),
+                        evidence_artifact_paths: (0..4)
+                            .map(|artifact| format!("verification-{artifact}.txt"))
+                            .collect(),
+                    })
+                    .collect(),
                 unresolved: vec!["Verify rollback behavior.".to_owned()],
             },
         )
@@ -786,10 +848,24 @@ mod tests {
             .unwrap();
         assert_eq!(decision.authority, DECISION_AUTHORITY);
         assert!(!decision.current_state_proven);
-        assert!(first.recent_verification.iter().any(|verification| {
-            verification.status == VerificationStatus::Passed
-                && verification.summary.contains("smoke test passed")
-        }));
+        let verification = first
+            .recent_verification
+            .iter()
+            .find(|verification| verification.summary.contains("smoke test passed"))
+            .unwrap();
+        assert_eq!(verification.status, VerificationStatus::Passed);
+        assert_eq!(verification.evidence_artifacts.len(), 4);
+        assert_eq!(verification.evidence_artifacts_omitted, 0);
+        assert!(verification.evidence_artifacts[0]
+            .content_hash
+            .starts_with("sha256:"));
+        assert_eq!(first.coverage.selected_verification_evidence_artifacts, 80);
+        assert_eq!(
+            first.coverage.verification_evidence_artifacts_returned,
+            MAX_CURRENT_STATE_VERIFICATION_EVIDENCE_ARTIFACTS
+        );
+        assert_eq!(first.coverage.verification_evidence_artifacts_omitted, 16);
+        assert!(first.coverage.truncated);
         assert!(first.text_characters <= limits.max_characters);
         assert!(first.estimated_text_tokens <= limits.max_characters.div_ceil(4));
 

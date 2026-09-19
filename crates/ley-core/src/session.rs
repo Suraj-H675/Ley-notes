@@ -23,6 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const SESSION_SCHEMA_VERSION: u32 = 2;
 const SESSION_V1_SCHEMA_VERSION: u32 = 1;
 pub const SESSION_RECOVERY_SCHEMA_VERSION: u32 = 3;
+pub const SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION: u32 = 4;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
@@ -40,6 +41,7 @@ const SESSION_LOCK_FILE: &str = "sessions-v1.lock";
 const SESSION_FILE: &str = "session-v1.json";
 const SESSION_V2_FILE: &str = "session-v2.json";
 const SESSION_V3_FILE: &str = "session-v3.json";
+const SESSION_V4_FILE: &str = "session-v4.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +195,8 @@ pub struct VerificationInput {
     pub summary: String,
     #[serde(default)]
     pub command: Option<String>,
+    #[serde(default)]
+    pub evidence_artifact_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -424,6 +428,8 @@ pub struct VerificationRecord {
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_artifacts: Vec<SessionArtifactCitation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -743,6 +749,10 @@ fn checkpoint_session_with_expected_count(
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
     let request_id = input.request_id.clone();
+    let has_verification_evidence = input
+        .verification
+        .iter()
+        .any(|verification| !verification.evidence_artifact_paths.is_empty());
     let diagnostic = diagnose_project(&project_start)?;
     let memory = load_project_memory(&diagnostic.root, &vault)?;
     let event_id = deterministic_id(
@@ -760,7 +770,11 @@ fn checkpoint_session_with_expected_count(
             request_id,
             redactions,
             payload: SessionEventPayload::CheckpointRecorded(Box::new(checkpoint)),
-            schema_version: SESSION_V1_SCHEMA_VERSION,
+            schema_version: if has_verification_evidence {
+                SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
+            } else {
+                SESSION_V1_SCHEMA_VERSION
+            },
             allow_create: false,
             expected_event_count,
         },
@@ -1241,6 +1255,11 @@ fn normalize_checkpoint(
     recorded_at: u64,
     memory: &crate::ingestion::LoadedProjectMemory,
 ) -> Result<(SessionCheckpoint, Vec<MemoryRedaction>), LeyCoreError> {
+    let verification_evidence_artifacts = input
+        .verification
+        .iter()
+        .map(|verification| verification.evidence_artifact_paths.len())
+        .sum::<usize>();
     if input.plan.len() > 100
         || input.decisions.len() > 100
         || input.tasks.len() > 100
@@ -1248,6 +1267,11 @@ fn normalize_checkpoint(
         || input.commands.len() > 200
         || input.verification.len() > 200
         || input.touched_artifacts.len() > 200
+        || verification_evidence_artifacts > 200
+        || input
+            .verification
+            .iter()
+            .any(|verification| verification.evidence_artifact_paths.len() > 20)
     {
         return Err(LeyCoreError::InvalidSessionRequest(
             "checkpoint collection limits were exceeded".to_owned(),
@@ -1409,8 +1433,11 @@ fn normalize_checkpoint(
             resolution,
         });
     }
-    let touched_artifacts =
-        citations_for_paths(memory, input.touched_artifacts.into_iter().collect())?;
+    let touched_artifacts = artifact_citations_for_paths(
+        memory,
+        input.touched_artifacts.into_iter().collect(),
+        "touched artifact",
+    )?;
     let project_revision = Some(SessionProjectRevision {
         graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
         artifact_snapshot_id: memory.graph.artifact_snapshot_id.clone(),
@@ -1446,6 +1473,11 @@ fn normalize_checkpoint(
     }
     let mut verification = Vec::new();
     for (index, item) in input.verification.into_iter().enumerate() {
+        let evidence_artifacts = artifact_citations_for_paths(
+            memory,
+            item.evidence_artifact_paths,
+            "verification evidence artifact",
+        )?;
         verification.push(VerificationRecord {
             id: child_id("ver", event_id, index),
             kind: sanitize_text(
@@ -1475,6 +1507,7 @@ fn normalize_checkpoint(
                     )
                 })
                 .transpose()?,
+            evidence_artifacts,
         });
     }
     Ok((
@@ -1497,9 +1530,10 @@ fn normalize_checkpoint(
     ))
 }
 
-fn citations_for_paths(
+fn artifact_citations_for_paths(
     memory: &crate::ingestion::LoadedProjectMemory,
     paths: Vec<String>,
+    description: &str,
 ) -> Result<Vec<SessionArtifactCitation>, LeyCoreError> {
     let mut unique = BTreeSet::new();
     let mut citations = Vec::new();
@@ -1514,7 +1548,7 @@ fn citations_for_paths(
             .find(|artifact| artifact.path == path)
             .ok_or_else(|| {
                 LeyCoreError::InvalidSessionRequest(format!(
-                    "touched artifact is not in the current approved snapshot: {path}"
+                    "{description} is not in the current approved snapshot: {path}"
                 ))
             })?;
         citations.push(SessionArtifactCitation {
@@ -2012,7 +2046,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_RECOVERY_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION {
+        SESSION_V4_FILE
+    } else if session.schema_version >= SESSION_RECOVERY_SCHEMA_VERSION {
         SESSION_V3_FILE
     } else if session.schema_version >= SESSION_SCHEMA_VERSION {
         SESSION_V2_FILE
@@ -2429,7 +2465,10 @@ fn validate_event(
 ) -> Result<(), LeyCoreError> {
     if !matches!(
         event.schema_version,
-        SESSION_V1_SCHEMA_VERSION | SESSION_SCHEMA_VERSION | SESSION_RECOVERY_SCHEMA_VERSION
+        SESSION_V1_SCHEMA_VERSION
+            | SESSION_SCHEMA_VERSION
+            | SESSION_RECOVERY_SCHEMA_VERSION
+            | SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -2550,11 +2589,19 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
         event.payload,
         SessionEventPayload::RecoveryCheckpointRecorded(_)
     );
+    let is_verification_evidence_checkpoint = matches!(
+        &event.payload,
+        SessionEventPayload::CheckpointRecorded(checkpoint)
+            if checkpoint
+                .verification
+                .iter()
+                .any(|verification| !verification.evidence_artifacts.is_empty())
+    );
     if event.schema_version == SESSION_V1_SCHEMA_VERSION
-        && (is_turn_event || is_recovery_checkpoint)
+        && (is_turn_event || is_recovery_checkpoint || is_verification_evidence_checkpoint)
     {
         return invalid_session_store(
-            "schema version 1 cannot store turn evidence or bound recovery checkpoints",
+            "schema version 1 cannot store turn evidence, bound recovery checkpoints, or verification evidence links",
         );
     }
     if event.schema_version == SESSION_SCHEMA_VERSION && !is_turn_event {
@@ -2563,6 +2610,13 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
     if event.schema_version == SESSION_RECOVERY_SCHEMA_VERSION && !is_recovery_checkpoint {
         return invalid_session_store(
             "schema version 3 is reserved for bound recovery checkpoints",
+        );
+    }
+    if event.schema_version == SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
+        && !is_verification_evidence_checkpoint
+    {
+        return invalid_session_store(
+            "schema version 4 is reserved for checkpoints with verification evidence links",
         );
     }
     Ok(())
@@ -2768,12 +2822,34 @@ fn validate_checkpoint_records(
         validate_stored_text("command.command", &item.command, 1, 8_000)?;
         validate_stored_text("command.summary", &item.summary, 0, 4_000)?;
     }
+    let mut verification_evidence_artifacts = 0usize;
     for (index, item) in checkpoint.verification.iter().enumerate() {
         validate_child_id(&item.id, "ver", event_id, index)?;
         validate_stored_text("verification.kind", &item.kind, 1, 64)?;
         validate_stored_text("verification.summary", &item.summary, 1, 8_000)?;
         if let Some(command) = &item.command {
             validate_stored_text("verification.command", command, 1, 8_000)?;
+        }
+        if item.evidence_artifacts.len() > 20 {
+            return invalid_session_store(
+                "a verification record contains too many evidence artifact citations",
+            );
+        }
+        verification_evidence_artifacts =
+            verification_evidence_artifacts.saturating_add(item.evidence_artifacts.len());
+        if verification_evidence_artifacts > 200 {
+            return invalid_session_store(
+                "checkpoint contains too many verification evidence artifact citations",
+            );
+        }
+        let mut evidence_paths = BTreeSet::new();
+        for citation in &item.evidence_artifacts {
+            validate_artifact_citation(citation)?;
+            if !evidence_paths.insert(citation.artifact_path.as_str()) {
+                return invalid_session_store(
+                    "verification record has duplicate evidence artifact citations",
+                );
+            }
         }
     }
     validate_stored_list("checkpoint.unresolved", &checkpoint.unresolved, 100, 4_000)
@@ -3301,6 +3377,19 @@ fn render_session_markdown(session: &AgentSession) -> String {
                     enum_label(verification.status),
                     markdown_inline(&verification.summary)
                 ));
+                if let Some(command) = &verification.command {
+                    output.push_str(&format!("  - command: `{}`\n", markdown_inline(command)));
+                }
+                for citation in &verification.evidence_artifacts {
+                    output.push_str(&format!(
+                        "  - evidence: `{}` · snapshot `{}` · `{}` · lines {}–{}\n",
+                        markdown_inline(&citation.artifact_path),
+                        markdown_inline(&citation.artifact_snapshot_id),
+                        markdown_inline(&citation.content_hash),
+                        citation.start_line,
+                        citation.end_line
+                    ));
+                }
             }
         }
         if !checkpoint.unresolved.is_empty() {
@@ -3754,6 +3843,7 @@ mod tests {
                 status: VerificationStatus::Passed,
                 summary: "Session lifecycle passed".to_owned(),
                 command: Some("cargo test -p ley-core".to_owned()),
+                evidence_artifact_paths: Vec::new(),
             }],
             unresolved: vec!["Expose lifecycle tools through MCP".to_owned()],
         }
@@ -3794,6 +3884,62 @@ mod tests {
         assert_eq!(replayed.schema_version, SESSION_V1_SCHEMA_VERSION);
         assert_eq!(std::fs::read(v1).unwrap(), before);
         assert!(!directory.join(SESSION_V2_FILE).exists());
+    }
+
+    #[test]
+    fn verification_evidence_is_snapshot_bound_and_upgrades_projection() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('e'))).unwrap();
+        let directory = session_directory(&project, &vault, &started.session.session_id);
+        let mut input = checkpoint_input(request_id('f'), "Linked verification evidence");
+        input.verification[0].evidence_artifact_paths = vec!["README.md".to_owned()];
+
+        let mutation =
+            checkpoint_session(&project, &vault, &started.session.session_id, input).unwrap();
+        let checkpoint = mutation.session.checkpoints.last().unwrap();
+        let revision = checkpoint.project_revision.as_ref().unwrap();
+        let evidence = &checkpoint.verification[0].evidence_artifacts;
+
+        assert_eq!(
+            mutation.session.schema_version,
+            SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
+        );
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].artifact_path, "README.md");
+        assert_eq!(
+            evidence[0].artifact_snapshot_id,
+            revision.artifact_snapshot_id
+        );
+        assert!(evidence[0].content_hash.starts_with("sha256:"));
+        assert_eq!(evidence[0].start_line, 1);
+        assert!(evidence[0].end_line >= evidence[0].start_line);
+        assert!(directory.join(SESSION_V4_FILE).exists());
+        assert!(mutation.session_path.ends_with(SESSION_V4_FILE));
+
+        let replayed = read_session(&project, &vault, &started.session.session_id).unwrap();
+        assert_eq!(
+            replayed.checkpoints[0].verification[0].evidence_artifacts,
+            evidence.as_slice()
+        );
+    }
+
+    #[test]
+    fn verification_evidence_rejects_paths_outside_the_captured_snapshot() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('a'))).unwrap();
+        let mut input = checkpoint_input(request_id('b'), "Reject missing evidence");
+        input.verification[0].evidence_artifact_paths = vec!["runtime/test.log".to_owned()];
+
+        let error =
+            checkpoint_session(&project, &vault, &started.session.session_id, input).unwrap_err();
+        assert!(matches!(
+            error,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("verification evidence artifact is not in the current approved snapshot")
+        ));
+        let replayed = read_session(&project, &vault, &started.session.session_id).unwrap();
+        assert_eq!(replayed.event_count, 1);
+        assert!(replayed.checkpoints.is_empty());
     }
 
     #[test]

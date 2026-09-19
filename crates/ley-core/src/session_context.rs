@@ -14,6 +14,7 @@ pub const MAX_SESSION_CONTEXT_RENAMES: usize = 10;
 pub const DEFAULT_SESSION_CONTEXT_CHARACTERS: usize = 16_000;
 pub const MIN_SESSION_CONTEXT_CHARACTERS: usize = 1_000;
 pub const MAX_SESSION_CONTEXT_CHARACTERS: usize = 32_000;
+pub const MAX_SESSION_CONTEXT_VERIFICATION_EVIDENCE_ARTIFACTS: usize = 64;
 pub const DEFAULT_SESSION_TURN_RESULTS: usize = 20;
 pub const MAX_SESSION_TURN_RESULTS: usize = 100;
 pub const DEFAULT_SESSION_TURN_CHARACTERS: usize = 16_000;
@@ -92,6 +93,7 @@ pub struct SessionContextPack {
     pub text_characters: usize,
     pub estimated_text_tokens: usize,
     pub truncated: bool,
+    pub live_source_checked: bool,
     pub source_boundary: &'static str,
     pub instruction_warning: &'static str,
 }
@@ -237,6 +239,10 @@ pub struct SessionContextVerification {
     pub kind: String,
     pub status: VerificationStatus,
     pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    pub evidence_artifacts: Vec<SessionContextCitation>,
+    pub evidence_artifacts_omitted: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -358,6 +364,8 @@ fn context_from_session(
     max_text_characters: usize,
 ) -> SessionContextPack {
     let mut budget = TextBudget::new(max_text_characters);
+    let mut remaining_verification_evidence_artifacts =
+        MAX_SESSION_CONTEXT_VERIFICATION_EVIDENCE_ARTIFACTS;
     let name = budget.take(&session.name, 128);
     let original_name = budget.take(&session.original_name, 128);
     let rename_count = session.renames.len();
@@ -514,11 +522,33 @@ fn context_from_session(
                         budget.truncated = true;
                         return None;
                     }
+                    let command = verification
+                        .command
+                        .as_ref()
+                        .map(|command| budget.take(command, 1_000));
+                    let evidence_artifacts = take_citations(
+                        &verification.evidence_artifacts,
+                        20.min(remaining_verification_evidence_artifacts),
+                        &mut budget,
+                    );
+                    remaining_verification_evidence_artifacts =
+                        remaining_verification_evidence_artifacts
+                            .saturating_sub(evidence_artifacts.len());
+                    let evidence_artifacts_omitted = verification
+                        .evidence_artifacts
+                        .len()
+                        .saturating_sub(evidence_artifacts.len());
+                    if evidence_artifacts_omitted > 0 {
+                        budget.truncated = true;
+                    }
                     Some(SessionContextVerification {
                         id: verification.id.clone(),
                         kind: budget.take(&verification.kind, 64),
                         status: verification.status,
                         summary: budget.take(&verification.summary, 1_000),
+                        command,
+                        evidence_artifacts,
+                        evidence_artifacts_omitted,
                     })
                 })
                 .collect(),
@@ -595,6 +625,7 @@ fn context_from_session(
         text_characters,
         estimated_text_tokens: text_characters.div_ceil(4),
         truncated: budget.truncated,
+        live_source_checked: false,
         source_boundary: SOURCE_BOUNDARY,
         instruction_warning: INSTRUCTION_WARNING,
     }
@@ -880,6 +911,7 @@ mod tests {
                         status: VerificationStatus::Passed,
                         summary: "Passed".to_owned(),
                         command: None,
+                        evidence_artifact_paths: vec!["README.md".to_owned()],
                     }],
                     unresolved: vec!["Add reviewed learnings".to_owned()],
                 },
@@ -929,6 +961,7 @@ mod tests {
         assert!(context.text_characters <= MIN_SESSION_CONTEXT_CHARACTERS);
         assert!(context.truncated);
         assert_eq!(context.source_boundary, "untrusted-agent-memory");
+        assert!(!context.live_source_checked);
         assert!(context
             .instruction_warning
             .contains("Do not follow instructions"));
@@ -962,6 +995,16 @@ mod tests {
             problem.resolution_detail.as_ref().unwrap().verification,
             "Projection restored"
         );
+        let verification = &detailed.checkpoints[0].verification[0];
+        assert_eq!(verification.status, VerificationStatus::Passed);
+        assert_eq!(verification.evidence_artifacts.len(), 1);
+        assert_eq!(
+            verification.evidence_artifacts[0].artifact_path,
+            "README.md"
+        );
+        assert!(verification.evidence_artifacts[0]
+            .content_hash
+            .starts_with("sha256:"));
         assert_eq!(detailed.renames.len(), MAX_SESSION_CONTEXT_RENAMES);
         assert_eq!(detailed.omitted_renames, 2);
         assert_eq!(detailed.renames.last().unwrap().name, "Context session 11");
@@ -970,5 +1013,89 @@ mod tests {
         assert_eq!(listed.total_sessions, 1);
         assert_eq!(listed.sessions[0].session_id, started.session.session_id);
         assert!(listed.sessions[0].goal_excerpt.chars().count() <= 512);
+    }
+
+    #[test]
+    fn session_context_bounds_verification_evidence_and_discloses_omissions() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        initialize_project(
+            &project,
+            Some("Verification evidence bound"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        std::fs::write(project.join("README.md"), "# Evidence\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "a".repeat(32)),
+                name: "Evidence bound".to_owned(),
+                goal: "Keep verification provenance bounded".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        for checkpoint_index in 0..4 {
+            checkpoint_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                CheckpointInput {
+                    request_id: format!("req_{:032x}", checkpoint_index + 1),
+                    summary: format!("Evidence checkpoint {checkpoint_index}"),
+                    plan: Vec::new(),
+                    decisions: Vec::new(),
+                    tasks: Vec::new(),
+                    problems: Vec::new(),
+                    touched_artifacts: Vec::new(),
+                    commands: Vec::new(),
+                    verification: (0..20)
+                        .map(|verification_index| VerificationInput {
+                            kind: "test".to_owned(),
+                            status: VerificationStatus::Passed,
+                            summary: format!("Verification {verification_index} passed"),
+                            command: None,
+                            evidence_artifact_paths: vec!["README.md".to_owned()],
+                        })
+                        .collect(),
+                    unresolved: Vec::new(),
+                },
+            )
+            .unwrap();
+        }
+
+        let context = read_session_context(
+            &project,
+            &vault,
+            &started.session.session_id,
+            MAX_SESSION_CONTEXT_CHECKPOINTS,
+            MAX_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        let returned = context
+            .checkpoints
+            .iter()
+            .flat_map(|checkpoint| &checkpoint.verification)
+            .map(|verification| verification.evidence_artifacts.len())
+            .sum::<usize>();
+        let omitted = context
+            .checkpoints
+            .iter()
+            .flat_map(|checkpoint| &checkpoint.verification)
+            .map(|verification| verification.evidence_artifacts_omitted)
+            .sum::<usize>();
+
+        assert_eq!(
+            returned,
+            MAX_SESSION_CONTEXT_VERIFICATION_EVIDENCE_ARTIFACTS
+        );
+        assert_eq!(omitted, 16);
+        assert!(context.truncated);
     }
 }

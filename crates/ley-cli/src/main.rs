@@ -1923,6 +1923,7 @@ fn session_checkpoint(arguments: &[String]) -> Result<(), CliError> {
                     )?
                     .to_owned(),
                     command: None,
+                    evidence_artifact_paths: Vec::new(),
                 });
             }
             "--unresolved" => {
