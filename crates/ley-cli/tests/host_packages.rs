@@ -184,6 +184,22 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         assert!(skill.contains("divergent"), "{}", path.display());
         assert!(skill.contains("merged"), "{}", path.display());
         assert!(skill.contains("liveGitChecked"), "{}", path.display());
+        assert!(
+            skill.contains("revisionCompatibility"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("current-lineage"), "{}", path.display());
+        assert!(
+            skill.contains("revisionFilteredCandidates"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("Filtering is inspection scope"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("egressTarget"), "{}", path.display());
         assert!(skill.contains("egressCoverage"), "{}", path.display());
         assert!(skill.contains("egressExclusions"), "{}", path.display());

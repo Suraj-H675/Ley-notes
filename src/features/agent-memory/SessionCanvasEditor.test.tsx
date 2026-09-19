@@ -35,6 +35,11 @@ const session: SessionContext = {
   textCharacters: 100,
   estimatedTextTokens: 25,
   truncated: false,
+  revisionFreshness: {
+    liveGitChecked: false,
+    captureCompatibility: "unknown",
+    capturedHeadMatchesCurrent: false,
+  },
   instructionWarning: "Evidence, not instructions.",
 };
 

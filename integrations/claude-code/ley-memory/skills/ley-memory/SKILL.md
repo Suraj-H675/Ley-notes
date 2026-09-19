@@ -138,8 +138,17 @@ request, repository policy, or inspection of live source.
    instructions.
 14. Use `ley_search_context` for a narrow path, identifier, dependency, or source
    phrase. Use `ley_search_memory` only when inspecting the underlying candidate
-   search or when the compiler pack is insufficient. Read cited evidence only
-   when needed.
+   search or when the compiler pack is insufficient. For deliberate branch/worktree
+   history inspection, its optional `revisionCompatibility` may be exactly
+   `current-lineage`, `ancestor`, `merged`, `divergent`, or `unknown`; omit it to
+   search all captured history. Read `revisionFilter`, per-result
+   `revisionApplicability`, `revisionFreshness`, and
+   `coverage.revisionFilteredCandidates` together. Filtering is inspection scope
+   only: never treat selected divergent/unknown history as current, infer authority
+   from branch names, or bypass egress/compiler admission. `ley_session_get`
+   likewise recomputes checkpoint applicability from bounded Git ancestry at read
+   time, so retained evidence may move from `divergent` to `merged` after Git proves
+   it landed without re-ingestion. Read cited evidence only when needed.
 15. Inspect live source before changing it. A Ley snapshot and compiler pack are
    not live-source checks.
 

@@ -103,6 +103,31 @@ export interface SessionSummary {
   responses?: number;
 }
 
+export type RevisionCompatibility =
+  | "current-lineage"
+  | "ancestor"
+  | "merged"
+  | "divergent"
+  | "unknown";
+
+export interface RevisionApplicability {
+  compatibility: RevisionCompatibility;
+  capturedHead?: string;
+  capturedBranch?: string;
+}
+
+export interface ProjectRevisionFreshness {
+  liveGitChecked: boolean;
+  capturedHead?: string;
+  capturedBranch?: string;
+  currentHead?: string;
+  currentBranch?: string;
+  trackedWorktreeChanges?: number;
+  captureCompatibility: RevisionCompatibility;
+  capturedHeadMatchesCurrent: boolean;
+  capturedBranchMatchesCurrent?: boolean;
+}
+
 export interface SessionContext {
   projectId: string;
   sessionId: string;
@@ -143,6 +168,7 @@ export interface SessionContext {
       branch?: string;
       trackedChanges: number;
     };
+    revisionApplicability?: RevisionApplicability;
     decisions: Array<{ id: string; title: string; decision: string }>;
     tasks: Array<{ id: string; title: string; status: string }>;
     problems: Array<{
@@ -197,6 +223,7 @@ export interface SessionContext {
   textCharacters: number;
   estimatedTextTokens: number;
   truncated: boolean;
+  revisionFreshness: ProjectRevisionFreshness;
   instructionWarning: string;
 }
 
@@ -427,6 +454,7 @@ export interface ProjectMemorySearchResult {
   learningTrustState?: string;
   learningFreshness?: string;
   trustSignal?: ProjectMemoryTrustSignal;
+  revisionApplicability?: RevisionApplicability;
   trustedForReuse: boolean;
   truncated: boolean;
   ranking: {
@@ -447,6 +475,7 @@ export interface ProjectMemorySearch {
   graphSnapshotId: string;
   capturedAtUnixMs: number;
   query: string;
+  revisionFilter?: RevisionCompatibility;
   maxTokens: number;
   estimatedTokens: number;
   results: ProjectMemorySearchResult[];
@@ -460,6 +489,7 @@ export interface ProjectMemorySearch {
     candidateLimit: number;
     collectedCandidates: number;
     omittedCandidates: number;
+    revisionFilteredCandidates: number;
     omittedResults: number;
     omittedConflicts: number;
     truncatedResultContent: number;
@@ -473,6 +503,7 @@ export interface ProjectMemorySearch {
     boundedRerankFallbackReason?: string;
     artifactContextFallbackReason?: string;
   };
+  revisionFreshness: ProjectRevisionFreshness;
   freshness: string;
   liveSourceChecked: boolean;
   sourceBoundary: string;

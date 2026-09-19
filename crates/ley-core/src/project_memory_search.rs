@@ -11,7 +11,7 @@ use crate::{
     find_project_hybrid_context, list_learnings, ContextItemKind, GraphCitation, LearningFreshness,
     LearningKind, LearningOriginSummary, LearningState, LearningSummary, LearningTrustState,
     LeyCoreError, ProjectRevisionFreshness, RetrievalLimits, RetrievalMode, RevisionApplicability,
-    SessionArtifactCitation,
+    RevisionCompatibility, SessionArtifactCitation,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -164,6 +164,7 @@ pub struct ProjectMemorySearchCoverage {
     pub candidate_limit: usize,
     pub collected_candidates: usize,
     pub omitted_candidates: usize,
+    pub revision_filtered_candidates: usize,
     pub omitted_results: usize,
     pub omitted_conflicts: usize,
     pub truncated_result_content: usize,
@@ -191,6 +192,8 @@ pub struct ProjectMemorySearch {
     pub graph_snapshot_id: String,
     pub captured_at_unix_ms: u64,
     pub query: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_filter: Option<RevisionCompatibility>,
     pub max_tokens: usize,
     pub estimated_tokens: usize,
     pub results: Vec<ProjectMemorySearchResult>,
@@ -318,6 +321,7 @@ pub fn search_project_memory(
     vault: impl AsRef<Path>,
     query: &str,
     limits: ProjectMemorySearchLimits,
+    revision_filter: Option<RevisionCompatibility>,
 ) -> Result<ProjectMemorySearch, LeyCoreError> {
     validate_request(query, limits)?;
     let project_start = project_start.as_ref();
@@ -394,7 +398,17 @@ pub fn search_project_memory(
         ));
     }
 
-    let (candidates, omitted_candidates) = collector.finish();
+    let (mut candidates, omitted_candidates) = collector.finish();
+    let before_revision_filter = candidates.len();
+    if let Some(filter) = revision_filter {
+        candidates.retain(|candidate| {
+            candidate
+                .revision_applicability
+                .as_ref()
+                .is_some_and(|applicability| applicability.compatibility == filter)
+        });
+    }
+    let revision_filtered_candidates = before_revision_filter.saturating_sub(candidates.len());
     let content_conflicted_entities = disclose_content_conflicts(&candidates, &mut conflicts);
     let (conflicts, conflict_limit_omitted) = conflicts.finish();
 
@@ -437,8 +451,9 @@ pub fn search_project_memory(
     let source_truncated = hybrid.context.truncated;
     let coverage = ProjectMemorySearchCoverage {
         candidate_limit: MAX_PROJECT_MEMORY_SEARCH_CANDIDATES,
-        collected_candidates: candidates.len(),
+        collected_candidates: before_revision_filter,
         omitted_candidates,
+        revision_filtered_candidates,
         omitted_results,
         omitted_conflicts,
         truncated_result_content,
@@ -464,6 +479,7 @@ pub fn search_project_memory(
         graph_snapshot_id: hybrid.context.graph_snapshot_id.clone(),
         captured_at_unix_ms: hybrid.context.captured_at_unix_ms,
         query: query.to_owned(),
+        revision_filter,
         max_tokens: limits.max_tokens,
         estimated_tokens,
         results,
@@ -487,7 +503,12 @@ fn collect_session_candidates(
     collector: &mut CandidateCollector,
     revision_resolver: &mut RevisionResolver,
 ) {
-    collector.push(new_candidate(
+    let session_revision_applicability = session
+        .checkpoints
+        .last()
+        .and_then(|checkpoint| checkpoint.project_revision.as_ref())
+        .map(|revision| revision_resolver.applicability(revision));
+    let mut session_candidate = new_candidate(
         ProjectMemoryResultKind::Session,
         session.session_id.clone(),
         session.name.clone(),
@@ -505,7 +526,9 @@ fn collect_session_candidates(
         None,
         query,
         terms,
-    ));
+    );
+    session_candidate.revision_applicability = session_revision_applicability;
+    collector.push(session_candidate);
 
     for checkpoint in &session.checkpoints {
         let revision_applicability = checkpoint
@@ -1326,9 +1349,32 @@ fn sanitize_memory_error(_error: LeyCoreError) -> LeyCoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ingest_project, initialize_project, CaptureMode};
+    use crate::{
+        checkpoint_session, ingest_project, initialize_project, start_session, CaptureMode,
+        CheckpointInput, DecisionInput, SessionSource, StartSessionInput,
+    };
     use std::fs;
+    use std::process::Command;
     use tempfile::tempdir;
+
+    fn request_id(digit: char) -> String {
+        format!("req_{}", digit.to_string().repeat(32))
+    }
+
+    fn git(project: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(project)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     fn candidate(
         kind: ProjectMemoryResultKind,
@@ -1611,6 +1657,7 @@ mod tests {
                 max_results: 4,
                 max_tokens: 1_000,
             },
+            None,
         )
         .unwrap();
 
@@ -1625,5 +1672,127 @@ mod tests {
             .unwrap()
             .contains(project.to_string_lossy().as_ref()));
         assert!(!result.live_source_checked);
+    }
+
+    #[test]
+    fn revision_filter_selects_exact_branch_applicability_without_reingestion() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        git(&project, &["init", "-b", "main"]);
+        git(&project, &["config", "user.name", "Ley Tests"]);
+        git(&project, &["config", "user.email", "ley@example.invalid"]);
+        fs::write(project.join("README.md"), "mainline baseline\n").unwrap();
+        git(&project, &["add", "README.md"]);
+        git(&project, &["commit", "-m", "baseline"]);
+
+        initialize_project(&project, Some("Branch controls"), CaptureMode::Structured).unwrap();
+        git(&project, &["checkout", "-b", "experiment"]);
+        fs::write(
+            project.join("README.md"),
+            "branch_filter_marker_7e31 experimental branch evidence\n",
+        )
+        .unwrap();
+        git(&project, &["add", "README.md"]);
+        git(&project, &["commit", "-m", "experiment"]);
+        ingest_project(&project, &vault).unwrap();
+
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('1'),
+                name: "Experimental workstream".to_owned(),
+                goal: "Evaluate branch_filter_marker_7e31 safely".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: request_id('2'),
+                summary: "Recorded branch_filter_marker_7e31 on the experiment branch.".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "Experimental branch marker".to_owned(),
+                    decision: "Keep branch_filter_marker_7e31 scoped to the experiment.".to_owned(),
+                    rationale: String::new(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["README.md".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        git(&project, &["checkout", "main"]);
+        let limits = ProjectMemorySearchLimits {
+            max_results: 12,
+            max_tokens: 4_000,
+        };
+        let divergent = search_project_memory(
+            &project,
+            &vault,
+            "branch_filter_marker_7e31",
+            limits,
+            Some(RevisionCompatibility::Divergent),
+        )
+        .unwrap();
+        assert_eq!(
+            divergent.revision_filter,
+            Some(RevisionCompatibility::Divergent)
+        );
+        assert!(!divergent.results.is_empty());
+        assert!(divergent.results.iter().all(|result| {
+            result
+                .revision_applicability
+                .as_ref()
+                .is_some_and(|applicability| {
+                    applicability.compatibility == RevisionCompatibility::Divergent
+                })
+        }));
+        assert!(!divergent.live_source_checked);
+
+        let current = search_project_memory(
+            &project,
+            &vault,
+            "branch_filter_marker_7e31",
+            limits,
+            Some(RevisionCompatibility::CurrentLineage),
+        )
+        .unwrap();
+        assert!(current.results.is_empty());
+        assert!(current.coverage.revision_filtered_candidates > 0);
+
+        git(
+            &project,
+            &["merge", "--no-ff", "experiment", "-m", "merge experiment"],
+        );
+        let merged = search_project_memory(
+            &project,
+            &vault,
+            "branch_filter_marker_7e31",
+            limits,
+            Some(RevisionCompatibility::Merged),
+        )
+        .unwrap();
+        assert!(!merged.results.is_empty());
+        assert!(merged.results.iter().all(|result| {
+            result
+                .revision_applicability
+                .as_ref()
+                .is_some_and(|applicability| {
+                    applicability.compatibility == RevisionCompatibility::Merged
+                })
+        }));
     }
 }

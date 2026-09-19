@@ -25,6 +25,7 @@ import type {
   AgentProjectSearchResultKind,
   ProjectMemorySearch,
   ProjectMemorySearchResult,
+  RevisionCompatibility,
   SemanticModelSetup,
 } from "./types";
 
@@ -49,6 +50,9 @@ export function MemorySearch({
   onOpen: (result: ProjectMemorySearchResult) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [revisionFilter, setRevisionFilter] = useState<
+    RevisionCompatibility | "all"
+  >("all");
   const [search, setSearch] = useState<ProjectMemorySearch | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +97,13 @@ export function MemorySearch({
     setBusy(true);
     setError(null);
     try {
-      setSearch(await searchAgentProjectMemory(projectPath, value));
+      setSearch(
+        await searchAgentProjectMemory(
+          projectPath,
+          value,
+          revisionFilter === "all" ? undefined : revisionFilter,
+        ),
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -106,6 +116,8 @@ export function MemorySearch({
       projectName={projectName}
       query={query}
       setQuery={setQuery}
+      revisionFilter={revisionFilter}
+      setRevisionFilter={setRevisionFilter}
       search={search}
       busy={busy}
       error={error}
@@ -123,6 +135,8 @@ function MemorySearchContent({
   projectName,
   query,
   setQuery,
+  revisionFilter,
+  setRevisionFilter,
   search,
   busy,
   error,
@@ -136,6 +150,8 @@ function MemorySearchContent({
   projectName: string;
   query: string;
   setQuery: (value: string) => void;
+  revisionFilter: RevisionCompatibility | "all";
+  setRevisionFilter: (value: RevisionCompatibility | "all") => void;
   search: ProjectMemorySearch | null;
   busy: boolean;
   error: string | null;
@@ -196,14 +212,37 @@ function MemorySearchContent({
             <span className="hidden sm:inline">Search</span>
           </Button>
         </div>
-        <div className="mt-2.5 flex items-center gap-2 px-1 text-micro text-muted-foreground">
-          <BrainCircuit size={12} aria-hidden="true" />
-          <span>
-            Runs on this device. Captured text never leaves Ley.
-            {semanticSetup?.status.state === "ready"
-              ? " Hybrid retrieval is ready."
-              : " Exact local search remains available."}
-          </span>
+        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 px-1">
+          <div className="flex items-center gap-2 text-micro text-muted-foreground">
+            <BrainCircuit size={12} aria-hidden="true" />
+            <span>
+              Runs on this device. Captured text never leaves Ley.
+              {semanticSetup?.status.state === "ready"
+                ? " Hybrid retrieval is ready."
+                : " Exact local search remains available."}
+            </span>
+          </div>
+          <label className="flex items-center gap-2 text-micro text-muted-foreground">
+            <GitBranch size={12} aria-hidden="true" />
+            <span>Revision scope</span>
+            <select
+              aria-label="Filter project memory by revision compatibility"
+              value={revisionFilter}
+              onChange={(event) =>
+                setRevisionFilter(
+                  event.target.value as RevisionCompatibility | "all",
+                )
+              }
+              className="rounded-sm border border-border bg-surface-1 px-2 py-1 text-micro text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <option value="all">All captured history</option>
+              <option value="current-lineage">Current lineage</option>
+              <option value="ancestor">Ancestor</option>
+              <option value="merged">Merged</option>
+              <option value="divergent">Divergent</option>
+              <option value="unknown">Unknown</option>
+            </select>
+          </label>
         </div>
       </form>
 
@@ -348,8 +387,19 @@ function MemorySearchResults({
             {search.retrieval.mode}
           </span>
           <span>captured snapshot</span>
+          {search.revisionFilter && (
+            <span className="rounded-sm border border-border bg-surface-1 px-1.5 py-0.5">
+              {compatibilityLabel(search.revisionFilter)} only
+            </span>
+          )}
         </div>
       </div>
+
+      <p className="text-micro leading-relaxed text-muted-foreground">
+        {search.revisionFreshness.liveGitChecked
+          ? `Current Git: ${search.revisionFreshness.currentBranch ?? "detached HEAD"}${search.revisionFreshness.currentHead ? ` · ${search.revisionFreshness.currentHead.slice(0, 10)}` : ""}. Git metadata only; live files were not checked.`
+          : "Current Git metadata was unavailable. Live files were not checked."}
+      </p>
 
       {search.conflicts.length > 0 && (
         <div className="rounded-md border border-warning/25 bg-warning/8 p-4">
@@ -443,6 +493,21 @@ function MemoryResult({
               {result.trustSignal.replace("-", " ")}
             </span>
           )}
+          {result.revisionApplicability && (
+            <span
+              className={cn(
+                "rounded-sm px-1.5 py-0.5 text-micro font-medium",
+                result.revisionApplicability.compatibility === "divergent" ||
+                  result.revisionApplicability.compatibility === "unknown"
+                  ? "bg-warning/10 text-warning"
+                  : "bg-surface-3 text-muted-foreground",
+              )}
+            >
+              {compatibilityLabel(
+                result.revisionApplicability.compatibility,
+              )}
+            </span>
+          )}
         </div>
         <p className="mt-1 line-clamp-3 text-meta leading-relaxed text-muted-foreground">
           {result.excerpt}
@@ -457,4 +522,19 @@ function MemoryResult({
       )}
     </button>
   );
+}
+
+function compatibilityLabel(value: RevisionCompatibility): string {
+  switch (value) {
+    case "current-lineage":
+      return "Current lineage";
+    case "ancestor":
+      return "Ancestor";
+    case "merged":
+      return "Merged";
+    case "divergent":
+      return "Divergent";
+    case "unknown":
+      return "Unknown";
+  }
 }

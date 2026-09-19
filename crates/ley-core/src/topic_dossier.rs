@@ -215,6 +215,7 @@ pub fn compile_topic_dossier(
             max_results: limits.max_results,
             max_tokens: limits.max_tokens,
         },
+        None,
     )?;
 
     let mut dossier = TopicDossier {

@@ -13,17 +13,17 @@ use ley_core::{
     ProjectActivityView, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
     ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView, ProjectMemorySearch,
     ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
-    RenameSessionInput, ReviewLearningInput, SessionContextPack, SessionMemoryErasure,
-    SessionSummary, SessionTurnsContextPack, SpecificationAuthorityList, SpecificationRegistry,
-    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS,
-    DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
-    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
-    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
-    DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS,
+    RenameSessionInput, ReviewLearningInput, RevisionCompatibility, SessionContextPack,
+    SessionMemoryErasure, SessionSummary, SessionTurnsContextPack, SpecificationAuthorityList,
+    SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS,
+    DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
+    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
+    DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_PROJECT_CATALOG_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS,
 };
 use ley_core::{
     semantic_model_status as local_semantic_model_status, supported_semantic_model,
@@ -606,6 +606,7 @@ async fn search_agent_projects(query: String) -> Result<CrossProjectSearch, Stri
 async fn search_agent_project_memory(
     project_path: String,
     query: String,
+    revision_filter: Option<RevisionCompatibility>,
 ) -> Result<ProjectMemorySearch, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let binding = resolved_agent_binding(Path::new(&project_path))?;
@@ -617,6 +618,7 @@ async fn search_agent_project_memory(
                 max_results: DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
                 max_tokens: DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
             },
+            revision_filter,
         )
     })
     .await

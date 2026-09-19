@@ -1,7 +1,9 @@
+use crate::retrieval::project_captured_git_state;
+use crate::revision::RevisionResolver;
 use crate::{
     list_sessions, read_session, AgentSession, AttemptOutcome, LeyCoreError,
-    SessionArtifactCitation, SessionSource, SessionStatus, TaskStatus, TurnEvidenceOrigin,
-    TurnEvidenceRetention, VerificationStatus,
+    ProjectRevisionFreshness, RevisionApplicability, SessionArtifactCitation, SessionSource,
+    SessionStatus, TaskStatus, TurnEvidenceOrigin, TurnEvidenceRetention, VerificationStatus,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -93,6 +95,7 @@ pub struct SessionContextPack {
     pub text_characters: usize,
     pub estimated_text_tokens: usize,
     pub truncated: bool,
+    pub revision_freshness: ProjectRevisionFreshness,
     pub live_source_checked: bool,
     pub source_boundary: &'static str,
     pub instruction_warning: &'static str,
@@ -154,6 +157,8 @@ pub struct SessionContextCheckpoint {
     pub summary: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_revision: Option<crate::SessionProjectRevision>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_applicability: Option<RevisionApplicability>,
     pub decisions: Vec<SessionContextDecision>,
     pub tasks: Vec<SessionContextTask>,
     pub problems: Vec<SessionContextProblem>,
@@ -329,11 +334,16 @@ pub fn read_session_context(
     max_text_characters: usize,
 ) -> Result<SessionContextPack, LeyCoreError> {
     validate_context_limits(max_checkpoints, max_text_characters)?;
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let captured_git = project_captured_git_state(project_start, vault)?;
+    let mut revision_resolver = RevisionResolver::new(project_start, captured_git.as_ref())?;
     let session = read_session(project_start, vault, session_id)?;
     Ok(context_from_session(
         session,
         max_checkpoints,
         max_text_characters,
+        &mut revision_resolver,
     ))
 }
 
@@ -362,6 +372,7 @@ fn context_from_session(
     session: AgentSession,
     max_checkpoints: usize,
     max_text_characters: usize,
+    revision_resolver: &mut RevisionResolver,
 ) -> SessionContextPack {
     let mut budget = TextBudget::new(max_text_characters);
     let mut remaining_verification_evidence_artifacts =
@@ -406,6 +417,10 @@ fn context_from_session(
             recorded_at_unix_ms: checkpoint.recorded_at_unix_ms,
             summary: budget.take(&checkpoint.summary, 2_000),
             project_revision: checkpoint.project_revision.clone(),
+            revision_applicability: checkpoint
+                .project_revision
+                .as_ref()
+                .map(|revision| revision_resolver.applicability(revision)),
             decisions: checkpoint
                 .decisions
                 .iter()
@@ -625,6 +640,7 @@ fn context_from_session(
         text_characters,
         estimated_text_tokens: text_characters.div_ceil(4),
         truncated: budget.truncated,
+        revision_freshness: revision_resolver.freshness().clone(),
         live_source_checked: false,
         source_boundary: SOURCE_BOUNDARY,
         instruction_warning: INSTRUCTION_WARNING,
@@ -833,9 +849,25 @@ mod tests {
         checkpoint_session, finish_session, ingest_project, initialize_project, rename_session,
         start_session, AttemptInput, AttemptOutcome, CaptureMode, CheckpointInput, CommandInput,
         DecisionInput, FinishSessionInput, ProblemInput, RenameSessionInput, ResolutionInput,
-        SessionSourceKind, StartSessionInput, TaskInput, VerificationInput,
+        RevisionCompatibility, SessionSourceKind, StartSessionInput, TaskInput, VerificationInput,
     };
+    use std::process::Command;
     use tempfile::tempdir;
+
+    fn git(project: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(project)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     #[test]
     fn session_context_is_recent_bounded_and_marks_memory_untrusted() {
@@ -1097,5 +1129,97 @@ mod tests {
         );
         assert_eq!(omitted, 16);
         assert!(context.truncated);
+    }
+
+    #[test]
+    fn session_context_recomputes_checkpoint_revision_applicability_without_reingestion() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        git(&project, &["init", "-b", "main"]);
+        git(&project, &["config", "user.name", "Ley Tests"]);
+        git(&project, &["config", "user.email", "ley@example.invalid"]);
+        std::fs::write(project.join("README.md"), "mainline\n").unwrap();
+        git(&project, &["add", "README.md"]);
+        git(&project, &["commit", "-m", "baseline"]);
+        initialize_project(&project, Some("Revision context"), CaptureMode::Structured).unwrap();
+
+        git(&project, &["checkout", "-b", "experiment"]);
+        std::fs::write(project.join("README.md"), "experimental state\n").unwrap();
+        git(&project, &["add", "README.md"]);
+        git(&project, &["commit", "-m", "experiment"]);
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "a".repeat(32)),
+                name: "Experimental workstream".to_owned(),
+                goal: "Keep branch state scoped".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "b".repeat(32)),
+                summary: "Experimental checkpoint".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["README.md".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        git(&project, &["checkout", "main"]);
+        let divergent = read_session_context(
+            &project,
+            &vault,
+            &started.session.session_id,
+            DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+            DEFAULT_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(
+            divergent.checkpoints[0]
+                .revision_applicability
+                .as_ref()
+                .unwrap()
+                .compatibility,
+            RevisionCompatibility::Divergent
+        );
+        assert!(!divergent.live_source_checked);
+
+        git(
+            &project,
+            &["merge", "--no-ff", "experiment", "-m", "merge experiment"],
+        );
+        let merged = read_session_context(
+            &project,
+            &vault,
+            &started.session.session_id,
+            DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+            DEFAULT_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(
+            merged.checkpoints[0]
+                .revision_applicability
+                .as_ref()
+                .unwrap()
+                .compatibility,
+            RevisionCompatibility::Merged
+        );
+        assert!(!merged.live_source_checked);
     }
 }

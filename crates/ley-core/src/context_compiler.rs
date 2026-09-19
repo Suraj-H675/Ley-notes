@@ -795,6 +795,7 @@ fn active_project_search(
             max_results: MAX_PROJECT_MEMORY_SEARCH_RESULTS,
             max_tokens: MAX_PROJECT_MEMORY_SEARCH_TOKENS,
         },
+        None,
     )
 }
 
@@ -1198,6 +1199,7 @@ fn append_mounted_references(
                 max_results: MOUNTED_REFERENCE_CANDIDATE_RESULTS,
                 max_tokens: MOUNTED_REFERENCE_CANDIDATE_TOKENS,
             },
+            None,
         ) {
             Ok(search) => search,
             Err(_) => {
@@ -2498,6 +2500,7 @@ mod tests {
             graph_snapshot_id: format!("grf_{}", "1".repeat(64)),
             captured_at_unix_ms: 1,
             query: "task".to_owned(),
+            revision_filter: None,
             max_tokens: MAX_PROJECT_MEMORY_SEARCH_TOKENS,
             estimated_tokens: 100,
             results,
@@ -2506,6 +2509,7 @@ mod tests {
                 candidate_limit: 256,
                 collected_candidates: 0,
                 omitted_candidates: 0,
+                revision_filtered_candidates: 0,
                 omitted_results: 0,
                 omitted_conflicts: 0,
                 truncated_result_content: 0,

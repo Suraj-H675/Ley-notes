@@ -18,6 +18,7 @@ import type {
   GraphCitation,
   ProjectProblemScope,
   ProjectMemorySearch,
+  RevisionCompatibility,
   SemanticModelInstallation,
   SemanticModelSetup,
   SessionContext,
@@ -55,8 +56,13 @@ export function searchAgentProjects(
 export function searchAgentProjectMemory(
   projectPath: string,
   query: string,
+  revisionFilter?: RevisionCompatibility,
 ): Promise<ProjectMemorySearch> {
-  return invoke("search_agent_project_memory", { projectPath, query });
+  return invoke("search_agent_project_memory", {
+    projectPath,
+    query,
+    revisionFilter,
+  });
 }
 
 export function readSemanticModelSetup(): Promise<SemanticModelSetup> {

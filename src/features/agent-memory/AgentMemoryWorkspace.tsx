@@ -64,6 +64,9 @@ import type {
   PromotedLearningNoteDraft,
   PromotedSessionNoteDraft,
   ProjectMemorySearchResult,
+  ProjectRevisionFreshness,
+  RevisionApplicability,
+  RevisionCompatibility,
   ResumeSession,
   SessionContext,
   SessionSummary,
@@ -2228,6 +2231,7 @@ function SessionCheckpointTimeline({
               key={checkpoint.checkpointId}
               checkpoint={checkpoint}
               index={index}
+              revisionFreshness={session.revisionFreshness}
               onEvidence={onEvidence}
               onProjectRevision={onProjectRevision}
             />
@@ -2241,11 +2245,13 @@ function SessionCheckpointTimeline({
 function SessionCheckpointCard({
   checkpoint,
   index,
+  revisionFreshness,
   onEvidence,
   onProjectRevision,
 }: {
   checkpoint: SessionContext["checkpoints"][number];
   index: number;
+  revisionFreshness: ProjectRevisionFreshness;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
   onProjectRevision: (graphSnapshotId: string) => void;
 }) {
@@ -2326,6 +2332,8 @@ function SessionCheckpointCard({
       {checkpoint.projectRevision && (
         <ProjectRevisionButton
           revision={checkpoint.projectRevision}
+          applicability={checkpoint.revisionApplicability}
+          freshness={revisionFreshness}
           onOpen={onProjectRevision}
         />
       )}
@@ -2471,18 +2479,30 @@ function SessionInspectorHeader({
 
 function ProjectRevisionButton({
   revision,
+  applicability,
+  freshness,
   onOpen,
 }: {
   revision: NonNullable<
     SessionContext["checkpoints"][number]["projectRevision"]
   >;
+  applicability?: RevisionApplicability;
+  freshness: ProjectRevisionFreshness;
   onOpen: (graphSnapshotId: string) => void;
 }) {
   const shortHead = revision.head?.slice(0, 10);
+  const currentHead = freshness.currentHead?.slice(0, 10);
   const changeLabel =
     revision.trackedChanges === 0
       ? "clean tracked tree"
       : `${revision.trackedChanges.toLocaleString()} tracked change${revision.trackedChanges === 1 ? "" : "s"}`;
+  const currentChangeLabel =
+    freshness.trackedWorktreeChanges === undefined
+      ? "tracked status unavailable"
+      : freshness.trackedWorktreeChanges === 0
+        ? "clean tracked tree"
+        : `${freshness.trackedWorktreeChanges.toLocaleString()} tracked change${freshness.trackedWorktreeChanges === 1 ? "" : "s"}`;
+  const compatibility = applicability?.compatibility;
   return (
     <div className="mt-4 border-t border-border pt-4">
       <p className="text-micro font-medium text-muted-foreground">
@@ -2516,8 +2536,48 @@ function ProjectRevisionButton({
           aria-hidden="true"
         />
       </button>
+      <div className="mt-2 rounded-md border border-border bg-background/45 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-micro font-medium text-muted-foreground">
+            Current applicability
+          </span>
+          <span
+            className={cn(
+              "rounded-sm px-1.5 py-0.5 text-micro font-medium",
+              compatibility === "divergent" || compatibility === "unknown"
+                ? "bg-warning/10 text-warning"
+                : "bg-success/10 text-success",
+            )}
+          >
+            {revisionCompatibilityLabel(compatibility ?? "unknown")}
+          </span>
+        </div>
+        <p className="mt-1.5 text-micro text-muted-foreground">
+          {freshness.liveGitChecked
+            ? `Current Git: ${freshness.currentBranch ?? "detached HEAD"}${currentHead ? ` · ${currentHead}` : ""} · ${currentChangeLabel}.`
+            : "Current Git metadata is unavailable."}
+        </p>
+        <p className="mt-1 text-micro text-muted-foreground">
+          Git metadata only. Live file contents were not checked.
+        </p>
+      </div>
     </div>
   );
+}
+
+function revisionCompatibilityLabel(value: RevisionCompatibility): string {
+  switch (value) {
+    case "current-lineage":
+      return "Current lineage";
+    case "ancestor":
+      return "Ancestor";
+    case "merged":
+      return "Merged";
+    case "divergent":
+      return "Divergent";
+    case "unknown":
+      return "Unknown";
+  }
 }
 
 function LearningInspector({

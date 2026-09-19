@@ -58,6 +58,7 @@ METRIC_NAMES = (
     "agent_legibility",
     "reviewed_runbook",
     "verification_evidence_links",
+    "branch_worktree_controls",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -375,6 +376,28 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "verification-evidence-links",
             "verification_evidence_links",
+            "truthy",
+        ),
+    },
+    "branch-worktree-controls": {
+        "adversarial": (
+            "divergent-branch-state-adjudication",
+            "branch_worktree_controls",
+            "truthy",
+        ),
+        "downstream": (
+            "divergent-branch-state-adjudication",
+            "branch_worktree_controls",
+            "truthy",
+        ),
+        "privacy": (
+            "divergent-branch-state-adjudication",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "divergent-branch-state-adjudication",
+            "branch_worktree_controls",
             "truthy",
         ),
     },
@@ -1431,6 +1454,78 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and divergent.get("liveSourceChecked") is False
         )
 
+        branch_controls_expectation = scenario.get("expected_branch_worktree_controls")
+        divergent_search: dict[str, object] | None = None
+        current_lineage_search: dict[str, object] | None = None
+        divergent_session: dict[str, object] | None = None
+        branch_controls_pre_merge_ok = True
+        if isinstance(branch_controls_expectation, dict):
+            if not session_id:
+                raise RuntimeError("branch/worktree controls fixture created no session")
+            controls_query = str(branch_controls_expectation.get("query", query))
+            divergent_search = mcp_call(
+                project,
+                "ley_search_memory",
+                {
+                    "query": controls_query,
+                    "revisionCompatibility": "divergent",
+                    "maxResults": 12,
+                    "maxTokens": 4_000,
+                },
+            )
+            current_lineage_search = mcp_call(
+                project,
+                "ley_search_memory",
+                {
+                    "query": controls_query,
+                    "revisionCompatibility": "current-lineage",
+                    "maxResults": 12,
+                    "maxTokens": 4_000,
+                },
+            )
+            divergent_session = mcp_call(
+                project,
+                "ley_session_get",
+                {
+                    "sessionId": session_id,
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            divergent_results = [
+                item
+                for item in divergent_search.get("results", [])
+                if isinstance(item, dict)
+            ]
+            divergent_checkpoints = [
+                item
+                for item in divergent_session.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            branch_controls_pre_merge_ok = (
+                divergent_search.get("revisionFilter") == "divergent"
+                and bool(divergent_results)
+                and all(
+                    item.get("revisionApplicability", {}).get("compatibility")
+                    == "divergent"
+                    for item in divergent_results
+                )
+                and not current_lineage_search.get("results")
+                and current_lineage_search.get("revisionFilter") == "current-lineage"
+                and bool(divergent_checkpoints)
+                and divergent_checkpoints[-1]
+                .get("revisionApplicability", {})
+                .get("compatibility")
+                == "divergent"
+                and divergent_session.get("revisionFreshness", {}).get(
+                    "captureCompatibility"
+                )
+                == "divergent"
+                and divergent_session.get("revisionFreshness", {}).get("liveGitChecked")
+                is True
+                and divergent_session.get("liveSourceChecked") is False
+            )
+
         git_run(
             project,
             [
@@ -1473,10 +1568,74 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         revision_ok = divergent_ok and merged_ok
         scores["revision_adjudication"] = revision_ok
+        branch_controls_post_merge_ok = True
+        branch_controls_evidence: list[object] = []
+        if isinstance(branch_controls_expectation, dict):
+            controls_query = str(branch_controls_expectation.get("query", query))
+            merged_search = mcp_call(
+                project,
+                "ley_search_memory",
+                {
+                    "query": controls_query,
+                    "revisionCompatibility": "merged",
+                    "maxResults": 12,
+                    "maxTokens": 4_000,
+                },
+            )
+            merged_session = mcp_call(
+                project,
+                "ley_session_get",
+                {
+                    "sessionId": session_id,
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            merged_results = [
+                item
+                for item in merged_search.get("results", [])
+                if isinstance(item, dict)
+            ]
+            merged_checkpoints = [
+                item
+                for item in merged_session.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            branch_controls_post_merge_ok = (
+                merged_search.get("revisionFilter") == "merged"
+                and bool(merged_results)
+                and all(
+                    item.get("revisionApplicability", {}).get("compatibility") == "merged"
+                    for item in merged_results
+                )
+                and bool(merged_checkpoints)
+                and merged_checkpoints[-1]
+                .get("revisionApplicability", {})
+                .get("compatibility")
+                == "merged"
+                and merged_session.get("revisionFreshness", {}).get("captureCompatibility")
+                == "merged"
+                and merged_session.get("revisionFreshness", {}).get("liveGitChecked") is True
+                and merged_session.get("liveSourceChecked") is False
+            )
+            scores["branch_worktree_controls"] = (
+                branch_controls_pre_merge_ok and branch_controls_post_merge_ok
+            )
+            branch_controls_evidence = [
+                divergent_search,
+                current_lineage_search,
+                divergent_session,
+                merged_search,
+                merged_session,
+            ]
+            if not scores["branch_worktree_controls"]:
+                failures.append(
+                    "branch/worktree controls did not filter exact revision applicability or refresh session compatibility across merge"
+                )
         scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)], [divergent, merged]
+            [str(project), str(vault)], [divergent, merged, *branch_controls_evidence]
         )
-        evidence_text.extend([divergent, merged])
+        evidence_text.extend([divergent, merged, *branch_controls_evidence])
         if not revision_ok:
             failures.append(
                 "revision adjudication did not withhold divergent state and re-admit proven merged history"
