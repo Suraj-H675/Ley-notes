@@ -13,6 +13,7 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 - selective abstention when no useful memory exists;
 - crash recovery, transition binding, idempotency, and origin-lineage preservation;
 - human-intent Specification admission, Context Mount isolation, premise resistance, and revision applicability;
+- explicit external GitHub connector scope/egress, read-only MCP exposure, stable remove/re-add identity, and non-laundering;
 - parallel-session separation and cross-host durability;
 - secret/cross-project/model-egress privacy violation rate;
 - deletion fidelity and forgetting-residue rate across Ley-managed raw/derived retrieval surfaces;
@@ -54,6 +55,12 @@ expectations, or failing metric values make a full-corpus run fail.
 
 Focused subset runs validate the matrix schema but intentionally skip full result-value coverage because
 not every representative scenario was executed.
+
+## P2 capability coverage
+
+The implemented P2 matrix currently covers the first external issue/PR connector slice. `python eval/run_eval.py --p2-coverage` runs a deterministic, network-free scenario through the real CLI/MCP surfaces: connector add must create authority without a provider request; allowed MCP list must disclose `networkRequested: false`; `local-model-only` must hide connector URL/content from the cloud target and activate the historical-derivative ceiling while preserving direct captured project evidence; an explicit local target may see the allowed connector metadata/history again; and remove/re-add of the same canonical source must preserve deterministic connector identity plus the retained restrictive policy. The matrix requires adversarial, downstream, privacy, and regression dimensions just like P0/P1.
+
+The provider network adapter is tested separately so the normal evaluation corpus does not depend on public internet availability. Rust tests verify canonical-target revalidation, issue-vs-PR parsing, response bounds, and structured-source tamper rejection. A real disposable CLI workflow is also used during landing verification to exercise explicit public GitHub refresh without touching user project/config state. This separation keeps the deterministic corpus reproducible while still testing the actual network path before release.
 
 ## P1 capability coverage
 

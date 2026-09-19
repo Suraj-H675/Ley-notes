@@ -1,0 +1,13 @@
+[package]
+name = "ley-github-connector"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "Explicit fixed-origin public GitHub issue/pull-request fetcher for Ley"
+
+[dependencies]
+ley-core = { path = "../ley-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ureq.workspace = true

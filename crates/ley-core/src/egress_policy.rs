@@ -1,4 +1,5 @@
 use crate::context_mount::validate_mount_id;
+use crate::external_connector::validate_connector_id;
 use crate::specification::validate_specification_id;
 use crate::{
     default_binding_registry_path, diagnose_project, validate_project_id, LeyCoreError,
@@ -15,7 +16,7 @@ const EGRESS_POLICY_REGISTRY_LOCK_FILE: &str = "agent-egress-v1.lock";
 pub const EGRESS_POLICY_REGISTRY_SCHEMA_VERSION: u32 = 1;
 pub const MAX_EGRESS_SCOPE_OVERRIDES_PER_PROJECT: usize = 256;
 
-const PRIVACY_NOTICE: &str = "Agent egress policy is OS-private authority. It stores stable project/specification/mount identities and policy labels only; repository or remembered text cannot grant itself model-sharing permission.";
+const PRIVACY_NOTICE: &str = "Agent egress policy is OS-private authority. It stores stable project/specification/mount/external-connector identities and policy labels only; repository, remembered, or fetched external text cannot grant itself model-sharing permission.";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -125,6 +126,7 @@ pub enum AgentEgressScopeKind {
     Project,
     Specification,
     ContextMount,
+    ExternalConnector,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -149,6 +151,7 @@ pub struct ProjectAgentEgressPolicy {
     pub project_policy: AgentEgressPolicy,
     pub specification_overrides: Vec<AgentEgressScopePolicy>,
     pub mount_overrides: Vec<AgentEgressScopePolicy>,
+    pub connector_overrides: Vec<AgentEgressScopePolicy>,
     pub privacy_notice: &'static str,
 }
 
@@ -161,6 +164,8 @@ struct ProjectEgressEntry {
     specifications: BTreeMap<String, AgentEgressPolicy>,
     #[serde(default)]
     mounts: BTreeMap<String, AgentEgressPolicy>,
+    #[serde(default)]
+    connectors: BTreeMap<String, AgentEgressPolicy>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +206,11 @@ impl EgressPolicyRegistryDocument {
                     "project {project_id} has more than {MAX_EGRESS_SCOPE_OVERRIDES_PER_PROJECT} Context Mount egress overrides"
                 )));
             }
+            if entry.connectors.len() > MAX_EGRESS_SCOPE_OVERRIDES_PER_PROJECT {
+                return Err(LeyCoreError::InvalidEgressPolicyRegistry(format!(
+                    "project {project_id} has more than {MAX_EGRESS_SCOPE_OVERRIDES_PER_PROJECT} external connector egress overrides"
+                )));
+            }
             for (specification_id, policy) in &entry.specifications {
                 validate_specification_id(specification_id)
                     .map_err(LeyCoreError::InvalidEgressPolicyRegistry)?;
@@ -216,6 +226,16 @@ impl EgressPolicyRegistryDocument {
                 if *policy == AgentEgressPolicy::AgentOk {
                     return Err(LeyCoreError::InvalidEgressPolicyRegistry(
                         "agent-ok Context Mount policy must be represented by absence of an override"
+                            .to_owned(),
+                    ));
+                }
+            }
+            for (connector_id, policy) in &entry.connectors {
+                validate_connector_id(connector_id)
+                    .map_err(LeyCoreError::InvalidEgressPolicyRegistry)?;
+                if *policy == AgentEgressPolicy::AgentOk {
+                    return Err(LeyCoreError::InvalidEgressPolicyRegistry(
+                        "agent-ok external connector policy must be represented by absence of an override"
                             .to_owned(),
                     ));
                 }
@@ -261,6 +281,14 @@ impl EgressPolicySnapshot {
             .unwrap_or(AgentEgressPolicy::AgentOk)
     }
 
+    pub fn connector_policy(&self, project_id: &str, connector_id: &str) -> AgentEgressPolicy {
+        self.projects
+            .get(project_id)
+            .and_then(|entry| entry.connectors.get(connector_id))
+            .copied()
+            .unwrap_or(AgentEgressPolicy::AgentOk)
+    }
+
     pub fn has_blocked_fine_grained_source(
         &self,
         project_id: &str,
@@ -289,6 +317,16 @@ impl EgressPolicySnapshot {
                     .iter()
                     .map(|(scope_id, policy)| AgentEgressScopePolicy {
                         scope_kind: AgentEgressScopeKind::ContextMount,
+                        scope_id: scope_id.clone(),
+                        policy: *policy,
+                    }),
+            )
+            .chain(
+                entry
+                    .connectors
+                    .iter()
+                    .map(|(scope_id, policy)| AgentEgressScopePolicy {
+                        scope_kind: AgentEgressScopeKind::ExternalConnector,
                         scope_id: scope_id.clone(),
                         policy: *policy,
                     }),
@@ -395,6 +433,33 @@ impl EgressPolicyRegistry {
         })
     }
 
+    pub fn set_connector_policy(
+        &self,
+        project_start: impl AsRef<Path>,
+        connector_id: &str,
+        policy: AgentEgressPolicy,
+    ) -> Result<AgentEgressPolicyMutation, LeyCoreError> {
+        validate_connector_id(connector_id).map_err(LeyCoreError::InvalidEgressPolicyRequest)?;
+        let project_id = diagnose_project(project_start)?.identity.project_id;
+        self.mutate(|document| {
+            let entry = document.projects.entry(project_id.clone()).or_default();
+            if policy == AgentEgressPolicy::AgentOk {
+                entry.connectors.remove(connector_id);
+            } else {
+                entry.connectors.insert(connector_id.to_owned(), policy);
+            }
+            prune_default_entry(document, &project_id);
+            Ok(AgentEgressPolicyMutation {
+                project_id: project_id.clone(),
+                scope: AgentEgressScopePolicy {
+                    scope_kind: AgentEgressScopeKind::ExternalConnector,
+                    scope_id: connector_id.to_owned(),
+                    policy,
+                },
+            })
+        })
+    }
+
     pub fn list(
         &self,
         project_start: impl AsRef<Path>,
@@ -421,11 +486,21 @@ impl EgressPolicyRegistry {
                 policy: *policy,
             })
             .collect();
+        let connector_overrides = entry
+            .into_iter()
+            .flat_map(|entry| entry.connectors.iter())
+            .map(|(scope_id, policy)| AgentEgressScopePolicy {
+                scope_kind: AgentEgressScopeKind::ExternalConnector,
+                scope_id: scope_id.clone(),
+                policy: *policy,
+            })
+            .collect();
         Ok(ProjectAgentEgressPolicy {
             project_id,
             project_policy,
             specification_overrides,
             mount_overrides,
+            connector_overrides,
             privacy_notice: PRIVACY_NOTICE,
         })
     }
@@ -457,6 +532,20 @@ impl EgressPolicyRegistry {
             .projects
             .get(&project_id)
             .is_some_and(|entry| entry.mounts.contains_key(mount_id)))
+    }
+
+    pub fn has_connector_override(
+        &self,
+        project_start: impl AsRef<Path>,
+        connector_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_connector_id(connector_id).map_err(LeyCoreError::InvalidEgressPolicyRequest)?;
+        let project_id = diagnose_project(project_start)?.identity.project_id;
+        let document = self.read_locked()?;
+        Ok(document
+            .projects
+            .get(&project_id)
+            .is_some_and(|entry| entry.connectors.contains_key(connector_id)))
     }
 
     pub fn with_snapshot_locked<T>(
@@ -669,6 +758,7 @@ fn prune_default_entry(document: &mut EgressPolicyRegistryDocument, project_id: 
         entry.project_policy == AgentEgressPolicy::AgentOk
             && entry.specifications.is_empty()
             && entry.mounts.is_empty()
+            && entry.connectors.is_empty()
     });
     if remove {
         document.projects.remove(project_id);
@@ -708,6 +798,7 @@ mod tests {
         assert_eq!(before.project_policy, AgentEgressPolicy::AgentOk);
         assert!(before.specification_overrides.is_empty());
         assert!(before.mount_overrides.is_empty());
+        assert!(before.connector_overrides.is_empty());
         assert!(!registry.path().exists());
 
         registry
@@ -764,7 +855,7 @@ mod tests {
     }
 
     #[test]
-    fn specification_and_mount_overrides_are_bounded_and_reset_with_agent_ok() {
+    fn fine_grained_overrides_are_bounded_and_reset_with_agent_ok() {
         let root = tempdir().unwrap();
         let project = root.path().join("project");
         fs::create_dir(&project).unwrap();
@@ -772,6 +863,7 @@ mod tests {
         let registry = EgressPolicyRegistry::at(root.path().join("private/egress.json"));
         let specification_id = "spec_11111111111111111111111111111111";
         let mount_id = "mnt_22222222222222222222222222222222";
+        let connector_id = "ext_33333333333333333333333333333333";
 
         registry
             .set_specification_policy(&project, specification_id, AgentEgressPolicy::NeverSend)
@@ -779,9 +871,27 @@ mod tests {
         registry
             .set_mount_policy(&project, mount_id, AgentEgressPolicy::LocalModelOnly)
             .unwrap();
+        registry
+            .set_connector_policy(&project, connector_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
         let listed = registry.list(&project).unwrap();
         assert_eq!(listed.specification_overrides.len(), 1);
         assert_eq!(listed.mount_overrides.len(), 1);
+        assert_eq!(listed.connector_overrides.len(), 1);
+        registry
+            .with_snapshot_locked(|snapshot| {
+                assert_eq!(
+                    snapshot.connector_policy(
+                        &initialize_project(&project, None, CaptureMode::Structured)?
+                            .identity
+                            .project_id,
+                        connector_id,
+                    ),
+                    AgentEgressPolicy::NeverSend
+                );
+                Ok(())
+            })
+            .unwrap();
 
         registry
             .set_specification_policy(&project, specification_id, AgentEgressPolicy::AgentOk)
@@ -789,9 +899,13 @@ mod tests {
         registry
             .set_mount_policy(&project, mount_id, AgentEgressPolicy::AgentOk)
             .unwrap();
+        registry
+            .set_connector_policy(&project, connector_id, AgentEgressPolicy::AgentOk)
+            .unwrap();
         let listed = registry.list(&project).unwrap();
         assert!(listed.specification_overrides.is_empty());
         assert!(listed.mount_overrides.is_empty());
+        assert!(listed.connector_overrides.is_empty());
     }
 
     #[test]

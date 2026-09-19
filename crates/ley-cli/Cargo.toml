@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 ley-core = { path = "../ley-core" }
+ley-github-connector = { path = "../ley-github-connector" }
 ley-mcp = { path = "../ley-mcp" }
 ley-semantic-installer = { path = "../ley-semantic-installer" }
 serde_json.workspace = true

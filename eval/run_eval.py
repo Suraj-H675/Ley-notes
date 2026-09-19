@@ -61,6 +61,7 @@ METRIC_NAMES = (
     "branch_worktree_controls",
     "graph_relation_retrieval",
     "context_memory_utility",
+    "external_connector",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -444,6 +445,31 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "context-memory-utility-feedback",
             "context_memory_utility",
+            "truthy",
+        ),
+    },
+}
+
+P2_CAPABILITY_COVERAGE = {
+    "external-issue-pr-connectors": {
+        "adversarial": (
+            "external-github-connector-egress",
+            "external_connector",
+            "truthy",
+        ),
+        "downstream": (
+            "external-github-connector-egress",
+            "external_connector",
+            "truthy",
+        ),
+        "privacy": (
+            "external-github-connector-egress",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "external-github-connector-egress",
+            "external_connector",
             "truthy",
         ),
     },
@@ -1931,6 +1957,246 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not egress_ok:
             failures.append(
                 "agent egress policy leaked or incorrectly blocked Specification context"
+            )
+
+    connector_expectation = scenario.get("expected_external_connector")
+    if isinstance(connector_expectation, dict):
+        source_url = str(connector_expectation.get("source_url", ""))
+        historical_marker = str(connector_expectation.get("historical_marker", ""))
+        direct_marker = str(connector_expectation.get("direct_marker", ""))
+        query = str(connector_expectation.get("query", ""))
+        if not source_url or not historical_marker or not direct_marker or not query:
+            raise RuntimeError(
+                "external connector fixture requires source_url, historical_marker, direct_marker, and query"
+            )
+
+        added = cli_json(["connector", "add", source_url, str(project), "--json"])
+        if not isinstance(added, dict) or not isinstance(added.get("connector"), dict):
+            raise RuntimeError("connector add returned no connector receipt")
+        added_connector = added["connector"]
+        connector_id = str(added_connector.get("connectorId", ""))
+        source = added_connector.get("source")
+        if not connector_id or not isinstance(source, dict):
+            raise RuntimeError("connector add returned incomplete connector identity")
+
+        tools = mcp_tools_list(project)
+        tool_names = {
+            str(tool.get("name", "")) for tool in tools if isinstance(tool, dict)
+        }
+        read_routes_only = (
+            "ley_external_connectors_list" in tool_names
+            and "ley_external_connector_get" in tool_names
+            and "ley_external_connector_add" not in tool_names
+            and "ley_external_connector_refresh" not in tool_names
+            and "ley_external_connector_remove" not in tool_names
+        )
+
+        allowed_list = mcp_call(project, "ley_external_connectors_list", {})
+        allowed_connectors = [
+            item
+            for item in allowed_list.get("connectors", [])
+            if isinstance(item, dict)
+        ]
+        allowed_discovery = (
+            source.get("canonicalUrl") == source_url
+            and source.get("resourceKind") in {"issue", "pull-request"}
+            and added_connector.get("agentContextEnabled") is True
+            and allowed_list.get("networkRequested") is False
+            and allowed_list.get("sourceBoundary") == "untrusted-external-reference"
+            and any(
+                item.get("connectorId") == connector_id
+                and isinstance(item.get("source"), dict)
+                and item["source"].get("canonicalUrl") == source_url
+                for item in allowed_connectors
+            )
+        )
+
+        cli_json(
+            [
+                "egress",
+                "connector",
+                connector_id,
+                "local-model-only",
+                str(project),
+                "--json",
+            ]
+        )
+        blocked_list = mcp_call(project, "ley_external_connectors_list", {})
+        blocked_serialized = json.dumps(blocked_list, sort_keys=True)
+        blocked_exclusions = [
+            item
+            for item in blocked_list.get("exclusions", [])
+            if isinstance(item, dict)
+        ]
+        blocked_metadata = (
+            blocked_list.get("networkRequested") is False
+            and not blocked_list.get("connectors")
+            and any(
+                item.get("connectorId") == connector_id
+                and item.get("policy") == "local-model-only"
+                and item.get("blockReason") == "local-model-only"
+                for item in blocked_exclusions
+            )
+            and source_url not in blocked_serialized
+        )
+
+        blocked_get_error = ""
+        try:
+            mcp_call(
+                project,
+                "ley_external_connector_get",
+                {"connectorId": connector_id},
+            )
+        except RuntimeError as error:
+            blocked_get_error = str(error)
+        blocked_get = (
+            "local-model-only" in blocked_get_error
+            and source_url not in blocked_get_error
+            and historical_marker not in blocked_get_error
+        )
+
+        cloud_compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+        )
+        cloud_coverage = cloud_compiled.get("egressCoverage")
+        cloud_exclusions = [
+            item
+            for item in cloud_compiled.get("egressExclusions", [])
+            if isinstance(item, dict)
+        ]
+        cloud_compiled_text = json.dumps(cloud_compiled, sort_keys=True)
+        cloud_withheld = (
+            isinstance(cloud_coverage, dict)
+            and cloud_coverage.get("blockedExternalConnectors") == 1
+            and cloud_coverage.get("historicalMemoryWithheld") is True
+            and int(cloud_coverage.get("withheldDerivedResults", 0)) >= 1
+            and any(
+                item.get("scopeKind") == "external-connector"
+                and item.get("scopeId") == connector_id
+                and item.get("policyOrigin") == "external-connector"
+                and item.get("policy") == "local-model-only"
+                for item in cloud_exclusions
+            )
+            and historical_marker not in cloud_compiled_text
+        )
+
+        resume_error = ""
+        try:
+            mcp_call(
+                project,
+                "ley_project_resume",
+                {"maxSessions": 3, "maxLearnings": 3, "maxCharacters": 8_000},
+            )
+        except RuntimeError as error:
+            resume_error = str(error)
+        historical_reader_blocked = (
+            "historical Ley memory is withheld" in resume_error
+            and historical_marker not in resume_error
+            and source_url not in resume_error
+        )
+
+        direct = mcp_call(
+            project,
+            "ley_search_context",
+            {"query": direct_marker, "maxResults": 4, "maxTokens": 1_000},
+        )
+        direct_preserved = direct_marker in json.dumps(direct, sort_keys=True)
+
+        local_flags = ("--egress-target", "local")
+        local_list = mcp_call(
+            project,
+            "ley_external_connectors_list",
+            {},
+            flags=local_flags,
+        )
+        local_compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": query, "maxResults": 8, "maxTokens": 1_500},
+            flags=local_flags,
+        )
+        local_allowed = (
+            local_list.get("networkRequested") is False
+            and source_url in json.dumps(local_list, sort_keys=True)
+            and historical_marker in json.dumps(local_compiled, sort_keys=True)
+            and isinstance(local_compiled.get("egressCoverage"), dict)
+            and local_compiled["egressCoverage"].get("blockedExternalConnectors") == 0
+        )
+
+        removed = cli_json(
+            ["connector", "remove", connector_id, str(project), "--json"]
+        )
+        retained = cli_json(["egress", "list", str(project), "--json"])
+        retained_overrides = (
+            retained.get("connectorOverrides", []) if isinstance(retained, dict) else []
+        )
+        retained_restriction = any(
+            isinstance(item, dict)
+            and item.get("scopeId") == connector_id
+            and item.get("policy") == "local-model-only"
+            for item in retained_overrides
+        )
+        readded = cli_json(["connector", "add", source_url, str(project), "--json"])
+        readded_connector = readded.get("connector", {}) if isinstance(readded, dict) else {}
+        stable_identity = (
+            isinstance(removed, dict)
+            and removed.get("connectorId") == connector_id
+            and isinstance(readded_connector, dict)
+            and readded_connector.get("connectorId") == connector_id
+        )
+        reblocked_list = mcp_call(project, "ley_external_connectors_list", {})
+        reblocked_text = json.dumps(reblocked_list, sort_keys=True)
+        retained_enforced = (
+            retained_restriction
+            and not reblocked_list.get("connectors")
+            and source_url not in reblocked_text
+            and any(
+                isinstance(item, dict)
+                and item.get("connectorId") == connector_id
+                and item.get("policy") == "local-model-only"
+                for item in reblocked_list.get("exclusions", [])
+            )
+        )
+
+        agent_payloads = [
+            allowed_list,
+            blocked_list,
+            cloud_compiled,
+            direct,
+            local_list,
+            local_compiled,
+            reblocked_list,
+        ]
+        local_path_leak = any(
+            path in serialized(agent_payloads)
+            for path in (str(project), str(vault))
+        )
+        policy_leak = (
+            source_url in blocked_serialized
+            or source_url in reblocked_text
+            or historical_marker in cloud_compiled_text
+            or historical_marker in resume_error
+        )
+        scores["privacy_violation_rate"] = 1.0 if local_path_leak or policy_leak else 0.0
+        connector_ok = (
+            read_routes_only
+            and allowed_discovery
+            and blocked_metadata
+            and blocked_get
+            and cloud_withheld
+            and historical_reader_blocked
+            and direct_preserved
+            and local_allowed
+            and stable_identity
+            and retained_enforced
+        )
+        scores["external_connector"] = connector_ok
+        evidence_text.extend(agent_payloads)
+        if not connector_ok:
+            failures.append(
+                "external connector scope/egress contract failed deterministic authority, MCP, non-laundering, or remove/re-add checks"
             )
 
     mounted_definitions = [
@@ -3702,6 +3968,11 @@ def parse_eval_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Run only implemented P1 coverage-matrix representative scenarios and enforce the matrix.",
     )
+    parser.add_argument(
+        "--p2-coverage",
+        action="store_true",
+        help="Run only implemented P2 coverage-matrix representative scenarios and enforce the matrix.",
+    )
     return parser.parse_args(argv)
 
 
@@ -3714,6 +3985,7 @@ def main(argv: list[str] | None = None) -> int:
     ]
     validate_coverage_config("P0", P0_CAPABILITY_COVERAGE, all_scenarios)
     validate_coverage_config("P1", P1_CAPABILITY_COVERAGE, all_scenarios)
+    validate_coverage_config("P2", P2_CAPABILITY_COVERAGE, all_scenarios)
     if arguments.list:
         for scenario in all_scenarios:
             print(f"{scenario['id']}\t{scenario.get('category', '')}")
@@ -3721,9 +3993,17 @@ def main(argv: list[str] | None = None) -> int:
 
     requested_ids = set(arguments.scenario)
     requested_categories = set(arguments.category)
-    if arguments.p0_coverage and arguments.p1_coverage:
-        raise SystemExit("--p0-coverage and --p1-coverage are mutually exclusive")
-    if (arguments.p0_coverage or arguments.p1_coverage) and (
+    coverage_modes = sum(
+        bool(value)
+        for value in (
+            arguments.p0_coverage,
+            arguments.p1_coverage,
+            arguments.p2_coverage,
+        )
+    )
+    if coverage_modes > 1:
+        raise SystemExit("--p0-coverage, --p1-coverage, and --p2-coverage are mutually exclusive")
+    if coverage_modes and (
         requested_ids or requested_categories
     ):
         raise SystemExit(
@@ -3751,6 +4031,17 @@ def main(argv: list[str] | None = None) -> int:
             for scenario in all_scenarios
             if str(scenario["id"]) in coverage_ids
         ]
+    elif arguments.p2_coverage:
+        coverage_ids = {
+            scenario_id
+            for dimensions in P2_CAPABILITY_COVERAGE.values()
+            for scenario_id, _, _ in dimensions.values()
+        }
+        scenarios = [
+            scenario
+            for scenario in all_scenarios
+            if str(scenario["id"]) in coverage_ids
+        ]
     elif requested_ids or requested_categories:
         scenarios = [
             scenario
@@ -3771,6 +4062,7 @@ def main(argv: list[str] | None = None) -> int:
     } == {str(item["id"]) for item in all_scenarios}
     enforce_p0_coverage = full_corpus or arguments.p0_coverage
     enforce_p1_coverage = full_corpus or arguments.p1_coverage
+    enforce_p2_coverage = full_corpus or arguments.p2_coverage
     print(f"Running {len(scenarios)} eval scenarios with {LEY}...\n", flush=True)
     results: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="ley-eval-") as temporary:
@@ -3887,6 +4179,37 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(
             "P1 capability coverage matrix: skipped for focused subset run.",
+            flush=True,
+        )
+
+    if enforce_p2_coverage:
+        result_by_id = {
+            str(result.get("id")): result
+            for result in results
+            if isinstance(result.get("id"), str)
+        }
+        print("", flush=True)
+        print("=== P2 capability metric coverage ===", flush=True)
+        for capability, dimensions in P2_CAPABILITY_COVERAGE.items():
+            dimension_results: list[str] = []
+            for dimension, (scenario_id, metric, expectation) in dimensions.items():
+                result = result_by_id.get(scenario_id, {})
+                ok = metric_requirement_passes(result, metric, expectation)
+                dimension_results.append(f"{dimension}={'PASS' if ok else 'FAIL'}")
+                if not ok:
+                    coverage_failures.append(
+                        f"{capability}/{dimension} requires {scenario_id}:{metric}={expectation}"
+                    )
+            print(f"{capability}: " + ", ".join(dimension_results), flush=True)
+        for failure in coverage_failures:
+            if any(
+                failure.startswith(f"{capability}/")
+                for capability in P2_CAPABILITY_COVERAGE
+            ):
+                print(f"  COVERAGE ERROR: {failure}", flush=True)
+    else:
+        print(
+            "P2 capability coverage matrix: skipped for focused subset run.",
             flush=True,
         )
 

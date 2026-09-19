@@ -233,6 +233,32 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             "{}",
             path.display()
         );
+        assert!(
+            skill.contains("ley_external_connectors_list"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("ley_external_connector_get"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("untrusted-external-reference"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("Neither tool contacts GitHub"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill
+                .contains("Never add, refresh, remove, or change egress for a connector"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("conflicting-state"), "{}", path.display());
         assert!(skill.contains("uncertain-state"), "{}", path.display());
         assert!(

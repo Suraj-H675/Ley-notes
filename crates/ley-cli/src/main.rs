@@ -4,22 +4,25 @@ use ley_core::{
     generate_learning_request_id, generate_request_id, ingest_project, initialize_project,
     learning_review_inbox, list_learnings, list_sessions, preview_capture,
     process_host_hook_for_agent_with_registries, project_resume_context, propose_learning,
-    read_learning, read_project_graph, read_session, read_session_context,
-    read_session_turns_context, record_session_prompt, record_session_response, rename_session,
+    read_external_connector_snapshot_with_registry, read_learning, read_project_graph,
+    read_session, read_session_context, read_session_turns_context, record_session_prompt,
+    record_session_response, remove_external_connector_with_registry, rename_session,
     review_learning, search_project_memory, semantic_model_status, start_session,
-    supported_semantic_model, AgentEgressPolicy, AgentEgressTarget, AgentHost, BindingRegistry,
-    CaptureMode, CheckpointInput, CommandInput, ContextMountRegistry, CorrectLearningInput,
-    EgressPolicyRegistry, EraseSessionMemoryInput, FinishSessionInput, GraphNodeKind,
-    LearningActor, LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance,
-    LearningState, LearningTrustState, LeyCoreError, ProjectMemorySearchLimits,
-    ProposeLearningInput, RenameSessionInput, ReviewLearningInput, ReviewedRunbookInput,
-    RevisionCompatibility, RunbookSkillExportInput, RunbookSkillHost, SemanticModelStatus,
-    SessionSource, SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput,
-    TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput, VerificationStatus,
+    store_external_connector_snapshot_with_registry, supported_semantic_model, AgentEgressPolicy,
+    AgentEgressTarget, AgentHost, BindingRegistry, CaptureMode, CheckpointInput, CommandInput,
+    ContextMountRegistry, CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput,
+    ExternalConnectorRegistry, FinishSessionInput, GraphNodeKind, LearningActor,
+    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
+    LearningTrustState, LeyCoreError, ProjectMemorySearchLimits, ProposeLearningInput,
+    RenameSessionInput, ReviewLearningInput, ReviewedRunbookInput, RevisionCompatibility,
+    RunbookSkillExportInput, RunbookSkillHost, SemanticModelStatus, SessionSource,
+    SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
+    TurnEvidenceOrigin, VerificationInput, VerificationStatus,
     DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
     DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
     DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
+use ley_github_connector::{fetch_public_github_reference, GitHubConnectorError};
 use ley_mcp::{run_stdio_with_egress_target, run_unavailable_stdio};
 use ley_semantic_installer::{
     install_supported_semantic_model_with_progress, SemanticModelInstallerError,
@@ -50,6 +53,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "hook" => hook(&arguments[1..]),
         "mcp" => mcp(&arguments[1..]),
         "egress" => egress(&arguments[1..]),
+        "connector" => connector(&arguments[1..]),
         "mount" => mount(&arguments[1..]),
         "session" => session(&arguments[1..]),
         "learning" => learning(&arguments[1..]),
@@ -171,7 +175,7 @@ fn semantic_install(json: bool) -> Result<(), CliError> {
 fn egress(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "egress requires list, project, specification, or mount".to_owned(),
+            "egress requires list, project, specification, mount, or connector".to_owned(),
         ));
     };
     let registry = EgressPolicyRegistry::system_default()?;
@@ -212,6 +216,14 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
                 } else {
                     println!("Context Mount overrides:");
                     for item in &result.mount_overrides {
+                        println!("  {}  {}", item.scope_id, item.policy);
+                    }
+                }
+                if result.connector_overrides.is_empty() {
+                    println!("External connector overrides: none");
+                } else {
+                    println!("External connector overrides:");
+                    for item in &result.connector_overrides {
                         println!("  {}  {}", item.scope_id, item.policy);
                     }
                 }
@@ -274,8 +286,31 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
             let result = registry.set_mount_policy(&project, mount_id, policy)?;
             print_egress_mutation(&result, json)
         }
+        "connector" => {
+            let connector_id = arguments.get(1).ok_or_else(|| {
+                CliError::Usage(
+                    "egress connector requires CONNECTOR_ID POLICY [PROJECT]".to_owned(),
+                )
+            })?;
+            let (policy, project, json) = parse_egress_scope_arguments(
+                &arguments[2..],
+                "egress connector requires CONNECTOR_ID POLICY [PROJECT]",
+            )?;
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let connectors = ExternalConnectorRegistry::system_default()?;
+            let known_connector = connectors.contains_connector(&project, connector_id)?;
+            let retained_override = registry.has_connector_override(&project, connector_id)?;
+            if !known_connector && !retained_override {
+                return Err(CliError::Usage(format!(
+                    "External connector {connector_id} is neither current nor retained by egress policy for this project"
+                )));
+            }
+            let result = registry.set_connector_policy(&project, connector_id, policy)?;
+            print_egress_mutation(&result, json)
+        }
         other => Err(CliError::Usage(format!(
-            "unknown egress command '{other}'; use list, project, specification, or mount"
+            "unknown egress command '{other}'; use list, project, specification, mount, or connector"
         ))),
     }
 }
@@ -324,6 +359,245 @@ fn print_egress_mutation(
         }
     }
     Ok(())
+}
+
+fn connector(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "connector requires add, list, refresh, show, or remove".to_owned(),
+        ));
+    };
+    let registry = ExternalConnectorRegistry::system_default()?;
+    match command {
+        "add" => {
+            let mut url = None;
+            let mut project = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if url.is_none() => url = Some(value.to_owned()),
+                    value if project.is_none() => project = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let url = url.ok_or_else(|| {
+                CliError::Usage("connector add requires GITHUB_ISSUE_OR_PR_URL".to_owned())
+            })?;
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.add_public_github_reference(&project, &url)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("external connector mutation is serializable")
+                );
+            } else {
+                println!(
+                    "External connector: {}  {}",
+                    result.connector.connector_id, result.connector.source.canonical_url
+                );
+                println!("Permission: read-only public GitHub reference");
+                println!(
+                    "Network: no request was made; run 'ley connector refresh {}' explicitly.",
+                    result.connector.connector_id
+                );
+                println!("Agent context: enabled subject to project + connector egress policy.");
+                if !result.created {
+                    println!("Existing connector reused.");
+                }
+            }
+            Ok(())
+        }
+        "list" => {
+            let mut project = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if project.is_none() => project = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.list(&project)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("external connector list is serializable")
+                );
+            } else if result.connectors.is_empty() {
+                println!("No external connectors.");
+            } else {
+                println!("External connectors: {}", result.connectors.len());
+                for connector in &result.connectors {
+                    println!(
+                        "  {}  {:?}  {}",
+                        connector.connector_id,
+                        connector.source.resource_kind,
+                        connector.source.canonical_url
+                    );
+                }
+                println!("Privacy: {}", result.privacy_notice);
+            }
+            Ok(())
+        }
+        "refresh" => {
+            let (connector_id, project, vault, json) = parse_connector_store_arguments(
+                &arguments[1..],
+                "connector refresh requires CONNECTOR_ID [PROJECT]",
+            )?;
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let binding = BindingRegistry::system_default()?.resolve(&project, vault.as_deref())?;
+            read_project_graph(&project, &binding.vault_path)?;
+            let connector = registry.get(&project, &connector_id)?;
+            let fetched = fetch_public_github_reference(&connector.source)?;
+            let result = store_external_connector_snapshot_with_registry(
+                &project,
+                &binding.vault_path,
+                &registry,
+                &connector_id,
+                fetched,
+            )?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("external connector refresh is serializable")
+                );
+            } else {
+                println!("External connector refreshed: {}", connector_id);
+                println!("Snapshot: {}", result.snapshot_id);
+                println!("Changed: {}", if result.changed { "yes" } else { "no" });
+                println!("Redaction findings: {}", result.redactions.len());
+                println!("Source remains untrusted external evidence; no GitHub write permission was granted.");
+            }
+            Ok(())
+        }
+        "show" => {
+            let (connector_id, project, vault, json) = parse_connector_store_arguments(
+                &arguments[1..],
+                "connector show requires CONNECTOR_ID [PROJECT]",
+            )?;
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let binding = BindingRegistry::system_default()?.resolve(&project, vault.as_deref())?;
+            let snapshot = read_external_connector_snapshot_with_registry(
+                &project,
+                &binding.vault_path,
+                &registry,
+                &connector_id,
+            )?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&snapshot)
+                        .expect("external connector snapshot is serializable")
+                );
+            } else {
+                println!("External connector: {}", snapshot.connector_id);
+                println!("Source: {}", snapshot.source.canonical_url);
+                println!("Snapshot: {}", snapshot.snapshot_id);
+                println!("State: {:?}", snapshot.state);
+                println!("Title: {}", terminal_safe(&snapshot.title));
+                if !snapshot.body.is_empty() {
+                    println!("Body:\n{}", terminal_safe(&snapshot.body));
+                }
+                println!(
+                    "Updated upstream: {}",
+                    terminal_safe(&snapshot.source_updated_at)
+                );
+                println!("Live source checked by this read: no");
+                println!("Warning: {}", snapshot.instruction_warning);
+            }
+            Ok(())
+        }
+        "remove" => {
+            let (connector_id, project, vault, json) = parse_connector_store_arguments(
+                &arguments[1..],
+                "connector remove requires CONNECTOR_ID [PROJECT]",
+            )?;
+            let project =
+                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let binding = BindingRegistry::system_default()?.resolve(&project, vault.as_deref())?;
+            let removed = remove_external_connector_with_registry(
+                &project,
+                &binding.vault_path,
+                &registry,
+                &connector_id,
+            )?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&removed)
+                        .expect("external connector removal is serializable")
+                );
+            } else if removed.is_some() {
+                println!("Removed external connector: {connector_id}");
+                println!("Any connector-specific egress override remains retained until explicitly changed.");
+            } else {
+                println!("External connector not found: {connector_id}");
+            }
+            Ok(())
+        }
+        other => Err(CliError::Usage(format!(
+            "unknown connector command '{other}'; use add, list, refresh, show, or remove"
+        ))),
+    }
+}
+
+fn parse_connector_store_arguments(
+    arguments: &[String],
+    usage: &str,
+) -> Result<(String, Option<PathBuf>, Option<PathBuf>, bool), CliError> {
+    let connector_id = arguments
+        .first()
+        .filter(|value| !value.starts_with('-'))
+        .cloned()
+        .ok_or_else(|| CliError::Usage(usage.to_owned()))?;
+    let mut project = None;
+    let mut vault = None;
+    let mut json = false;
+    let mut index = 1;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--vault" => {
+                index += 1;
+                vault = Some(PathBuf::from(required_value(arguments, index, "--vault")?));
+            }
+            "--json" => json = true,
+            value if value.starts_with('-') => {
+                return Err(CliError::Usage(format!("unknown option '{value}'")))
+            }
+            value if project.is_none() => project = Some(PathBuf::from(value)),
+            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+        }
+        index += 1;
+    }
+    Ok((connector_id, project, vault, json))
+}
+
+fn terminal_safe(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() && !matches!(character, '\n' | '\r' | '\t') {
+                '\u{fffd}'
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 fn mount(arguments: &[String]) -> Result<(), CliError> {
@@ -2722,6 +2996,12 @@ fn print_help() {
     println!("  ley egress project POLICY [PROJECT] [--json]");
     println!("  ley egress specification SPECIFICATION_ID POLICY [PROJECT] [--json]");
     println!("  ley egress mount MOUNT_ID POLICY [PROJECT] [--json]");
+    println!("  ley egress connector CONNECTOR_ID POLICY [PROJECT] [--json]");
+    println!("  ley connector add GITHUB_ISSUE_OR_PR_URL [PROJECT] [--json]");
+    println!("  ley connector list [PROJECT] [--json]");
+    println!("  ley connector refresh CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
+    println!("  ley connector show CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
+    println!("  ley connector remove CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley mount add REFERENCE_PROJECT [ACTIVE_PROJECT] [--json]");
     println!("  ley mount list [ACTIVE_PROJECT] [--json]");
     println!("  ley mount remove MOUNT_ID [ACTIVE_PROJECT] [--json]");
@@ -2764,6 +3044,7 @@ fn print_help() {
 enum CliError {
     Usage(String),
     Core(LeyCoreError),
+    GitHubConnector(GitHubConnectorError),
     Mcp(ley_mcp::McpServerError),
     CurrentDirectory(std::io::Error),
     HookInput(std::io::Error),
@@ -2781,6 +3062,7 @@ impl std::fmt::Display for CliError {
         match self {
             Self::Usage(message) => write!(formatter, "{message}; run 'ley help'"),
             Self::Core(error) => error.fmt(formatter),
+            Self::GitHubConnector(error) => error.fmt(formatter),
             Self::Mcp(error) => error.fmt(formatter),
             Self::CurrentDirectory(error) => {
                 write!(formatter, "could not read current directory: {error}")
@@ -2803,5 +3085,11 @@ impl std::fmt::Display for CliError {
 impl From<LeyCoreError> for CliError {
     fn from(value: LeyCoreError) -> Self {
         Self::Core(value)
+    }
+}
+
+impl From<GitHubConnectorError> for CliError {
+    fn from(value: GitHubConnectorError) -> Self {
+        Self::GitHubConnector(value)
     }
 }

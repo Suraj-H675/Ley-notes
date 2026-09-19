@@ -2,6 +2,7 @@
 members = [
     "crates/ley-cli",
     "crates/ley-core",
+    "crates/ley-github-connector",
     "crates/ley-mcp",
     "crates/ley-semantic-installer",
     "src-tauri",

@@ -16,6 +16,7 @@ mod context_pack_inspector;
 mod cross_project_search;
 mod current_project_state;
 mod egress_policy;
+mod external_connector;
 mod graph;
 mod host_adapter;
 mod ingestion;
@@ -96,6 +97,15 @@ pub use egress_policy::{
     AgentEgressPolicyMutation, AgentEgressScopeKind, AgentEgressScopePolicy, AgentEgressTarget,
     EgressPolicyRegistry, EgressPolicySnapshot, ProjectAgentEgressPolicy,
     EGRESS_POLICY_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_SCHEMA_VERSION,
+};
+pub use external_connector::{
+    parse_public_github_reference, read_external_connector_snapshot_with_registry,
+    remove_external_connector_with_registry, store_external_connector_snapshot_with_registry,
+    ExternalConnector, ExternalConnectorList, ExternalConnectorMutation, ExternalConnectorProvider,
+    ExternalConnectorRefresh, ExternalConnectorRegistry, ExternalConnectorResourceKind,
+    ExternalConnectorSnapshot, ExternalConnectorSnapshotInput, ExternalConnectorSource,
+    ExternalConnectorState, EXTERNAL_CONNECTOR_REGISTRY_FILE,
+    EXTERNAL_CONNECTOR_REGISTRY_SCHEMA_VERSION, MAX_EXTERNAL_CONNECTORS_PER_PROJECT,
 };
 pub use graph::{
     FactProvenance, GitChange, GitState, GraphCitation, GraphDiagnostic, GraphEdge, GraphEdgeKind,
@@ -442,6 +452,12 @@ pub enum LeyCoreError {
     InvalidEgressPolicyRegistry(String),
     #[error("invalid Ley agent egress policy request: {0}")]
     InvalidEgressPolicyRequest(String),
+    #[error("invalid Ley external connector registry: {0}")]
+    InvalidExternalConnectorRegistry(String),
+    #[error("invalid Ley external connector request: {0}")]
+    InvalidExternalConnectorRequest(String),
+    #[error("Ley external connector not found: {0}")]
+    ExternalConnectorNotFound(String),
     #[error("Ley agent egress policy '{policy}' does not allow target '{target}'")]
     AgentEgressDenied { policy: String, target: String },
     #[error("Ley cannot prove historical derived memory is independent of a source blocked for target '{target}'")]

@@ -126,6 +126,7 @@ pub struct ContextPremiseAdjudication {
 pub enum ContextEgressPolicyOrigin {
     Specification,
     ContextMount,
+    ExternalConnector,
     SourceProject,
 }
 
@@ -145,6 +146,7 @@ pub struct ContextEgressCoverage {
     pub target: AgentEgressTarget,
     pub blocked_specifications: usize,
     pub blocked_mounts: usize,
+    pub blocked_external_connectors: usize,
     pub blocked_historical_sources: usize,
     pub historical_memory_withheld: bool,
     pub withheld_derived_results: usize,
@@ -631,6 +633,9 @@ pub fn compile_project_context_for_agent_with_registries(
                         AgentEgressScopeKind::ContextMount => {
                             ContextEgressPolicyOrigin::ContextMount
                         }
+                        AgentEgressScopeKind::ExternalConnector => {
+                            ContextEgressPolicyOrigin::ExternalConnector
+                        }
                         AgentEgressScopeKind::Project => continue,
                     };
                     egress_exclusions.push(ContextEgressExclusion {
@@ -713,6 +718,10 @@ pub fn compile_project_context_for_agent_with_registries(
                         .iter()
                         .filter(|item| item.scope_kind == AgentEgressScopeKind::ContextMount)
                         .count();
+                    let blocked_external_connectors = egress_exclusions
+                        .iter()
+                        .filter(|item| item.scope_kind == AgentEgressScopeKind::ExternalConnector)
+                        .count();
                     let blocked_historical_sources = egress_exclusions
                         .iter()
                         .filter(|item| {
@@ -742,6 +751,7 @@ pub fn compile_project_context_for_agent_with_registries(
                         target,
                         blocked_specifications,
                         blocked_mounts,
+                        blocked_external_connectors,
                         blocked_historical_sources,
                         historical_memory_withheld,
                         withheld_derived_results,
@@ -3675,6 +3685,115 @@ mod tests {
             .items
             .iter()
             .any(|item| item.excerpt.contains("laundered_private_spec_marker")));
+    }
+
+    #[test]
+    fn blocked_external_connector_is_explicit_and_withholds_unproven_history() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        let config = root.path().join("config");
+        for path in [&project, &vault, &config] {
+            fs::create_dir_all(path).unwrap();
+        }
+        initialize_project(&project, Some("Connector egress"), CaptureMode::Structured).unwrap();
+        fs::write(project.join("README.md"), "connector egress baseline\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                name: "Connector-derived history".to_owned(),
+                goal: "Record connector-derived guidance".to_owned(),
+                source: Default::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                summary: "Captured connector-derived decision".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "Connector-derived decision".to_owned(),
+                    decision: "connector_derived_marker came from external reference context."
+                        .to_owned(),
+                    rationale: "Historical derivative may depend on connector content.".to_owned(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let connector_id = "ext_44444444444444444444444444444444";
+        egress
+            .set_connector_policy(&project, connector_id, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+        let authorities = AgentContextAuthorities {
+            specifications: &specifications,
+            mounts: &mounts,
+            egress: &egress,
+        };
+
+        let cloud = compile_project_context_for_agent_with_registries(
+            &project,
+            &vault,
+            "connector derived decision",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert!(cloud.egress_exclusions.iter().any(|item| {
+            item.scope_kind == AgentEgressScopeKind::ExternalConnector
+                && item.scope_id == connector_id
+                && item.policy_origin == ContextEgressPolicyOrigin::ExternalConnector
+                && item.policy == AgentEgressPolicy::LocalModelOnly
+                && item.block_reason == AgentEgressBlockReason::LocalModelOnly
+        }));
+        let coverage = cloud.egress_coverage.as_ref().unwrap();
+        assert_eq!(coverage.blocked_external_connectors, 1);
+        assert!(coverage.historical_memory_withheld);
+        assert!(coverage.withheld_derived_results >= 1);
+        assert!(!serde_json::to_string(&cloud)
+            .unwrap()
+            .contains("connector_derived_marker"));
+
+        let local = compile_project_context_for_agent_with_registries(
+            &project,
+            &vault,
+            "connector derived decision",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Local,
+        )
+        .unwrap();
+        assert_eq!(
+            local
+                .egress_coverage
+                .as_ref()
+                .unwrap()
+                .blocked_external_connectors,
+            0
+        );
+        assert!(local.egress_exclusions.is_empty());
+        assert!(local
+            .items
+            .iter()
+            .any(|item| item.excerpt.contains("connector_derived_marker")));
     }
 
     #[test]
