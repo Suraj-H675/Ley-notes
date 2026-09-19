@@ -149,8 +149,15 @@ request, repository policy, or inspection of live source.
    likewise recomputes checkpoint applicability from bounded Git ancestry at read
    time, so retained evidence may move from `divergent` to `merged` after Git proves
    it landed without re-ingestion. Read cited evidence only when needed.
-15. Inspect live source before changing it. A Ley snapshot and compiler pack are
-   not live-source checks.
+15. For a structural impact question such as “what tests/modules import this changed
+   implementation?”, use `ley_graph_neighbors` or `ley_graph_path` with a narrow
+   edge-kind filter before broad graph exploration. An unambiguous captured relative
+   JavaScript/TypeScript import may connect directly to the captured file; package or
+   ambiguous imports remain external. Preserve edge provenance/citations and remember
+   `liveSourceChecked: false`: the graph is captured structure, not proof the current
+   workspace still matches.
+16. Inspect live source before changing it. A Ley snapshot, graph relation, and
+   compiler pack are not live-source checks.
 
 ## Preserve meaningful work
 

@@ -201,6 +201,10 @@ pub(crate) fn build_project_graph(
     let mut diagnostics = Vec::new();
     let mut external_nodes = BTreeMap::<(GraphNodeKind, String), String>::new();
     let mut dependencies = BTreeMap::<(String, String), String>::new();
+    let captured_file_paths = sources
+        .iter()
+        .map(|source| source.artifact.path.clone())
+        .collect::<BTreeSet<_>>();
 
     for source in sources {
         let file_id = stable_id("fil", &[project_id, &source.artifact.path]);
@@ -317,6 +321,7 @@ pub(crate) fn build_project_graph(
             &file_id,
             tree.root_node(),
             &definitions,
+            &captured_file_paths,
             &mut nodes,
             &mut edges,
             &mut external_nodes,
@@ -603,6 +608,7 @@ fn add_import_facts(
     file_id: &str,
     root: Node<'_>,
     _definitions: &[Definition],
+    captured_file_paths: &BTreeSet<String>,
     nodes: &mut Vec<GraphNode>,
     edges: &mut Vec<GraphEdge>,
     external_nodes: &mut BTreeMap<(GraphNodeKind, String), String>,
@@ -628,13 +634,22 @@ fn add_import_facts(
             source.artifact.language.as_deref().unwrap_or_default(),
             statement,
         ) {
-            let target_id = external_node(
-                project_id,
-                GraphNodeKind::ExternalModule,
+            let target_id = resolve_captured_relative_import(
+                &source.artifact.path,
+                source.artifact.language.as_deref().unwrap_or_default(),
                 &target,
-                nodes,
-                external_nodes,
-            );
+                captured_file_paths,
+            )
+            .map(|path| stable_id("fil", &[project_id, &path]))
+            .unwrap_or_else(|| {
+                external_node(
+                    project_id,
+                    GraphNodeKind::ExternalModule,
+                    &target,
+                    nodes,
+                    external_nodes,
+                )
+            });
             edges.push(edge(
                 GraphEdgeKind::Imports,
                 file_id,
@@ -870,6 +885,70 @@ fn import_targets(language: &str, statement: &str) -> Vec<String> {
     targets.sort();
     targets.dedup();
     targets
+}
+
+fn resolve_captured_relative_import(
+    source_path: &str,
+    language: &str,
+    target: &str,
+    captured_file_paths: &BTreeSet<String>,
+) -> Option<String> {
+    if !matches!(language, "javascript" | "typescript")
+        || !(target.starts_with("./") || target.starts_with("../"))
+        || target.contains(['\\', '?', '#'])
+    {
+        return None;
+    }
+    let source_dir = source_path.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let normalized = normalize_relative_project_path(source_dir, target)?;
+    let mut candidates = Vec::new();
+    if captured_file_paths.contains(&normalized) {
+        candidates.push(normalized.clone());
+    }
+
+    let filename = normalized.rsplit('/').next().unwrap_or_default();
+    let has_extension = filename
+        .rsplit_once('.')
+        .is_some_and(|(stem, extension)| !stem.is_empty() && !extension.is_empty());
+    if !has_extension {
+        let extensions: &[&str] = match language {
+            "typescript" => &["ts", "tsx", "js", "jsx", "mjs", "cjs"],
+            "javascript" => &["js", "jsx", "mjs", "cjs"],
+            _ => &[],
+        };
+        for extension in extensions {
+            let direct = format!("{normalized}.{extension}");
+            if captured_file_paths.contains(&direct) {
+                candidates.push(direct);
+            }
+            let index = format!("{normalized}/index.{extension}");
+            if captured_file_paths.contains(&index) {
+                candidates.push(index);
+            }
+        }
+    }
+
+    candidates.sort();
+    candidates.dedup();
+    (candidates.len() == 1).then(|| candidates.remove(0))
+}
+
+fn normalize_relative_project_path(source_dir: &str, target: &str) -> Option<String> {
+    let mut components = source_dir
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for component in target.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop()?;
+            }
+            value => components.push(value.to_owned()),
+        }
+    }
+    (!components.is_empty()).then(|| components.join("/"))
 }
 
 fn inheritance_targets(raw: &str) -> Vec<String> {
@@ -1850,6 +1929,114 @@ mod tests {
         assert!(graph.edges.iter().any(|edge| {
             edge.kind == GraphEdgeKind::References && edge.label.as_deref() == Some("Recall")
         }));
+    }
+
+    #[test]
+    fn relative_js_ts_imports_resolve_only_to_one_captured_project_file() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = vec![
+            source(
+                "src/renderer.ts",
+                "typescript",
+                "export function render() { return 'ok'; }\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "tests/renderer.test.ts",
+                "typescript",
+                "import { render } from '../src/renderer';\nrender();\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "src/ambiguous.ts",
+                "typescript",
+                "export const value = 1;\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "src/ambiguous.tsx",
+                "typescript",
+                "export const value = <div />;\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "tests/ambiguous.test.ts",
+                "typescript",
+                "import { value } from '../src/ambiguous';\nvoid value;\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "tests/external.test.ts",
+                "typescript",
+                "import { describe } from 'vitest';\ndescribe('x', () => {});\n",
+                ArtifactKind::Source,
+            ),
+        ];
+        let graph = build_project_graph(
+            root.path(),
+            "prj_0123456789abcdef0123456789abcdef",
+            "Local import graph",
+            &format!("snp_{}", "c".repeat(64)),
+            &sources,
+            1,
+        )
+        .unwrap();
+
+        let file_id = |path: &str| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.kind == GraphNodeKind::File && node.path.as_deref() == Some(path))
+                .unwrap()
+                .id
+                .clone()
+        };
+        let test_id = file_id("tests/renderer.test.ts");
+        let implementation_id = file_id("src/renderer.ts");
+        let resolved = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == test_id
+                    && edge.label.as_deref() == Some("../src/renderer")
+            })
+            .unwrap();
+        assert_eq!(resolved.target, implementation_id);
+        assert_eq!(resolved.provenance, FactProvenance::Deterministic);
+        assert_eq!(resolved.confidence, 1.0);
+        assert_eq!(
+            resolved.citation.as_ref().unwrap().artifact_path,
+            "tests/renderer.test.ts"
+        );
+        assert!(!graph.nodes.iter().any(|node| {
+            node.kind == GraphNodeKind::ExternalModule && node.name == "../src/renderer"
+        }));
+
+        let ambiguous_test_id = file_id("tests/ambiguous.test.ts");
+        let ambiguous = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == ambiguous_test_id
+                    && edge.label.as_deref() == Some("../src/ambiguous")
+            })
+            .unwrap();
+        assert!(graph.nodes.iter().any(|node| {
+            node.id == ambiguous.target
+                && node.kind == GraphNodeKind::ExternalModule
+                && node.name == "../src/ambiguous"
+        }));
+
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| { node.kind == GraphNodeKind::ExternalModule && node.name == "vitest" }));
+        assert_eq!(
+            normalize_relative_project_path("tests", "../../outside"),
+            None
+        );
     }
 
     #[test]

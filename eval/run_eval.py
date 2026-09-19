@@ -59,6 +59,7 @@ METRIC_NAMES = (
     "reviewed_runbook",
     "verification_evidence_links",
     "branch_worktree_controls",
+    "graph_relation_retrieval",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -398,6 +399,28 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "divergent-branch-state-adjudication",
             "branch_worktree_controls",
+            "truthy",
+        ),
+    },
+    "richer-graph-relations": {
+        "adversarial": (
+            "graph-relative-import-test-impact",
+            "graph_relation_retrieval",
+            "truthy",
+        ),
+        "downstream": (
+            "graph-relative-import-test-impact",
+            "graph_relation_retrieval",
+            "truthy",
+        ),
+        "privacy": (
+            "graph-relative-import-test-impact",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "graph-relative-import-test-impact",
+            "graph_relation_retrieval",
             "truthy",
         ),
     },
@@ -2107,6 +2130,113 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not state_ok:
             failures.append(
                 "Current Project State did not preserve working-state boundaries, historical decision semantics, privacy, or source binding"
+            )
+
+    graph_relation_expectation = scenario.get("expected_graph_relation_retrieval")
+    if isinstance(graph_relation_expectation, dict):
+        implementation_path = str(
+            graph_relation_expectation.get("implementation_path", "")
+        )
+        relevant_test_path = str(
+            graph_relation_expectation.get("relevant_test_path", "")
+        )
+        unrelated_test_path = str(
+            graph_relation_expectation.get("unrelated_test_path", "")
+        )
+        baseline_query = str(graph_relation_expectation.get("baseline_query", ""))
+        if not all(
+            [implementation_path, relevant_test_path, unrelated_test_path, baseline_query]
+        ):
+            raise RuntimeError(
+                "graph relation fixture requires implementation/test paths and baseline query"
+            )
+
+        baseline = mcp_call(
+            project,
+            "ley_search_context",
+            {"query": baseline_query, "maxResults": 8, "maxTokens": 1_500},
+        )
+        neighbors = mcp_call(
+            project,
+            "ley_graph_neighbors",
+            {
+                "node": Path(implementation_path).name,
+                "depth": 1,
+                "maxNodes": 20,
+                "direction": "incoming",
+                "edgeKinds": ["imports"],
+            },
+        )
+        path = mcp_call(
+            project,
+            "ley_graph_path",
+            {
+                "from": Path(relevant_test_path).name,
+                "to": Path(implementation_path).name,
+                "maxDepth": 1,
+                "maxVisitedNodes": 20,
+                "direction": "outgoing",
+                "edgeKinds": ["imports"],
+            },
+        )
+
+        neighbor_nodes = [
+            item for item in neighbors.get("nodes", []) if isinstance(item, dict)
+        ]
+        neighbor_edges = [
+            item for item in neighbors.get("edges", []) if isinstance(item, dict)
+        ]
+        neighbor_paths = {
+            str(item.get("path"))
+            for item in neighbor_nodes
+            if isinstance(item.get("path"), str)
+        }
+        relation_edge = next(
+            (
+                item
+                for item in neighbor_edges
+                if item.get("kind") == "imports"
+                and item.get("label") == "../src/renderer"
+            ),
+            None,
+        )
+        path_nodes = [item for item in path.get("nodes", []) if isinstance(item, dict)]
+        path_edges = [item for item in path.get("edges", []) if isinstance(item, dict)]
+        path_paths = [
+            str(item.get("path"))
+            for item in path_nodes
+            if isinstance(item.get("path"), str)
+        ]
+        baseline_text = json.dumps(baseline, sort_keys=True)
+        graph_relation_ok = (
+            baseline.get("liveSourceChecked") is False
+            and relevant_test_path not in baseline_text
+            and neighbors.get("ambiguous") is False
+            and neighbors.get("liveSourceChecked") is False
+            and implementation_path in neighbor_paths
+            and relevant_test_path in neighbor_paths
+            and unrelated_test_path not in neighbor_paths
+            and relation_edge is not None
+            and relation_edge.get("provenance") == "deterministic"
+            and relation_edge.get("confidence") == 1.0
+            and relation_edge.get("citation", {}).get("artifactPath")
+            == relevant_test_path
+            and path.get("found") is True
+            and path.get("ambiguous") is False
+            and path.get("liveSourceChecked") is False
+            and path_paths == [relevant_test_path, implementation_path]
+            and len(path_edges) == 1
+            and path_edges[0].get("kind") == "imports"
+            and path_edges[0].get("provenance") == "deterministic"
+        )
+        scores["graph_relation_retrieval"] = graph_relation_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)], [baseline, neighbors, path]
+        )
+        evidence_text.extend([baseline, neighbors, path])
+        if not graph_relation_ok:
+            failures.append(
+                "deterministic captured relative-import graph relation did not improve implementation-to-test retrieval over the direct context-search baseline"
             )
 
     verification_evidence_expectation = scenario.get("expected_verification_evidence")

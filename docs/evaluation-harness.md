@@ -58,7 +58,7 @@ not every representative scenario was executed.
 ## P1 capability coverage
 
 Implemented P1 capabilities get a separate matrix rather than weakening the completed P0 contract. The
-current entries are **Topic Dossiers**, **Current Project State**, **Context Pack Inspector**, **Memory Health / Hygiene**, **Agent Legibility Map**, **Reviewed Runbooks / Skill Export**, **Verification Evidence Links**, and **Branch / Worktree Controls**. Their matrices require:
+current entries are **Topic Dossiers**, **Current Project State**, **Context Pack Inspector**, **Memory Health / Hygiene**, **Agent Legibility Map**, **Reviewed Runbooks / Skill Export**, **Verification Evidence Links**, **Branch / Worktree Controls**, and **Richer Graph Relations**. Their matrices require:
 
 - adversarial deletion/forgetting evidence from the session-erasure scenario;
 - downstream/regression success from the real authentication dossier journey;
@@ -72,6 +72,7 @@ current entries are **Topic Dossiers**, **Current Project State**, **Context Pac
 - Reviewed Runbook coverage for explicit user-confirmed current procedure/pitfall/convention selection, deterministic runbook/source identity, no authority increase, unrelated-session omission, exact-ID stale-export rejection, explicit host/egress selection, cloud blocking under local-only policy, non-installing Skill output, and zero local-path leakage through the real CLI path.
 - Verification Evidence coverage for a real structured test outcome with an immutable captured-artifact citation; propagation through `ley_session_get` and Current Project State; deliberate live-file drift after the checkpoint without hash drift in Ley; explicit `liveSourceChecked: false`; and zero live-canary or local-path leakage. Unknown/uncaptured evidence paths are rejected by focused core coverage.
 - Branch / Worktree Controls reuse the real divergent-branch journey. Before merge, exact `divergent` Memory Search must return only divergent-applicable history, `current-lineage` must exclude the experimental evidence, and `ley_session_get` must show the checkpoint and capture freshness as divergent. After a real `--no-ff` merge, the same retained search/session evidence must recompute to `merged` without re-ingestion. Every surface keeps `liveSourceChecked: false`, and local-path privacy remains zero.
+- Richer Graph Relations use a real captured implementation/importing-test fixture. Direct context search for an implementation-only marker is the simpler baseline and must not surface the test; `ley_graph_neighbors` must discover exactly the importing test through an incoming deterministic `imports` edge while excluding an unrelated test, and `ley_graph_path` must prove the one-edge test→implementation path with captured citation/provenance. Focused core coverage additionally proves ambiguous dual file matches, package imports, and project-escape paths are not promoted into local deterministic file relations. Graph results keep `liveSourceChecked: false` and leak no machine paths.
 
 As later P1 capabilities land, each should add its own adversarial, downstream, privacy, and regression
 representatives before the slice is considered complete.

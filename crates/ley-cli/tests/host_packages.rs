@@ -184,6 +184,13 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         assert!(skill.contains("divergent"), "{}", path.display());
         assert!(skill.contains("merged"), "{}", path.display());
         assert!(skill.contains("liveGitChecked"), "{}", path.display());
+        assert!(skill.contains("ley_graph_neighbors"), "{}", path.display());
+        assert!(skill.contains("ley_graph_path"), "{}", path.display());
+        assert!(
+            normalized_skill.contains("relative JavaScript/TypeScript import"),
+            "{}",
+            path.display()
+        );
         assert!(
             skill.contains("revisionCompatibility"),
             "{}",
