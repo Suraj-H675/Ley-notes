@@ -409,6 +409,11 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             "{}",
             path.display()
         );
+        assert!(
+            skill.contains("ley_session_memory_verify_batch"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("review-required"), "{}", path.display());
         assert!(
             skill.contains("semantic faithfulness"),
@@ -427,6 +432,17 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         );
         assert!(
             skill.contains("ley_session_memory_commit_plan"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("ley_session_memory_commit_batch"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("atomic checkpoint"), "{}", path.display());
+        assert!(
+            skill.contains("do not commit them sequentially"),
             "{}",
             path.display()
         );

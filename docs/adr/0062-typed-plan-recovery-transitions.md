@@ -95,7 +95,8 @@ only under `--allow-session-writes`; the verifier itself remains read-only.
 
 ## Deliberately deferred
 
-- multi-claim atomic recovery;
+- multi-claim atomic recovery; ADR 0063 later implements it for the already-supported recovery shapes
+  through a separate batch fingerprint and schema-v11 writer, without broadening typed-v2;
 - Command recovery;
 - Verification recovery;
 - nested Attempt/Resolution recovery;

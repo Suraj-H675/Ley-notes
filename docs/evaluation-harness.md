@@ -58,13 +58,17 @@ expectations, or failing metric values make a full-corpus run fail.
 The crash-recovery representative exercises the supported candidate-bound recovery writers through the
 real MCP server. It first verifies and idempotently commits one unresolved claim through the legacy
 schema-v3 route, then records new bounded host evidence and commits a Decision through schema v8, a
-typed Task through schema v9, and a typed Plan through schema v10. The typed stages use
-`ley_session_memory_verify_typed` plus their matching Task/Plan commit routes. The representative
-requires exact replay, closed recovery-window state, mechanically preserved
-recovery-candidate/turn-evidence lineage, exact durable Task title/status/details, and exact durable
-Plan text/status. Separate Task- and Plan-specific secret canaries are injected into captured host
-prompts and must be redacted from recovery packs and absent from durable `session-v9.json` and
-`session-v10.json`. The representative therefore requires zero privacy leakage and keeps typed
+typed Task through schema v9, and a typed Plan through schema v10. It then creates one new interrupted
+evidence window supporting several facts at once and uses `ley_session_memory_verify_batch` plus
+`ley_session_memory_commit_batch` to preserve a Decision, Task, Plan, and unresolved item in one
+schema-v11 checkpoint. The representative requires exact replay, closed recovery-window state,
+mechanically preserved recovery-candidate/turn-evidence lineage, exact durable Task/Plan state,
+read-projected `unr_...` unresolved identity, and record-specific schema-v11 child lineage for both a
+structured child and the unresolved child so unrelated evidence from the same atomic checkpoint is not
+attributed to every child.
+Task-, Plan-, and batch-specific secret canaries are injected into captured host prompts and must be
+redacted from recovery packs and absent from durable `session-v9.json`, `session-v10.json`, and
+`session-v11.json`. The representative therefore requires zero privacy leakage and keeps atomic
 recovery inside the existing Reliable Memory Compiler, memory-binding, and origin-lineage gates rather
 than introducing weaker standalone metrics.
 

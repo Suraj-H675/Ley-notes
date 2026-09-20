@@ -96,8 +96,9 @@ The existing `ley_session_memory_commit_unresolved` tool remains separate and un
 - Plan, Task, Attempt, Resolution, Command, Verification, and Summary candidates remain review-only
   in this bound-write path until Ley has lossless typed inputs for their required semantics. ADR 0061
   later adds a separate typed-v2 verifier and schema-v9 bound writer for exactly one Task, and ADR 0062
-  extends that typed verifier with exactly one Plan plus a separate schema-v10 Plan writer; this ADR's
-  generic verifier and schema-v8 Decision/Problem contract remain unchanged.
+  extends that typed verifier with exactly one Plan plus a separate schema-v10 Plan writer. ADR 0063
+  later composes the already-supported recovery shapes into a separate schema-v11 atomic batch route;
+  this ADR's generic verifier and schema-v8 Decision/Problem contract remain unchanged.
 - This slice does not perform cross-session consolidation, background scheduling, automatic learning
   promotion, or trust changes.
 
@@ -118,7 +119,8 @@ The implementation must prove:
 ## Deliberately deferred
 
 - automatic/model-generated Memory Compiler candidates inside Ley;
-- multi-claim atomic recovery commits;
+- multi-claim atomic recovery commits; ADR 0063 later implements them for the already-supported
+  unresolved/Decision/Problem/Task/Plan shapes without changing this schema-v8 contract;
 - bound Plan/Task/Attempt/Resolution/Command/Verification/Summary writers. ADR 0061 later implements
   Task through a separate typed-v2 verifier/schema-v9 route, and ADR 0062 later implements Plan through
   the same typed verifier family plus schema v10, without changing this schema-v8 contract;

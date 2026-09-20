@@ -203,6 +203,8 @@ pub struct SessionContextCheckpoint {
     pub commands: Vec<SessionContextCommand>,
     pub verification: Vec<SessionContextVerification>,
     pub unresolved: Vec<String>,
+    /// Stable record IDs aligned by index with the returned `unresolved` items.
+    pub unresolved_record_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -507,7 +509,7 @@ fn context_from_session(
             budget.truncated = true;
             break;
         }
-        checkpoints.push(SessionContextCheckpoint {
+        let mut checkpoint_context = SessionContextCheckpoint {
             checkpoint_id: checkpoint.id.clone(),
             recorded_at_unix_ms: checkpoint.recorded_at_unix_ms,
             summary: budget.take(&checkpoint.summary, 2_000),
@@ -669,7 +671,12 @@ fn context_from_session(
                 max_text_characters / 10,
                 &mut budget,
             ),
-        });
+            unresolved_record_ids: Vec::new(),
+        };
+        checkpoint_context.unresolved_record_ids = (0..checkpoint_context.unresolved.len())
+            .map(|index| crate::session::unresolved_record_id(&checkpoint.event_id, index))
+            .collect();
+        checkpoints.push(checkpoint_context);
         if checkpoint.decisions.len() > 20
             || checkpoint.tasks.len() > 30
             || checkpoint.problems.len() > 10
@@ -1143,6 +1150,9 @@ mod tests {
         assert!(verification.evidence_artifacts[0]
             .content_hash
             .starts_with("sha256:"));
+        assert_eq!(detailed.checkpoints[0].unresolved.len(), 1);
+        assert_eq!(detailed.checkpoints[0].unresolved_record_ids.len(), 1);
+        assert!(detailed.checkpoints[0].unresolved_record_ids[0].starts_with("unr_"));
         assert_eq!(detailed.renames.len(), MAX_SESSION_CONTEXT_RENAMES);
         assert_eq!(detailed.omitted_renames, 2);
         assert_eq!(detailed.renames.last().unwrap().name, "Context session 11");

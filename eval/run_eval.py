@@ -5980,6 +5980,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             plan_compiled: dict[str, object] | None = None
             plan_projection: dict[str, object] | None = None
             plan_secret_canary = str(scenario.get("plan_secret_canary", ""))
+            batch_compiled: dict[str, object] | None = None
+            batch_projection: dict[str, object] | None = None
+            batch_secret_canary = str(scenario.get("batch_secret_canary", ""))
             if scenario.get("expected_recovery_checkpoint"):
                 event_count = int(compiled.get("sessionEventCount", 0))
                 evidence = compiled.get("evidence", [])
@@ -6137,6 +6140,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 plan_binding_ok = True
                 plan_lineage_ok = True
                 plan_after_ok = True
+                batch_binding_ok = True
+                batch_lineage_ok = True
+                batch_after_ok = True
                 if scenario.get("expected_typed_recovery"):
                     typed_prompt = "Use SQLite for local-first persistence"
                     hook_call(
@@ -6801,6 +6807,440 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             and task_lineage_ok
                             and plan_lineage_ok
                         )
+                if scenario.get("expected_batch_recovery"):
+                    batch_first_prompt = (
+                        "Atomic batch storage decision: use SQLite. "
+                        f"api_key: {batch_secret_canary}"
+                    )
+                    batch_second_prompt = (
+                        "Atomic batch migration task completed; rollout plan completed."
+                    )
+                    batch_third_prompt = (
+                        "Atomic batch backup behavior remains unresolved and needs verification."
+                    )
+                    hook_call(
+                        project,
+                        "codex",
+                        {
+                            "hook_event_name": "UserPromptSubmit",
+                            "session_id": "ley-eval-crash-thread",
+                            "turn_id": "ley-eval-batch-recovery-turn-1",
+                            "prompt": batch_first_prompt,
+                        },
+                    )
+                    hook_call(
+                        project,
+                        "codex",
+                        {
+                            "hook_event_name": "UserPromptSubmit",
+                            "session_id": "ley-eval-crash-thread",
+                            "turn_id": "ley-eval-batch-recovery-turn-2",
+                            "prompt": batch_second_prompt,
+                        },
+                    )
+                    hook_call(
+                        project,
+                        "codex",
+                        {
+                            "hook_event_name": "UserPromptSubmit",
+                            "session_id": "ley-eval-crash-thread",
+                            "turn_id": "ley-eval-batch-recovery-turn-3",
+                            "prompt": batch_third_prompt,
+                        },
+                    )
+                    batch_compiled = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 8_000},
+                    )
+                    batch_event_count = int(batch_compiled.get("sessionEventCount", 0))
+                    batch_evidence = [
+                        item
+                        for item in batch_compiled.get("evidence", [])
+                        if isinstance(item, dict)
+                        and item.get("kind") == "user-prompt"
+                        and item.get("recordId")
+                    ]
+                    batch_first_record = batch_evidence[0] if len(batch_evidence) >= 1 else {}
+                    batch_second_record = batch_evidence[1] if len(batch_evidence) >= 2 else {}
+                    batch_third_record = batch_evidence[2] if len(batch_evidence) >= 3 else {}
+                    batch_first_record_id = str(batch_first_record.get("recordId", ""))
+                    batch_second_record_id = str(batch_second_record.get("recordId", ""))
+                    batch_third_record_id = str(batch_third_record.get("recordId", ""))
+                    batch_first_text = str(batch_first_record.get("text", ""))
+                    batch_redaction_ok = (
+                        len(batch_evidence) == 3
+                        and bool(batch_secret_canary)
+                        and batch_secret_canary not in batch_first_text
+                        and "[REDACTED:" in batch_first_text
+                        and bool(batch_first_record_id)
+                        and bool(batch_second_record_id)
+                        and bool(batch_third_record_id)
+                    )
+                    if not batch_redaction_ok:
+                        failures.append(
+                            "atomic batch recovery evidence did not preserve three bounded records with secret redaction"
+                        )
+
+                    batch_candidates = [
+                        {
+                            "kind": "decision",
+                            "title": "Atomic batch storage engine",
+                            "decision": "Use SQLite",
+                            "evidenceRecordIds": [batch_first_record_id],
+                        },
+                        {
+                            "kind": "task",
+                            "title": "Atomic batch migration",
+                            "status": "completed",
+                            "details": "Migration completed",
+                            "evidenceRecordIds": [batch_second_record_id],
+                        },
+                        {
+                            "kind": "plan",
+                            "text": "Atomic batch rollout",
+                            "status": "completed",
+                            "evidenceRecordIds": [batch_second_record_id],
+                        },
+                        {
+                            "kind": "unresolved",
+                            "text": "Verify atomic batch backup behavior",
+                            "evidenceRecordIds": [batch_third_record_id],
+                        },
+                    ]
+                    batch_summary = "Recovered atomic persistence batch"
+                    batch_transition = mcp_call(
+                        project,
+                        "ley_session_memory_verify_batch",
+                        {
+                            "sessionId": session_id,
+                            "expectedEventCount": batch_event_count,
+                            "checkpointSummary": batch_summary,
+                            "candidates": batch_candidates,
+                            "deferredEvidenceRecordIds": [],
+                        },
+                    )
+                    batch_commit_args = {
+                        "sessionId": session_id,
+                        "requestId": request_id(f"{scenario['id']}:batch-memory-recovery"),
+                        "expectedEventCount": batch_event_count,
+                        "candidateFingerprint": batch_transition.get("candidateFingerprint", ""),
+                        "checkpointSummary": batch_summary,
+                        "candidates": batch_candidates,
+                    }
+                    batch_receipt = mcp_call(
+                        project,
+                        "ley_session_memory_commit_batch",
+                        batch_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    batch_retry = mcp_call(
+                        project,
+                        "ley_session_memory_commit_batch",
+                        batch_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    batch_session = mcp_call(
+                        project,
+                        "ley_session_get",
+                        {"sessionId": session_id, "maxCheckpoints": 12, "maxCharacters": 20_000},
+                    )
+                    batch_checkpoints = batch_session.get("checkpoints", [])
+                    batch_checkpoint = (
+                        batch_checkpoints[-1]
+                        if isinstance(batch_checkpoints, list)
+                        and batch_checkpoints
+                        and isinstance(batch_checkpoints[-1], dict)
+                        else {}
+                    )
+                    batch_decisions = batch_checkpoint.get("decisions", [])
+                    batch_tasks = batch_checkpoint.get("tasks", [])
+                    batch_unresolved = batch_checkpoint.get("unresolved", [])
+                    batch_unresolved_record_ids = batch_checkpoint.get("unresolvedRecordIds", [])
+
+                    batch_diagnostic = cli_json(["doctor", str(project), "--json"])
+                    batch_identity = (
+                        batch_diagnostic.get("identity", {})
+                        if isinstance(batch_diagnostic, dict)
+                        else {}
+                    )
+                    batch_project_id = (
+                        str(batch_identity.get("projectId", ""))
+                        if isinstance(batch_identity, dict)
+                        else ""
+                    )
+                    batch_projection_path = (
+                        vault
+                        / ".ley"
+                        / "agent-memory"
+                        / "projects"
+                        / batch_project_id
+                        / "sessions"
+                        / session_id
+                        / "session-v11.json"
+                    )
+                    if batch_project_id and batch_projection_path.is_file():
+                        loaded_batch_projection = json.loads(
+                            batch_projection_path.read_text(encoding="utf-8")
+                        )
+                        if isinstance(loaded_batch_projection, dict):
+                            batch_projection = loaded_batch_projection
+                    durable_batch_checkpoints = (
+                        batch_projection.get("checkpoints", [])
+                        if isinstance(batch_projection, dict)
+                        else []
+                    )
+                    durable_batch_checkpoint = (
+                        durable_batch_checkpoints[-1]
+                        if isinstance(durable_batch_checkpoints, list)
+                        and durable_batch_checkpoints
+                        and isinstance(durable_batch_checkpoints[-1], dict)
+                        else {}
+                    )
+                    durable_batch_decisions = durable_batch_checkpoint.get("decisions", [])
+                    durable_batch_tasks = durable_batch_checkpoint.get("tasks", [])
+                    durable_batch_plans = durable_batch_checkpoint.get("plan", [])
+                    durable_batch_unresolved = durable_batch_checkpoint.get("unresolved", [])
+                    durable_batch_ok = (
+                        isinstance(durable_batch_decisions, list)
+                        and len(durable_batch_decisions) == 1
+                        and isinstance(durable_batch_decisions[0], dict)
+                        and durable_batch_decisions[0].get("title") == "Atomic batch storage engine"
+                        and durable_batch_decisions[0].get("decision") == "Use SQLite"
+                        and isinstance(durable_batch_tasks, list)
+                        and len(durable_batch_tasks) == 1
+                        and isinstance(durable_batch_tasks[0], dict)
+                        and durable_batch_tasks[0].get("title") == "Atomic batch migration"
+                        and durable_batch_tasks[0].get("status") == "completed"
+                        and durable_batch_tasks[0].get("details") == "Migration completed"
+                        and isinstance(durable_batch_plans, list)
+                        and len(durable_batch_plans) == 1
+                        and isinstance(durable_batch_plans[0], dict)
+                        and durable_batch_plans[0].get("text") == "Atomic batch rollout"
+                        and durable_batch_plans[0].get("status") == "completed"
+                        and durable_batch_unresolved == ["Verify atomic batch backup behavior"]
+                        and batch_secret_canary not in serialized(batch_projection)
+                    )
+                    if not durable_batch_ok:
+                        failures.append(
+                            "atomic batch recovery did not durably preserve exact Decision/Task/Plan/Unresolved state or leaked its secret canary"
+                        )
+                    batch_binding_ok = (
+                        batch_transition.get("state") == "review-required"
+                        and batch_transition.get("semanticFaithfulnessProven") is False
+                        and batch_transition.get("liveSourceChecked") is False
+                        and bool(batch_transition.get("coverage", {}).get("coverageComplete"))
+                        and batch_transition.get("coverage", {}).get("totalCurrentEvidence") == 3
+                        and len(batch_transition.get("claimChecks", [])) == 4
+                        and str(batch_transition.get("candidateFingerprint", "")).startswith("sha256:")
+                        and batch_receipt.get("eventCount") == batch_event_count + 1
+                        and batch_receipt.get("replayed") is False
+                        and batch_retry.get("eventCount") == batch_event_count + 1
+                        and batch_retry.get("eventId") == batch_receipt.get("eventId")
+                        and batch_retry.get("replayed") is True
+                        and batch_session.get("schemaVersion") == 11
+                        and batch_checkpoint.get("summary") == batch_summary
+                        and isinstance(batch_decisions, list)
+                        and len(batch_decisions) == 1
+                        and isinstance(batch_tasks, list)
+                        and len(batch_tasks) == 1
+                        and batch_checkpoint.get("problems") == []
+                        and batch_unresolved == ["Verify atomic batch backup behavior"]
+                        and isinstance(batch_unresolved_record_ids, list)
+                        and len(batch_unresolved_record_ids) == 1
+                        and str(batch_unresolved_record_ids[0]).startswith("unr_")
+                        and durable_batch_ok
+                        and batch_redaction_ok
+                    )
+                    if not batch_binding_ok:
+                        failures.append(
+                            "atomic batch recovery did not preserve verifier binding/idempotency/schema-v11 projection"
+                        )
+
+                    if scenario.get("expected_origin_lineage"):
+                        batch_decision_id = (
+                            str(batch_decisions[0].get("id", ""))
+                            if isinstance(batch_decisions, list)
+                            and batch_decisions
+                            and isinstance(batch_decisions[0], dict)
+                            else ""
+                        )
+                        batch_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(f"{scenario['id']}:batch-origin-lineage"),
+                                "kind": "fact",
+                                "title": "Atomic batch recovered storage decision",
+                                "guidance": "Use SQLite for atomic batch storage.",
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": batch_decision_id,
+                                        "note": "Derived only from the recovered Decision child of the atomic batch.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        batch_learning_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(batch_learning.get("learningId", "")),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        batch_lineage = batch_learning_context.get("originLineage", {})
+                        batch_sources = (
+                            batch_lineage.get("sources", [])
+                            if isinstance(batch_lineage, dict)
+                            else []
+                        )
+                        batch_decision_lineage_ok = (
+                            bool(batch_decision_id)
+                            and batch_lineage.get("mechanicallyResolved") is True
+                            and batch_lineage.get("causalCompletenessProven") is False
+                            and batch_lineage.get("automaticAuthorityCeiling") == "review-required"
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == batch_transition.get("candidateFingerprint")
+                                for source in batch_sources
+                            )
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == batch_first_record_id
+                                for source in batch_sources
+                            )
+                            and not any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == batch_second_record_id
+                                for source in batch_sources
+                            )
+                            and not any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == batch_third_record_id
+                                for source in batch_sources
+                            )
+                        )
+
+                        batch_unresolved_record_id = (
+                            str(batch_unresolved_record_ids[0])
+                            if isinstance(batch_unresolved_record_ids, list)
+                            and batch_unresolved_record_ids
+                            else ""
+                        )
+                        batch_unresolved_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(
+                                    f"{scenario['id']}:batch-unresolved-origin-lineage"
+                                ),
+                                "kind": "fact",
+                                "title": "Atomic batch backup behavior remains unresolved",
+                                "guidance": "Keep atomic batch backup behavior unresolved until verified.",
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": batch_unresolved_record_id,
+                                        "note": "Derived only from the recovered unresolved child of the atomic batch.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        batch_unresolved_learning_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(
+                                    batch_unresolved_learning.get("learningId", "")
+                                ),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        batch_unresolved_lineage = batch_unresolved_learning_context.get(
+                            "originLineage", {}
+                        )
+                        batch_unresolved_sources = (
+                            batch_unresolved_lineage.get("sources", [])
+                            if isinstance(batch_unresolved_lineage, dict)
+                            else []
+                        )
+                        batch_unresolved_lineage_ok = (
+                            bool(batch_unresolved_record_id)
+                            and batch_unresolved_lineage.get("mechanicallyResolved") is True
+                            and batch_unresolved_lineage.get("causalCompletenessProven") is False
+                            and batch_unresolved_lineage.get("automaticAuthorityCeiling")
+                            == "review-required"
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == batch_transition.get("candidateFingerprint")
+                                for source in batch_unresolved_sources
+                            )
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == batch_third_record_id
+                                for source in batch_unresolved_sources
+                            )
+                            and not any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == batch_first_record_id
+                                for source in batch_unresolved_sources
+                            )
+                            and not any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == batch_second_record_id
+                                for source in batch_unresolved_sources
+                            )
+                        )
+                        batch_lineage_ok = (
+                            batch_decision_lineage_ok and batch_unresolved_lineage_ok
+                        )
+                        if not batch_lineage_ok:
+                            failures.append(
+                                "atomic batch child learning did not preserve its record-specific recovery lineage"
+                            )
+
+                    batch_after = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                    )
+                    batch_after_ok = (
+                        batch_after.get("state") == "no-unconsolidated-evidence"
+                        and batch_after.get("totalUnconsolidatedEvidence") == 0
+                    )
+                    scores["memory_binding"] = (
+                        binding_ok
+                        and typed_binding_ok
+                        and task_binding_ok
+                        and plan_binding_ok
+                        and batch_binding_ok
+                    )
+                    if scenario.get("expected_origin_lineage"):
+                        scores["origin_lineage"] = (
+                            lineage_ok
+                            and typed_lineage_ok
+                            and task_lineage_ok
+                            and plan_lineage_ok
+                            and batch_lineage_ok
+                        )
                 recovery_ok = (
                     state_ok
                     and transition_ok
@@ -6817,6 +7257,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and plan_binding_ok
                     and plan_lineage_ok
                     and plan_after_ok
+                    and batch_binding_ok
+                    and batch_lineage_ok
+                    and batch_after_ok
                 )
             scores["memory_recovery"] = recovery_ok
             privacy_payloads = [compiled]
@@ -6830,11 +7273,17 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 privacy_payloads.append(plan_compiled)
             if plan_projection is not None:
                 privacy_payloads.append(plan_projection)
+            if batch_compiled is not None:
+                privacy_payloads.append(batch_compiled)
+            if batch_projection is not None:
+                privacy_payloads.append(batch_projection)
             privacy_canaries = [str(project), str(vault)]
             if task_secret_canary:
                 privacy_canaries.append(task_secret_canary)
             if plan_secret_canary:
                 privacy_canaries.append(plan_secret_canary)
+            if batch_secret_canary:
+                privacy_canaries.append(batch_secret_canary)
             scores["privacy_violation_rate"] = privacy_violation_rate(
                 privacy_canaries, privacy_payloads
             )

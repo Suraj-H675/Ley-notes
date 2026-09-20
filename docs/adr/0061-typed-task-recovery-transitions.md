@@ -106,7 +106,7 @@ candidate through the separate verifier/write flow.
 
 ## Deliberately deferred
 
-- multi-claim atomic recovery;
+- multi-claim atomic recovery; ADR 0063 later implements it for the already-supported recovery shapes;
 - Plan recovery; ADR 0062 later implements it through the typed-v2 verifier plus schema v10;
 - nested Problem Attempt/Resolution recovery;
 - Command or Verification recovery;

@@ -1,40 +1,41 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
-    commit_plan_memory_transition, commit_structured_memory_transition,
-    commit_task_memory_transition, commit_unresolved_memory_transition,
-    compile_agent_legibility_map, compile_bootstrap_context_with_registries,
-    compile_project_context_for_agent_with_registries, compile_session_memory,
-    compile_topic_dossier, consolidation_inbox, current_project_state, diagnose_project,
-    evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
-    inspect_context_pack, list_learning_contexts, memory_health_report, project_activity_view,
-    project_memory_overview, project_resume_context, propose_learning,
+    commit_batch_memory_transition, commit_plan_memory_transition,
+    commit_structured_memory_transition, commit_task_memory_transition,
+    commit_unresolved_memory_transition, compile_agent_legibility_map,
+    compile_bootstrap_context_with_registries, compile_project_context_for_agent_with_registries,
+    compile_session_memory, compile_topic_dossier, consolidation_inbox, current_project_state,
+    diagnose_project, evaluate_agent_egress, find_project_context, find_project_graph_path,
+    finish_session, inspect_context_pack, list_learning_contexts, memory_health_report,
+    project_activity_view, project_memory_overview, project_resume_context, propose_learning,
     read_external_connector_snapshot_with_registry, read_learning_context,
     read_project_cited_media, read_project_evidence, read_session_context,
     read_session_turns_context, record_context_utility_observation,
     replay_context_utility_binding_if_present, search_project_memory, start_session,
-    traverse_project_graph, verify_memory_transition, verify_typed_memory_transition,
-    AgentContextAuthorities, AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget,
-    AgentLegibilityLimits, AttemptInput, AttemptOutcome, BootstrapSpecificationRegistry,
-    CheckpointInput, CommandInput, CommitPlanMemoryTransitionInput,
-    CommitStructuredMemoryTransitionInput, CommitTaskMemoryTransitionInput,
-    CommitUnresolvedMemoryTransitionInput, ConsolidationInboxLimits, ContextCompileLimits,
-    ContextMountRegistry, ContextUtilityBindingInput, ContextUtilityObservationInput,
-    CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, ExternalConnector,
-    ExternalConnectorRegistry, FinishSessionInput, GraphDirection, GraphEdgeKind,
-    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningKind, LearningListScope,
-    LearningMutation, LearningProvenance, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
-    MemoryHealthLimits, MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry,
-    ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
-    ResolutionInput, RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource,
-    SessionSourceKind, SessionStatus, SpecificationContextLimits, SpecificationRegistry,
-    StartSessionInput, TaskInput, TaskStatus, TopicDossierLimits, TypedMemoryCandidateClaim,
-    TypedMemoryTransitionInput, VerificationInput, VerificationStatus,
-    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
-    DEFAULT_AGENT_LEGIBILITY_SESSIONS, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
-    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_CONTEXT_COMPILE_RESULTS,
-    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
-    DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
+    traverse_project_graph, verify_batch_memory_transition, verify_memory_transition,
+    verify_typed_memory_transition, AgentContextAuthorities, AgentEgressBlockReason,
+    AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits, AttemptInput, AttemptOutcome,
+    BatchMemoryCandidateClaim, BatchMemoryTransitionInput, BootstrapSpecificationRegistry,
+    CheckpointInput, CommandInput, CommitBatchMemoryTransitionInput,
+    CommitPlanMemoryTransitionInput, CommitStructuredMemoryTransitionInput,
+    CommitTaskMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
+    ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry,
+    ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
+    DecisionInput, EgressPolicyRegistry, ExternalConnector, ExternalConnectorRegistry,
+    FinishSessionInput, GraphDirection, GraphEdgeKind, KnowledgeScopeRegistry, LearningActor,
+    LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
+    LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits,
+    MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry, ProblemInput,
+    ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput, ResolutionInput,
+    RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource, SessionSourceKind,
+    SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
+    TaskStatus, TopicDossierLimits, TypedMemoryCandidateClaim, TypedMemoryTransitionInput,
+    VerificationInput, VerificationStatus, DEFAULT_AGENT_LEGIBILITY_CHARACTERS,
+    DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, DEFAULT_AGENT_LEGIBILITY_SESSIONS,
+    DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
+    DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS,
+    DEFAULT_CONTEXT_TOKENS, DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
     DEFAULT_CURRENT_STATE_SESSIONS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
@@ -144,6 +145,9 @@ remain historical context. The live Git beacon reads metadata only and does not 
 session reports post-checkpoint evidence, inspect only that bounded recovery window with \
 ley_session_memory_compile. Before writing reconstructed structure, check unresolved/Decision/Problem \
 candidates with ley_session_memory_verify and Plan/Task candidates with ley_session_memory_verify_typed; \
+when the same recovery window supports two or more already-supported candidates, use \
+ley_session_memory_verify_batch so coverage and typed status are checked together. Batch verification \
+is read-only by itself and never authorizes sequential single-claim writes that would close the window. \
 `review-required` means structurally accounted, not semantically proven, \
 trusted, or write-authorized. Otherwise request full bounded turn history with ley_session_turns_get \
 only when the current user task needs it.";
@@ -157,7 +161,10 @@ ley_session_memory_commit_structured with that same exact binding. For a Task, u
 ley_session_memory_verify_typed so status participates in the candidate fingerprint and overlap \
 check, then use ley_session_memory_commit_task with that exact typed binding. For a Plan, use the \
 same typed verifier and then ley_session_memory_commit_plan with the exact Plan text/status binding. \
-Other candidate kinds remain review-only. \
+If ley_session_memory_verify_batch was required because several supported candidates share one recovery \
+window and it returns review-required with no deferred evidence, use exactly one \
+ley_session_memory_commit_batch with the exact batch fingerprint, checkpoint summary, and candidate \
+set; do not commit one candidate first and discard the others. Other candidate kinds remain review-only. \
 Do not substitute the generic checkpoint route for any bound recovery flow and \
 do not invent Task status or details. Store concise structure, \
 project-relative touched artifacts, and observed outcomes rather than transcripts or full tool \
@@ -940,6 +947,146 @@ pub struct VerifyTypedSessionMemoryParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum McpBatchMemoryCandidateClaim {
+    Unresolved {
+        #[schemars(length(min = 1, max = 4_000))]
+        text: String,
+        #[schemars(length(min = 1, max = 20))]
+        #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+        evidence_record_ids: Vec<String>,
+    },
+    Decision {
+        #[schemars(length(min = 1, max = 256))]
+        title: String,
+        #[schemars(length(min = 1, max = 4_000))]
+        decision: String,
+        #[schemars(length(min = 1, max = 20))]
+        #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+        evidence_record_ids: Vec<String>,
+    },
+    Problem {
+        #[schemars(length(min = 1, max = 256))]
+        title: String,
+        #[schemars(length(min = 1, max = 4_000))]
+        symptom: String,
+        #[schemars(length(min = 1, max = 20))]
+        #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+        evidence_record_ids: Vec<String>,
+    },
+    Task {
+        #[schemars(length(min = 1, max = 256))]
+        title: String,
+        status: McpTaskStatus,
+        #[serde(default)]
+        #[schemars(length(max = 4_000))]
+        details: String,
+        #[schemars(length(min = 1, max = 20))]
+        #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+        evidence_record_ids: Vec<String>,
+    },
+    Plan {
+        #[schemars(length(min = 1, max = 4_000))]
+        text: String,
+        status: McpPlanStatus,
+        #[schemars(length(min = 1, max = 20))]
+        #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+        evidence_record_ids: Vec<String>,
+    },
+}
+
+impl From<McpBatchMemoryCandidateClaim> for BatchMemoryCandidateClaim {
+    fn from(value: McpBatchMemoryCandidateClaim) -> Self {
+        match value {
+            McpBatchMemoryCandidateClaim::Unresolved {
+                text,
+                evidence_record_ids,
+            } => Self::Unresolved {
+                text,
+                evidence_record_ids,
+            },
+            McpBatchMemoryCandidateClaim::Decision {
+                title,
+                decision,
+                evidence_record_ids,
+            } => Self::Decision {
+                title,
+                decision,
+                evidence_record_ids,
+            },
+            McpBatchMemoryCandidateClaim::Problem {
+                title,
+                symptom,
+                evidence_record_ids,
+            } => Self::Problem {
+                title,
+                symptom,
+                evidence_record_ids,
+            },
+            McpBatchMemoryCandidateClaim::Task {
+                title,
+                status,
+                details,
+                evidence_record_ids,
+            } => Self::Task {
+                title,
+                status: status.into(),
+                details,
+                evidence_record_ids,
+            },
+            McpBatchMemoryCandidateClaim::Plan {
+                text,
+                status,
+                evidence_record_ids,
+            } => Self::Plan {
+                text,
+                status: status.into(),
+                evidence_record_ids,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VerifyBatchSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    #[schemars(length(min = 1, max = 16_000))]
+    pub checkpoint_summary: String,
+    #[schemars(length(min = 2, max = 50))]
+    pub candidates: Vec<McpBatchMemoryCandidateClaim>,
+    #[serde(default)]
+    #[schemars(length(max = 10_000))]
+    #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+    pub deferred_evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitBatchSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
+    pub request_id: String,
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    #[schemars(regex(pattern = "^sha256:[0-9a-f]{64}$"))]
+    pub candidate_fingerprint: String,
+    #[schemars(length(min = 1, max = 16_000))]
+    pub checkpoint_summary: String,
+    #[schemars(length(min = 2, max = 50))]
+    pub candidates: Vec<McpBatchMemoryCandidateClaim>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CommitUnresolvedSessionMemoryParams {
     #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
@@ -1580,6 +1727,7 @@ impl LeyMcpServer {
         if !session_writes_enabled {
             tool_router.disable_route("ley_session_start");
             tool_router.disable_route("ley_session_checkpoint");
+            tool_router.disable_route("ley_session_memory_commit_batch");
             tool_router.disable_route("ley_session_memory_commit_plan");
             tool_router.disable_route("ley_session_memory_commit_structured");
             tool_router.disable_route("ley_session_memory_commit_task");
@@ -2685,6 +2833,81 @@ impl LeyMcpServer {
                 self.vault.as_path(),
                 &params.session_id,
                 input,
+            )
+        }))
+    }
+
+    /// Verify one atomic batch of already-supported recovery candidates against the exact current
+    /// recovery window. This route is read-only and does not prove semantic faithfulness, live-source
+    /// correctness, or authorize a later write.
+    #[tool(
+        name = "ley_session_memory_verify_batch",
+        annotations(
+            title = "Verify an atomic Ley recovery candidate batch",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_verify_batch(
+        &self,
+        Parameters(params): Parameters<VerifyBatchSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let candidates = params
+            .candidates
+            .into_iter()
+            .map(BatchMemoryCandidateClaim::from)
+            .collect();
+        Ok(self.gated_historical_tool_result(|| {
+            verify_batch_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                BatchMemoryTransitionInput {
+                    expected_event_count: params.expected_event_count,
+                    checkpoint_summary: params.checkpoint_summary,
+                    candidates,
+                    deferred_evidence_record_ids: params.deferred_evidence_record_ids,
+                },
+            )
+        }))
+    }
+
+    /// Commit one verifier-approved atomic recovery batch.
+    /// Ley re-runs batch verification, requires the exact fingerprint and complete recovery window,
+    /// then appends one schema-v11 checkpoint with record-specific evidence bindings.
+    #[tool(
+        name = "ley_session_memory_commit_batch",
+        annotations(
+            title = "Commit a verified atomic Ley recovery batch",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_commit_batch(
+        &self,
+        Parameters(params): Parameters<CommitBatchSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let candidates = params
+            .candidates
+            .into_iter()
+            .map(BatchMemoryCandidateClaim::from)
+            .collect();
+        Ok(self.gated_session_write_result(|| {
+            commit_batch_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                CommitBatchMemoryTransitionInput {
+                    request_id: params.request_id,
+                    expected_event_count: params.expected_event_count,
+                    candidate_fingerprint: params.candidate_fingerprint,
+                    checkpoint_summary: params.checkpoint_summary,
+                    candidates,
+                },
             )
         }))
     }
@@ -3849,6 +4072,7 @@ mod tests {
                 "ley_session_get",
                 "ley_session_memory_compile",
                 "ley_session_memory_verify",
+                "ley_session_memory_verify_batch",
                 "ley_session_memory_verify_typed",
                 "ley_session_turns_get",
                 "ley_sessions_list",
@@ -4148,6 +4372,54 @@ mod tests {
             memory_verifier_schema["properties"]["claims"]["maxItems"],
             50
         );
+        let batch_memory_verifier_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_session_memory_verify_batch")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            batch_memory_verifier_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        assert_eq!(
+            batch_memory_verifier_schema["properties"]["checkpointSummary"]["maxLength"],
+            16_000
+        );
+        assert_eq!(
+            batch_memory_verifier_schema["properties"]["candidates"]["minItems"],
+            2
+        );
+        assert_eq!(
+            batch_memory_verifier_schema["properties"]["candidates"]["maxItems"],
+            50
+        );
+        let batch_verifier_schema_text = batch_memory_verifier_schema.to_string();
+        for value in [
+            "unresolved",
+            "decision",
+            "problem",
+            "task",
+            "plan",
+            "pending",
+            "in-progress",
+            "completed",
+            "blocked",
+            "cancelled",
+        ] {
+            assert!(batch_verifier_schema_text.contains(value));
+        }
+        for unsupported in [
+            "attempt",
+            "resolution",
+            "command",
+            "verification",
+            "summary",
+        ] {
+            assert!(!batch_verifier_schema_text.contains(&format!("\"{unsupported}\"")));
+        }
         let typed_memory_verifier_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -4216,12 +4488,14 @@ mod tests {
                 "ley_session_checkpoint",
                 "ley_session_finish",
                 "ley_session_get",
+                "ley_session_memory_commit_batch",
                 "ley_session_memory_commit_plan",
                 "ley_session_memory_commit_structured",
                 "ley_session_memory_commit_task",
                 "ley_session_memory_commit_unresolved",
                 "ley_session_memory_compile",
                 "ley_session_memory_verify",
+                "ley_session_memory_verify_batch",
                 "ley_session_memory_verify_typed",
                 "ley_session_start",
                 "ley_session_turns_get",
@@ -4295,6 +4569,55 @@ mod tests {
         let utility_observe_schema_text = utility_observe_schema.to_string();
         assert!(utility_observe_schema_text.contains("cub_"));
         assert!(utility_observe_schema_text.contains("evt_"));
+        let batch_recovery_commit_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_session_memory_commit_batch")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            batch_recovery_commit_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        assert_eq!(
+            batch_recovery_commit_schema["properties"]["checkpointSummary"]["maxLength"],
+            16_000
+        );
+        assert_eq!(
+            batch_recovery_commit_schema["properties"]["candidates"]["minItems"],
+            2
+        );
+        assert_eq!(
+            batch_recovery_commit_schema["properties"]["candidates"]["maxItems"],
+            50
+        );
+        assert!(batch_recovery_commit_schema["properties"]["deferredEvidenceRecordIds"].is_null());
+        let batch_commit_schema_text = batch_recovery_commit_schema.to_string();
+        for value in [
+            "unresolved",
+            "decision",
+            "problem",
+            "task",
+            "plan",
+            "pending",
+            "in-progress",
+            "completed",
+            "blocked",
+            "cancelled",
+        ] {
+            assert!(batch_commit_schema_text.contains(value));
+        }
+        for unsupported in [
+            "attempt",
+            "resolution",
+            "command",
+            "verification",
+            "summary",
+        ] {
+            assert!(!batch_commit_schema_text.contains(&format!("\"{unsupported}\"")));
+        }
         let recovery_commit_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -4391,6 +4714,7 @@ mod tests {
                     | "ley_context_utility_observe"
                     | "ley_session_start"
                     | "ley_session_checkpoint"
+                    | "ley_session_memory_commit_batch"
                     | "ley_session_memory_commit_plan"
                     | "ley_session_memory_commit_structured"
                     | "ley_session_memory_commit_task"
@@ -6287,6 +6611,287 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn batch_recovery_verifier_accounts_multiple_supported_claims_without_writing() {
+        let (_temporary, project, vault, server) = fixture();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "b".repeat(32)),
+                name: "Atomic recovery verification".to_owned(),
+                goal: "Verify several recovery candidates from one interrupted window".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
+        record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "8".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("atomic-recovery-turn".to_owned()),
+                text: "Use SQLite, complete the migration task, and complete the rollout plan"
+                    .to_owned(),
+            },
+        )
+        .unwrap();
+        record_session_response(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "9".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("atomic-recovery-turn".to_owned()),
+                text: "SQLite is selected; migration and rollout are completed".to_owned(),
+            },
+        )
+        .unwrap();
+        let pack = server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id: session_id.clone(),
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let evidence_record_ids = pack["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["recordId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(evidence_record_ids.len(), 2);
+        let transition = server
+            .session_memory_verify_batch(Parameters(VerifyBatchSessionMemoryParams {
+                session_id: session_id.clone(),
+                expected_event_count: 3,
+                checkpoint_summary: "Recovered persistence work".to_owned(),
+                candidates: vec![
+                    McpBatchMemoryCandidateClaim::Decision {
+                        title: "Storage engine".to_owned(),
+                        decision: "Use SQLite".to_owned(),
+                        evidence_record_ids: evidence_record_ids.clone(),
+                    },
+                    McpBatchMemoryCandidateClaim::Task {
+                        title: "Migrate local state".to_owned(),
+                        status: McpTaskStatus::Completed,
+                        details: "Migration completed".to_owned(),
+                        evidence_record_ids: vec![evidence_record_ids[1].clone()],
+                    },
+                    McpBatchMemoryCandidateClaim::Plan {
+                        text: "Roll out local persistence".to_owned(),
+                        status: McpPlanStatus::Completed,
+                        evidence_record_ids: vec![evidence_record_ids[0].clone()],
+                    },
+                ],
+                deferred_evidence_record_ids: Vec::new(),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(transition["state"], "review-required");
+        assert_eq!(transition["semanticFaithfulnessProven"], false);
+        assert_eq!(transition["liveSourceChecked"], false);
+        assert_eq!(transition["coverage"]["coverageComplete"], true);
+        assert_eq!(transition["coverage"]["totalCurrentEvidence"], 2);
+        assert_eq!(transition["claimChecks"].as_array().unwrap().len(), 3);
+        assert!(transition["issues"].as_array().unwrap().is_empty());
+        assert!(transition["candidateFingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+
+        let session = server
+            .session_get(Parameters(SessionContextParams {
+                session_id,
+                max_checkpoints: Some(5),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(session["eventCount"], 3);
+        assert!(session["checkpoints"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn batch_recovery_write_flow_commits_once_replays_and_closes_window() {
+        let (_temporary, project, vault, _) = fixture();
+        let write_server =
+            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "Atomic MCP recovery".to_owned(),
+                goal: "Recover several claims through the public MCP write flow".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
+        record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("atomic-mcp-recovery-turn".to_owned()),
+                text: "Use SQLite, complete the migration task, and complete the rollout plan"
+                    .to_owned(),
+            },
+        )
+        .unwrap();
+        record_session_response(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("atomic-mcp-recovery-turn".to_owned()),
+                text: "SQLite is selected; migration and rollout are completed".to_owned(),
+            },
+        )
+        .unwrap();
+
+        let pack = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id: session_id.clone(),
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let evidence_record_ids = pack["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["recordId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(evidence_record_ids.len(), 2);
+
+        let candidates = || {
+            vec![
+                McpBatchMemoryCandidateClaim::Decision {
+                    title: "Storage engine".to_owned(),
+                    decision: "Use SQLite".to_owned(),
+                    evidence_record_ids: evidence_record_ids.clone(),
+                },
+                McpBatchMemoryCandidateClaim::Task {
+                    title: "Migrate local state".to_owned(),
+                    status: McpTaskStatus::Completed,
+                    details: "Migration completed".to_owned(),
+                    evidence_record_ids: vec![evidence_record_ids[1].clone()],
+                },
+                McpBatchMemoryCandidateClaim::Plan {
+                    text: "Roll out local persistence".to_owned(),
+                    status: McpPlanStatus::Completed,
+                    evidence_record_ids: vec![evidence_record_ids[0].clone()],
+                },
+            ]
+        };
+        let checkpoint_summary = "Recovered persistence work".to_owned();
+        let transition = write_server
+            .session_memory_verify_batch(Parameters(VerifyBatchSessionMemoryParams {
+                session_id: session_id.clone(),
+                expected_event_count: 3,
+                checkpoint_summary: checkpoint_summary.clone(),
+                candidates: candidates(),
+                deferred_evidence_record_ids: Vec::new(),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(transition["state"], "review-required");
+        assert_eq!(transition["coverage"]["coverageComplete"], true);
+        let candidate_fingerprint = transition["candidateFingerprint"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let request_id = format!("req_{}", "4".repeat(32));
+
+        let committed = write_server
+            .session_memory_commit_batch(Parameters(CommitBatchSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id: request_id.clone(),
+                expected_event_count: 3,
+                candidate_fingerprint: candidate_fingerprint.clone(),
+                checkpoint_summary: checkpoint_summary.clone(),
+                candidates: candidates(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(committed.is_error, Some(false));
+        let committed = committed.structured_content.unwrap();
+        assert_eq!(committed["eventCount"], 4);
+        assert_eq!(committed["replayed"], false);
+
+        let retry = write_server
+            .session_memory_commit_batch(Parameters(CommitBatchSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id,
+                expected_event_count: 3,
+                candidate_fingerprint,
+                checkpoint_summary,
+                candidates: candidates(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(retry.is_error, Some(false));
+        assert_eq!(retry.structured_content.as_ref().unwrap()["eventCount"], 4);
+        assert_eq!(retry.structured_content.as_ref().unwrap()["replayed"], true);
+
+        let session = write_server
+            .session_get(Parameters(SessionContextParams {
+                session_id: session_id.clone(),
+                max_checkpoints: Some(5),
+                max_characters: Some(8_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(session["schemaVersion"], 11);
+        assert_eq!(session["eventCount"], 4);
+        let checkpoints = session["checkpoints"].as_array().unwrap();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0]["summary"], "Recovered persistence work");
+        assert_eq!(checkpoints[0]["decisions"].as_array().unwrap().len(), 1);
+        assert_eq!(checkpoints[0]["tasks"].as_array().unwrap().len(), 1);
+
+        let after = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id,
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(after["state"], "no-unconsolidated-evidence");
+        assert_eq!(after["totalUnconsolidatedEvidence"], 0);
+    }
+
+    #[tokio::test]
     async fn bound_task_recovery_uses_typed_verifier_and_replays_exact_retry() {
         let (_temporary, project, vault, _) = fixture();
         let write_server =
@@ -7664,7 +8269,7 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 27);
+        assert_eq!(tools.len(), 28);
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_consolidation_inbox"));
@@ -7680,6 +8285,9 @@ mod tests {
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_session_memory_verify_typed"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == "ley_session_memory_verify_batch"));
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await

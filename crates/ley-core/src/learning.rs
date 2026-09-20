@@ -774,6 +774,7 @@ fn resolve_evidence(
                 vault,
                 &session.session_id,
                 &checkpoint_event_id,
+                &input.record_id,
             )? {
                 lineage.push(LearningOriginSource::RecoveryCandidate {
                     session_id: session.session_id.clone(),
@@ -901,6 +902,10 @@ fn locate_session_record(
             .any(|record| record.id == record_id)
         {
             Some("verification")
+        } else if checkpoint.unresolved.iter().enumerate().any(|(index, _)| {
+            crate::session::unresolved_record_id(&checkpoint.event_id, index) == record_id
+        }) {
+            Some("unresolved")
         } else {
             checkpoint.problems.iter().find_map(|problem| {
                 if problem.id == record_id {
@@ -2126,6 +2131,7 @@ fn validate_stored_evidence(evidence: &[LearningEvidence]) -> Result<(), LeyCore
                 | "problem"
                 | "attempt"
                 | "resolution"
+                | "unresolved"
                 | "turn-user-prompt"
                 | "turn-assistant-response"
         ) {
@@ -2308,6 +2314,7 @@ fn valid_record_id(value: &str) -> bool {
         ("res_", 32),
         ("cmd_", 32),
         ("ver_", 32),
+        ("unr_", 32),
         ("tev_", 32),
     ]
     .iter()
@@ -2563,12 +2570,15 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, commit_unresolved_memory_transition, erase_session_memory,
-        finish_session, ingest_project, initialize_project, project_memory_overview, read_session,
-        record_session_prompt, record_session_response, start_session, AttemptInput,
-        AttemptOutcome, CaptureMode, CheckpointInput, CommitUnresolvedMemoryTransitionInput,
+        checkpoint_session, commit_batch_memory_transition, commit_unresolved_memory_transition,
+        erase_session_memory, finish_session, ingest_project, initialize_project,
+        project_memory_overview, read_session, record_session_prompt, record_session_response,
+        start_session, verify_batch_memory_transition, AttemptInput, AttemptOutcome,
+        BatchMemoryCandidateClaim, BatchMemoryTransitionInput, CaptureMode, CheckpointInput,
+        CommitBatchMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
         EraseSessionMemoryInput, FinishSessionInput, ProblemInput, ResolutionInput, SessionSource,
-        SessionSourceKind, SessionStatus, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
+        SessionSourceKind, SessionStatus, StartSessionInput, TaskStatus, TurnEvidenceInput,
+        TurnEvidenceOrigin,
     };
     use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
@@ -3003,6 +3013,224 @@ mod tests {
                     )
                 }));
         }
+    }
+
+    #[test]
+    fn atomic_recovery_child_lineage_uses_record_specific_evidence() {
+        let (_base, project, vault, _session_id, _record_id) = setup_learning();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('d'),
+                name: "Atomic interrupted derivation".to_owned(),
+                goal: "Preserve record-specific recovery provenance".to_owned(),
+                source: SessionSource {
+                    kind: SessionSourceKind::HostHook,
+                    host: Some("codex".to_owned()),
+                    agent: Some("gpt-5".to_owned()),
+                    source_reference: None,
+                },
+            },
+        )
+        .unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('e'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("atomic-turn".to_owned()),
+                text: "Use SQLite for local persistence".to_owned(),
+            },
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts.last().unwrap().record_id.clone();
+        let response = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('f'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("atomic-turn".to_owned()),
+                text: "Migration task completed".to_owned(),
+            },
+        )
+        .unwrap();
+        let response_id = response.session.responses.last().unwrap().record_id.clone();
+        let candidates = vec![
+            BatchMemoryCandidateClaim::Decision {
+                title: "Storage engine".to_owned(),
+                decision: "Use SQLite".to_owned(),
+                evidence_record_ids: vec![prompt_id.clone()],
+            },
+            BatchMemoryCandidateClaim::Task {
+                title: "Migrate local state".to_owned(),
+                status: TaskStatus::Completed,
+                details: "Migration completed".to_owned(),
+                evidence_record_ids: vec![response_id.clone()],
+            },
+            BatchMemoryCandidateClaim::Unresolved {
+                text: "Confirm SQLite backup behavior".to_owned(),
+                evidence_record_ids: vec![prompt_id.clone()],
+            },
+        ];
+        let verification = verify_batch_memory_transition(
+            &project,
+            &vault,
+            &started.session.session_id,
+            BatchMemoryTransitionInput {
+                expected_event_count: 3,
+                checkpoint_summary: "Recovered persistence work".to_owned(),
+                candidates: candidates.clone(),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            verification.state,
+            crate::MemoryTransitionState::ReviewRequired
+        );
+        let fingerprint = verification.candidate_fingerprint.clone();
+        let committed = commit_batch_memory_transition(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CommitBatchMemoryTransitionInput {
+                request_id: request_id('a'),
+                expected_event_count: 3,
+                candidate_fingerprint: verification.candidate_fingerprint,
+                checkpoint_summary: "Recovered persistence work".to_owned(),
+                candidates,
+            },
+        )
+        .unwrap();
+        let checkpoint = committed.session.checkpoints.last().unwrap();
+        let decision_id = checkpoint.decisions[0].id.clone();
+        let task_id = checkpoint.tasks[0].id.clone();
+        let unresolved_id = crate::session::unresolved_record_id(&checkpoint.event_id, 0);
+
+        let mut decision_input =
+            proposal(request_id('b'), &started.session.session_id, &decision_id);
+        decision_input.title = "SQLite was selected".to_owned();
+        decision_input.guidance = "Use SQLite for the local persistence path.".to_owned();
+        let decision_learning = propose_learning(&project, &vault, decision_input).unwrap();
+        assert!(decision_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::RecoveryCandidate {
+                    session_id,
+                    candidate_fingerprint,
+                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
+            )));
+        assert!(decision_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::TurnEvidence { session_id, record_id }
+                    if session_id == &started.session.session_id && record_id == &prompt_id
+            )));
+        assert!(!decision_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::TurnEvidence { session_id, record_id }
+                    if session_id == &started.session.session_id && record_id == &response_id
+            )));
+
+        let mut task_input = proposal(request_id('c'), &started.session.session_id, &task_id);
+        task_input.title = "Migration completed".to_owned();
+        task_input.guidance = "Treat the migration task as completed historical work.".to_owned();
+        let task_learning = propose_learning(&project, &vault, task_input).unwrap();
+        assert!(task_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::RecoveryCandidate {
+                    session_id,
+                    candidate_fingerprint,
+                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
+            )));
+        assert!(task_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::TurnEvidence { session_id, record_id }
+                    if session_id == &started.session.session_id && record_id == &response_id
+            )));
+        assert!(!task_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::TurnEvidence { session_id, record_id }
+                    if session_id == &started.session.session_id && record_id == &prompt_id
+            )));
+
+        let mut unresolved_input =
+            proposal(request_id('9'), &started.session.session_id, &unresolved_id);
+        unresolved_input.title = "SQLite backup behavior still needs confirmation".to_owned();
+        unresolved_input.guidance =
+            "Keep SQLite backup behavior explicitly unresolved until it is verified.".to_owned();
+        let unresolved_learning = propose_learning(&project, &vault, unresolved_input).unwrap();
+        assert_eq!(
+            unresolved_learning.learning.evidence[0].record_type,
+            "unresolved"
+        );
+        assert!(unresolved_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::RecoveryCandidate {
+                    session_id,
+                    candidate_fingerprint,
+                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
+            )));
+        assert!(unresolved_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::TurnEvidence { session_id, record_id }
+                    if session_id == &started.session.session_id && record_id == &prompt_id
+            )));
+        assert!(!unresolved_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::TurnEvidence { session_id, record_id }
+                    if session_id == &started.session.session_id && record_id == &response_id
+            )));
     }
 
     #[test]
