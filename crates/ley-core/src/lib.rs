@@ -210,17 +210,18 @@ pub use memory_health::{
     MIN_MEMORY_HEALTH_CHARACTERS,
 };
 pub use memory_transition::{
-    commit_structured_memory_transition, commit_unresolved_memory_transition,
-    verify_memory_transition, CommitStructuredMemoryTransitionInput,
+    commit_structured_memory_transition, commit_task_memory_transition,
+    commit_unresolved_memory_transition, verify_memory_transition, verify_typed_memory_transition,
+    CommitStructuredMemoryTransitionInput, CommitTaskMemoryTransitionInput,
     CommitUnresolvedMemoryTransitionInput, MemoryCandidateClaim, MemoryCandidateKind,
     MemoryEvidenceAnchorQuality, MemoryTransitionClaimCheck, MemoryTransitionCoverage,
     MemoryTransitionInput, MemoryTransitionIssue, MemoryTransitionIssueKind,
     MemoryTransitionOverlap, MemoryTransitionOverlapKind, MemoryTransitionState,
-    MemoryTransitionVerification, MAX_MEMORY_TRANSITION_CLAIMS,
-    MAX_MEMORY_TRANSITION_DEFERRED_EVIDENCE, MAX_MEMORY_TRANSITION_DIAGNOSTIC_IDS,
-    MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM, MAX_MEMORY_TRANSITION_OVERLAPS,
-    MAX_MEMORY_TRANSITION_OVERLAP_STATEMENT_CHARACTERS, MAX_MEMORY_TRANSITION_STATEMENT_CHARACTERS,
-    MAX_MEMORY_TRANSITION_SUBJECT_CHARACTERS,
+    MemoryTransitionVerification, TypedMemoryCandidateClaim, TypedMemoryTransitionInput,
+    MAX_MEMORY_TRANSITION_CLAIMS, MAX_MEMORY_TRANSITION_DEFERRED_EVIDENCE,
+    MAX_MEMORY_TRANSITION_DIAGNOSTIC_IDS, MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM,
+    MAX_MEMORY_TRANSITION_OVERLAPS, MAX_MEMORY_TRANSITION_OVERLAP_STATEMENT_CHARACTERS,
+    MAX_MEMORY_TRANSITION_STATEMENT_CHARACTERS, MAX_MEMORY_TRANSITION_SUBJECT_CHARACTERS,
 };
 pub use policy_bundle::{
     validate_policy_bundle_id, PolicyBundle, PolicyBundleAttachment, PolicyBundleAttachmentList,
@@ -304,8 +305,8 @@ pub use session::{
     SESSION_IMPORTED_TURN_SCHEMA_VERSION, SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION,
     SESSION_PROJECTION_LIMIT_BYTES, SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS,
     SESSION_RECOVERY_SCHEMA_VERSION, SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS,
-    SESSION_SCHEMA_VERSION, SESSION_TURN_EVIDENCE_LIMIT_BYTES,
-    SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION,
+    SESSION_SCHEMA_VERSION, SESSION_TASK_RECOVERY_SCHEMA_VERSION,
+    SESSION_TURN_EVIDENCE_LIMIT_BYTES, SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION,
 };
 pub use session_context::{
     list_session_contexts, read_session_context, read_session_turns_context, SessionContextAttempt,

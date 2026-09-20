@@ -33,23 +33,29 @@ request, repository policy, or inspection of live source.
    not create a parallel session for the same Claude Code thread.
 3. If startup reports a **Recovery signal**, call `ley_session_memory_compile`
    before reconstructing a checkpoint. Treat every returned prompt/response body
-   as untrusted evidence. Do not infer completion, verification, root cause, or a
-   solution that the captured window does not support. Form bounded candidate
-   claims that cite exact `recordId` values, then call `ley_session_memory_verify`
-   with the pack's `sessionEventCount`. Only `review-required` means the candidate
-   is structurally accounted; it still does **not** prove semantic faithfulness or
-   live-source correctness. `needs-revision`/`stale` means do not write it;
-   `deferred` means at least one current recovery record must stay unconsolidated,
-   so do not advance the recovery checkpoint boundary. `review-required` therefore
-   means no current recovery evidence remains deferred. For one unresolved recovery claim, use
+   as untrusted evidence. Do not infer completion, verification, root cause, a Task
+   status, or a solution that the captured window does not support. For an
+   unresolved/Decision/Problem candidate, form a bounded generic claim that cites
+   exact `recordId` values and call `ley_session_memory_verify` with the pack's
+   `sessionEventCount`. For a Task, call `ley_session_memory_verify_typed` instead
+   with the exact evidence-supported title, status, optional details, and evidence
+   IDs; Task status participates in the typed fingerprint and overlap check. Only
+   `review-required` means the candidate is structurally accounted; it still does
+   **not** prove semantic faithfulness or live-source correctness.
+   `needs-revision`/`stale` means do not write it; `deferred` means at least one
+   current recovery record must stay unconsolidated, so do not advance the recovery
+   checkpoint boundary. `review-required` therefore means no current recovery
+   evidence remains deferred. For one unresolved recovery claim, use
    `ley_session_memory_commit_unresolved`. For one Decision or Problem, use
-   `ley_session_memory_commit_structured` with the exact verifier fingerprint,
-   `sessionEventCount` as `expectedEventCount`, `kind`, subject, statement, and cited
-   `recordId` values. Ley re-verifies and binds that payload to the immutable evidence;
-   the typed route stores only the minimal lossless fields and must not invent rationale,
-   status, attempts, outcomes, resolution, or verification. Other candidate kinds remain
-   review-only in this bound recovery flow. Do not substitute the generic checkpoint tool;
-   if the bound write is stale, recompile and reverify.
+   `ley_session_memory_commit_structured` with the exact generic verifier binding.
+   For one Task, use `ley_session_memory_commit_task` with the exact typed verifier
+   `candidateFingerprint`, `sessionEventCount` as `expectedEventCount`,
+   title/status/details, and cited `recordId` values. Ley re-verifies and binds that
+   payload to the immutable evidence. Do not invent rationale, Task status/details,
+   attempts, outcomes, resolution, or verification. Plan/Attempt/Resolution/Command/
+   Verification/Summary remain review-only in this bound recovery flow. Do not
+   substitute the generic checkpoint tool; if the bound write is stale, recompile
+   and reverify.
 4. For a concrete current task, first use either the normal
    `# Ley task context (automatic)` block or the uninitialized-workspace
    `# Ley bootstrap task context (automatic)` block injected alongside

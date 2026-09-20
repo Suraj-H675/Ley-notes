@@ -1,21 +1,22 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
-    commit_structured_memory_transition, commit_unresolved_memory_transition,
-    compile_agent_legibility_map, compile_bootstrap_context_with_registries,
-    compile_project_context_for_agent_with_registries, compile_session_memory,
-    compile_topic_dossier, consolidation_inbox, current_project_state, diagnose_project,
-    evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
-    inspect_context_pack, list_learning_contexts, memory_health_report, project_activity_view,
-    project_memory_overview, project_resume_context, propose_learning,
+    commit_structured_memory_transition, commit_task_memory_transition,
+    commit_unresolved_memory_transition, compile_agent_legibility_map,
+    compile_bootstrap_context_with_registries, compile_project_context_for_agent_with_registries,
+    compile_session_memory, compile_topic_dossier, consolidation_inbox, current_project_state,
+    diagnose_project, evaluate_agent_egress, find_project_context, find_project_graph_path,
+    finish_session, inspect_context_pack, list_learning_contexts, memory_health_report,
+    project_activity_view, project_memory_overview, project_resume_context, propose_learning,
     read_external_connector_snapshot_with_registry, read_learning_context,
     read_project_cited_media, read_project_evidence, read_session_context,
     read_session_turns_context, record_context_utility_observation,
     replay_context_utility_binding_if_present, search_project_memory, start_session,
-    traverse_project_graph, verify_memory_transition, AgentContextAuthorities,
-    AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits,
-    AttemptInput, AttemptOutcome, BootstrapSpecificationRegistry, CheckpointInput, CommandInput,
-    CommitStructuredMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
+    traverse_project_graph, verify_memory_transition, verify_typed_memory_transition,
+    AgentContextAuthorities, AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget,
+    AgentLegibilityLimits, AttemptInput, AttemptOutcome, BootstrapSpecificationRegistry,
+    CheckpointInput, CommandInput, CommitStructuredMemoryTransitionInput,
+    CommitTaskMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
     ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry,
     ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
     DecisionInput, EgressPolicyRegistry, ExternalConnector, ExternalConnectorRegistry,
@@ -26,12 +27,12 @@ use ley_core::{
     ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput, ResolutionInput,
     RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource, SessionSourceKind,
     SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
-    TaskStatus, TopicDossierLimits, VerificationInput, VerificationStatus,
-    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
-    DEFAULT_AGENT_LEGIBILITY_SESSIONS, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
-    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_CONTEXT_COMPILE_RESULTS,
-    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
-    DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
+    TaskStatus, TopicDossierLimits, TypedMemoryCandidateClaim, TypedMemoryTransitionInput,
+    VerificationInput, VerificationStatus, DEFAULT_AGENT_LEGIBILITY_CHARACTERS,
+    DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, DEFAULT_AGENT_LEGIBILITY_SESSIONS,
+    DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
+    DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS,
+    DEFAULT_CONTEXT_TOKENS, DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
     DEFAULT_CURRENT_STATE_SESSIONS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
@@ -139,8 +140,9 @@ historical state as applicable: divergent decisions/revisions are withheld, whil
 remain historical context. The live Git beacon reads metadata only and does not make \
 `liveSourceChecked` true. Prompt and response bodies are excluded from startup context. When a resumed \
 session reports post-checkpoint evidence, inspect only that bounded recovery window with \
-ley_session_memory_compile. Before writing reconstructed structure, check the candidate with \
-ley_session_memory_verify; `review-required` means structurally accounted, not semantically proven, \
+ley_session_memory_compile. Before writing reconstructed structure, check unresolved/Decision/Problem \
+candidates with ley_session_memory_verify and Task candidates with ley_session_memory_verify_typed; \
+`review-required` means structurally accounted, not semantically proven, \
 trusted, or write-authorized. Otherwise request full bounded turn history with ley_session_turns_get \
 only when the current user task needs it.";
 const WRITE_INSTRUCTIONS: &str =
@@ -149,8 +151,11 @@ Checkpoint after meaningful decisions, implementation slices, diagnoses, failed 
 solutions, verification results, and handoffs. For a verifier-approved single unresolved recovery \
 claim, use ley_session_memory_commit_unresolved with the exact candidate fingerprint and recovery \
 evidence set. For one verifier-approved `decision` or `problem` recovery claim, use \
-ley_session_memory_commit_structured with that same exact binding; other candidate kinds remain \
-review-only. Do not substitute the generic checkpoint route for either bound recovery flow. Store concise structure, \
+ley_session_memory_commit_structured with that same exact binding. For a Task, use \
+ley_session_memory_verify_typed so status participates in the candidate fingerprint and overlap \
+check, then use ley_session_memory_commit_task with that exact typed binding. Other candidate kinds \
+remain review-only. Do not substitute the generic checkpoint route for any bound recovery flow and \
+do not invent Task status or details. Store concise structure, \
 project-relative touched artifacts, and observed outcomes rather than transcripts or full tool \
 output. A verification may include `evidenceArtifactPaths` only for directly supporting artifacts \
 already present in the approved captured snapshot; returned `evidenceArtifacts` are immutable \
@@ -888,6 +893,41 @@ pub struct VerifySessionMemoryParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum McpTypedMemoryCandidateClaim {
+    Task {
+        #[schemars(length(min = 1, max = 256))]
+        title: String,
+        status: McpTaskStatus,
+        #[serde(default)]
+        #[schemars(length(max = 4_000))]
+        details: String,
+        #[schemars(length(min = 1, max = 20))]
+        #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+        evidence_record_ids: Vec<String>,
+    },
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VerifyTypedSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    pub candidate: McpTypedMemoryCandidateClaim,
+    #[serde(default)]
+    #[schemars(length(max = 10_000))]
+    #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+    pub deferred_evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CommitUnresolvedSessionMemoryParams {
     #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
@@ -952,6 +992,32 @@ pub struct CommitStructuredSessionMemoryParams {
     #[schemars(length(min = 1, max = 4_000))]
     pub statement: String,
     /// Exact recovery evidence IDs cited by the verified candidate.
+    #[schemars(length(min = 1, max = 20))]
+    #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+    pub evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitTaskSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    /// Caller-stable idempotency key. Reuse only when retrying this exact bound recovery write.
+    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
+    pub request_id: String,
+    /// Exact event count used by the successful typed verifier call.
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    /// Exact sha256 fingerprint returned by ley_session_memory_verify_typed.
+    #[schemars(regex(pattern = "^sha256:[0-9a-f]{64}$"))]
+    pub candidate_fingerprint: String,
+    #[schemars(length(min = 1, max = 256))]
+    pub title: String,
+    pub status: McpTaskStatus,
+    #[serde(default)]
+    #[schemars(length(max = 4_000))]
+    pub details: String,
+    /// Exact recovery evidence IDs cited by the verified Task candidate.
     #[schemars(length(min = 1, max = 20))]
     #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
     pub evidence_record_ids: Vec<String>,
@@ -1480,6 +1546,7 @@ impl LeyMcpServer {
             tool_router.disable_route("ley_session_start");
             tool_router.disable_route("ley_session_checkpoint");
             tool_router.disable_route("ley_session_memory_commit_structured");
+            tool_router.disable_route("ley_session_memory_commit_task");
             tool_router.disable_route("ley_session_memory_commit_unresolved");
             tool_router.disable_route("ley_session_finish");
             tool_router.disable_route("ley_context_utility_bind");
@@ -2586,6 +2653,50 @@ impl LeyMcpServer {
         }))
     }
 
+    /// Verify exactly one typed Task candidate against the current recovery window.
+    /// Task status participates in fingerprinting and duplicate/revision checks. This route is
+    /// read-only and does not prove semantic faithfulness or live-source correctness.
+    #[tool(
+        name = "ley_session_memory_verify_typed",
+        annotations(
+            title = "Verify a typed Ley memory transition candidate",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_verify_typed(
+        &self,
+        Parameters(params): Parameters<VerifyTypedSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let candidate = match params.candidate {
+            McpTypedMemoryCandidateClaim::Task {
+                title,
+                status,
+                details,
+                evidence_record_ids,
+            } => TypedMemoryCandidateClaim::Task {
+                title,
+                status: status.into(),
+                details,
+                evidence_record_ids,
+            },
+        };
+        Ok(self.gated_historical_tool_result(|| {
+            verify_typed_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                TypedMemoryTransitionInput {
+                    expected_event_count: params.expected_event_count,
+                    candidate,
+                    deferred_evidence_record_ids: params.deferred_evidence_record_ids,
+                },
+            )
+        }))
+    }
+
     /// Commit exactly one verifier-approved unresolved recovery claim.
     /// Ley re-verifies the current recovery window and binds the immutable checkpoint to the
     /// candidate fingerprint plus the complete cited turn-evidence set.
@@ -2650,6 +2761,41 @@ impl LeyMcpServer {
                     kind: params.kind.into(),
                     subject: params.subject,
                     statement: params.statement,
+                    evidence_record_ids: params.evidence_record_ids,
+                },
+            )
+        }))
+    }
+
+    /// Commit exactly one typed-verifier-approved Task recovery claim.
+    /// Ley re-verifies title, exact status, details, event count, and complete recovery evidence
+    /// before deriving the one-Task checkpoint. No Task field is inferred by this route.
+    #[tool(
+        name = "ley_session_memory_commit_task",
+        annotations(
+            title = "Commit a verified Ley Task recovery claim",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_commit_task(
+        &self,
+        Parameters(params): Parameters<CommitTaskSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_session_write_result(|| {
+            commit_task_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                CommitTaskMemoryTransitionInput {
+                    request_id: params.request_id,
+                    expected_event_count: params.expected_event_count,
+                    candidate_fingerprint: params.candidate_fingerprint,
+                    title: params.title,
+                    status: params.status.into(),
+                    details: params.details,
                     evidence_record_ids: params.evidence_record_ids,
                 },
             )
@@ -3624,6 +3770,7 @@ mod tests {
                 "ley_session_get",
                 "ley_session_memory_compile",
                 "ley_session_memory_verify",
+                "ley_session_memory_verify_typed",
                 "ley_session_turns_get",
                 "ley_sessions_list",
                 "ley_topic_dossier",
@@ -3922,6 +4069,31 @@ mod tests {
             memory_verifier_schema["properties"]["claims"]["maxItems"],
             50
         );
+        let typed_memory_verifier_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_session_memory_verify_typed")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            typed_memory_verifier_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        let typed_verifier_schema_text = typed_memory_verifier_schema.to_string();
+        for value in [
+            "task",
+            "pending",
+            "in-progress",
+            "completed",
+            "blocked",
+            "cancelled",
+        ] {
+            assert!(typed_verifier_schema_text.contains(value));
+        }
+        assert!(!typed_verifier_schema_text.contains("decision"));
+        assert!(!typed_verifier_schema_text.contains("problem"));
         for tool in tools {
             let annotations = tool.annotations.unwrap();
             assert_eq!(annotations.read_only_hint, Some(true));
@@ -3965,9 +4137,11 @@ mod tests {
                 "ley_session_finish",
                 "ley_session_get",
                 "ley_session_memory_commit_structured",
+                "ley_session_memory_commit_task",
                 "ley_session_memory_commit_unresolved",
                 "ley_session_memory_compile",
                 "ley_session_memory_verify",
+                "ley_session_memory_verify_typed",
                 "ley_session_start",
                 "ley_session_turns_get",
                 "ley_sessions_list",
@@ -4077,6 +4251,32 @@ mod tests {
         assert!(structured_schema_text.contains("problem"));
         assert!(!structured_schema_text.contains("unresolved"));
         assert!(!structured_schema_text.contains("verification"));
+        let task_recovery_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_session_memory_commit_task")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            task_recovery_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        assert_eq!(
+            task_recovery_schema["properties"]["evidenceRecordIds"]["maxItems"],
+            20
+        );
+        let task_schema_text = task_recovery_schema.to_string();
+        for status in [
+            "pending",
+            "in-progress",
+            "completed",
+            "blocked",
+            "cancelled",
+        ] {
+            assert!(task_schema_text.contains(status));
+        }
         for tool in tools {
             let annotations = tool.annotations.unwrap();
             let writes_session = matches!(
@@ -4086,6 +4286,7 @@ mod tests {
                     | "ley_session_start"
                     | "ley_session_checkpoint"
                     | "ley_session_memory_commit_structured"
+                    | "ley_session_memory_commit_task"
                     | "ley_session_memory_commit_unresolved"
                     | "ley_session_finish"
             );
@@ -5979,6 +6180,168 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bound_task_recovery_uses_typed_verifier_and_replays_exact_retry() {
+        let (_temporary, project, vault, _) = fixture();
+        let write_server =
+            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "b".repeat(32)),
+                name: "Typed Task recovery".to_owned(),
+                goal: "Recover exact Task state from bounded turn evidence".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
+        record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "c".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("typed-task-recovery-turn".to_owned()),
+                text: "Track the release build task".to_owned(),
+            },
+        )
+        .unwrap();
+        record_session_response(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "d".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("typed-task-recovery-turn".to_owned()),
+                text: "Release build completed after the smoke test passed".to_owned(),
+            },
+        )
+        .unwrap();
+        let pack = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id: session_id.clone(),
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let evidence_record_ids = pack["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["recordId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(evidence_record_ids.len(), 2);
+        let transition = write_server
+            .session_memory_verify_typed(Parameters(VerifyTypedSessionMemoryParams {
+                session_id: session_id.clone(),
+                expected_event_count: 3,
+                candidate: McpTypedMemoryCandidateClaim::Task {
+                    title: "Release build".to_owned(),
+                    status: McpTaskStatus::Completed,
+                    details: "Smoke test passed".to_owned(),
+                    evidence_record_ids: evidence_record_ids.clone(),
+                },
+                deferred_evidence_record_ids: Vec::new(),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(transition["state"], "review-required");
+        assert_eq!(transition["semanticFaithfulnessProven"], false);
+        assert_eq!(transition["liveSourceChecked"], false);
+        assert_eq!(transition["coverage"]["coverageComplete"], true);
+        let request_id = format!("req_{}", "e".repeat(32));
+        let committed = write_server
+            .session_memory_commit_task(Parameters(CommitTaskSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id: request_id.clone(),
+                expected_event_count: 3,
+                candidate_fingerprint: transition["candidateFingerprint"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                title: "Release build".to_owned(),
+                status: McpTaskStatus::Completed,
+                details: "Smoke test passed".to_owned(),
+                evidence_record_ids: evidence_record_ids.clone(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(committed.is_error, Some(false));
+        assert_eq!(
+            committed.structured_content.as_ref().unwrap()["eventCount"],
+            4
+        );
+        assert_eq!(
+            committed.structured_content.as_ref().unwrap()["replayed"],
+            false
+        );
+
+        let retry = write_server
+            .session_memory_commit_task(Parameters(CommitTaskSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id,
+                expected_event_count: 3,
+                candidate_fingerprint: transition["candidateFingerprint"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                title: "Release build".to_owned(),
+                status: McpTaskStatus::Completed,
+                details: "Smoke test passed".to_owned(),
+                evidence_record_ids,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(retry.is_error, Some(false));
+        assert_eq!(retry.structured_content.as_ref().unwrap()["replayed"], true);
+
+        let session = write_server
+            .session_get(Parameters(SessionContextParams {
+                session_id: session_id.clone(),
+                max_checkpoints: Some(5),
+                max_characters: Some(8_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(session["schemaVersion"], 9);
+        assert_eq!(session["eventCount"], 4);
+        let checkpoints = session["checkpoints"].as_array().unwrap();
+        assert_eq!(checkpoints.len(), 1);
+        let tasks = checkpoints[0]["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["title"], "Release build");
+        assert_eq!(tasks[0]["status"], "completed");
+        assert!(checkpoints[0]["decisions"].as_array().unwrap().is_empty());
+        assert!(checkpoints[0]["problems"].as_array().unwrap().is_empty());
+        assert!(checkpoints[0]["unresolved"].as_array().unwrap().is_empty());
+
+        let after = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id,
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(after["state"], "no-unconsolidated-evidence");
+        assert_eq!(after["totalUnconsolidatedEvidence"], 0);
+    }
+
+    #[tokio::test]
     async fn search_returns_cited_untrusted_snapshot_without_local_paths() {
         let (_temporary, project, vault, server) = fixture();
         let result = server
@@ -7037,7 +7400,7 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 26);
+        assert_eq!(tools.len(), 27);
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_consolidation_inbox"));
@@ -7050,6 +7413,9 @@ mod tests {
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_read_media_evidence"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == "ley_session_memory_verify_typed"));
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await

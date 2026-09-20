@@ -5974,6 +5974,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             state_ok = compiled.get("state") == expected_state
             recovery_ok = state_ok
             typed_compiled: dict[str, object] | None = None
+            task_compiled: dict[str, object] | None = None
+            task_projection: dict[str, object] | None = None
+            task_secret_canary = str(scenario.get("task_secret_canary", ""))
             if scenario.get("expected_recovery_checkpoint"):
                 event_count = int(compiled.get("sessionEventCount", 0))
                 evidence = compiled.get("evidence", [])
@@ -6125,6 +6128,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 typed_binding_ok = True
                 typed_lineage_ok = True
                 typed_after_ok = True
+                task_binding_ok = True
+                task_lineage_ok = True
+                task_after_ok = True
                 if scenario.get("expected_typed_recovery"):
                     typed_prompt = "Use SQLite for local-first persistence"
                     hook_call(
@@ -6303,6 +6309,247 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     scores["memory_binding"] = binding_ok and typed_binding_ok
                     if scenario.get("expected_origin_lineage"):
                         scores["origin_lineage"] = lineage_ok and typed_lineage_ok
+                if scenario.get("expected_task_recovery"):
+                    task_prompt = (
+                        "Task state: Release build is completed; details: smoke test passed. "
+                        f"api_key: {task_secret_canary}"
+                    )
+                    hook_call(
+                        project,
+                        "codex",
+                        {
+                            "hook_event_name": "UserPromptSubmit",
+                            "session_id": "ley-eval-crash-thread",
+                            "turn_id": "ley-eval-task-recovery-turn",
+                            "prompt": task_prompt,
+                        },
+                    )
+                    task_compiled = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                    )
+                    task_event_count = int(task_compiled.get("sessionEventCount", 0))
+                    task_evidence = task_compiled.get("evidence", [])
+                    task_prompt_record = next(
+                        (
+                            item
+                            for item in task_evidence
+                            if isinstance(item, dict)
+                            and item.get("kind") == "user-prompt"
+                            and item.get("recordId")
+                        ),
+                        {},
+                    )
+                    task_record_id = str(task_prompt_record.get("recordId", ""))
+                    task_prompt_text = str(task_prompt_record.get("text", ""))
+                    task_redaction_ok = (
+                        bool(task_secret_canary)
+                        and task_secret_canary not in task_prompt_text
+                        and "[REDACTED:" in task_prompt_text
+                    )
+                    if not task_redaction_ok:
+                        failures.append(
+                            "typed Task recovery evidence did not redact the Task-specific secret canary"
+                        )
+                    task_transition = mcp_call(
+                        project,
+                        "ley_session_memory_verify_typed",
+                        {
+                            "sessionId": session_id,
+                            "expectedEventCount": task_event_count,
+                            "candidate": {
+                                "kind": "task",
+                                "title": "Release build",
+                                "status": "completed",
+                                "details": "Smoke test passed",
+                                "evidenceRecordIds": [task_record_id],
+                            },
+                            "deferredEvidenceRecordIds": [],
+                        },
+                    )
+                    task_commit_args = {
+                        "sessionId": session_id,
+                        "requestId": request_id(f"{scenario['id']}:task-memory-recovery"),
+                        "expectedEventCount": task_event_count,
+                        "candidateFingerprint": task_transition.get("candidateFingerprint", ""),
+                        "title": "Release build",
+                        "status": "completed",
+                        "details": "Smoke test passed",
+                        "evidenceRecordIds": [task_record_id],
+                    }
+                    task_receipt = mcp_call(
+                        project,
+                        "ley_session_memory_commit_task",
+                        task_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    task_retry = mcp_call(
+                        project,
+                        "ley_session_memory_commit_task",
+                        task_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    task_session = mcp_call(
+                        project,
+                        "ley_session_get",
+                        {"sessionId": session_id, "maxCheckpoints": 8, "maxCharacters": 12_000},
+                    )
+                    task_checkpoints = task_session.get("checkpoints", [])
+                    task_checkpoint = (
+                        task_checkpoints[-1]
+                        if isinstance(task_checkpoints, list)
+                        and task_checkpoints
+                        and isinstance(task_checkpoints[-1], dict)
+                        else {}
+                    )
+                    task_records = task_checkpoint.get("tasks", [])
+                    diagnostic = cli_json(["doctor", str(project), "--json"])
+                    identity = diagnostic.get("identity", {}) if isinstance(diagnostic, dict) else {}
+                    project_id = str(identity.get("projectId", "")) if isinstance(identity, dict) else ""
+                    task_projection_path = (
+                        vault
+                        / ".ley"
+                        / "agent-memory"
+                        / "projects"
+                        / project_id
+                        / "sessions"
+                        / session_id
+                        / "session-v9.json"
+                    )
+                    if project_id and task_projection_path.is_file():
+                        loaded_task_projection = json.loads(
+                            task_projection_path.read_text(encoding="utf-8")
+                        )
+                        if isinstance(loaded_task_projection, dict):
+                            task_projection = loaded_task_projection
+                    durable_task_checkpoints = (
+                        task_projection.get("checkpoints", [])
+                        if isinstance(task_projection, dict)
+                        else []
+                    )
+                    durable_task_checkpoint = (
+                        durable_task_checkpoints[-1]
+                        if isinstance(durable_task_checkpoints, list)
+                        and durable_task_checkpoints
+                        and isinstance(durable_task_checkpoints[-1], dict)
+                        else {}
+                    )
+                    durable_task_records = durable_task_checkpoint.get("tasks", [])
+                    durable_task_ok = (
+                        isinstance(durable_task_records, list)
+                        and len(durable_task_records) == 1
+                        and isinstance(durable_task_records[0], dict)
+                        and durable_task_records[0].get("title") == "Release build"
+                        and durable_task_records[0].get("status") == "completed"
+                        and durable_task_records[0].get("details") == "Smoke test passed"
+                        and task_secret_canary not in serialized(task_projection)
+                    )
+                    if not durable_task_ok:
+                        failures.append(
+                            "typed Task recovery did not durably preserve exact details or leaked the Task secret canary"
+                        )
+                    task_binding_ok = (
+                        task_transition.get("state") == "review-required"
+                        and task_transition.get("semanticFaithfulnessProven") is False
+                        and task_transition.get("liveSourceChecked") is False
+                        and bool(task_transition.get("coverage", {}).get("coverageComplete"))
+                        and str(task_transition.get("candidateFingerprint", "")).startswith("sha256:")
+                        and task_receipt.get("eventCount") == task_event_count + 1
+                        and task_receipt.get("replayed") is False
+                        and task_retry.get("eventCount") == task_event_count + 1
+                        and task_retry.get("replayed") is True
+                        and task_session.get("schemaVersion") == 9
+                        and isinstance(task_records, list)
+                        and len(task_records) == 1
+                        and isinstance(task_records[0], dict)
+                        and task_records[0].get("title") == "Release build"
+                        and task_records[0].get("status") == "completed"
+                        and durable_task_ok
+                        and task_redaction_ok
+                        and task_checkpoint.get("decisions") == []
+                        and task_checkpoint.get("problems") == []
+                        and task_checkpoint.get("unresolved") == []
+                    )
+                    if not task_binding_ok:
+                        failures.append(
+                            "typed Task recovery did not preserve verifier binding/idempotency/projection"
+                        )
+                    if scenario.get("expected_origin_lineage"):
+                        task_checkpoint_id = str(task_checkpoint.get("checkpointId", ""))
+                        task_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(f"{scenario['id']}:task-origin-lineage"),
+                                "kind": "fact",
+                                "title": "Recovered release Task state",
+                                "guidance": "Release build completed after the smoke test passed",
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": task_checkpoint_id,
+                                        "note": "Derived only from the typed Task recovery checkpoint.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        task_learning_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(task_learning.get("learningId", "")),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        task_lineage = task_learning_context.get("originLineage", {})
+                        task_sources = (
+                            task_lineage.get("sources", [])
+                            if isinstance(task_lineage, dict)
+                            else []
+                        )
+                        task_lineage_ok = (
+                            bool(task_checkpoint_id)
+                            and task_lineage.get("mechanicallyResolved") is True
+                            and task_lineage.get("causalCompletenessProven") is False
+                            and task_lineage.get("automaticAuthorityCeiling") == "review-required"
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == task_transition.get("candidateFingerprint")
+                                for source in task_sources
+                            )
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == task_record_id
+                                for source in task_sources
+                            )
+                        )
+                        if not task_lineage_ok:
+                            failures.append(
+                                "typed Task recovery-derived learning did not preserve the bound origin chain"
+                            )
+                    task_after = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                    )
+                    task_after_ok = (
+                        task_after.get("state") == "no-unconsolidated-evidence"
+                        and task_after.get("totalUnconsolidatedEvidence") == 0
+                    )
+                    scores["memory_binding"] = (
+                        binding_ok and typed_binding_ok and task_binding_ok
+                    )
+                    if scenario.get("expected_origin_lineage"):
+                        scores["origin_lineage"] = (
+                            lineage_ok and typed_lineage_ok and task_lineage_ok
+                        )
                 recovery_ok = (
                     state_ok
                     and transition_ok
@@ -6313,13 +6560,23 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and typed_binding_ok
                     and typed_lineage_ok
                     and typed_after_ok
+                    and task_binding_ok
+                    and task_lineage_ok
+                    and task_after_ok
                 )
             scores["memory_recovery"] = recovery_ok
             privacy_payloads = [compiled]
             if typed_compiled is not None:
                 privacy_payloads.append(typed_compiled)
+            if task_compiled is not None:
+                privacy_payloads.append(task_compiled)
+            if task_projection is not None:
+                privacy_payloads.append(task_projection)
+            privacy_canaries = [str(project), str(vault)]
+            if task_secret_canary:
+                privacy_canaries.append(task_secret_canary)
             scores["privacy_violation_rate"] = privacy_violation_rate(
-                [str(project), str(vault)], privacy_payloads
+                privacy_canaries, privacy_payloads
             )
             if not recovery_ok:
                 failures.append(

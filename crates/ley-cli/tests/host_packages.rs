@@ -404,6 +404,11 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             "{}",
             path.display()
         );
+        assert!(
+            skill.contains("ley_session_memory_verify_typed"),
+            "{}",
+            path.display()
+        );
         assert!(skill.contains("review-required"), "{}", path.display());
         assert!(
             skill.contains("semantic faithfulness"),
@@ -412,6 +417,11 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         );
         assert!(
             skill.contains("ley_session_memory_commit_unresolved"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("ley_session_memory_commit_task"),
             "{}",
             path.display()
         );

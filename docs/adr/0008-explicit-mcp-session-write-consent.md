@@ -26,6 +26,7 @@ The flag enables the following session lifecycle and recovery tools:
 | `ley_session_start` | Creates one structured session start event |
 | `ley_session_checkpoint` | Appends one checkpoint with structured work and cited artifacts |
 | `ley_session_memory_commit_structured` | Appends one candidate-bound Decision or Problem recovery checkpoint after re-verification |
+| `ley_session_memory_commit_task` | Appends one candidate-bound typed Task recovery checkpoint after typed re-verification |
 | `ley_session_memory_commit_unresolved` | Appends one candidate-bound unresolved recovery checkpoint after re-verification |
 | `ley_session_finish` | Appends one completed, paused, or abandoned result |
 

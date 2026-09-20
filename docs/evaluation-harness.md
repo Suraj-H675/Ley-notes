@@ -58,9 +58,12 @@ expectations, or failing metric values make a full-corpus run fail.
 The crash-recovery representative now exercises both candidate-bound recovery writers through the real
 MCP server. It first verifies and idempotently commits one unresolved claim through the legacy schema-v3
 route, then records a new bounded host prompt, verifies one Decision claim, commits it through
-`ley_session_memory_commit_structured`, and requires schema-v8 structured projection, exact replay,
+`ley_session_memory_commit_structured`, then exercises `ley_session_memory_verify_typed` plus
+`ley_session_memory_commit_task`; it requires schema-v8 Decision projection, schema-v9 Task projection, exact replay,
 closed recovery-window state, mechanically preserved recovery-candidate/turn-evidence lineage, and
-zero privacy leakage. The typed route is therefore part of the existing Reliable Memory Compiler,
+exact durable Task title/status/details. A Task-specific secret canary is injected into the captured
+host prompt and must be redacted from the recovery pack and absent from durable `session-v9.json`, so
+the representative also requires zero privacy leakage. The typed route is therefore part of the existing Reliable Memory Compiler,
 memory-binding, and origin-lineage gates rather than a separate weaker metric.
 
 Focused subset runs validate the matrix schema but intentionally skip full result-value coverage because

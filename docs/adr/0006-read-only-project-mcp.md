@@ -29,6 +29,7 @@ The default read-only server currently exposes sixteen tools (the original surfa
 | `ley_session_get` | One untrusted resume pack, at most 20 recent checkpoints and 32,000 text characters |
 | `ley_session_memory_compile` | Read-only bounded post-checkpoint prompt/response recovery pack with partial/metadata-only disclosure and a stable event-count guard for later writes |
 | `ley_session_memory_verify` | Read-only structural verification of a proposed recovery transition against exact evidence IDs, current event count, coverage, and duplicate/revision overlap; never semantic proof |
+| `ley_session_memory_verify_typed` | Read-only verification of one typed Task recovery candidate with exact evidence IDs and status-aware fingerprint/duplicate/revision checks; never semantic proof |
 | `ley_session_turns_get` | Explicit bounded prompt/response evidence read; turn bodies never enter startup context automatically |
 | `ley_learnings_list` | Trusted-first bounded learning summaries with explicit review/all scopes |
 | `ley_learning_get` | One bounded learning pack with trust, freshness, provenance, citations, and history |
