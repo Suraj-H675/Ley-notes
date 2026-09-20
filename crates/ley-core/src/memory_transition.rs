@@ -1,14 +1,15 @@
 use crate::session::{
-    checkpoint_recovered_batch_session, checkpoint_recovered_plan_session,
-    checkpoint_recovered_rich_problem_session, checkpoint_recovered_structured_session,
-    checkpoint_recovered_task_session, checkpoint_recovered_unresolved_session,
-    read_session_for_memory_compiler, replay_recovered_batch_session_if_present,
+    checkpoint_recovered_batch_session, checkpoint_recovered_composite_session,
+    checkpoint_recovered_plan_session, checkpoint_recovered_rich_problem_session,
+    checkpoint_recovered_structured_session, checkpoint_recovered_task_session,
+    checkpoint_recovered_unresolved_session, read_session_for_memory_compiler,
+    replay_recovered_batch_session_if_present, replay_recovered_composite_session_if_present,
     replay_recovered_plan_session_if_present, replay_recovered_rich_problem_session_if_present,
     replay_recovered_structured_session_if_present, replay_recovered_task_session_if_present,
     replay_recovered_unresolved_session_if_present, RecoveredBatchCheckpointInput,
-    RecoveredPlanCheckpointInput, RecoveredRichProblemCheckpointInput,
-    RecoveredStructuredCheckpointInput, RecoveredStructuredKind, RecoveredTaskCheckpointInput,
-    RecoveredUnresolvedCheckpointInput,
+    RecoveredCompositeCheckpointInput, RecoveredPlanCheckpointInput,
+    RecoveredRichProblemCheckpointInput, RecoveredStructuredCheckpointInput,
+    RecoveredStructuredKind, RecoveredTaskCheckpointInput, RecoveredUnresolvedCheckpointInput,
 };
 use crate::{
     AgentSession, AttemptOutcome, LeyCoreError, PlanStatus, ProblemRecord, SessionMutation,
@@ -157,6 +158,17 @@ pub struct CommitBatchMemoryTransitionInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitCompositeMemoryTransitionInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub checkpoint_summary: String,
+    pub rich_problem: RichProblemMemoryCandidate,
+    pub siblings: Vec<BatchMemoryCandidateClaim>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "kebab-case",
@@ -225,6 +237,16 @@ pub struct RichProblemMemoryCandidate {
 pub struct RichProblemMemoryTransitionInput {
     pub expected_event_count: u64,
     pub candidate: RichProblemMemoryCandidate,
+    pub deferred_evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompositeMemoryTransitionInput {
+    pub expected_event_count: u64,
+    pub checkpoint_summary: String,
+    pub rich_problem: RichProblemMemoryCandidate,
+    pub siblings: Vec<BatchMemoryCandidateClaim>,
     pub deferred_evidence_record_ids: Vec<String>,
 }
 
@@ -483,6 +505,135 @@ pub(crate) fn verify_rich_problem_memory_transition_against_session(
     }
     verification.state = typed_transition_state(&verification);
     verification.candidate_fingerprint = rich_problem_candidate_fingerprint(session_id, &input);
+    Ok(verification)
+}
+
+pub fn verify_composite_memory_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: CompositeMemoryTransitionInput,
+) -> Result<MemoryTransitionVerification, LeyCoreError> {
+    validate_composite_input(&input)?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler(project_start, vault, session_id)?;
+    verify_composite_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        input,
+    )
+}
+
+pub(crate) fn verify_composite_memory_transition_against_session(
+    session: &AgentSession,
+    boundary_sequence: u64,
+    session_id: &str,
+    input: CompositeMemoryTransitionInput,
+) -> Result<MemoryTransitionVerification, LeyCoreError> {
+    validate_composite_input(&input)?;
+    let rich_component_count = rich_problem_component_count(&input.rich_problem);
+    let generic = composite_as_generic_input(&input);
+    let mut verification = verify_transition(session, boundary_sequence, generic);
+
+    verification.issues.retain(|issue| {
+        if !matches!(
+            issue.kind,
+            MemoryTransitionIssueKind::ExactDuplicate
+                | MemoryTransitionIssueKind::SameSubjectDifferentContent
+        ) {
+            return true;
+        }
+        let Some(index) = issue.claim_index else {
+            return true;
+        };
+        if index < rich_component_count {
+            return false;
+        }
+        matches!(
+            input.siblings.get(index - rich_component_count),
+            Some(
+                BatchMemoryCandidateClaim::Unresolved { .. }
+                    | BatchMemoryCandidateClaim::Decision { .. }
+                    | BatchMemoryCandidateClaim::Problem { .. }
+            )
+        )
+    });
+    verification.overlaps.retain(|overlap| {
+        if overlap.claim_index < rich_component_count {
+            return false;
+        }
+        matches!(
+            input
+                .siblings
+                .get(overlap.claim_index - rich_component_count),
+            Some(
+                BatchMemoryCandidateClaim::Unresolved { .. }
+                    | BatchMemoryCandidateClaim::Decision { .. }
+                    | BatchMemoryCandidateClaim::Problem { .. }
+            )
+        )
+    });
+
+    if !input.rich_problem.title.trim().is_empty() {
+        for overlap in find_rich_problem_overlaps(&input.rich_problem, session) {
+            if verification.overlaps.len() >= MAX_MEMORY_TRANSITION_OVERLAPS {
+                break;
+            }
+            verification.issues.push(overlap_issue(&overlap));
+            verification.overlaps.push(overlap);
+        }
+    }
+
+    for (sibling_index, candidate) in input.siblings.iter().enumerate() {
+        let claim_index = rich_component_count + sibling_index;
+        match candidate {
+            BatchMemoryCandidateClaim::Plan { text, status, .. } => {
+                if let Some(check) = verification.claim_checks.get_mut(claim_index) {
+                    check.subject = text.trim().to_owned();
+                }
+                if !text.trim().is_empty() {
+                    for overlap in find_plan_overlaps(claim_index, text, *status, session) {
+                        if verification.overlaps.len() >= MAX_MEMORY_TRANSITION_OVERLAPS {
+                            break;
+                        }
+                        verification.issues.push(overlap_issue(&overlap));
+                        verification.overlaps.push(overlap);
+                    }
+                }
+            }
+            BatchMemoryCandidateClaim::Task {
+                title,
+                status,
+                details,
+                ..
+            } if !title.trim().is_empty() => {
+                for overlap in find_task_overlaps(claim_index, title, *status, details, session) {
+                    if verification.overlaps.len() >= MAX_MEMORY_TRANSITION_OVERLAPS {
+                        break;
+                    }
+                    verification.issues.push(overlap_issue(&overlap));
+                    verification.overlaps.push(overlap);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for mut issue in find_intra_batch_issues(&input.siblings) {
+        if let Some(index) = issue.claim_index.as_mut() {
+            *index += rich_component_count;
+        }
+        verification.issues.push(issue);
+    }
+    if let Some(mut issue) = rich_problem_minimal_sibling_issue(&input) {
+        if let Some(index) = issue.claim_index.as_mut() {
+            *index += rich_component_count;
+        }
+        verification.issues.push(issue);
+    }
+    verification.state = typed_transition_state(&verification);
+    verification.candidate_fingerprint = composite_candidate_fingerprint(session_id, &input);
     Ok(verification)
 }
 
@@ -891,6 +1042,55 @@ pub fn commit_batch_memory_transition(
     checkpoint_recovered_batch_session(project_start, vault, session_id, bound_input)
 }
 
+pub fn commit_composite_memory_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: CommitCompositeMemoryTransitionInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    let bound_input = RecoveredCompositeCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        checkpoint_summary: input.checkpoint_summary.clone(),
+        rich_problem: input.rich_problem.clone(),
+        siblings: input.siblings.clone(),
+    };
+    if let Some(replayed) = replay_recovered_composite_session_if_present(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        bound_input.clone(),
+    )? {
+        return Ok(replayed);
+    }
+    let verification = verify_composite_memory_transition(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        CompositeMemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            checkpoint_summary: input.checkpoint_summary,
+            rich_problem: input.rich_problem,
+            siblings: input.siblings,
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "composite recovery commit requires a current review-required composite candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "composite recovery candidate fingerprint does not match the current composite transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_composite_session(project_start, vault, session_id, bound_input)
+}
+
 fn validate_typed_input(input: &TypedMemoryTransitionInput) -> Result<(), LeyCoreError> {
     if input.deferred_evidence_record_ids.len() > MAX_MEMORY_TRANSITION_DEFERRED_EVIDENCE {
         return Err(LeyCoreError::InvalidSessionRequest(format!(
@@ -1003,6 +1203,39 @@ fn validate_rich_problem_input(
     Ok(())
 }
 
+fn validate_composite_input(input: &CompositeMemoryTransitionInput) -> Result<(), LeyCoreError> {
+    if input.checkpoint_summary.trim().is_empty()
+        || input.checkpoint_summary.chars().count() > MAX_BATCH_CHECKPOINT_SUMMARY_CHARACTERS
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "composite checkpoint summary must contain between 1 and {MAX_BATCH_CHECKPOINT_SUMMARY_CHARACTERS} characters"
+        )));
+    }
+    if input.siblings.is_empty() || input.siblings.len() >= MAX_MEMORY_TRANSITION_CLAIMS {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "composite memory transition must contain between 1 and {} sibling candidates",
+            MAX_MEMORY_TRANSITION_CLAIMS - 1
+        )));
+    }
+    let component_count = rich_problem_component_count(&input.rich_problem) + input.siblings.len();
+    if component_count > MAX_MEMORY_TRANSITION_CLAIMS {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "composite memory transition cannot exceed {MAX_MEMORY_TRANSITION_CLAIMS} verifier components"
+        )));
+    }
+    validate_rich_problem_input(&RichProblemMemoryTransitionInput {
+        expected_event_count: input.expected_event_count,
+        candidate: input.rich_problem.clone(),
+        deferred_evidence_record_ids: input.deferred_evidence_record_ids.clone(),
+    })?;
+    validate_minimal_candidates(&input.siblings)?;
+    Ok(())
+}
+
+fn rich_problem_component_count(candidate: &RichProblemMemoryCandidate) -> usize {
+    1 + candidate.attempts.len() + usize::from(candidate.resolution.is_some())
+}
+
 fn validate_rich_problem_evidence_ids(
     label: &str,
     evidence_record_ids: &[String],
@@ -1100,7 +1333,13 @@ fn validate_batch_input(input: &BatchMemoryTransitionInput) -> Result<(), LeyCor
             "deferred evidence cannot exceed {MAX_MEMORY_TRANSITION_DEFERRED_EVIDENCE} records"
         )));
     }
-    for (index, candidate) in input.candidates.iter().enumerate() {
+    validate_minimal_candidates(&input.candidates)
+}
+
+fn validate_minimal_candidates(
+    candidates: &[BatchMemoryCandidateClaim],
+) -> Result<(), LeyCoreError> {
+    for (index, candidate) in candidates.iter().enumerate() {
         let (subject, statement, evidence_record_ids) = match candidate {
             BatchMemoryCandidateClaim::Unresolved {
                 text,
@@ -1159,68 +1398,124 @@ fn validate_batch_input(input: &BatchMemoryTransitionInput) -> Result<(), LeyCor
     Ok(())
 }
 
+fn composite_as_generic_input(input: &CompositeMemoryTransitionInput) -> MemoryTransitionInput {
+    let mut claims = rich_problem_as_generic_input(&RichProblemMemoryTransitionInput {
+        expected_event_count: input.expected_event_count,
+        candidate: input.rich_problem.clone(),
+        deferred_evidence_record_ids: Vec::new(),
+    })
+    .claims;
+    claims.extend(input.siblings.iter().map(batch_candidate_as_generic_claim));
+    MemoryTransitionInput {
+        expected_event_count: input.expected_event_count,
+        claims,
+        deferred_evidence_record_ids: input.deferred_evidence_record_ids.clone(),
+    }
+}
+
 fn batch_candidates_as_generic_input(input: &BatchMemoryTransitionInput) -> MemoryTransitionInput {
     let claims = input
         .candidates
         .iter()
-        .map(|candidate| match candidate {
-            BatchMemoryCandidateClaim::Unresolved {
-                text,
-                evidence_record_ids,
-            } => MemoryCandidateClaim {
-                kind: MemoryCandidateKind::Unresolved,
-                subject: "unresolved".to_owned(),
-                statement: text.clone(),
-                evidence_record_ids: evidence_record_ids.clone(),
-            },
-            BatchMemoryCandidateClaim::Decision {
-                title,
-                decision,
-                evidence_record_ids,
-            } => MemoryCandidateClaim {
-                kind: MemoryCandidateKind::Decision,
-                subject: title.clone(),
-                statement: decision.clone(),
-                evidence_record_ids: evidence_record_ids.clone(),
-            },
-            BatchMemoryCandidateClaim::Problem {
-                title,
-                symptom,
-                evidence_record_ids,
-            } => MemoryCandidateClaim {
-                kind: MemoryCandidateKind::Problem,
-                subject: title.clone(),
-                statement: symptom.clone(),
-                evidence_record_ids: evidence_record_ids.clone(),
-            },
-            BatchMemoryCandidateClaim::Task {
-                title,
-                details,
-                evidence_record_ids,
-                ..
-            } => MemoryCandidateClaim {
-                kind: MemoryCandidateKind::Task,
-                subject: title.clone(),
-                statement: task_validation_statement(details),
-                evidence_record_ids: evidence_record_ids.clone(),
-            },
-            BatchMemoryCandidateClaim::Plan {
-                text,
-                evidence_record_ids,
-                ..
-            } => MemoryCandidateClaim {
-                kind: MemoryCandidateKind::Plan,
-                subject: "batch-plan".to_owned(),
-                statement: text.clone(),
-                evidence_record_ids: evidence_record_ids.clone(),
-            },
-        })
+        .map(batch_candidate_as_generic_claim)
         .collect();
     MemoryTransitionInput {
         expected_event_count: input.expected_event_count,
         claims,
         deferred_evidence_record_ids: input.deferred_evidence_record_ids.clone(),
     }
+}
+
+fn batch_candidate_as_generic_claim(candidate: &BatchMemoryCandidateClaim) -> MemoryCandidateClaim {
+    match candidate {
+        BatchMemoryCandidateClaim::Unresolved {
+            text,
+            evidence_record_ids,
+        } => MemoryCandidateClaim {
+            kind: MemoryCandidateKind::Unresolved,
+            subject: "unresolved".to_owned(),
+            statement: text.clone(),
+            evidence_record_ids: evidence_record_ids.clone(),
+        },
+        BatchMemoryCandidateClaim::Decision {
+            title,
+            decision,
+            evidence_record_ids,
+        } => MemoryCandidateClaim {
+            kind: MemoryCandidateKind::Decision,
+            subject: title.clone(),
+            statement: decision.clone(),
+            evidence_record_ids: evidence_record_ids.clone(),
+        },
+        BatchMemoryCandidateClaim::Problem {
+            title,
+            symptom,
+            evidence_record_ids,
+        } => MemoryCandidateClaim {
+            kind: MemoryCandidateKind::Problem,
+            subject: title.clone(),
+            statement: symptom.clone(),
+            evidence_record_ids: evidence_record_ids.clone(),
+        },
+        BatchMemoryCandidateClaim::Task {
+            title,
+            details,
+            evidence_record_ids,
+            ..
+        } => MemoryCandidateClaim {
+            kind: MemoryCandidateKind::Task,
+            subject: title.clone(),
+            statement: task_validation_statement(details),
+            evidence_record_ids: evidence_record_ids.clone(),
+        },
+        BatchMemoryCandidateClaim::Plan {
+            text,
+            evidence_record_ids,
+            ..
+        } => MemoryCandidateClaim {
+            kind: MemoryCandidateKind::Plan,
+            subject: "batch-plan".to_owned(),
+            statement: text.clone(),
+            evidence_record_ids: evidence_record_ids.clone(),
+        },
+    }
+}
+
+fn rich_problem_minimal_sibling_issue(
+    input: &CompositeMemoryTransitionInput,
+) -> Option<MemoryTransitionIssue> {
+    let rich_title = normalize(&input.rich_problem.title);
+    if rich_title.is_empty() {
+        return None;
+    }
+    for (index, sibling) in input.siblings.iter().enumerate() {
+        let BatchMemoryCandidateClaim::Problem { title, symptom, .. } = sibling else {
+            continue;
+        };
+        if normalize(title) != rich_title {
+            continue;
+        }
+        let kind = if normalize(symptom) == normalize(&input.rich_problem.symptom) {
+            MemoryTransitionIssueKind::DuplicateCandidate
+        } else {
+            MemoryTransitionIssueKind::ConflictingCandidate
+        };
+        return Some(MemoryTransitionIssue {
+            kind,
+            message: match kind {
+                MemoryTransitionIssueKind::DuplicateCandidate => format!(
+                    "composite sibling candidate {index} duplicates the rich Problem parent"
+                ),
+                MemoryTransitionIssueKind::ConflictingCandidate => format!(
+                    "composite sibling candidate {index} conflicts with the rich Problem parent for the same durable subject"
+                ),
+                _ => unreachable!(),
+            },
+            claim_index: Some(index),
+            evidence_record_ids: Vec::new(),
+        });
+    }
+    None
 }
 
 fn find_intra_batch_issues(candidates: &[BatchMemoryCandidateClaim]) -> Vec<MemoryTransitionIssue> {
@@ -1366,6 +1661,48 @@ pub(crate) fn batch_candidate_fingerprint(
     ] {
         for candidate in input
             .candidates
+            .iter()
+            .filter(|candidate| batch_candidate_kind(candidate) == kind)
+        {
+            update_batch_candidate_hash(&mut hasher, candidate);
+        }
+    }
+
+    let mut deferred = input.deferred_evidence_record_ids.clone();
+    deferred.sort();
+    for record_id in deferred {
+        hasher.update([0xfe]);
+        hasher.update(record_id.as_bytes());
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+pub(crate) fn composite_candidate_fingerprint(
+    session_id: &str,
+    input: &CompositeMemoryTransitionInput,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ley-memory-transition-v5-composite");
+    hasher.update([0]);
+    hasher.update(session_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(input.expected_event_count.to_le_bytes());
+    hasher.update([0]);
+    hasher.update(normalize(&input.checkpoint_summary).as_bytes());
+
+    for kind in [
+        MemoryCandidateKind::Plan,
+        MemoryCandidateKind::Decision,
+        MemoryCandidateKind::Task,
+        MemoryCandidateKind::Problem,
+        MemoryCandidateKind::Unresolved,
+    ] {
+        if kind == MemoryCandidateKind::Problem {
+            hasher.update([0xa0]);
+            update_rich_problem_hash(&mut hasher, &input.rich_problem);
+        }
+        for candidate in input
+            .siblings
             .iter()
             .filter(|candidate| batch_candidate_kind(candidate) == kind)
         {
@@ -1582,12 +1919,22 @@ pub(crate) fn rich_problem_candidate_fingerprint(
     hasher.update(session_id.as_bytes());
     hasher.update([0]);
     hasher.update(input.expected_event_count.to_le_bytes());
-    let candidate = &input.candidate;
+    update_rich_problem_hash(&mut hasher, &input.candidate);
+    let mut deferred = input.deferred_evidence_record_ids.clone();
+    deferred.sort();
+    for record_id in deferred {
+        hasher.update([0xfe]);
+        hasher.update(record_id.as_bytes());
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn update_rich_problem_hash(hasher: &mut Sha256, candidate: &RichProblemMemoryCandidate) {
     for field in [&candidate.title, &candidate.symptom, &candidate.expected] {
         hasher.update([0]);
         hasher.update(normalize(field).as_bytes());
     }
-    hash_sorted_evidence(&mut hasher, 0xe0, &candidate.evidence_record_ids);
+    hash_sorted_evidence(hasher, 0xe0, &candidate.evidence_record_ids);
     for attempt in &candidate.attempts {
         hasher.update([0xa1]);
         hasher.update(normalize(&attempt.action).as_bytes());
@@ -1595,7 +1942,7 @@ pub(crate) fn rich_problem_candidate_fingerprint(
         hasher.update(attempt_outcome_label(attempt.outcome).as_bytes());
         hasher.update([0]);
         hasher.update(normalize(&attempt.evidence).as_bytes());
-        hash_sorted_evidence(&mut hasher, 0xe1, &attempt.evidence_record_ids);
+        hash_sorted_evidence(hasher, 0xe1, &attempt.evidence_record_ids);
     }
     if let Some(resolution) = &candidate.resolution {
         hasher.update([0xa2]);
@@ -1607,17 +1954,10 @@ pub(crate) fn rich_problem_candidate_fingerprint(
             hasher.update([0]);
             hasher.update(normalize(field).as_bytes());
         }
-        hash_sorted_evidence(&mut hasher, 0xe2, &resolution.evidence_record_ids);
+        hash_sorted_evidence(hasher, 0xe2, &resolution.evidence_record_ids);
     } else {
         hasher.update([0xa3]);
     }
-    let mut deferred = input.deferred_evidence_record_ids.clone();
-    deferred.sort();
-    for record_id in deferred {
-        hasher.update([0xfe]);
-        hasher.update(record_id.as_bytes());
-    }
-    format!("sha256:{:x}", hasher.finalize())
 }
 
 fn hash_sorted_evidence(hasher: &mut Sha256, marker: u8, evidence_record_ids: &[String]) {
@@ -2892,6 +3232,532 @@ mod tests {
         assert!(verification.issues.iter().any(|issue| {
             issue.kind == MemoryTransitionIssueKind::MissingEvidenceAnchor
                 && issue.claim_index == Some(1)
+        }));
+    }
+
+    #[test]
+    fn composite_transition_accounts_rich_problem_and_minimal_siblings_atomically() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let symptom_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "composite-turn-1",
+            "Refresh returns 401 although the session should survive",
+        );
+        let first_attempt_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "composite-turn-1",
+            "Clearing cookies had no effect",
+        );
+        let second_attempt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '4',
+            "composite-turn-2",
+            "Refreshing the token before navigation kept the session authenticated",
+        );
+        let resolution_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '5',
+            "composite-turn-2",
+            "Use refresh-before-navigation; migration task is completed",
+        );
+        let decision = batch_decision(
+            "Token refresh policy",
+            "Refresh before protected navigation",
+            vec![second_attempt_id.clone(), resolution_id.clone()],
+        );
+        let task = batch_task(
+            "Migrate refresh flow",
+            TaskStatus::Completed,
+            "Migration completed",
+            vec![resolution_id.clone()],
+        );
+        let input = CompositeMemoryTransitionInput {
+            expected_event_count: 5,
+            checkpoint_summary: "Recovered login fix and follow-up".to_owned(),
+            rich_problem: rich_problem(
+                vec![symptom_id.clone()],
+                vec![first_attempt_id.clone()],
+                vec![second_attempt_id.clone()],
+                vec![resolution_id.clone()],
+            ),
+            siblings: vec![decision.clone(), task.clone()],
+            deferred_evidence_record_ids: Vec::new(),
+        };
+        let verification =
+            verify_composite_memory_transition(&project, &vault, &session_id, input.clone())
+                .unwrap();
+        assert_eq!(verification.state, MemoryTransitionState::ReviewRequired);
+        assert!(verification.issues.is_empty());
+        assert!(verification.coverage.coverage_complete);
+        assert_eq!(verification.coverage.total_current_evidence, 4);
+        assert_eq!(verification.coverage.used_evidence, 4);
+        assert_eq!(verification.claim_checks.len(), 6);
+
+        let interleaved = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                siblings: vec![task, decision],
+                ..input.clone()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            verification.candidate_fingerprint,
+            interleaved.candidate_fingerprint
+        );
+
+        let mut reordered_attempts = input;
+        reordered_attempts.rich_problem.attempts.swap(0, 1);
+        assert_ne!(
+            verification.candidate_fingerprint,
+            composite_candidate_fingerprint(&session_id, &reordered_attempts)
+        );
+    }
+
+    #[test]
+    fn composite_transition_preserves_same_kind_order_and_rejects_rich_problem_aliases() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let symptom_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "composite-order",
+            "Refresh returns 401",
+        );
+        let attempt_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "composite-order",
+            "Clearing cookies had no effect",
+        );
+        let resolution_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '4',
+            "composite-resolution",
+            "Refresh token before navigation",
+        );
+        let rich = RichProblemMemoryCandidate {
+            title: "Login refresh failure".to_owned(),
+            symptom: "Refreshing returns 401".to_owned(),
+            expected: "The authenticated session survives refresh".to_owned(),
+            evidence_record_ids: vec![symptom_id.clone()],
+            attempts: vec![RichProblemAttemptCandidate {
+                action: "Clear browser cookies".to_owned(),
+                outcome: AttemptOutcome::NoEffect,
+                evidence: "Refresh still returned 401".to_owned(),
+                evidence_record_ids: vec![attempt_id.clone()],
+            }],
+            resolution: Some(RichProblemResolutionCandidate {
+                root_cause: "Expired access token".to_owned(),
+                change: "Refresh before navigation".to_owned(),
+                verification: String::new(),
+                evidence_record_ids: vec![resolution_id.clone()],
+            }),
+        };
+        let first = batch_decision(
+            "Storage",
+            "Use SQLite",
+            vec![symptom_id.clone(), resolution_id.clone()],
+        );
+        let second = batch_decision(
+            "Retry",
+            "Use bounded backoff",
+            vec![attempt_id.clone(), resolution_id.clone()],
+        );
+        let ordered = CompositeMemoryTransitionInput {
+            expected_event_count: 4,
+            checkpoint_summary: "Recovered debugging decisions".to_owned(),
+            rich_problem: rich.clone(),
+            siblings: vec![first.clone(), second.clone()],
+            deferred_evidence_record_ids: Vec::new(),
+        };
+        let ordered_verification =
+            verify_composite_memory_transition(&project, &vault, &session_id, ordered.clone())
+                .unwrap();
+        let swapped = CompositeMemoryTransitionInput {
+            siblings: vec![second, first],
+            ..ordered
+        };
+        let swapped_verification =
+            verify_composite_memory_transition(&project, &vault, &session_id, swapped).unwrap();
+        assert_eq!(
+            ordered_verification.state,
+            MemoryTransitionState::ReviewRequired
+        );
+        assert_eq!(
+            swapped_verification.state,
+            MemoryTransitionState::ReviewRequired
+        );
+        assert_ne!(
+            ordered_verification.candidate_fingerprint,
+            swapped_verification.candidate_fingerprint
+        );
+
+        let duplicate = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 4,
+                checkpoint_summary: "Duplicate rich problem".to_owned(),
+                rich_problem: rich.clone(),
+                siblings: vec![batch_problem(
+                    "Login refresh failure",
+                    "Refreshing returns 401",
+                    vec![
+                        symptom_id.clone(),
+                        attempt_id.clone(),
+                        resolution_id.clone(),
+                    ],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(duplicate.state, MemoryTransitionState::NeedsRevision);
+        assert!(duplicate.issues.iter().any(|issue| {
+            issue.kind == MemoryTransitionIssueKind::DuplicateCandidate
+                && issue.claim_index == Some(3)
+        }));
+
+        let conflict = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 4,
+                checkpoint_summary: "Conflicting rich problem".to_owned(),
+                rich_problem: rich,
+                siblings: vec![batch_problem(
+                    "Login refresh failure",
+                    "Refreshing returns 500",
+                    vec![symptom_id, attempt_id, resolution_id],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(conflict.state, MemoryTransitionState::NeedsRevision);
+        assert!(conflict.issues.iter().any(|issue| {
+            issue.kind == MemoryTransitionIssueKind::ConflictingCandidate
+                && issue.claim_index == Some(3)
+        }));
+    }
+
+    #[test]
+    fn composite_transition_component_bounds_are_strict() {
+        let evidence = vec![format!("tev_{}", "a".repeat(32))];
+        let attempt = RichProblemAttemptCandidate {
+            action: "Try one bounded action".to_owned(),
+            outcome: AttemptOutcome::Unknown,
+            evidence: String::new(),
+            evidence_record_ids: evidence.clone(),
+        };
+        let mut rich = RichProblemMemoryCandidate {
+            title: "Bounded problem".to_owned(),
+            symptom: "Bounded symptom".to_owned(),
+            expected: String::new(),
+            evidence_record_ids: evidence.clone(),
+            attempts: vec![attempt.clone(); 47],
+            resolution: Some(RichProblemResolutionCandidate {
+                root_cause: "Bounded root cause".to_owned(),
+                change: "Bounded change".to_owned(),
+                verification: String::new(),
+                evidence_record_ids: evidence.clone(),
+            }),
+        };
+        let sibling = batch_unresolved("Bounded follow-up", evidence.clone());
+        let exact = CompositeMemoryTransitionInput {
+            expected_event_count: 1,
+            checkpoint_summary: "Bounded composite".to_owned(),
+            rich_problem: rich.clone(),
+            siblings: vec![sibling.clone()],
+            deferred_evidence_record_ids: Vec::new(),
+        };
+        assert!(validate_composite_input(&exact).is_ok());
+
+        rich.attempts.push(attempt);
+        let too_large = CompositeMemoryTransitionInput {
+            rich_problem: rich,
+            ..exact
+        };
+        let error = validate_composite_input(&too_large).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("cannot exceed 50 verifier components"));
+
+        let no_sibling = CompositeMemoryTransitionInput {
+            expected_event_count: 1,
+            checkpoint_summary: "Missing sibling".to_owned(),
+            rich_problem: too_large.rich_problem,
+            siblings: Vec::new(),
+            deferred_evidence_record_ids: Vec::new(),
+        };
+        let error = validate_composite_input(&no_sibling).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("between 1 and 49 sibling candidates"));
+    }
+
+    #[test]
+    fn composite_transition_preserves_fail_closed_window_semantics() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "composite-fail-closed",
+            "Refresh returns 401",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "composite-fail-closed",
+            "Clearing cookies had no effect",
+        );
+        let later_prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '4',
+            "composite-follow-up",
+            "Leave deployment verification unresolved",
+        );
+        let rich = RichProblemMemoryCandidate {
+            title: "Login refresh failure".to_owned(),
+            symptom: "Refreshing returns 401".to_owned(),
+            expected: String::new(),
+            evidence_record_ids: vec![prompt_id.clone()],
+            attempts: vec![RichProblemAttemptCandidate {
+                action: "Clear browser cookies".to_owned(),
+                outcome: AttemptOutcome::NoEffect,
+                evidence: "Refresh still returned 401".to_owned(),
+                evidence_record_ids: vec![response_id.clone()],
+            }],
+            resolution: None,
+        };
+
+        let deferred = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 4,
+                checkpoint_summary: "Recovered login debugging".to_owned(),
+                rich_problem: rich.clone(),
+                siblings: vec![batch_unresolved(
+                    "Confirm deployment behavior",
+                    vec![response_id.clone()],
+                )],
+                deferred_evidence_record_ids: vec![later_prompt_id.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(deferred.state, MemoryTransitionState::Deferred);
+        assert!(deferred.coverage.coverage_complete);
+        assert_eq!(deferred.coverage.deferred_evidence, 1);
+
+        let stale = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 3,
+                checkpoint_summary: "Recovered login debugging".to_owned(),
+                rich_problem: rich.clone(),
+                siblings: vec![batch_unresolved(
+                    "Confirm deployment behavior",
+                    vec![later_prompt_id.clone()],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(stale.state, MemoryTransitionState::Stale);
+        assert!(stale
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::StaleEventCount));
+
+        let mut invalid_rich = rich;
+        invalid_rich.attempts[0].evidence_record_ids = vec![format!("tev_{}", "f".repeat(32))];
+        let invalid = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 4,
+                checkpoint_summary: "Recovered login debugging".to_owned(),
+                rich_problem: invalid_rich,
+                siblings: vec![batch_unresolved(
+                    "Confirm deployment behavior",
+                    vec![prompt_id],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(invalid.state, MemoryTransitionState::NeedsRevision);
+        assert!(invalid
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::InvalidEvidenceReference));
+        assert!(invalid
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::UncoveredEvidence));
+
+        let (_base, minimal_project, minimal_vault, minimal_session_id) =
+            fixture(CaptureMode::Minimal);
+        let minimal_prompt_id = prompt(
+            &minimal_project,
+            &minimal_vault,
+            &minimal_session_id,
+            '5',
+            "composite-minimal",
+            "Refresh returns 401",
+        );
+        let metadata_only = verify_composite_memory_transition(
+            &minimal_project,
+            &minimal_vault,
+            &minimal_session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 2,
+                checkpoint_summary: "Recovered metadata-only debugging".to_owned(),
+                rich_problem: RichProblemMemoryCandidate {
+                    title: "Login refresh failure".to_owned(),
+                    symptom: "Refreshing returns 401".to_owned(),
+                    expected: String::new(),
+                    evidence_record_ids: vec![minimal_prompt_id.clone()],
+                    attempts: Vec::new(),
+                    resolution: None,
+                },
+                siblings: vec![batch_unresolved(
+                    "Confirm refresh behavior",
+                    vec![minimal_prompt_id],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(metadata_only.state, MemoryTransitionState::NeedsRevision);
+        assert!(metadata_only
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::MetadataOnlyEvidence));
+    }
+
+    #[test]
+    fn composite_transition_preserves_typed_sibling_overlap_semantics() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        checkpoint_session(
+            &project,
+            &vault,
+            &session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "Existing release state".to_owned(),
+                plan: vec![PlanItemInput {
+                    text: "Ship the release".to_owned(),
+                    status: PlanStatus::Pending,
+                }],
+                decisions: Vec::new(),
+                tasks: vec![TaskInput {
+                    title: "Release build".to_owned(),
+                    status: TaskStatus::Pending,
+                    details: "Ship v1".to_owned(),
+                }],
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "composite-overlap",
+            "Release state changed while login debugging continued",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '4',
+            "composite-overlap",
+            "The release build is still pending but the plan is completed",
+        );
+        let verification = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 4,
+                checkpoint_summary: "Recovered debugging and release state".to_owned(),
+                rich_problem: RichProblemMemoryCandidate {
+                    title: "Login refresh failure".to_owned(),
+                    symptom: "Refreshing returns 401".to_owned(),
+                    expected: String::new(),
+                    evidence_record_ids: vec![prompt_id.clone()],
+                    attempts: vec![RichProblemAttemptCandidate {
+                        action: "Inspect release state".to_owned(),
+                        outcome: AttemptOutcome::Unknown,
+                        evidence: "Release state was recorded".to_owned(),
+                        evidence_record_ids: vec![response_id.clone()],
+                    }],
+                    resolution: None,
+                },
+                siblings: vec![
+                    batch_task(
+                        "Release build",
+                        TaskStatus::Pending,
+                        "Ship v1",
+                        vec![response_id.clone()],
+                    ),
+                    batch_plan(
+                        "Ship the release",
+                        PlanStatus::Completed,
+                        vec![prompt_id, response_id],
+                    ),
+                ],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(verification.state, MemoryTransitionState::NeedsRevision);
+        assert!(verification.overlaps.iter().any(|overlap| {
+            overlap.kind == MemoryCandidateKind::Task
+                && overlap.claim_index == 2
+                && overlap.overlap_kind == MemoryTransitionOverlapKind::ExactDuplicate
+        }));
+        assert!(verification.overlaps.iter().any(|overlap| {
+            overlap.kind == MemoryCandidateKind::Plan
+                && overlap.claim_index == 3
+                && overlap.overlap_kind == MemoryTransitionOverlapKind::SameSubjectDifferentContent
         }));
     }
 
@@ -4992,6 +5858,260 @@ mod tests {
     }
 
     #[test]
+    fn verified_composite_candidate_commits_as_schema_v13_and_exact_retry_replays() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let symptom_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "composite-write-1",
+            "Refresh returns 401 although authentication should survive",
+        );
+        let attempt_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "composite-write-1",
+            "Clearing cookies had no effect",
+        );
+        let resolution_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '4',
+            "composite-write-2",
+            "Refreshing the token before navigation fixed repeated refreshes",
+        );
+        let sibling_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '5',
+            "composite-write-2",
+            "Adopt refresh-before-navigation and mark migration complete",
+        );
+        let rich_problem = RichProblemMemoryCandidate {
+            title: "Login refresh failure".to_owned(),
+            symptom: "Refreshing returns 401".to_owned(),
+            expected: "The authenticated session survives refresh".to_owned(),
+            evidence_record_ids: vec![symptom_id],
+            attempts: vec![RichProblemAttemptCandidate {
+                action: "Clear browser cookies".to_owned(),
+                outcome: AttemptOutcome::NoEffect,
+                evidence: "Refresh still returned 401".to_owned(),
+                evidence_record_ids: vec![attempt_id],
+            }],
+            resolution: Some(RichProblemResolutionCandidate {
+                root_cause: "The client reused an expired access token".to_owned(),
+                change: "Refresh the token before protected navigation".to_owned(),
+                verification: "Repeated refreshes remained authenticated".to_owned(),
+                evidence_record_ids: vec![resolution_id],
+            }),
+        };
+        let siblings = vec![
+            batch_decision(
+                "Token refresh policy",
+                "Refresh before protected navigation",
+                vec![sibling_id.clone()],
+            ),
+            batch_task(
+                "Migrate refresh flow",
+                TaskStatus::Completed,
+                "Migration completed",
+                vec![sibling_id],
+            ),
+        ];
+        let verification = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 5,
+                checkpoint_summary: "Recovered login fix and migration".to_owned(),
+                rich_problem: rich_problem.clone(),
+                siblings: siblings.clone(),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(verification.state, MemoryTransitionState::ReviewRequired);
+        let input = CommitCompositeMemoryTransitionInput {
+            request_id: format!("req_{}", "6".repeat(32)),
+            expected_event_count: 5,
+            candidate_fingerprint: verification.candidate_fingerprint,
+            checkpoint_summary: "Recovered login fix and migration".to_owned(),
+            rich_problem,
+            siblings,
+        };
+        let committed =
+            commit_composite_memory_transition(&project, &vault, &session_id, input.clone())
+                .unwrap();
+        assert!(!committed.replayed);
+        assert_eq!(committed.session.event_count, 6);
+        assert_eq!(committed.session.schema_version, 13);
+        assert!(committed.session_path.ends_with("session-v13.json"));
+        assert_eq!(committed.session.checkpoints.len(), 1);
+        let checkpoint = &committed.session.checkpoints[0];
+        assert_eq!(checkpoint.summary, "Recovered login fix and migration");
+        assert_eq!(checkpoint.decisions.len(), 1);
+        assert_eq!(checkpoint.tasks.len(), 1);
+        assert_eq!(checkpoint.problems.len(), 1);
+        assert_eq!(checkpoint.problems[0].attempts.len(), 1);
+        assert!(checkpoint.problems[0].resolution.is_some());
+
+        prompt(
+            &project,
+            &vault,
+            &session_id,
+            '7',
+            "later-turn",
+            "New work began after the composite checkpoint",
+        );
+        let replayed =
+            commit_composite_memory_transition(&project, &vault, &session_id, input).unwrap();
+        assert!(replayed.replayed);
+        assert_eq!(replayed.event_id, committed.event_id);
+        assert_eq!(replayed.session.event_count, 7);
+    }
+
+    #[test]
+    fn composite_bound_commit_rejects_substitution_normalization_drift_and_stale_window() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "composite-bound",
+            "Refresh returns 401",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "composite-bound",
+            "Refreshing the access token fixed the issue and migration completed",
+        );
+        let rich_problem = RichProblemMemoryCandidate {
+            title: "Login refresh failure".to_owned(),
+            symptom: "Refreshing returns 401".to_owned(),
+            expected: String::new(),
+            evidence_record_ids: vec![prompt_id.clone()],
+            attempts: Vec::new(),
+            resolution: Some(RichProblemResolutionCandidate {
+                root_cause: "Expired access token".to_owned(),
+                change: "Refresh before navigation".to_owned(),
+                verification: String::new(),
+                evidence_record_ids: vec![response_id.clone()],
+            }),
+        };
+        let siblings = vec![batch_task(
+            "Migrate refresh flow",
+            TaskStatus::Completed,
+            "Migration completed",
+            vec![response_id.clone()],
+        )];
+        let verification = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 3,
+                checkpoint_summary: "Recovered login work".to_owned(),
+                rich_problem: rich_problem.clone(),
+                siblings: siblings.clone(),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        let base = CommitCompositeMemoryTransitionInput {
+            request_id: format!("req_{}", "4".repeat(32)),
+            expected_event_count: 3,
+            candidate_fingerprint: verification.candidate_fingerprint,
+            checkpoint_summary: "Recovered login work".to_owned(),
+            rich_problem: rich_problem.clone(),
+            siblings: siblings.clone(),
+        };
+
+        let substituted = vec![batch_task(
+            "Migrate refresh flow",
+            TaskStatus::Pending,
+            "Migration completed",
+            vec![response_id.clone()],
+        )];
+        assert!(matches!(
+            commit_composite_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitCompositeMemoryTransitionInput {
+                    siblings: substituted,
+                    ..base.clone()
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message)) if message.contains("fingerprint")
+        ));
+
+        let mut secret_rich_problem = rich_problem;
+        secret_rich_problem.symptom = "Refreshing returns 401 token=secret-value".to_owned();
+        let secret_verification = verify_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CompositeMemoryTransitionInput {
+                expected_event_count: 3,
+                checkpoint_summary: "Recovered login work".to_owned(),
+                rich_problem: secret_rich_problem.clone(),
+                siblings: siblings.clone(),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            secret_verification.state,
+            MemoryTransitionState::ReviewRequired
+        );
+        let secret_error = commit_composite_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CommitCompositeMemoryTransitionInput {
+                request_id: format!("req_{}", "5".repeat(32)),
+                expected_event_count: 3,
+                candidate_fingerprint: secret_verification.candidate_fingerprint,
+                checkpoint_summary: "Recovered login work".to_owned(),
+                rich_problem: secret_rich_problem,
+                siblings,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                &secret_error,
+                LeyCoreError::InvalidSessionRequest(message)
+                    if message.contains("changed under checkpoint normalization")
+            ),
+            "unexpected composite normalization error: {secret_error:?}"
+        );
+
+        prompt(
+            &project,
+            &vault,
+            &session_id,
+            '6',
+            "composite-stale",
+            "New evidence arrived after verification",
+        );
+        assert!(matches!(
+            commit_composite_memory_transition(&project, &vault, &session_id, base),
+            Err(LeyCoreError::InvalidSessionRequest(message)) if message.contains("review-required")
+        ));
+    }
+
+    #[test]
     fn rich_problem_bound_commit_rejects_substitution_normalization_drift_and_stale_window() {
         let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
         let prompt_id = prompt(
@@ -5748,6 +6868,76 @@ mod tests {
         assert_eq!(
             fingerprint,
             "sha256:69a5a1839ba8559de288025d1f1e9b47e72e7206c2fe197332a43343a35856be"
+        );
+    }
+
+    #[test]
+    fn batch_v3_candidate_fingerprint_is_byte_stable() {
+        let session_id = format!("ses_{}", "1".repeat(32));
+        let fingerprint = batch_candidate_fingerprint(
+            &session_id,
+            &BatchMemoryTransitionInput {
+                expected_event_count: 3,
+                checkpoint_summary: "Recovered persistence work".to_owned(),
+                candidates: vec![
+                    batch_decision(
+                        "Storage engine",
+                        "Use SQLite",
+                        vec![
+                            format!("tev_{}", "b".repeat(32)),
+                            format!("tev_{}", "a".repeat(32)),
+                        ],
+                    ),
+                    batch_task(
+                        "Migrate local state",
+                        TaskStatus::Completed,
+                        "Migration completed",
+                        vec![format!("tev_{}", "b".repeat(32))],
+                    ),
+                ],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        );
+        assert_eq!(
+            fingerprint,
+            "sha256:b1e1ca2d570c2385f53da5cb76cc4b1ab9dbc49f7da225f8fc7d358067b409c9"
+        );
+    }
+
+    #[test]
+    fn rich_problem_v4_candidate_fingerprint_is_byte_stable() {
+        let session_id = format!("ses_{}", "1".repeat(32));
+        let fingerprint = rich_problem_candidate_fingerprint(
+            &session_id,
+            &RichProblemMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: RichProblemMemoryCandidate {
+                    title: "Login refresh failure".to_owned(),
+                    symptom: "Refreshing returns 401".to_owned(),
+                    expected: "The authenticated session survives refresh".to_owned(),
+                    evidence_record_ids: vec![
+                        format!("tev_{}", "b".repeat(32)),
+                        format!("tev_{}", "a".repeat(32)),
+                    ],
+                    attempts: vec![RichProblemAttemptCandidate {
+                        action: "Clear browser cookies".to_owned(),
+                        outcome: AttemptOutcome::NoEffect,
+                        evidence: "Refresh still returned 401".to_owned(),
+                        evidence_record_ids: vec![format!("tev_{}", "b".repeat(32))],
+                    }],
+                    resolution: Some(RichProblemResolutionCandidate {
+                        root_cause: "The client reused an expired access token".to_owned(),
+                        change: "Refresh the token before protected navigation".to_owned(),
+                        verification: "Repeated refreshes remained authenticated".to_owned(),
+                        evidence_record_ids: vec![format!("tev_{}", "a".repeat(32))],
+                    }),
+                },
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        );
+        assert_eq!(
+            fingerprint,
+            "sha256:d6e5f1742fcaf70a14ae6a9584f5da2931f5900f734646cf231718f5f589e3a6"
         );
     }
 

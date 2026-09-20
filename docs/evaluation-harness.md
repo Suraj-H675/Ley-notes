@@ -70,12 +70,19 @@ attributed to every child. It then records one more interrupted debugging window
 schema-v12 Problem episode containing expected behavior, ordered Attempts/outcomes/evidence, and an
 optional Resolution. The representative requires exact retry, closed recovery-window state, durable
 `session-v12.json`, and component-specific origin lineage proving an Attempt/Resolution learning does
-not inherit unrelated turns from the same debugging episode.
-Task-, Plan-, batch-, and rich-Problem-specific secret canaries are injected into captured host prompts and must be
-redacted from recovery packs and absent from durable `session-v9.json`, `session-v10.json`, and
-`session-v11.json` / `session-v12.json`. The representative therefore requires zero privacy leakage and keeps rich
-recovery inside the existing Reliable Memory Compiler, memory-binding, and origin-lineage gates rather
-than introducing weaker standalone metrics.
+not inherit unrelated turns from the same debugging episode. It then records a fourth independent
+recovery window in which one rich Problem, failed Attempt, Resolution, Decision, and completed Task all
+need to survive together. `ley_session_memory_verify_composite` plus
+`ley_session_memory_commit_composite` must preserve the whole set in one schema-v13 checkpoint rather
+than allowing either the rich episode or siblings to strand the other side of the window. The eval
+requires `session-v13.json`, exact retry, closed-window state, full-union checkpoint lineage, and
+component-specific Attempt/Decision lineage.
+Task-, Plan-, batch-, rich-Problem-, and composite-specific secret canaries are injected into captured
+host prompts and must be redacted from recovery packs and absent from durable `session-v9.json`,
+`session-v10.json`, `session-v11.json`, `session-v12.json`, and `session-v13.json`. The representative
+therefore requires zero privacy leakage and keeps rich/composite recovery inside the existing Reliable
+Memory Compiler, memory-binding, and origin-lineage gates rather than introducing weaker standalone
+metrics.
 
 Focused subset runs validate the matrix schema but intentionally skip full result-value coverage because
 not every representative scenario was executed.

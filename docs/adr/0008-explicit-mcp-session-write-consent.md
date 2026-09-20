@@ -26,6 +26,7 @@ The flag enables the following session lifecycle and recovery tools:
 | `ley_session_start` | Creates one structured session start event |
 | `ley_session_checkpoint` | Appends one checkpoint with structured work and cited artifacts |
 | `ley_session_memory_commit_batch` | Appends one schema-v11 atomic multi-claim recovery checkpoint after batch re-verification |
+| `ley_session_memory_commit_composite` | Appends one schema-v13 atomic rich-Problem-plus-siblings recovery checkpoint after composite re-verification |
 | `ley_session_memory_commit_plan` | Appends one candidate-bound typed Plan recovery checkpoint after typed re-verification |
 | `ley_session_memory_commit_problem` | Appends one schema-v12 verifier-bound rich Problem episode with per-Problem/Attempt/Resolution evidence bindings |
 | `ley_session_memory_commit_structured` | Appends one candidate-bound Decision or Problem recovery checkpoint after re-verification |

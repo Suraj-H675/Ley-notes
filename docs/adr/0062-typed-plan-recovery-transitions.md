@@ -100,7 +100,8 @@ only under `--allow-session-writes`; the verifier itself remains read-only.
 - Command recovery;
 - Verification recovery;
 - nested Attempt/Resolution recovery; ADR 0064 later implements one new rich Problem episode with
-  ordered Attempts and an optional Resolution, while attaching those children to an older Problem
+  ordered Attempts and an optional Resolution, and ADR 0065 later composes that rich episode with
+  minimal siblings through a separate schema-v13 route. Attaching those children to an older Problem
   remains deferred;
 - automatic/model-generated candidates inside Ley;
 - background/scheduled consolidation;

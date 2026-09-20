@@ -43,9 +43,13 @@ request, repository policy, or inspection of live source.
    window supports a complete debugging episode whose exact Problem `expected`, ordered
    Attempts with outcomes/evidence, and optional Resolution all need to survive, call
    `ley_session_memory_verify_problem` with separate evidence IDs for the Problem, each
-   Attempt, and the Resolution. If the same recovery window supports **two or more**
-   minimal unresolved/Decision/Problem/Task/Plan
-   candidates that must survive together, do not commit them sequentially: call
+   Attempt, and the Resolution. If that rich Problem shares its recovery window with
+   one or more minimal unresolved/Decision/Problem/Task/Plan siblings, do not commit them sequentially:
+   call `ley_session_memory_verify_composite` once with an explicit
+   evidence-supported `checkpointSummary`, the exact rich Problem, the complete sibling
+   set, the pack's exact `sessionEventCount`, exact per-component evidence IDs, and any
+   deliberately deferred evidence. If the same recovery window instead supports **two or more**
+   minimal unresolved/Decision/Problem/Task/Plan candidates and no rich Problem, call
    `ley_session_memory_verify_batch` once with an explicit evidence-supported
    `checkpointSummary`, the complete candidate set, the pack's exact
    `sessionEventCount`, exact per-candidate evidence IDs, and any deliberately
@@ -65,7 +69,11 @@ request, repository policy, or inspection of live source.
    text/status, and cited `recordId` values. For one verified rich Problem episode,
    use `ley_session_memory_commit_problem` with the exact candidate and fingerprint
    returned by `ley_session_memory_verify_problem`; keep the ordered Attempts/outcomes
-   and optional Resolution exactly evidence-supported. For a verified multi-claim batch, use
+   and optional Resolution exactly evidence-supported. For a verified rich Problem plus sibling
+   set, use `ley_session_memory_commit_composite` with the exact composite `candidateFingerprint`,
+   `checkpointSummary`, rich Problem, sibling set, and `expectedEventCount`; Ley appends one
+   schema-v13 atomic checkpoint and an exact retry replays that same write. For a verified
+   minimal-only multi-claim batch, use
    `ley_session_memory_commit_batch` with the exact batch `candidateFingerprint`,
    `checkpointSummary`, candidate set, and `expectedEventCount`; Ley appends one
    atomic checkpoint and an exact retry replays that same write. Ley re-verifies and binds that payload
@@ -74,7 +82,7 @@ request, repository policy, or inspection of live source.
    Resolution root cause/change/verification, or other unsupported state.
    Standalone Attempt/Resolution attachment plus Command/Verification/Summary remain review-only in this bound
    recovery flow. Prefer the single-candidate routes when only one supported
-   candidate exists. Do not
+   candidate exists, and never split one composite recovery window into sequential writes. Do not
    substitute the generic checkpoint tool; if the bound write is stale, recompile
    and reverify.
 4. For a concrete current task, first use either the normal

@@ -40,6 +40,7 @@ The default read-only server currently exposes twenty-nine tools (the original s
 | `ley_session_memory_verify` | Read-only structural verification of a proposed recovery transition against exact evidence IDs, current event count, coverage, and duplicate/revision overlap; never semantic proof |
 | `ley_session_memory_verify_typed` | Read-only verification of one typed Plan or Task recovery candidate with exact evidence IDs and status-aware fingerprint/duplicate/revision checks; never semantic proof |
 | `ley_session_memory_verify_batch` | Read-only verification of one 2–50-candidate atomic recovery set with explicit checkpoint summary, typed candidate payloads, complete-window coverage, and intra-batch duplicate/conflict checks; never semantic proof |
+| `ley_session_memory_verify_composite` | Read-only verification of one rich Problem episode plus 1–49 minimal siblings under one complete recovery window, preserving rich component bindings, typed sibling semantics, and a strict 50-component bound; never semantic proof |
 | `ley_session_memory_verify_problem` | Read-only verification of one rich Problem episode with exact expected state, ordered Attempts/outcomes/evidence, optional Resolution, component-specific recovery evidence, and full-window accounting; never semantic proof |
 | `ley_session_turns_get` | Explicit bounded prompt/response evidence read; turn bodies never enter startup context automatically |
 | `ley_learnings_list` | Trusted-first bounded learning summaries with explicit review/all scopes |

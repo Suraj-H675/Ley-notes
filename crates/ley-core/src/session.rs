@@ -36,6 +36,7 @@ pub const SESSION_TASK_RECOVERY_SCHEMA_VERSION: u32 = 9;
 pub const SESSION_PLAN_RECOVERY_SCHEMA_VERSION: u32 = 10;
 pub const SESSION_BATCH_RECOVERY_SCHEMA_VERSION: u32 = 11;
 pub const SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION: u32 = 12;
+pub const SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION: u32 = 13;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
@@ -64,6 +65,7 @@ const SESSION_V9_FILE: &str = "session-v9.json";
 const SESSION_V10_FILE: &str = "session-v10.json";
 const SESSION_V11_FILE: &str = "session-v11.json";
 const SESSION_V12_FILE: &str = "session-v12.json";
+const SESSION_V13_FILE: &str = "session-v13.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1055,6 +1057,16 @@ pub(crate) struct RecoveredRichProblemCheckpointInput {
     pub candidate: crate::memory_transition::RichProblemMemoryCandidate,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct RecoveredCompositeCheckpointInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub checkpoint_summary: String,
+    pub rich_problem: crate::memory_transition::RichProblemMemoryCandidate,
+    pub siblings: Vec<crate::memory_transition::BatchMemoryCandidateClaim>,
+}
+
 pub(crate) fn replay_recovered_unresolved_session_if_present(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -1184,6 +1196,28 @@ pub(crate) fn checkpoint_recovered_rich_problem_session(
 ) -> Result<SessionMutation, LeyCoreError> {
     let (project_id, pending) =
         recovered_rich_problem_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
+    mutate_session(&project_id, session_id, pending, vault)
+}
+
+pub(crate) fn replay_recovered_composite_session_if_present(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredCompositeCheckpointInput,
+) -> Result<Option<SessionMutation>, LeyCoreError> {
+    let (project_id, pending) =
+        recovered_composite_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
+    replay_pending_event_if_present(&project_id, session_id, pending, vault)
+}
+
+pub(crate) fn checkpoint_recovered_composite_session(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredCompositeCheckpointInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    let (project_id, pending) =
+        recovered_composite_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
     mutate_session(&project_id, session_id, pending, vault)
 }
 
@@ -1937,6 +1971,297 @@ fn recovered_rich_problem_pending(
     ))
 }
 
+fn recovered_composite_pending(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: RecoveredCompositeCheckpointInput,
+) -> Result<(String, PendingEvent), LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    if !is_sha256(&input.candidate_fingerprint) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "composite recovery candidate fingerprint must be sha256".to_owned(),
+        ));
+    }
+    if input.siblings.is_empty()
+        || input.siblings.len() >= crate::memory_transition::MAX_MEMORY_TRANSITION_CLAIMS
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "composite recovery must contain between 1 and {} sibling candidates",
+            crate::memory_transition::MAX_MEMORY_TRANSITION_CLAIMS - 1
+        )));
+    }
+    let component_count = 1
+        + input.rich_problem.attempts.len()
+        + usize::from(input.rich_problem.resolution.is_some())
+        + input.siblings.len();
+    if component_count > crate::memory_transition::MAX_MEMORY_TRANSITION_CLAIMS {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "composite recovery cannot exceed {} verifier components",
+            crate::memory_transition::MAX_MEMORY_TRANSITION_CLAIMS
+        )));
+    }
+
+    let RecoveredCompositeCheckpointInput {
+        request_id,
+        expected_event_count,
+        candidate_fingerprint,
+        checkpoint_summary,
+        rich_problem,
+        siblings,
+    } = input;
+
+    let rich_problem_evidence = validate_rich_problem_component_evidence(
+        "problem",
+        rich_problem.evidence_record_ids.clone(),
+    )?;
+    let mut all_evidence = rich_problem_evidence
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut rich_attempt_inputs = Vec::with_capacity(rich_problem.attempts.len());
+    let mut rich_attempt_evidence = Vec::with_capacity(rich_problem.attempts.len());
+    for (index, attempt) in rich_problem.attempts.into_iter().enumerate() {
+        let evidence = validate_rich_problem_component_evidence(
+            &format!("attempt {index}"),
+            attempt.evidence_record_ids,
+        )?;
+        all_evidence.extend(evidence.iter().cloned());
+        rich_attempt_inputs.push(AttemptInput {
+            action: attempt.action,
+            outcome: attempt.outcome,
+            evidence: attempt.evidence,
+        });
+        rich_attempt_evidence.push(evidence);
+    }
+    let (rich_resolution_input, rich_resolution_evidence) = match rich_problem.resolution {
+        Some(resolution) => {
+            let evidence = validate_rich_problem_component_evidence(
+                "resolution",
+                resolution.evidence_record_ids,
+            )?;
+            all_evidence.extend(evidence.iter().cloned());
+            (
+                Some(ResolutionInput {
+                    root_cause: resolution.root_cause,
+                    change: resolution.change,
+                    verification: resolution.verification,
+                }),
+                Some(evidence),
+            )
+        }
+        None => (None, None),
+    };
+    let rich_problem_input = ProblemInput {
+        title: rich_problem.title,
+        symptom: rich_problem.symptom,
+        expected: rich_problem.expected,
+        attempts: rich_attempt_inputs,
+        resolution: rich_resolution_input,
+    };
+
+    let mut plans = Vec::new();
+    let mut plan_evidence = Vec::new();
+    let mut decisions = Vec::new();
+    let mut decision_evidence = Vec::new();
+    let mut tasks = Vec::new();
+    let mut task_evidence = Vec::new();
+    let mut minimal_problems = Vec::new();
+    let mut minimal_problem_evidence = Vec::new();
+    let mut unresolved = Vec::new();
+    let mut unresolved_evidence = Vec::new();
+    for sibling in siblings {
+        match sibling {
+            crate::memory_transition::BatchMemoryCandidateClaim::Plan {
+                text,
+                status,
+                evidence_record_ids,
+            } => {
+                let evidence = validate_batch_candidate_evidence(evidence_record_ids)?;
+                all_evidence.extend(evidence.iter().cloned());
+                plans.push(PlanItemInput { text, status });
+                plan_evidence.push(evidence);
+            }
+            crate::memory_transition::BatchMemoryCandidateClaim::Decision {
+                title,
+                decision,
+                evidence_record_ids,
+            } => {
+                let evidence = validate_batch_candidate_evidence(evidence_record_ids)?;
+                all_evidence.extend(evidence.iter().cloned());
+                decisions.push(DecisionInput {
+                    title,
+                    decision,
+                    rationale: String::new(),
+                    alternatives: Vec::new(),
+                });
+                decision_evidence.push(evidence);
+            }
+            crate::memory_transition::BatchMemoryCandidateClaim::Task {
+                title,
+                status,
+                details,
+                evidence_record_ids,
+            } => {
+                let evidence = validate_batch_candidate_evidence(evidence_record_ids)?;
+                all_evidence.extend(evidence.iter().cloned());
+                tasks.push(TaskInput {
+                    title,
+                    status,
+                    details,
+                });
+                task_evidence.push(evidence);
+            }
+            crate::memory_transition::BatchMemoryCandidateClaim::Problem {
+                title,
+                symptom,
+                evidence_record_ids,
+            } => {
+                let evidence = validate_batch_candidate_evidence(evidence_record_ids)?;
+                all_evidence.extend(evidence.iter().cloned());
+                minimal_problems.push(ProblemInput {
+                    title,
+                    symptom,
+                    expected: String::new(),
+                    attempts: Vec::new(),
+                    resolution: None,
+                });
+                minimal_problem_evidence.push(evidence);
+            }
+            crate::memory_transition::BatchMemoryCandidateClaim::Unresolved {
+                text,
+                evidence_record_ids,
+            } => {
+                let evidence = validate_batch_candidate_evidence(evidence_record_ids)?;
+                all_evidence.extend(evidence.iter().cloned());
+                unresolved.push(text);
+                unresolved_evidence.push(evidence);
+            }
+        }
+    }
+    if all_evidence.is_empty() || all_evidence.len() > SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "composite recovery binding must cite between 1 and {SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT} distinct evidence records"
+        )));
+    }
+    let evidence_record_ids = all_evidence.into_iter().collect::<Vec<_>>();
+
+    let diagnostic = diagnose_project(project_start)?;
+    let memory = load_project_memory(&diagnostic.root, vault)?;
+    let event_id = deterministic_id(
+        "evt",
+        &format!("{session_id}:{request_id}:recovery-checkpoint-recorded"),
+        64,
+    );
+    let recorded_at = unix_time_ms();
+    let mut problems = Vec::with_capacity(1 + minimal_problems.len());
+    problems.push(rich_problem_input);
+    problems.extend(minimal_problems);
+    let checkpoint_input = CheckpointInput {
+        request_id: request_id.clone(),
+        summary: checkpoint_summary,
+        plan: plans,
+        decisions,
+        tasks,
+        problems,
+        touched_artifacts: Vec::new(),
+        commands: Vec::new(),
+        verification: Vec::new(),
+        unresolved,
+    };
+    let (checkpoint, redactions) =
+        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+
+    let mut record_bindings = Vec::with_capacity(component_count);
+    for (record, evidence) in checkpoint.plan.iter().zip(plan_evidence) {
+        record_bindings.push(RecoveryRecordBinding {
+            record_id: record.id.clone(),
+            evidence_record_ids: evidence,
+        });
+    }
+    for (record, evidence) in checkpoint.decisions.iter().zip(decision_evidence) {
+        record_bindings.push(RecoveryRecordBinding {
+            record_id: record.id.clone(),
+            evidence_record_ids: evidence,
+        });
+    }
+    for (record, evidence) in checkpoint.tasks.iter().zip(task_evidence) {
+        record_bindings.push(RecoveryRecordBinding {
+            record_id: record.id.clone(),
+            evidence_record_ids: evidence,
+        });
+    }
+    let rich_record = checkpoint.problems.first().ok_or_else(|| {
+        LeyCoreError::InvalidSessionRequest(
+            "composite recovery normalization produced no rich problem".to_owned(),
+        )
+    })?;
+    record_bindings.push(RecoveryRecordBinding {
+        record_id: rich_record.id.clone(),
+        evidence_record_ids: rich_problem_evidence,
+    });
+    for (attempt, evidence) in rich_record.attempts.iter().zip(rich_attempt_evidence) {
+        record_bindings.push(RecoveryRecordBinding {
+            record_id: attempt.id.clone(),
+            evidence_record_ids: evidence,
+        });
+    }
+    if let (Some(resolution), Some(evidence)) = (&rich_record.resolution, rich_resolution_evidence)
+    {
+        record_bindings.push(RecoveryRecordBinding {
+            record_id: resolution.id.clone(),
+            evidence_record_ids: evidence,
+        });
+    }
+    for (record, evidence) in checkpoint
+        .problems
+        .iter()
+        .skip(1)
+        .zip(minimal_problem_evidence)
+    {
+        record_bindings.push(RecoveryRecordBinding {
+            record_id: record.id.clone(),
+            evidence_record_ids: evidence,
+        });
+    }
+    for (index, evidence) in unresolved_evidence.into_iter().enumerate() {
+        record_bindings.push(RecoveryRecordBinding {
+            record_id: unresolved_record_id(&checkpoint.event_id, index),
+            evidence_record_ids: evidence,
+        });
+    }
+    let binding_fingerprint = recovery_binding_fingerprint_v7(
+        session_id,
+        expected_event_count,
+        &candidate_fingerprint,
+        &evidence_record_ids,
+        &checkpoint,
+        &record_bindings,
+    );
+    Ok((
+        diagnostic.identity.project_id,
+        PendingEvent {
+            event_id,
+            request_id,
+            redactions,
+            payload: SessionEventPayload::RecoveryCheckpointRecorded(RecoveryCheckpointEvent {
+                checkpoint: Box::new(checkpoint),
+                provenance: RecoveryCheckpointProvenance {
+                    expected_event_count,
+                    candidate_fingerprint,
+                    binding_fingerprint,
+                    evidence_record_ids,
+                    record_bindings,
+                },
+            }),
+            schema_version: SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(expected_event_count),
+        },
+    ))
+}
+
 fn validate_rich_problem_component_evidence(
     label: &str,
     mut evidence_record_ids: Vec<String>,
@@ -2478,6 +2803,7 @@ pub(crate) fn read_recovery_derivation_origin(
                 event.schema_version,
                 SESSION_BATCH_RECOVERY_SCHEMA_VERSION
                     | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
+                    | SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
             ) && record_id != recovery.checkpoint.id
             {
                 recovery
@@ -3430,6 +3756,48 @@ fn validate_pending_recovery_window(
             }
             verification.candidate_fingerprint
         }
+        SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION => {
+            let composite = composite_recovery_transition_input(
+                &recovery.checkpoint,
+                &recovery.provenance.record_bindings,
+                &recovery.provenance.evidence_record_ids,
+                recovery.provenance.expected_event_count,
+            )
+            .map_err(|_| {
+                LeyCoreError::InvalidSessionRequest(
+                    "composite recovery checkpoint changed under normalization; recompile and reverify the sanitized content"
+                        .to_owned(),
+                )
+            })?;
+            let boundary_sequence = existing
+                .iter()
+                .rev()
+                .find_map(|event| {
+                    matches!(
+                        &event.payload,
+                        SessionEventPayload::CheckpointRecorded(_)
+                            | SessionEventPayload::RecoveryCheckpointRecorded(_)
+                    )
+                    .then_some(event.sequence)
+                })
+                .unwrap_or(0);
+            let session = replay_events(existing, project_id, session_id)?;
+            let verification =
+                crate::memory_transition::verify_composite_memory_transition_against_session(
+                    &session,
+                    boundary_sequence,
+                    session_id,
+                    composite,
+                )?;
+            if verification.state != crate::memory_transition::MemoryTransitionState::ReviewRequired
+            {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "composite recovery commit no longer verifies as review-required under the session writer lock; recompile and reverify"
+                        .to_owned(),
+                ));
+            }
+            verification.candidate_fingerprint
+        }
         _ => {
             return Err(LeyCoreError::InvalidSessionRequest(
                 "recovery checkpoint uses an unsupported schema version".to_owned(),
@@ -3873,7 +4241,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION {
+        SESSION_V13_FILE
+    } else if session.schema_version >= SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION {
         SESSION_V12_FILE
     } else if session.schema_version >= SESSION_BATCH_RECOVERY_SCHEMA_VERSION {
         SESSION_V11_FILE
@@ -4408,6 +4778,7 @@ fn validate_event(
             | SESSION_PLAN_RECOVERY_SCHEMA_VERSION
             | SESSION_BATCH_RECOVERY_SCHEMA_VERSION
             | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
+            | SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -4644,6 +5015,12 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
             "schema version 12 is reserved for rich problem bound recovery checkpoints",
         );
     }
+    if event.schema_version == SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION && !is_recovery_checkpoint
+    {
+        return invalid_session_store(
+            "schema version 13 is reserved for composite bound recovery checkpoints",
+        );
+    }
     if event.schema_version == SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
         && !is_verification_evidence_checkpoint
     {
@@ -4866,7 +5243,9 @@ fn validate_recovery_checkpoint_event(
     validate_checkpoint_records(checkpoint, &event.event_id)?;
     if matches!(
         event.schema_version,
-        SESSION_BATCH_RECOVERY_SCHEMA_VERSION | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
+        SESSION_BATCH_RECOVERY_SCHEMA_VERSION
+            | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
+            | SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
     ) {
         if recovery.provenance.record_bindings.is_empty() {
             return invalid_session_store(
@@ -4927,6 +5306,14 @@ fn validate_recovery_checkpoint_event(
         }
         SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION => {
             rich_problem_recovery_transition_input(
+                checkpoint,
+                &recovery.provenance.record_bindings,
+                &recovery.provenance.evidence_record_ids,
+                recovery.provenance.expected_event_count,
+            )?;
+        }
+        SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION => {
+            composite_recovery_transition_input(
                 checkpoint,
                 &recovery.provenance.record_bindings,
                 &recovery.provenance.evidence_record_ids,
@@ -5034,6 +5421,15 @@ fn validate_recovery_checkpoint_event(
                 &event.session_id,
                 &rich_problem,
             )
+        }
+        SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION => {
+            let composite = composite_recovery_transition_input(
+                checkpoint,
+                &recovery.provenance.record_bindings,
+                evidence,
+                recovery.provenance.expected_event_count,
+            )?;
+            crate::memory_transition::composite_candidate_fingerprint(&event.session_id, &composite)
         }
         _ => unreachable!("recovery schema checked above"),
     };
@@ -5777,6 +6173,112 @@ fn recovery_binding_fingerprint_v6(
     format!("sha256:{:x}", hasher.finalize())
 }
 
+fn recovery_binding_fingerprint_v7(
+    session_id: &str,
+    expected_event_count: u64,
+    candidate_fingerprint: &str,
+    evidence_record_ids: &[String],
+    checkpoint: &SessionCheckpoint,
+    record_bindings: &[RecoveryRecordBinding],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ley-recovery-checkpoint-binding-v7-composite");
+    hasher.update([0]);
+    hasher.update(session_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(expected_event_count.to_le_bytes());
+    hasher.update([0]);
+    hasher.update(candidate_fingerprint.as_bytes());
+    hasher.update([0]);
+    hasher.update(checkpoint.summary.as_bytes());
+    for plan in &checkpoint.plan {
+        hasher.update([0xf0]);
+        hasher.update(plan.id.as_bytes());
+        hasher.update([0]);
+        hasher.update(plan.text.as_bytes());
+        hasher.update([0]);
+        hasher.update(enum_label(plan.status).as_bytes());
+    }
+    for decision in &checkpoint.decisions {
+        hasher.update([0xf1]);
+        hasher.update(decision.id.as_bytes());
+        hasher.update([0]);
+        hasher.update(decision.title.as_bytes());
+        hasher.update([0]);
+        hasher.update(decision.decision.as_bytes());
+    }
+    for task in &checkpoint.tasks {
+        hasher.update([0xf2]);
+        hasher.update(task.id.as_bytes());
+        hasher.update([0]);
+        hasher.update(task.title.as_bytes());
+        hasher.update([0]);
+        hasher.update(enum_label(task.status).as_bytes());
+        hasher.update([0]);
+        hasher.update(task.details.as_bytes());
+    }
+    if let Some(problem) = checkpoint.problems.first() {
+        hasher.update([0xf5]);
+        hasher.update(problem.id.as_bytes());
+        for field in [&problem.title, &problem.symptom, &problem.expected] {
+            hasher.update([0]);
+            hasher.update(field.as_bytes());
+        }
+        for attempt in &problem.attempts {
+            hasher.update([0xf6]);
+            hasher.update(attempt.id.as_bytes());
+            hasher.update([0]);
+            hasher.update(attempt.action.as_bytes());
+            hasher.update([0]);
+            hasher.update(enum_label(attempt.outcome).as_bytes());
+            hasher.update([0]);
+            hasher.update(attempt.evidence.as_bytes());
+        }
+        if let Some(resolution) = &problem.resolution {
+            hasher.update([0xf7]);
+            hasher.update(resolution.id.as_bytes());
+            for field in [
+                &resolution.root_cause,
+                &resolution.change,
+                &resolution.verification,
+            ] {
+                hasher.update([0]);
+                hasher.update(field.as_bytes());
+            }
+        } else {
+            hasher.update([0xf8]);
+        }
+    }
+    for problem in checkpoint.problems.iter().skip(1) {
+        hasher.update([0xf3]);
+        hasher.update(problem.id.as_bytes());
+        hasher.update([0]);
+        hasher.update(problem.title.as_bytes());
+        hasher.update([0]);
+        hasher.update(problem.symptom.as_bytes());
+    }
+    for (index, unresolved) in checkpoint.unresolved.iter().enumerate() {
+        hasher.update([0xf4]);
+        hasher.update(unresolved_record_id(&checkpoint.event_id, index).as_bytes());
+        hasher.update([0]);
+        hasher.update(unresolved.as_bytes());
+    }
+    for record_id in evidence_record_ids {
+        hasher.update([0xfc]);
+        hasher.update(record_id.as_bytes());
+    }
+    for binding in record_bindings {
+        hasher.update([0xfd]);
+        hasher.update(binding.record_id.as_bytes());
+        for record_id in &binding.evidence_record_ids {
+            hasher.update([0]);
+            hasher.update(record_id.as_bytes());
+        }
+        hasher.update([0xff]);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 fn rich_problem_recovery_transition_input(
     checkpoint: &SessionCheckpoint,
     record_bindings: &[RecoveryRecordBinding],
@@ -5887,6 +6389,230 @@ fn rich_problem_recovery_transition_input(
             attempts,
             resolution,
         },
+        deferred_evidence_record_ids: Vec::new(),
+    })
+}
+
+fn composite_recovery_transition_input(
+    checkpoint: &SessionCheckpoint,
+    record_bindings: &[RecoveryRecordBinding],
+    full_evidence: &[String],
+    expected_event_count: u64,
+) -> Result<crate::memory_transition::CompositeMemoryTransitionInput, LeyCoreError> {
+    if checkpoint.problems.is_empty()
+        || !checkpoint.touched_artifacts.is_empty()
+        || !checkpoint.commands.is_empty()
+        || !checkpoint.verification.is_empty()
+    {
+        return invalid_session_store(
+            "schema-v13 composite recovery checkpoint contains unsupported record kinds",
+        );
+    }
+    if checkpoint
+        .decisions
+        .iter()
+        .any(|decision| !decision.rationale.is_empty() || !decision.alternatives.is_empty())
+        || checkpoint.problems.iter().skip(1).any(|problem| {
+            !problem.expected.is_empty()
+                || !problem.attempts.is_empty()
+                || problem.resolution.is_some()
+        })
+    {
+        return invalid_session_store(
+            "schema-v13 composite recovery checkpoint contains unsupported sibling derived fields",
+        );
+    }
+    let rich_problem = &checkpoint.problems[0];
+    let sibling_count = checkpoint.plan.len()
+        + checkpoint.decisions.len()
+        + checkpoint.tasks.len()
+        + checkpoint.problems.len().saturating_sub(1)
+        + checkpoint.unresolved.len();
+    if sibling_count == 0 || sibling_count >= crate::memory_transition::MAX_MEMORY_TRANSITION_CLAIMS
+    {
+        return invalid_session_store(
+            "schema-v13 composite recovery sibling candidate count is invalid",
+        );
+    }
+    let component_count = 1
+        + rich_problem.attempts.len()
+        + usize::from(rich_problem.resolution.is_some())
+        + sibling_count;
+    if component_count > crate::memory_transition::MAX_MEMORY_TRANSITION_CLAIMS {
+        return invalid_session_store(
+            "schema-v13 composite recovery verifier component count is invalid",
+        );
+    }
+    if record_bindings.len() != component_count {
+        return invalid_session_store("schema-v13 composite recovery binding count is invalid");
+    }
+    let full_evidence_set = full_evidence.iter().cloned().collect::<BTreeSet<_>>();
+    let mut bound_evidence_union = BTreeSet::new();
+    for binding in record_bindings {
+        if binding.evidence_record_ids.is_empty()
+            || binding.evidence_record_ids.len()
+                > crate::memory_transition::MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM
+            || binding
+                .evidence_record_ids
+                .iter()
+                .any(|record_id| !valid_prefixed_hex(record_id, "tev_", 32))
+            || binding
+                .evidence_record_ids
+                .windows(2)
+                .any(|window| window[0] >= window[1])
+            || binding
+                .evidence_record_ids
+                .iter()
+                .any(|record_id| !full_evidence_set.contains(record_id))
+        {
+            return invalid_session_store(
+                "schema-v13 composite recovery record binding evidence is invalid",
+            );
+        }
+        bound_evidence_union.extend(binding.evidence_record_ids.iter().cloned());
+    }
+    if bound_evidence_union != full_evidence_set {
+        return invalid_session_store(
+            "schema-v13 composite recovery bindings do not cover the complete recovery window",
+        );
+    }
+
+    let mut binding_index = 0usize;
+    let mut siblings = Vec::with_capacity(sibling_count);
+    for plan in &checkpoint.plan {
+        let binding = &record_bindings[binding_index];
+        if binding.record_id != plan.id {
+            return invalid_session_store(
+                "schema-v13 composite recovery plan binding record ID is invalid",
+            );
+        }
+        siblings.push(crate::memory_transition::BatchMemoryCandidateClaim::Plan {
+            text: plan.text.clone(),
+            status: plan.status,
+            evidence_record_ids: binding.evidence_record_ids.clone(),
+        });
+        binding_index += 1;
+    }
+    for decision in &checkpoint.decisions {
+        let binding = &record_bindings[binding_index];
+        if binding.record_id != decision.id {
+            return invalid_session_store(
+                "schema-v13 composite recovery decision binding record ID is invalid",
+            );
+        }
+        siblings.push(
+            crate::memory_transition::BatchMemoryCandidateClaim::Decision {
+                title: decision.title.clone(),
+                decision: decision.decision.clone(),
+                evidence_record_ids: binding.evidence_record_ids.clone(),
+            },
+        );
+        binding_index += 1;
+    }
+    for task in &checkpoint.tasks {
+        let binding = &record_bindings[binding_index];
+        if binding.record_id != task.id {
+            return invalid_session_store(
+                "schema-v13 composite recovery task binding record ID is invalid",
+            );
+        }
+        siblings.push(crate::memory_transition::BatchMemoryCandidateClaim::Task {
+            title: task.title.clone(),
+            status: task.status,
+            details: task.details.clone(),
+            evidence_record_ids: binding.evidence_record_ids.clone(),
+        });
+        binding_index += 1;
+    }
+
+    let rich_problem_binding = &record_bindings[binding_index];
+    if rich_problem_binding.record_id != rich_problem.id {
+        return invalid_session_store(
+            "schema-v13 composite recovery rich problem binding record ID is invalid",
+        );
+    }
+    binding_index += 1;
+    let mut rich_attempts = Vec::with_capacity(rich_problem.attempts.len());
+    for attempt in &rich_problem.attempts {
+        let binding = &record_bindings[binding_index];
+        if binding.record_id != attempt.id {
+            return invalid_session_store(
+                "schema-v13 composite recovery rich attempt binding record ID is invalid",
+            );
+        }
+        rich_attempts.push(crate::memory_transition::RichProblemAttemptCandidate {
+            action: attempt.action.clone(),
+            outcome: attempt.outcome,
+            evidence: attempt.evidence.clone(),
+            evidence_record_ids: binding.evidence_record_ids.clone(),
+        });
+        binding_index += 1;
+    }
+    let rich_resolution = if let Some(resolution) = &rich_problem.resolution {
+        let binding = &record_bindings[binding_index];
+        if binding.record_id != resolution.id {
+            return invalid_session_store(
+                "schema-v13 composite recovery rich resolution binding record ID is invalid",
+            );
+        }
+        binding_index += 1;
+        Some(crate::memory_transition::RichProblemResolutionCandidate {
+            root_cause: resolution.root_cause.clone(),
+            change: resolution.change.clone(),
+            verification: resolution.verification.clone(),
+            evidence_record_ids: binding.evidence_record_ids.clone(),
+        })
+    } else {
+        None
+    };
+    let rich_candidate = crate::memory_transition::RichProblemMemoryCandidate {
+        title: rich_problem.title.clone(),
+        symptom: rich_problem.symptom.clone(),
+        expected: rich_problem.expected.clone(),
+        evidence_record_ids: rich_problem_binding.evidence_record_ids.clone(),
+        attempts: rich_attempts,
+        resolution: rich_resolution,
+    };
+
+    for problem in checkpoint.problems.iter().skip(1) {
+        let binding = &record_bindings[binding_index];
+        if binding.record_id != problem.id {
+            return invalid_session_store(
+                "schema-v13 composite recovery minimal problem binding record ID is invalid",
+            );
+        }
+        siblings.push(
+            crate::memory_transition::BatchMemoryCandidateClaim::Problem {
+                title: problem.title.clone(),
+                symptom: problem.symptom.clone(),
+                evidence_record_ids: binding.evidence_record_ids.clone(),
+            },
+        );
+        binding_index += 1;
+    }
+    for (index, text) in checkpoint.unresolved.iter().enumerate() {
+        let binding = &record_bindings[binding_index];
+        if binding.record_id != unresolved_record_id(&checkpoint.event_id, index) {
+            return invalid_session_store(
+                "schema-v13 composite recovery unresolved binding record ID is invalid",
+            );
+        }
+        siblings.push(
+            crate::memory_transition::BatchMemoryCandidateClaim::Unresolved {
+                text: text.clone(),
+                evidence_record_ids: binding.evidence_record_ids.clone(),
+            },
+        );
+        binding_index += 1;
+    }
+    if binding_index != record_bindings.len() {
+        return invalid_session_store("schema-v13 composite recovery has trailing record bindings");
+    }
+    Ok(crate::memory_transition::CompositeMemoryTransitionInput {
+        expected_event_count,
+        checkpoint_summary: checkpoint.summary.clone(),
+        rich_problem: rich_candidate,
+        siblings,
         deferred_evidence_record_ids: Vec::new(),
     })
 }
@@ -6215,6 +6941,14 @@ fn recovery_binding_fingerprint_for_event(
             &recovery.provenance.record_bindings,
         )),
         SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION => Ok(recovery_binding_fingerprint_v6(
+            &event.session_id,
+            recovery.provenance.expected_event_count,
+            &recovery.provenance.candidate_fingerprint,
+            &recovery.provenance.evidence_record_ids,
+            &recovery.checkpoint,
+            &recovery.provenance.record_bindings,
+        )),
+        SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION => Ok(recovery_binding_fingerprint_v7(
             &event.session_id,
             recovery.provenance.expected_event_count,
             &recovery.provenance.candidate_fingerprint,
@@ -6983,6 +7717,24 @@ mod tests {
             candidate_fingerprint,
             checkpoint_summary: checkpoint_summary.to_owned(),
             candidates,
+        }
+    }
+
+    fn recovered_composite_input(
+        request_id: String,
+        expected_event_count: u64,
+        candidate_fingerprint: String,
+        checkpoint_summary: &str,
+        rich_problem: crate::memory_transition::RichProblemMemoryCandidate,
+        siblings: Vec<crate::memory_transition::BatchMemoryCandidateClaim>,
+    ) -> RecoveredCompositeCheckpointInput {
+        RecoveredCompositeCheckpointInput {
+            request_id,
+            expected_event_count,
+            candidate_fingerprint,
+            checkpoint_summary: checkpoint_summary.to_owned(),
+            rich_problem,
+            siblings,
         }
     }
 
@@ -9287,7 +10039,133 @@ mod tests {
     }
 
     #[test]
-    fn recovery_ledger_replays_schema_v3_v8_v9_v10_v11_and_v12_events_together() {
+    fn composite_recovery_replay_rejects_cross_child_evidence_rebinding() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
+        let session_id = started.session.session_id.clone();
+        let symptom = record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            turn_input(request_id('2'), "Refresh returns 401"),
+        )
+        .unwrap();
+        let symptom_id = symptom.session.prompts[0].record_id.clone();
+        let attempt = record_session_response(
+            &project,
+            &vault,
+            &session_id,
+            turn_input(request_id('3'), "Clearing cookies had no effect"),
+        )
+        .unwrap();
+        let attempt_id = attempt.session.responses[0].record_id.clone();
+        let decision = record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            turn_input(
+                request_id('4'),
+                "Adopt refresh-before-navigation for protected routes",
+            ),
+        )
+        .unwrap();
+        let decision_id = decision.session.prompts.last().unwrap().record_id.clone();
+        let rich_problem = crate::memory_transition::RichProblemMemoryCandidate {
+            title: "Login refresh failure".to_owned(),
+            symptom: "Refreshing returns 401".to_owned(),
+            expected: String::new(),
+            evidence_record_ids: vec![symptom_id],
+            attempts: vec![crate::memory_transition::RichProblemAttemptCandidate {
+                action: "Clear browser cookies".to_owned(),
+                outcome: AttemptOutcome::NoEffect,
+                evidence: "Refresh still returned 401".to_owned(),
+                evidence_record_ids: vec![attempt_id],
+            }],
+            resolution: None,
+        };
+        let siblings = vec![
+            crate::memory_transition::BatchMemoryCandidateClaim::Decision {
+                title: "Token refresh policy".to_owned(),
+                decision: "Refresh before protected navigation".to_owned(),
+                evidence_record_ids: vec![decision_id],
+            },
+        ];
+        let candidate_fingerprint = crate::memory_transition::composite_candidate_fingerprint(
+            &session_id,
+            &crate::memory_transition::CompositeMemoryTransitionInput {
+                expected_event_count: 4,
+                checkpoint_summary: "Recovered login debugging and policy".to_owned(),
+                rich_problem: rich_problem.clone(),
+                siblings: siblings.clone(),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        );
+        let committed = checkpoint_recovered_composite_session(
+            &project,
+            &vault,
+            &session_id,
+            recovered_composite_input(
+                request_id('5'),
+                4,
+                candidate_fingerprint,
+                "Recovered login debugging and policy",
+                rich_problem,
+                siblings,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            committed.session.schema_version,
+            SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
+        );
+        assert!(committed.session_path.ends_with(SESSION_V13_FILE));
+
+        let event_path = session_directory(&project, &vault, &session_id)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", committed.event_id));
+        let mut event: SessionEvent =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        let SessionEventPayload::RecoveryCheckpointRecorded(recovery) = &mut event.payload else {
+            panic!("expected composite recovery checkpoint event");
+        };
+        assert_eq!(recovery.provenance.record_bindings.len(), 3);
+        let decision_evidence = recovery.provenance.record_bindings[0]
+            .evidence_record_ids
+            .clone();
+        recovery.provenance.record_bindings[0].evidence_record_ids =
+            recovery.provenance.record_bindings[2]
+                .evidence_record_ids
+                .clone();
+        recovery.provenance.record_bindings[2].evidence_record_ids = decision_evidence;
+        let composite = composite_recovery_transition_input(
+            &recovery.checkpoint,
+            &recovery.provenance.record_bindings,
+            &recovery.provenance.evidence_record_ids,
+            recovery.provenance.expected_event_count,
+        )
+        .unwrap();
+        recovery.provenance.candidate_fingerprint =
+            crate::memory_transition::composite_candidate_fingerprint(
+                &event.session_id,
+                &composite,
+            );
+        event.request_fingerprint = request_fingerprint(
+            &event.project_id,
+            &event.session_id,
+            &event.request_id,
+            &event.payload,
+        )
+        .unwrap();
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&event).unwrap()).unwrap();
+        assert!(matches!(
+            read_session(&project, &vault, &session_id),
+            Err(LeyCoreError::InvalidSessionStore(message))
+                if message.contains("binding fingerprint")
+        ));
+    }
+
+    #[test]
+    fn recovery_ledger_replays_schema_v3_v8_v9_v10_v11_v12_and_v13_events_together() {
         let (_base, project, vault) = setup_memory();
         let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
         let session_id = started.session.session_id.clone();
@@ -9677,13 +10555,114 @@ mod tests {
         );
         assert!(rich_problem.session_path.ends_with(SESSION_V12_FILE));
 
+        let composite_problem_prompt = record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            turn_input(
+                format!("req_{}", "af".repeat(16)),
+                "Refresh still returns 401 in the protected-route edge case",
+            ),
+        )
+        .unwrap();
+        let composite_problem_prompt_id = composite_problem_prompt
+            .session
+            .prompts
+            .last()
+            .unwrap()
+            .record_id
+            .clone();
+        let composite_attempt = record_session_response(
+            &project,
+            &vault,
+            &session_id,
+            turn_input(
+                format!("req_{}", "ba".repeat(16)),
+                "Refreshing before navigation fixed the edge case",
+            ),
+        )
+        .unwrap();
+        let composite_attempt_id = composite_attempt
+            .session
+            .responses
+            .last()
+            .unwrap()
+            .record_id
+            .clone();
+        let composite_decision = record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            turn_input(
+                format!("req_{}", "bd".repeat(16)),
+                "Adopt refresh-before-navigation for every protected route",
+            ),
+        )
+        .unwrap();
+        let composite_decision_id = composite_decision
+            .session
+            .prompts
+            .last()
+            .unwrap()
+            .record_id
+            .clone();
+        let composite_rich_problem = crate::memory_transition::RichProblemMemoryCandidate {
+            title: "Protected-route refresh failure".to_owned(),
+            symptom: "Refreshing a protected route returns 401".to_owned(),
+            expected: "Protected-route refresh preserves authentication".to_owned(),
+            evidence_record_ids: vec![composite_problem_prompt_id],
+            attempts: vec![crate::memory_transition::RichProblemAttemptCandidate {
+                action: "Refresh the access token before protected navigation".to_owned(),
+                outcome: AttemptOutcome::Helped,
+                evidence: "The protected-route edge case stopped returning 401".to_owned(),
+                evidence_record_ids: vec![composite_attempt_id],
+            }],
+            resolution: None,
+        };
+        let composite_siblings = vec![
+            crate::memory_transition::BatchMemoryCandidateClaim::Decision {
+                title: "Protected route refresh policy".to_owned(),
+                decision: "Refresh before every protected navigation".to_owned(),
+                evidence_record_ids: vec![composite_decision_id],
+            },
+        ];
+        let composite_fingerprint = crate::memory_transition::composite_candidate_fingerprint(
+            &session_id,
+            &crate::memory_transition::CompositeMemoryTransitionInput {
+                expected_event_count: 23,
+                checkpoint_summary: "Recovered protected-route debugging and policy".to_owned(),
+                rich_problem: composite_rich_problem.clone(),
+                siblings: composite_siblings.clone(),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        );
+        let composite = checkpoint_recovered_composite_session(
+            &project,
+            &vault,
+            &session_id,
+            recovered_composite_input(
+                format!("req_{}", "bc".repeat(16)),
+                23,
+                composite_fingerprint,
+                "Recovered protected-route debugging and policy",
+                composite_rich_problem,
+                composite_siblings,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            composite.session.schema_version,
+            SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
+        );
+        assert!(composite.session_path.ends_with(SESSION_V13_FILE));
+
         let replayed = read_session(&project, &vault, &session_id).unwrap();
         assert_eq!(
             replayed.schema_version,
-            SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
+            SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
         );
-        assert_eq!(replayed.event_count, 20);
-        assert_eq!(replayed.checkpoints.len(), 6);
+        assert_eq!(replayed.event_count, 24);
+        assert_eq!(replayed.checkpoints.len(), 7);
         assert_eq!(
             replayed.checkpoints[0].unresolved,
             vec!["The retry investigation remains open"]
@@ -9735,6 +10714,25 @@ mod tests {
                 .unwrap()
                 .root_cause,
             "The client reused an expired access token"
+        );
+        assert_eq!(
+            replayed.checkpoints[6].summary,
+            "Recovered protected-route debugging and policy"
+        );
+        assert_eq!(replayed.checkpoints[6].problems.len(), 1);
+        assert_eq!(
+            replayed.checkpoints[6].problems[0].title,
+            "Protected-route refresh failure"
+        );
+        assert_eq!(replayed.checkpoints[6].problems[0].attempts.len(), 1);
+        assert_eq!(
+            replayed.checkpoints[6].problems[0].attempts[0].outcome,
+            AttemptOutcome::Helped
+        );
+        assert_eq!(replayed.checkpoints[6].decisions.len(), 1);
+        assert_eq!(
+            replayed.checkpoints[6].decisions[0].decision,
+            "Refresh before every protected navigation"
         );
     }
 

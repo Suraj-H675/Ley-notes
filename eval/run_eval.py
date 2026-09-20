@@ -5988,6 +5988,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             rich_problem_secret_canary = str(
                 scenario.get("rich_problem_secret_canary", "")
             )
+            composite_compiled: dict[str, object] | None = None
+            composite_projection: dict[str, object] | None = None
+            composite_secret_canary = str(scenario.get("composite_secret_canary", ""))
             if scenario.get("expected_recovery_checkpoint"):
                 event_count = int(compiled.get("sessionEventCount", 0))
                 evidence = compiled.get("evidence", [])
@@ -6151,6 +6154,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 rich_problem_binding_ok = True
                 rich_problem_lineage_ok = True
                 rich_problem_after_ok = True
+                composite_binding_ok = True
+                composite_lineage_ok = True
+                composite_after_ok = True
                 if scenario.get("expected_typed_recovery"):
                     typed_prompt = "Use SQLite for local-first persistence"
                     hook_call(
@@ -7692,6 +7698,557 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             and batch_lineage_ok
                             and rich_problem_lineage_ok
                         )
+                if scenario.get("expected_composite_recovery"):
+                    composite_prompts = [
+                        (
+                            "ley-eval-composite-recovery-turn-1",
+                            "Composite login symptom: refresh returns 401 although authentication should survive. "
+                            f"api_key: {composite_secret_canary}",
+                        ),
+                        (
+                            "ley-eval-composite-recovery-turn-2",
+                            "Composite failed attempt: clearing browser cookies had no effect on the 401.",
+                        ),
+                        (
+                            "ley-eval-composite-recovery-turn-3",
+                            "Composite resolution: an expired access token was the root cause; refreshing before navigation fixed repeated refreshes.",
+                        ),
+                        (
+                            "ley-eval-composite-recovery-turn-4",
+                            "Composite follow-up: adopt refresh-before-navigation and mark the refresh-flow migration completed.",
+                        ),
+                    ]
+                    for turn_id, prompt_text in composite_prompts:
+                        hook_call(
+                            project,
+                            "codex",
+                            {
+                                "hook_event_name": "UserPromptSubmit",
+                                "session_id": "ley-eval-crash-thread",
+                                "turn_id": turn_id,
+                                "prompt": prompt_text,
+                            },
+                        )
+                    composite_compiled = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 8_000},
+                    )
+                    composite_event_count = int(composite_compiled.get("sessionEventCount", 0))
+                    composite_evidence = [
+                        item
+                        for item in composite_compiled.get("evidence", [])
+                        if isinstance(item, dict)
+                        and item.get("kind") == "user-prompt"
+                        and item.get("recordId")
+                    ]
+                    composite_record_ids = [
+                        str(item.get("recordId", "")) for item in composite_evidence
+                    ]
+                    composite_first_text = (
+                        str(composite_evidence[0].get("text", ""))
+                        if composite_evidence
+                        else ""
+                    )
+                    composite_redaction_ok = (
+                        len(composite_record_ids) == 4
+                        and bool(composite_secret_canary)
+                        and composite_secret_canary not in composite_first_text
+                        and "[REDACTED:" in composite_first_text
+                        and all(composite_record_ids)
+                    )
+                    if not composite_redaction_ok:
+                        failures.append(
+                            "composite recovery evidence did not preserve four bounded records with secret redaction"
+                        )
+
+                    composite_rich_problem = {
+                        "title": "Composite login refresh failure",
+                        "symptom": "Refreshing returns 401",
+                        "expected": "The authenticated session survives refresh",
+                        "evidenceRecordIds": [composite_record_ids[0]],
+                        "attempts": [
+                            {
+                                "action": "Clear browser cookies",
+                                "outcome": "no-effect",
+                                "evidence": "Refresh still returned 401",
+                                "evidenceRecordIds": [composite_record_ids[1]],
+                            }
+                        ],
+                        "resolution": {
+                            "rootCause": "The client reused an expired access token",
+                            "change": "Refresh the token before protected navigation",
+                            "verification": "Repeated refreshes remained authenticated",
+                            "evidenceRecordIds": [composite_record_ids[2]],
+                        },
+                    }
+                    composite_siblings = [
+                        {
+                            "kind": "decision",
+                            "title": "Composite token refresh policy",
+                            "decision": "Refresh before protected navigation",
+                            "evidenceRecordIds": [composite_record_ids[3]],
+                        },
+                        {
+                            "kind": "task",
+                            "title": "Composite refresh-flow migration",
+                            "status": "completed",
+                            "details": "Migration completed",
+                            "evidenceRecordIds": [composite_record_ids[3]],
+                        },
+                    ]
+                    composite_summary = "Recovered composite login debugging and migration"
+                    composite_transition = mcp_call(
+                        project,
+                        "ley_session_memory_verify_composite",
+                        {
+                            "sessionId": session_id,
+                            "expectedEventCount": composite_event_count,
+                            "checkpointSummary": composite_summary,
+                            "richProblem": composite_rich_problem,
+                            "siblings": composite_siblings,
+                            "deferredEvidenceRecordIds": [],
+                        },
+                    )
+                    composite_commit_args = {
+                        "sessionId": session_id,
+                        "requestId": request_id(
+                            f"{scenario['id']}:composite-memory-recovery"
+                        ),
+                        "expectedEventCount": composite_event_count,
+                        "candidateFingerprint": composite_transition.get(
+                            "candidateFingerprint", ""
+                        ),
+                        "checkpointSummary": composite_summary,
+                        "richProblem": composite_rich_problem,
+                        "siblings": composite_siblings,
+                    }
+                    composite_receipt = mcp_call(
+                        project,
+                        "ley_session_memory_commit_composite",
+                        composite_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    composite_retry = mcp_call(
+                        project,
+                        "ley_session_memory_commit_composite",
+                        composite_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    composite_session = mcp_call(
+                        project,
+                        "ley_session_get",
+                        {"sessionId": session_id, "maxCheckpoints": 16, "maxCharacters": 24_000},
+                    )
+                    composite_checkpoints = composite_session.get("checkpoints", [])
+                    composite_checkpoint = (
+                        composite_checkpoints[-1]
+                        if isinstance(composite_checkpoints, list)
+                        and composite_checkpoints
+                        and isinstance(composite_checkpoints[-1], dict)
+                        else {}
+                    )
+                    composite_decisions = composite_checkpoint.get("decisions", [])
+                    composite_tasks = composite_checkpoint.get("tasks", [])
+                    composite_problems = composite_checkpoint.get("problems", [])
+                    composite_problem = (
+                        composite_problems[0]
+                        if isinstance(composite_problems, list)
+                        and composite_problems
+                        and isinstance(composite_problems[0], dict)
+                        else {}
+                    )
+                    composite_attempts = composite_problem.get("attempts", [])
+                    composite_resolution = composite_problem.get("resolutionDetail", {})
+
+                    composite_diagnostic = cli_json(["doctor", str(project), "--json"])
+                    composite_identity = (
+                        composite_diagnostic.get("identity", {})
+                        if isinstance(composite_diagnostic, dict)
+                        else {}
+                    )
+                    composite_project_id = (
+                        str(composite_identity.get("projectId", ""))
+                        if isinstance(composite_identity, dict)
+                        else ""
+                    )
+                    composite_projection_path = (
+                        vault
+                        / ".ley"
+                        / "agent-memory"
+                        / "projects"
+                        / composite_project_id
+                        / "sessions"
+                        / session_id
+                        / "session-v13.json"
+                    )
+                    if composite_project_id and composite_projection_path.is_file():
+                        loaded_composite_projection = json.loads(
+                            composite_projection_path.read_text(encoding="utf-8")
+                        )
+                        if isinstance(loaded_composite_projection, dict):
+                            composite_projection = loaded_composite_projection
+                    durable_composite_checkpoints = (
+                        composite_projection.get("checkpoints", [])
+                        if isinstance(composite_projection, dict)
+                        else []
+                    )
+                    durable_composite_checkpoint = (
+                        durable_composite_checkpoints[-1]
+                        if isinstance(durable_composite_checkpoints, list)
+                        and durable_composite_checkpoints
+                        and isinstance(durable_composite_checkpoints[-1], dict)
+                        else {}
+                    )
+                    durable_composite_decisions = durable_composite_checkpoint.get(
+                        "decisions", []
+                    )
+                    durable_composite_tasks = durable_composite_checkpoint.get("tasks", [])
+                    durable_composite_problems = durable_composite_checkpoint.get(
+                        "problems", []
+                    )
+                    durable_composite_problem = (
+                        durable_composite_problems[0]
+                        if isinstance(durable_composite_problems, list)
+                        and durable_composite_problems
+                        and isinstance(durable_composite_problems[0], dict)
+                        else {}
+                    )
+                    durable_composite_attempts = durable_composite_problem.get("attempts", [])
+                    durable_composite_resolution = durable_composite_problem.get(
+                        "resolution", {}
+                    )
+                    durable_composite_ok = (
+                        durable_composite_checkpoint.get("summary") == composite_summary
+                        and isinstance(durable_composite_decisions, list)
+                        and len(durable_composite_decisions) == 1
+                        and isinstance(durable_composite_decisions[0], dict)
+                        and durable_composite_decisions[0].get("title")
+                        == "Composite token refresh policy"
+                        and durable_composite_decisions[0].get("decision")
+                        == "Refresh before protected navigation"
+                        and isinstance(durable_composite_tasks, list)
+                        and len(durable_composite_tasks) == 1
+                        and isinstance(durable_composite_tasks[0], dict)
+                        and durable_composite_tasks[0].get("title")
+                        == "Composite refresh-flow migration"
+                        and durable_composite_tasks[0].get("status") == "completed"
+                        and durable_composite_problem.get("title")
+                        == "Composite login refresh failure"
+                        and durable_composite_problem.get("symptom") == "Refreshing returns 401"
+                        and durable_composite_problem.get("expected")
+                        == "The authenticated session survives refresh"
+                        and isinstance(durable_composite_attempts, list)
+                        and len(durable_composite_attempts) == 1
+                        and isinstance(durable_composite_attempts[0], dict)
+                        and durable_composite_attempts[0].get("action")
+                        == "Clear browser cookies"
+                        and durable_composite_attempts[0].get("outcome") == "no-effect"
+                        and durable_composite_resolution.get("rootCause")
+                        == "The client reused an expired access token"
+                        and durable_composite_resolution.get("change")
+                        == "Refresh the token before protected navigation"
+                        and composite_secret_canary not in serialized(composite_projection)
+                    )
+                    if not durable_composite_ok:
+                        failures.append(
+                            "composite recovery did not durably preserve exact rich Problem/sibling state or leaked its secret canary"
+                        )
+
+                    composite_binding_ok = (
+                        composite_transition.get("state") == "review-required"
+                        and composite_transition.get("semanticFaithfulnessProven") is False
+                        and composite_transition.get("liveSourceChecked") is False
+                        and bool(
+                            composite_transition.get("coverage", {}).get("coverageComplete")
+                        )
+                        and composite_transition.get("coverage", {}).get(
+                            "totalCurrentEvidence"
+                        )
+                        == 4
+                        and len(composite_transition.get("claimChecks", [])) == 5
+                        and str(
+                            composite_transition.get("candidateFingerprint", "")
+                        ).startswith("sha256:")
+                        and composite_receipt.get("eventCount")
+                        == composite_event_count + 1
+                        and composite_receipt.get("replayed") is False
+                        and composite_retry.get("eventCount")
+                        == composite_event_count + 1
+                        and composite_retry.get("eventId")
+                        == composite_receipt.get("eventId")
+                        and composite_retry.get("replayed") is True
+                        and composite_session.get("schemaVersion") == 13
+                        and composite_checkpoint.get("summary") == composite_summary
+                        and isinstance(composite_decisions, list)
+                        and len(composite_decisions) == 1
+                        and isinstance(composite_tasks, list)
+                        and len(composite_tasks) == 1
+                        and composite_problem.get("title")
+                        == "Composite login refresh failure"
+                        and isinstance(composite_attempts, list)
+                        and len(composite_attempts) == 1
+                        and composite_attempts[0].get("outcome") == "no-effect"
+                        and isinstance(composite_resolution, dict)
+                        and composite_resolution.get("rootCause")
+                        == "The client reused an expired access token"
+                        and durable_composite_ok
+                        and composite_redaction_ok
+                    )
+                    if not composite_binding_ok:
+                        failures.append(
+                            "composite recovery did not preserve verifier binding/idempotency/schema-v13 projection"
+                        )
+
+                    if scenario.get("expected_origin_lineage"):
+                        composite_checkpoint_id = str(
+                            composite_checkpoint.get("checkpointId", "")
+                        )
+                        composite_attempt_id = (
+                            str(composite_attempts[0].get("id", ""))
+                            if isinstance(composite_attempts, list)
+                            and composite_attempts
+                            and isinstance(composite_attempts[0], dict)
+                            else ""
+                        )
+                        composite_decision_id = (
+                            str(composite_decisions[0].get("id", ""))
+                            if isinstance(composite_decisions, list)
+                            and composite_decisions
+                            and isinstance(composite_decisions[0], dict)
+                            else ""
+                        )
+                        composite_checkpoint_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(
+                                    f"{scenario['id']}:composite-checkpoint-lineage"
+                                ),
+                                "kind": "fact",
+                                "title": "Composite recovery window remained attributable",
+                                "guidance": "Treat the composite checkpoint as provenance over the complete recovery window.",
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": composite_checkpoint_id,
+                                        "note": "Derived from the complete composite recovery checkpoint.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        composite_checkpoint_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(
+                                    composite_checkpoint_learning.get("learningId", "")
+                                ),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        composite_checkpoint_lineage = composite_checkpoint_context.get(
+                            "originLineage", {}
+                        )
+                        composite_checkpoint_sources = (
+                            composite_checkpoint_lineage.get("sources", [])
+                            if isinstance(composite_checkpoint_lineage, dict)
+                            else []
+                        )
+                        composite_checkpoint_lineage_ok = (
+                            bool(composite_checkpoint_id)
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == composite_transition.get("candidateFingerprint")
+                                for source in composite_checkpoint_sources
+                            )
+                            and all(
+                                any(
+                                    isinstance(source, dict)
+                                    and source.get("kind") == "turn-evidence"
+                                    and source.get("recordId") == record_id
+                                    for source in composite_checkpoint_sources
+                                )
+                                for record_id in composite_record_ids
+                            )
+                        )
+
+                        composite_attempt_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(
+                                    f"{scenario['id']}:composite-attempt-lineage"
+                                ),
+                                "kind": "pitfall",
+                                "title": "Composite cookie clearing did not fix refresh authentication",
+                                "guidance": "Do not treat cookie clearing as the fix for this composite refresh failure.",
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": composite_attempt_id,
+                                        "note": "Derived only from the recovered composite Attempt.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        composite_attempt_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(
+                                    composite_attempt_learning.get("learningId", "")
+                                ),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        composite_attempt_lineage = composite_attempt_context.get(
+                            "originLineage", {}
+                        )
+                        composite_attempt_sources = (
+                            composite_attempt_lineage.get("sources", [])
+                            if isinstance(composite_attempt_lineage, dict)
+                            else []
+                        )
+                        composite_attempt_lineage_ok = (
+                            bool(composite_attempt_id)
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == composite_transition.get("candidateFingerprint")
+                                for source in composite_attempt_sources
+                            )
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == composite_record_ids[1]
+                                for source in composite_attempt_sources
+                            )
+                            and not any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") in {
+                                    composite_record_ids[0],
+                                    composite_record_ids[2],
+                                    composite_record_ids[3],
+                                }
+                                for source in composite_attempt_sources
+                            )
+                        )
+
+                        composite_decision_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(
+                                    f"{scenario['id']}:composite-decision-lineage"
+                                ),
+                                "kind": "procedure",
+                                "title": "Composite protected routes refresh before navigation",
+                                "guidance": "Refresh the access token before protected navigation.",
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": composite_decision_id,
+                                        "note": "Derived only from the recovered composite Decision.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        composite_decision_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(
+                                    composite_decision_learning.get("learningId", "")
+                                ),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        composite_decision_lineage = composite_decision_context.get(
+                            "originLineage", {}
+                        )
+                        composite_decision_sources = (
+                            composite_decision_lineage.get("sources", [])
+                            if isinstance(composite_decision_lineage, dict)
+                            else []
+                        )
+                        composite_decision_lineage_ok = (
+                            bool(composite_decision_id)
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == composite_transition.get("candidateFingerprint")
+                                for source in composite_decision_sources
+                            )
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == composite_record_ids[3]
+                                for source in composite_decision_sources
+                            )
+                            and not any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") in {
+                                    composite_record_ids[0],
+                                    composite_record_ids[1],
+                                    composite_record_ids[2],
+                                }
+                                for source in composite_decision_sources
+                            )
+                        )
+                        composite_lineage_ok = (
+                            composite_checkpoint_lineage_ok
+                            and composite_attempt_lineage_ok
+                            and composite_decision_lineage_ok
+                        )
+                        if not composite_lineage_ok:
+                            failures.append(
+                                "composite recovery learning did not preserve checkpoint-union and child-specific origin lineage"
+                            )
+
+                    composite_after = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                    )
+                    composite_after_ok = (
+                        composite_after.get("state") == "no-unconsolidated-evidence"
+                        and composite_after.get("totalUnconsolidatedEvidence") == 0
+                    )
+                    scores["memory_binding"] = (
+                        binding_ok
+                        and typed_binding_ok
+                        and task_binding_ok
+                        and plan_binding_ok
+                        and batch_binding_ok
+                        and rich_problem_binding_ok
+                        and composite_binding_ok
+                    )
+                    if scenario.get("expected_origin_lineage"):
+                        scores["origin_lineage"] = (
+                            lineage_ok
+                            and typed_lineage_ok
+                            and task_lineage_ok
+                            and plan_lineage_ok
+                            and batch_lineage_ok
+                            and rich_problem_lineage_ok
+                            and composite_lineage_ok
+                        )
                 recovery_ok = (
                     state_ok
                     and transition_ok
@@ -7714,6 +8271,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and rich_problem_binding_ok
                     and rich_problem_lineage_ok
                     and rich_problem_after_ok
+                    and composite_binding_ok
+                    and composite_lineage_ok
+                    and composite_after_ok
                 )
             scores["memory_recovery"] = recovery_ok
             privacy_payloads = [compiled]
@@ -7735,6 +8295,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 privacy_payloads.append(rich_problem_compiled)
             if rich_problem_projection is not None:
                 privacy_payloads.append(rich_problem_projection)
+            if composite_compiled is not None:
+                privacy_payloads.append(composite_compiled)
+            if composite_projection is not None:
+                privacy_payloads.append(composite_projection)
             privacy_canaries = [str(project), str(vault)]
             if task_secret_canary:
                 privacy_canaries.append(task_secret_canary)
@@ -7744,6 +8308,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 privacy_canaries.append(batch_secret_canary)
             if rich_problem_secret_canary:
                 privacy_canaries.append(rich_problem_secret_canary)
+            if composite_secret_canary:
+                privacy_canaries.append(composite_secret_canary)
             scores["privacy_violation_rate"] = privacy_violation_rate(
                 privacy_canaries, privacy_payloads
             )

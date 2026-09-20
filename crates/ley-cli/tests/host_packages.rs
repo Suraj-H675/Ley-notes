@@ -415,6 +415,11 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(
+            skill.contains("ley_session_memory_verify_composite"),
+            "{}",
+            path.display()
+        );
+        assert!(
             skill.contains("ley_session_memory_verify_problem"),
             "{}",
             path.display()
@@ -446,6 +451,11 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(
+            skill.contains("ley_session_memory_commit_composite"),
+            "{}",
+            path.display()
+        );
+        assert!(
             skill.contains("ley_session_memory_commit_problem"),
             "{}",
             path.display()
@@ -456,6 +466,7 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(skill.contains("atomic checkpoint"), "{}", path.display());
+        assert!(skill.contains("schema-v13"), "{}", path.display());
         assert!(
             skill.contains("do not commit them sequentially"),
             "{}",

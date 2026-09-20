@@ -158,7 +158,9 @@ avoided.
 ## Deliberately deferred
 
 - attaching a recovered Attempt or Resolution to an existing historical Problem;
-- rich Problem candidates inside schema-v11 atomic multi-claim batches;
+- rich Problem candidates inside schema-v11 atomic multi-claim batches; ADR 0065 later preserves the
+  same atomic use case through a separate schema-v13 composite family instead of broadening v11 or
+  this schema-v12 contract;
 - standalone Command recovery and execution-occurrence identity;
 - standalone Verification recovery and observed-vs-recovered result semantics;
 - standalone Summary recovery;

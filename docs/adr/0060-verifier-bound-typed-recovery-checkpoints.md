@@ -125,8 +125,9 @@ The implementation must prove:
   Task through a separate typed-v2 verifier/schema-v9 route, ADR 0062 later implements Plan through
   the same typed verifier family plus schema v10, and ADR 0064 later implements one new rich Problem
   episode containing ordered Attempts and an optional Resolution through a separate typed verifier /
-  schema-v12 route, without changing this schema-v8 contract. Attaching recovered Attempt/Resolution
-  children to an already-existing Problem remains deferred;
+  schema-v12 route. ADR 0065 later composes that rich episode with minimal sibling candidates through
+  a separate schema-v13 route, without changing this schema-v8 contract. Attaching recovered
+  Attempt/Resolution children to an already-existing Problem remains deferred;
 - inference of status, expected behavior, rationale, outcomes, verification, or root cause;
 - cross-session/background consolidation; and
 - automatic trust, learning promotion, or retrieval-ranking changes from a recovery commit.

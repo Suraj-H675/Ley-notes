@@ -153,8 +153,9 @@ review, trust, or egress authority.
 - Command recovery and execution-occurrence identity;
 - Verification recovery and recovered-vs-observed outcome provenance;
 - nested Attempt/Resolution parent/update semantics; ADR 0064 later implements one separate single
-  rich-Problem recovery episode with ordered Attempts and optional Resolution, while schema-v11 batch
-  inclusion and mutation of an existing Problem remain deferred;
+  rich-Problem recovery episode with ordered Attempts and optional Resolution. ADR 0065 later composes
+  that rich episode with minimal siblings through a separate schema-v13 route, without broadening the
+  schema-v11 batch contract; mutation of an existing Problem remains deferred;
 - standalone Summary recovery;
 - automatic/model-generated candidates inside Ley;
 - background/scheduled consolidation or Inbox mutation; and
