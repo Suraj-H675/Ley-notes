@@ -40,6 +40,13 @@ fn json_stdout(output: Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+fn automatic_context_block(context: &str) -> &str {
+    let start = context
+        .find("# Ley task context (automatic)")
+        .expect("automatic task context marker");
+    &context[start..]
+}
+
 #[test]
 fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() {
     let base = tempdir().unwrap();
@@ -132,6 +139,9 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
         .unwrap();
     assert!(prompt_context.contains(session_id));
     assert!(prompt_context.contains("ley_session_checkpoint"));
+    assert!(prompt_context.contains("# Ley task context (automatic)"));
+    assert!(prompt_context.contains("cpk_"));
+    assert!(automatic_context_block(prompt_context).len() <= 3_500);
     assert!(!prompt_context.contains("NEVER_PERSIST_THIS_PROMPT"));
 
     let stop = json!({
@@ -231,6 +241,9 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
         .as_str()
         .unwrap();
     assert!(claude_context.contains(claude_session_id));
+    assert!(claude_context.contains("# Ley task context (automatic)"));
+    assert!(claude_context.contains("cpk_"));
+    assert!(automatic_context_block(claude_context).len() <= 3_500);
     assert!(!claude_context.contains("NEVER_PERSIST_CLAUDE_PROMPT"));
 
     let vault_text = walk_text(&vault);

@@ -66,6 +66,10 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
             "{event}"
         );
     }
+    assert_eq!(
+        hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["statusMessage"],
+        "Loading Ley task context"
+    );
 
     let skill = fs::read_to_string(plugin.join("skills/ley-memory/SKILL.md")).unwrap();
     assert!(skill.contains("ley_session_checkpoint"));
@@ -80,6 +84,20 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
         assert_portable(path);
     }
 }
+
+#[test]
+fn codex_prompt_hook_keeps_automatic_context_inside_an_explicit_host_bound() {
+    let root = repository_root();
+    let plugin = root.join("integrations/codex/plugins/ley-memory");
+    let hooks = json(plugin.join("hooks/hooks.json"));
+    let handler = &hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0];
+
+    assert_eq!(handler["command"], "ley hook --host codex");
+    assert_eq!(handler["additionalContextLimit"], 5_000);
+    assert_eq!(handler["statusMessage"], "Loading Ley task context");
+    assert_portable(plugin.join("hooks/hooks.json"));
+}
+
 #[test]
 fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
     let root = repository_root();
@@ -89,6 +107,23 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
     ] {
         let skill = fs::read_to_string(&path).expect("packaged Ley skill");
         let normalized_skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            skill.contains("# Ley task context (automatic)"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("Do not call `ley_compile_context` again")
+                || normalized_skill.contains("Do **not** call `ley_compile_context` again"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("Automatic hook-injected packs deliberately")
+                && normalized_skill.contains("no utility binding"),
+            "{}",
+            path.display()
+        );
         assert!(
             skill.contains("ley_project_specifications"),
             "{}",

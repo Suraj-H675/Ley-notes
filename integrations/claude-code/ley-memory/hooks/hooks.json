@@ -32,7 +32,7 @@
               "${CLAUDE_PROJECT_DIR}"
             ],
             "timeout": 20,
-            "statusMessage": "Capturing bounded Ley prompt"
+            "statusMessage": "Loading Ley task context"
           }
         ]
       }

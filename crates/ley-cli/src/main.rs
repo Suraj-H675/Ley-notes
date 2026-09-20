@@ -1367,12 +1367,14 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
     let mount_registry = ContextMountRegistry::system_default()?;
     let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
     let policy_bundle_registry = PolicyBundleRegistry::system_default()?;
+    let specification_registry = SpecificationRegistry::system_default()?;
     let result = process_host_hook_for_agent_with_registries(
         &project,
         &binding.vault_path,
         host,
         payload,
         HostAgentContextRegistries {
+            specifications: &specification_registry,
             egress: &egress_registry,
             mounts: &mount_registry,
             knowledge_scopes: &knowledge_scope_registry,

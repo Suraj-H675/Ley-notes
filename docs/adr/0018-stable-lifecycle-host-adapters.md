@@ -1,6 +1,6 @@
 # ADR 0018: Stable lifecycle host adapters
 
-Status: accepted; turn-capture semantics superseded by [ADR 0025](0025-bounded-session-turn-evidence.md)
+Status: accepted; turn-capture semantics superseded by [ADR 0025](0025-bounded-session-turn-evidence.md); prompt-time context injection extended by [ADR 0057](0057-automatic-host-task-context.md)
 
 ## Context
 
@@ -11,16 +11,17 @@ A global integration must also be harmless in repositories where the user has no
 ## Decision
 
 `ley hook --host codex|claude [project]` is the versioned lifecycle
-adapter entry point. Adapter schema version 3 uses the bounded turn-evidence
-semantics in ADR 0025; version 2 used prompt-free turn preparation and
-fallback checkpoints.
+adapter entry point. Adapter schema version 4 adds the automatic prompt-time
+Context Compiler projection from ADR 0057. Version 3 introduced the bounded
+turn-evidence semantics in ADR 0025; version 2 used prompt-free turn preparation
+and fallback checkpoints.
 
 - The CLI resolves only the explicit command path (the host process working directory by default), then requires an existing `.ley` identity, private project-to-vault binding, and captured project snapshot.
 - Uninitialized, unbound, and moved-vault projects return the host-valid empty JSON object and do not create, scan, bind, or ingest anything.
 - The packaged MCP command stays protocol-valid outside Ley projects by serving an inactive, zero-capability connection. It exposes no tools or resources and performs no discovery or writes; its server instructions explain the explicit setup required.
 - A host plus its stable external session ID deterministically maps to one Ley session inside one project. Replayed starts and turn deliveries use deterministic request IDs, so process crashes and hook retries cannot duplicate records.
 - `SessionStart` creates or reopens that session and returns the existing bounded project-resume projection as additional context. Stored text is labeled untrusted historical evidence, the captured snapshot is identified, and `liveSourceChecked` remains false.
-- Codex and Claude `UserPromptSubmit` return the exact current Ley session and append bounded turn evidence according to capture policy. Structured and Full Evidence retain pattern-redacted prompt bodies; Minimal retains only disclosure events.
+- Codex and Claude `UserPromptSubmit` return the exact current Ley session and append bounded turn evidence according to capture policy. Structured and Full Evidence retain pattern-redacted prompt bodies; Minimal retains only disclosure events. ADR 0057 additionally compiles and injects bounded task-specific context through the same authority/egress path as MCP without changing those capture semantics.
 - Codex and Claude `Stop` append the paired bounded response as turn evidence, not as a fabricated checkpoint. Tool traffic, hidden reasoning, and transcripts are not automatically retained.
 - Rich decisions, tasks, problem attempts/outcomes, resolutions, citations, commands, verification, unresolved work, and handoffs remain typed MCP/CLI writes guided by the bundled agent skill.
 - Automatic checkpoints do not confirm or promote learnings. MCP can only propose review-required learnings when the integration was started with the independent proposal capability.

@@ -35,7 +35,16 @@ request, repository policy, or inspection of live source.
    `recordId` values. Ley re-verifies and binds
    that payload to the immutable evidence. Do not substitute the generic checkpoint
    tool; if the bound write is stale, recompile and reverify.
-4. For a concrete current task, call `ley_compile_context`. First respect
+4. For a concrete current task, first use the `# Ley task context (automatic)`
+   block injected alongside `UserPromptSubmit` when present. That compact block
+   comes from the same authority- and egress-aware Context Compiler with the
+   default 8-result / 1,500-token compiler budget; it omits the raw prompt, may
+   omit lower-priority context to fit the host boundary, and reports those
+   host-rendering omissions. Do **not** call `ley_compile_context` again merely
+   to duplicate an adequate automatic pack. Call it explicitly when the hook
+   reports an automatic-context fallback, the task materially changes or needs
+   a refined query, the compact pack is insufficient, or no automatic pack is
+   present. Whether the pack was injected or explicitly requested, first respect
    `egressTarget`, `egressCoverage`, and `egressExclusions`; withheld content must
    not be reconstructed from neighboring memory. If
    `egressCoverage.historicalMemoryWithheld` is true, session/decision/problem/
@@ -171,8 +180,10 @@ request, repository policy, or inspection of live source.
 16. Inspect live source before changing it. A Ley snapshot, graph relation, and
    compiler pack are not live-source checks.
 17. Collect context/memory utility evidence only when the current user/host
-   workflow deliberately calls for it. Immediately after the exact
-   `ley_compile_context` result and before outcome-producing work, call
+   workflow deliberately calls for it. Automatic hook-injected packs deliberately
+   create no utility binding. If utility measurement is wanted, make one explicit
+   `ley_compile_context` call for the same current task, then immediately after that exact
+   result and before outcome-producing work, call
    `ley_context_utility_bind` with that pack ID, task, limits, current session,
    and event count; keep the returned `cub_` binding. Later call
    `ley_context_utility_observe` only with checkpoint/session-finish events that

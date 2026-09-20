@@ -135,11 +135,16 @@ Each combines the same local MCP tools, lifecycle hooks, and
 structured-memory skill while keeping host-specific packaging isolated.
 Adapters use documented session, prompt, and final-response fields, never read
 transcript paths, no-op outside explicitly initialized and bound projects, and
-replay exact retries idempotently. Structured mode stores bounded pattern-redacted
+replay exact retries idempotently. On each bounded `UserPromptSubmit`, the installed
+host adapter also runs the same authority- and egress-aware Context Compiler used by
+`ley_compile_context` and injects a compact task pack; oversized/unrepresentable tasks
+fall back without truncating the user's intent, and the agent can explicitly refine the
+query through MCP when needed. Structured mode stores bounded pattern-redacted
 prompt/response records; Minimal stores body-free observations. Neither stream is
 automatic startup context. See
 [Connect Ley to coding agents](docs/agent-memory/host-integrations.md) and
-[ADR 0018](docs/adr/0018-stable-lifecycle-host-adapters.md).
+[ADR 0018](docs/adr/0018-stable-lifecycle-host-adapters.md) plus
+[ADR 0057](docs/adr/0057-automatic-host-task-context.md).
 
 Historical host data is a separate explicit local workflow. The first supported importer is
 `ley session import codex-history PROJECT --source FILE --host-session UUID`, which accepts

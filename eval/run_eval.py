@@ -1004,6 +1004,28 @@ def hook_call(
     return value
 
 
+def hook_additional_context(payload: dict[str, object]) -> str:
+    hook_output = payload.get("hookSpecificOutput", {})
+    if not isinstance(hook_output, dict):
+        return ""
+    value = hook_output.get("additionalContext", "")
+    return value if isinstance(value, str) else ""
+
+
+def automatic_hook_context(payload: dict[str, object]) -> str:
+    context = hook_additional_context(payload)
+    marker = "# Ley task context (automatic)"
+    start = context.find(marker)
+    return "" if start < 0 else context[start:]
+
+
+def hook_ley_session_id(payload: dict[str, object]) -> str:
+    for line in hook_additional_context(payload).splitlines():
+        if line.startswith("Current Ley session: ") and line.endswith("."):
+            return line.removeprefix("Current Ley session: ").removesuffix(".")
+    return ""
+
+
 def ensure_learning_citations(project: Path, events: list[dict[str, object]]) -> None:
     """Give cited learning fixtures a real initial artifact that can be renamed."""
     for event in events:
@@ -5168,7 +5190,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         marker = str(
             portability_expectation.get("marker", "portable_host_memory_marker")
         )
-        create_structured_session(
+        portable_session_id, _ = create_structured_session(
             project,
             seed=f"{scenario['id']}:portable",
             name="Portable prior work",
@@ -5187,14 +5209,82 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "claude",
             {"hook_event_name": "SessionStart", "session_id": "portable-claude-thread"},
         )
+        codex_prompt_marker = "codex_prompt_only_private_marker_7f31"
+        claude_prompt_marker = "claude_prompt_only_private_marker_4aa2"
+        codex_prompt = {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "portable-codex-thread",
+            "turn_id": "portable-turn-1",
+            "prompt": "Preserve durable knowledge across hosts " + codex_prompt_marker,
+        }
+        claude_prompt = {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "portable-claude-thread",
+            "prompt": "Preserve durable knowledge across hosts " + claude_prompt_marker,
+        }
+        codex_session_id = hook_ley_session_id(codex)
+        claude_session_id = hook_ley_session_id(claude)
+        codex_task = hook_call(project, "codex", codex_prompt)
+        codex_after_first = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": codex_session_id, "maxCheckpoints": 5, "maxCharacters": 8_000},
+        )
+        codex_retry = hook_call(project, "codex", codex_prompt)
+        codex_after_retry = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": codex_session_id, "maxCheckpoints": 5, "maxCharacters": 8_000},
+        )
+        claude_task = hook_call(project, "claude", claude_prompt)
+        claude_after_first = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": claude_session_id, "maxCheckpoints": 5, "maxCharacters": 8_000},
+        )
+        claude_retry = hook_call(project, "claude", claude_prompt)
+        claude_after_retry = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": claude_session_id, "maxCheckpoints": 5, "maxCharacters": 8_000},
+        )
         codex_text = json.dumps(codex, sort_keys=True)
         claude_text = json.dumps(claude, sort_keys=True)
-        portable = marker in codex_text and marker in claude_text
+        codex_task_context = automatic_hook_context(codex_task)
+        claude_task_context = automatic_hook_context(claude_task)
+        codex_retry_context = automatic_hook_context(codex_retry)
+        claude_retry_context = automatic_hook_context(claude_retry)
+        portable = (
+            marker in codex_text
+            and marker in claude_text
+            and codex_session_id.startswith("ses_")
+            and claude_session_id.startswith("ses_")
+            and codex_task_context.startswith("# Ley task context (automatic)")
+            and claude_task_context.startswith("# Ley task context (automatic)")
+            and "cpk_" in codex_task_context
+            and "cpk_" in claude_task_context
+            and portable_session_id in codex_task_context
+            and portable_session_id in claude_task_context
+            and "Portable prior work" in codex_task_context
+            and "Portable prior work" in claude_task_context
+            and codex_prompt_marker not in codex_task_context
+            and claude_prompt_marker not in claude_task_context
+            and len(codex_task_context.encode("utf-8")) <= 3_500
+            and len(claude_task_context.encode("utf-8")) <= 3_500
+            and codex_retry_context == codex_task_context
+            and claude_retry_context == claude_task_context
+            and codex_after_first.get("eventCount") == codex_after_retry.get("eventCount")
+            and claude_after_first.get("eventCount") == claude_after_retry.get("eventCount")
+            and codex_after_retry.get("promptCount") == 1
+            and claude_after_retry.get("promptCount") == 1
+            and codex_after_retry.get("contextUtilityBindingCount") == 0
+            and claude_after_retry.get("contextUtilityBindingCount") == 0
+        )
         scores["host_portability"] = portable
-        evidence_text.extend([codex, claude])
+        evidence_text.extend([codex, claude, codex_task, claude_task, codex_retry, claude_retry])
         if not portable:
             failures.append(
-                "durable Ley context was not usable from both Codex and Claude lifecycle hosts"
+                "durable Ley context or automatic task compilation was not usable from both Codex and Claude lifecycle hosts"
             )
 
     baseline_expectation = scenario.get("expected_budget_baseline")

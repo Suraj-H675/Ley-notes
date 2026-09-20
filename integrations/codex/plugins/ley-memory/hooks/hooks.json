@@ -20,8 +20,9 @@
           {
             "type": "command",
             "command": "ley hook --host codex",
+            "additionalContextLimit": 5000,
             "timeout": 20,
-            "statusMessage": "Capturing bounded Ley prompt"
+            "statusMessage": "Loading Ley task context"
           }
         ]
       }
