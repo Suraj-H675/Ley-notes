@@ -1,13 +1,14 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
-    commit_structured_memory_transition, commit_task_memory_transition,
-    commit_unresolved_memory_transition, compile_agent_legibility_map,
-    compile_bootstrap_context_with_registries, compile_project_context_for_agent_with_registries,
-    compile_session_memory, compile_topic_dossier, consolidation_inbox, current_project_state,
-    diagnose_project, evaluate_agent_egress, find_project_context, find_project_graph_path,
-    finish_session, inspect_context_pack, list_learning_contexts, memory_health_report,
-    project_activity_view, project_memory_overview, project_resume_context, propose_learning,
+    commit_plan_memory_transition, commit_structured_memory_transition,
+    commit_task_memory_transition, commit_unresolved_memory_transition,
+    compile_agent_legibility_map, compile_bootstrap_context_with_registries,
+    compile_project_context_for_agent_with_registries, compile_session_memory,
+    compile_topic_dossier, consolidation_inbox, current_project_state, diagnose_project,
+    evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
+    inspect_context_pack, list_learning_contexts, memory_health_report, project_activity_view,
+    project_memory_overview, project_resume_context, propose_learning,
     read_external_connector_snapshot_with_registry, read_learning_context,
     read_project_cited_media, read_project_evidence, read_session_context,
     read_session_turns_context, record_context_utility_observation,
@@ -15,24 +16,25 @@ use ley_core::{
     traverse_project_graph, verify_memory_transition, verify_typed_memory_transition,
     AgentContextAuthorities, AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget,
     AgentLegibilityLimits, AttemptInput, AttemptOutcome, BootstrapSpecificationRegistry,
-    CheckpointInput, CommandInput, CommitStructuredMemoryTransitionInput,
-    CommitTaskMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
-    ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry,
-    ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
-    DecisionInput, EgressPolicyRegistry, ExternalConnector, ExternalConnectorRegistry,
-    FinishSessionInput, GraphDirection, GraphEdgeKind, KnowledgeScopeRegistry, LearningActor,
-    LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
-    LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits,
-    MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry, ProblemInput,
-    ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput, ResolutionInput,
-    RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource, SessionSourceKind,
-    SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
-    TaskStatus, TopicDossierLimits, TypedMemoryCandidateClaim, TypedMemoryTransitionInput,
-    VerificationInput, VerificationStatus, DEFAULT_AGENT_LEGIBILITY_CHARACTERS,
-    DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, DEFAULT_AGENT_LEGIBILITY_SESSIONS,
-    DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
-    DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS,
-    DEFAULT_CONTEXT_TOKENS, DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
+    CheckpointInput, CommandInput, CommitPlanMemoryTransitionInput,
+    CommitStructuredMemoryTransitionInput, CommitTaskMemoryTransitionInput,
+    CommitUnresolvedMemoryTransitionInput, ConsolidationInboxLimits, ContextCompileLimits,
+    ContextMountRegistry, ContextUtilityBindingInput, ContextUtilityObservationInput,
+    CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, ExternalConnector,
+    ExternalConnectorRegistry, FinishSessionInput, GraphDirection, GraphEdgeKind,
+    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningKind, LearningListScope,
+    LearningMutation, LearningProvenance, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
+    MemoryHealthLimits, MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry,
+    ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
+    ResolutionInput, RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource,
+    SessionSourceKind, SessionStatus, SpecificationContextLimits, SpecificationRegistry,
+    StartSessionInput, TaskInput, TaskStatus, TopicDossierLimits, TypedMemoryCandidateClaim,
+    TypedMemoryTransitionInput, VerificationInput, VerificationStatus,
+    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
+    DEFAULT_AGENT_LEGIBILITY_SESSIONS, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
+    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_CONTEXT_COMPILE_RESULTS,
+    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
+    DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
     DEFAULT_CURRENT_STATE_SESSIONS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
@@ -141,7 +143,7 @@ remain historical context. The live Git beacon reads metadata only and does not 
 `liveSourceChecked` true. Prompt and response bodies are excluded from startup context. When a resumed \
 session reports post-checkpoint evidence, inspect only that bounded recovery window with \
 ley_session_memory_compile. Before writing reconstructed structure, check unresolved/Decision/Problem \
-candidates with ley_session_memory_verify and Task candidates with ley_session_memory_verify_typed; \
+candidates with ley_session_memory_verify and Plan/Task candidates with ley_session_memory_verify_typed; \
 `review-required` means structurally accounted, not semantically proven, \
 trusted, or write-authorized. Otherwise request full bounded turn history with ley_session_turns_get \
 only when the current user task needs it.";
@@ -153,8 +155,10 @@ claim, use ley_session_memory_commit_unresolved with the exact candidate fingerp
 evidence set. For one verifier-approved `decision` or `problem` recovery claim, use \
 ley_session_memory_commit_structured with that same exact binding. For a Task, use \
 ley_session_memory_verify_typed so status participates in the candidate fingerprint and overlap \
-check, then use ley_session_memory_commit_task with that exact typed binding. Other candidate kinds \
-remain review-only. Do not substitute the generic checkpoint route for any bound recovery flow and \
+check, then use ley_session_memory_commit_task with that exact typed binding. For a Plan, use the \
+same typed verifier and then ley_session_memory_commit_plan with the exact Plan text/status binding. \
+Other candidate kinds remain review-only. \
+Do not substitute the generic checkpoint route for any bound recovery flow and \
 do not invent Task status or details. Store concise structure, \
 project-relative touched artifacts, and observed outcomes rather than transcripts or full tool \
 output. A verification may include `evidenceArtifactPaths` only for directly supporting artifacts \
@@ -900,6 +904,14 @@ pub struct VerifySessionMemoryParams {
     deny_unknown_fields
 )]
 pub enum McpTypedMemoryCandidateClaim {
+    Plan {
+        #[schemars(length(min = 1, max = 4_000))]
+        text: String,
+        status: McpPlanStatus,
+        #[schemars(length(min = 1, max = 20))]
+        #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+        evidence_record_ids: Vec<String>,
+    },
     Task {
         #[schemars(length(min = 1, max = 256))]
         title: String,
@@ -1018,6 +1030,29 @@ pub struct CommitTaskSessionMemoryParams {
     #[schemars(length(max = 4_000))]
     pub details: String,
     /// Exact recovery evidence IDs cited by the verified Task candidate.
+    #[schemars(length(min = 1, max = 20))]
+    #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+    pub evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitPlanSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    /// Caller-stable idempotency key. Reuse only when retrying this exact bound recovery write.
+    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
+    pub request_id: String,
+    /// Exact event count used by the successful typed verifier call.
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    /// Exact sha256 fingerprint returned by ley_session_memory_verify_typed.
+    #[schemars(regex(pattern = "^sha256:[0-9a-f]{64}$"))]
+    pub candidate_fingerprint: String,
+    #[schemars(length(min = 1, max = 4_000))]
+    pub text: String,
+    pub status: McpPlanStatus,
+    /// Exact recovery evidence IDs cited by the verified Plan candidate.
     #[schemars(length(min = 1, max = 20))]
     #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
     pub evidence_record_ids: Vec<String>,
@@ -1545,6 +1580,7 @@ impl LeyMcpServer {
         if !session_writes_enabled {
             tool_router.disable_route("ley_session_start");
             tool_router.disable_route("ley_session_checkpoint");
+            tool_router.disable_route("ley_session_memory_commit_plan");
             tool_router.disable_route("ley_session_memory_commit_structured");
             tool_router.disable_route("ley_session_memory_commit_task");
             tool_router.disable_route("ley_session_memory_commit_unresolved");
@@ -2653,8 +2689,8 @@ impl LeyMcpServer {
         }))
     }
 
-    /// Verify exactly one typed Task candidate against the current recovery window.
-    /// Task status participates in fingerprinting and duplicate/revision checks. This route is
+    /// Verify exactly one typed Plan or Task candidate against the current recovery window.
+    /// Typed status participates in fingerprinting and duplicate/revision checks. This route is
     /// read-only and does not prove semantic faithfulness or live-source correctness.
     #[tool(
         name = "ley_session_memory_verify_typed",
@@ -2671,6 +2707,15 @@ impl LeyMcpServer {
         Parameters(params): Parameters<VerifyTypedSessionMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
         let candidate = match params.candidate {
+            McpTypedMemoryCandidateClaim::Plan {
+                text,
+                status,
+                evidence_record_ids,
+            } => TypedMemoryCandidateClaim::Plan {
+                text,
+                status: status.into(),
+                evidence_record_ids,
+            },
             McpTypedMemoryCandidateClaim::Task {
                 title,
                 status,
@@ -2796,6 +2841,40 @@ impl LeyMcpServer {
                     title: params.title,
                     status: params.status.into(),
                     details: params.details,
+                    evidence_record_ids: params.evidence_record_ids,
+                },
+            )
+        }))
+    }
+
+    /// Commit exactly one typed-verifier-approved Plan recovery claim.
+    /// Ley re-verifies exact text, status, event count, and complete recovery evidence before
+    /// deriving the one-Plan checkpoint. No Plan field is inferred by this route.
+    #[tool(
+        name = "ley_session_memory_commit_plan",
+        annotations(
+            title = "Commit a verified Ley Plan recovery claim",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_commit_plan(
+        &self,
+        Parameters(params): Parameters<CommitPlanSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_session_write_result(|| {
+            commit_plan_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                CommitPlanMemoryTransitionInput {
+                    request_id: params.request_id,
+                    expected_event_count: params.expected_event_count,
+                    candidate_fingerprint: params.candidate_fingerprint,
+                    text: params.text,
+                    status: params.status.into(),
                     evidence_record_ids: params.evidence_record_ids,
                 },
             )
@@ -3496,7 +3575,7 @@ mod tests {
             &project,
             &vault,
             StartSessionInput {
-                request_id: format!("req_{}", "1".repeat(32)),
+                request_id: format!("req_{}", "a".repeat(32)),
                 name: "Remember MCP context".to_owned(),
                 goal: "Let the next agent resume from bounded cited memory".to_owned(),
                 source: SessionSource::default(),
@@ -4083,6 +4162,7 @@ mod tests {
         );
         let typed_verifier_schema_text = typed_memory_verifier_schema.to_string();
         for value in [
+            "plan",
             "task",
             "pending",
             "in-progress",
@@ -4136,6 +4216,7 @@ mod tests {
                 "ley_session_checkpoint",
                 "ley_session_finish",
                 "ley_session_get",
+                "ley_session_memory_commit_plan",
                 "ley_session_memory_commit_structured",
                 "ley_session_memory_commit_task",
                 "ley_session_memory_commit_unresolved",
@@ -4277,6 +4358,31 @@ mod tests {
         ] {
             assert!(task_schema_text.contains(status));
         }
+        let plan_recovery_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_session_memory_commit_plan")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            plan_recovery_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        assert_eq!(
+            plan_recovery_schema["properties"]["text"]["maxLength"],
+            4_000
+        );
+        assert_eq!(
+            plan_recovery_schema["properties"]["evidenceRecordIds"]["maxItems"],
+            20
+        );
+        let plan_schema_text = plan_recovery_schema.to_string();
+        for status in ["pending", "in-progress", "completed", "blocked"] {
+            assert!(plan_schema_text.contains(status));
+        }
+        assert!(!plan_schema_text.contains("cancelled"));
         for tool in tools {
             let annotations = tool.annotations.unwrap();
             let writes_session = matches!(
@@ -4285,6 +4391,7 @@ mod tests {
                     | "ley_context_utility_observe"
                     | "ley_session_start"
                     | "ley_session_checkpoint"
+                    | "ley_session_memory_commit_plan"
                     | "ley_session_memory_commit_structured"
                     | "ley_session_memory_commit_task"
                     | "ley_session_memory_commit_unresolved"
@@ -6324,6 +6431,163 @@ mod tests {
         assert_eq!(tasks[0]["title"], "Release build");
         assert_eq!(tasks[0]["status"], "completed");
         assert!(checkpoints[0]["decisions"].as_array().unwrap().is_empty());
+        assert!(checkpoints[0]["problems"].as_array().unwrap().is_empty());
+        assert!(checkpoints[0]["unresolved"].as_array().unwrap().is_empty());
+
+        let after = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id,
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(after["state"], "no-unconsolidated-evidence");
+        assert_eq!(after["totalUnconsolidatedEvidence"], 0);
+    }
+
+    #[tokio::test]
+    async fn bound_plan_recovery_uses_typed_verifier_and_replays_exact_retry() {
+        let (_temporary, project, vault, _) = fixture();
+        let write_server =
+            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "Typed Plan recovery".to_owned(),
+                goal: "Recover exact Plan state from bounded turn evidence".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
+        record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "b".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("typed-plan-recovery-turn".to_owned()),
+                text: "Track the implementation plan".to_owned(),
+            },
+        )
+        .unwrap();
+        record_session_response(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "c".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("typed-plan-recovery-turn".to_owned()),
+                text: "The implementation plan is completed".to_owned(),
+            },
+        )
+        .unwrap();
+        let pack = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id: session_id.clone(),
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let evidence_record_ids = pack["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["recordId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(evidence_record_ids.len(), 2);
+        let transition = write_server
+            .session_memory_verify_typed(Parameters(VerifyTypedSessionMemoryParams {
+                session_id: session_id.clone(),
+                expected_event_count: 3,
+                candidate: McpTypedMemoryCandidateClaim::Plan {
+                    text: "Ship the release".to_owned(),
+                    status: McpPlanStatus::Completed,
+                    evidence_record_ids: evidence_record_ids.clone(),
+                },
+                deferred_evidence_record_ids: Vec::new(),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(transition["state"], "review-required");
+        assert_eq!(transition["semanticFaithfulnessProven"], false);
+        assert_eq!(transition["liveSourceChecked"], false);
+        assert_eq!(transition["coverage"]["coverageComplete"], true);
+        let request_id = format!("req_{}", "d".repeat(32));
+        let committed = write_server
+            .session_memory_commit_plan(Parameters(CommitPlanSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id: request_id.clone(),
+                expected_event_count: 3,
+                candidate_fingerprint: transition["candidateFingerprint"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                text: "Ship the release".to_owned(),
+                status: McpPlanStatus::Completed,
+                evidence_record_ids: evidence_record_ids.clone(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(committed.is_error, Some(false));
+        assert_eq!(
+            committed.structured_content.as_ref().unwrap()["eventCount"],
+            4
+        );
+        assert_eq!(
+            committed.structured_content.as_ref().unwrap()["replayed"],
+            false
+        );
+
+        let retry = write_server
+            .session_memory_commit_plan(Parameters(CommitPlanSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id,
+                expected_event_count: 3,
+                candidate_fingerprint: transition["candidateFingerprint"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                text: "Ship the release".to_owned(),
+                status: McpPlanStatus::Completed,
+                evidence_record_ids,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(retry.is_error, Some(false));
+        assert_eq!(retry.structured_content.as_ref().unwrap()["replayed"], true);
+
+        let session = write_server
+            .session_get(Parameters(SessionContextParams {
+                session_id: session_id.clone(),
+                max_checkpoints: Some(5),
+                max_characters: Some(8_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(session["schemaVersion"], 10);
+        assert_eq!(session["eventCount"], 4);
+        let checkpoints = session["checkpoints"].as_array().unwrap();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0]["summary"], "Ship the release");
+        assert!(checkpoints[0]["decisions"].as_array().unwrap().is_empty());
+        assert!(checkpoints[0]["tasks"].as_array().unwrap().is_empty());
         assert!(checkpoints[0]["problems"].as_array().unwrap().is_empty());
         assert!(checkpoints[0]["unresolved"].as_array().unwrap().is_empty());
 

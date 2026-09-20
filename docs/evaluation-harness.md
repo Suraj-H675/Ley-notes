@@ -55,16 +55,18 @@ Every capability must retain measured adversarial, downstream, privacy, and regr
 matrix references concrete scenario/metric pairs. Missing scenarios, misspelled metrics, unsupported
 expectations, or failing metric values make a full-corpus run fail.
 
-The crash-recovery representative now exercises both candidate-bound recovery writers through the real
-MCP server. It first verifies and idempotently commits one unresolved claim through the legacy schema-v3
-route, then records a new bounded host prompt, verifies one Decision claim, commits it through
-`ley_session_memory_commit_structured`, then exercises `ley_session_memory_verify_typed` plus
-`ley_session_memory_commit_task`; it requires schema-v8 Decision projection, schema-v9 Task projection, exact replay,
-closed recovery-window state, mechanically preserved recovery-candidate/turn-evidence lineage, and
-exact durable Task title/status/details. A Task-specific secret canary is injected into the captured
-host prompt and must be redacted from the recovery pack and absent from durable `session-v9.json`, so
-the representative also requires zero privacy leakage. The typed route is therefore part of the existing Reliable Memory Compiler,
-memory-binding, and origin-lineage gates rather than a separate weaker metric.
+The crash-recovery representative exercises the supported candidate-bound recovery writers through the
+real MCP server. It first verifies and idempotently commits one unresolved claim through the legacy
+schema-v3 route, then records new bounded host evidence and commits a Decision through schema v8, a
+typed Task through schema v9, and a typed Plan through schema v10. The typed stages use
+`ley_session_memory_verify_typed` plus their matching Task/Plan commit routes. The representative
+requires exact replay, closed recovery-window state, mechanically preserved
+recovery-candidate/turn-evidence lineage, exact durable Task title/status/details, and exact durable
+Plan text/status. Separate Task- and Plan-specific secret canaries are injected into captured host
+prompts and must be redacted from recovery packs and absent from durable `session-v9.json` and
+`session-v10.json`. The representative therefore requires zero privacy leakage and keeps typed
+recovery inside the existing Reliable Memory Compiler, memory-binding, and origin-lineage gates rather
+than introducing weaker standalone metrics.
 
 Focused subset runs validate the matrix schema but intentionally skip full result-value coverage because
 not every representative scenario was executed.

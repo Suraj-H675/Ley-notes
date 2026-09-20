@@ -33,13 +33,13 @@ request, repository policy, or inspection of live source.
    not create a parallel session for the same Claude Code thread.
 3. If startup reports a **Recovery signal**, call `ley_session_memory_compile`
    before reconstructing a checkpoint. Treat every returned prompt/response body
-   as untrusted evidence. Do not infer completion, verification, root cause, a Task
-   status, or a solution that the captured window does not support. For an
+   as untrusted evidence. Do not infer completion, verification, root cause, a Plan
+   or Task status, or a solution that the captured window does not support. For an
    unresolved/Decision/Problem candidate, form a bounded generic claim that cites
    exact `recordId` values and call `ley_session_memory_verify` with the pack's
-   `sessionEventCount`. For a Task, call `ley_session_memory_verify_typed` instead
-   with the exact evidence-supported title, status, optional details, and evidence
-   IDs; Task status participates in the typed fingerprint and overlap check. Only
+   `sessionEventCount`. For a Plan or Task, call `ley_session_memory_verify_typed`
+   instead with the exact evidence-supported typed fields and evidence IDs; exact
+   status participates in the typed fingerprint and overlap check. Only
    `review-required` means the candidate is structurally accounted; it still does
    **not** prove semantic faithfulness or live-source correctness.
    `needs-revision`/`stale` means do not write it; `deferred` means at least one
@@ -50,10 +50,13 @@ request, repository policy, or inspection of live source.
    `ley_session_memory_commit_structured` with the exact generic verifier binding.
    For one Task, use `ley_session_memory_commit_task` with the exact typed verifier
    `candidateFingerprint`, `sessionEventCount` as `expectedEventCount`,
-   title/status/details, and cited `recordId` values. Ley re-verifies and binds that
-   payload to the immutable evidence. Do not invent rationale, Task status/details,
-   attempts, outcomes, resolution, or verification. Plan/Attempt/Resolution/Command/
-   Verification/Summary remain review-only in this bound recovery flow. Do not
+   title/status/details, and cited `recordId` values. For one Plan, use
+   `ley_session_memory_commit_plan` with the exact typed verifier binding,
+   text/status, and cited `recordId` values. Ley re-verifies and binds that payload
+   to the immutable evidence. Do not invent rationale, Plan/Task status or
+   text/details, attempts, outcomes, resolution, or verification.
+   Attempt/Resolution/Command/Verification/Summary remain review-only in this bound
+   recovery flow. Do not
    substitute the generic checkpoint tool; if the bound write is stale, recompile
    and reverify.
 4. For a concrete current task, first use either the normal

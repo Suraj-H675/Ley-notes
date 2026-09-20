@@ -107,7 +107,7 @@ candidate through the separate verifier/write flow.
 ## Deliberately deferred
 
 - multi-claim atomic recovery;
-- Plan recovery;
+- Plan recovery; ADR 0062 later implements it through the typed-v2 verifier plus schema v10;
 - nested Problem Attempt/Resolution recovery;
 - Command or Verification recovery;
 - automatic/model-generated candidates inside Ley;

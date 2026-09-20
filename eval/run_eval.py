@@ -5977,6 +5977,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             task_compiled: dict[str, object] | None = None
             task_projection: dict[str, object] | None = None
             task_secret_canary = str(scenario.get("task_secret_canary", ""))
+            plan_compiled: dict[str, object] | None = None
+            plan_projection: dict[str, object] | None = None
+            plan_secret_canary = str(scenario.get("plan_secret_canary", ""))
             if scenario.get("expected_recovery_checkpoint"):
                 event_count = int(compiled.get("sessionEventCount", 0))
                 evidence = compiled.get("evidence", [])
@@ -6131,6 +6134,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 task_binding_ok = True
                 task_lineage_ok = True
                 task_after_ok = True
+                plan_binding_ok = True
+                plan_lineage_ok = True
+                plan_after_ok = True
                 if scenario.get("expected_typed_recovery"):
                     typed_prompt = "Use SQLite for local-first persistence"
                     hook_call(
@@ -6550,6 +6556,251 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                         scores["origin_lineage"] = (
                             lineage_ok and typed_lineage_ok and task_lineage_ok
                         )
+                if scenario.get("expected_plan_recovery"):
+                    plan_prompt = (
+                        "Plan state: Ship the release is completed. "
+                        f"api_key: {plan_secret_canary}"
+                    )
+                    hook_call(
+                        project,
+                        "codex",
+                        {
+                            "hook_event_name": "UserPromptSubmit",
+                            "session_id": "ley-eval-crash-thread",
+                            "turn_id": "ley-eval-plan-recovery-turn",
+                            "prompt": plan_prompt,
+                        },
+                    )
+                    plan_compiled = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                    )
+                    plan_event_count = int(plan_compiled.get("sessionEventCount", 0))
+                    plan_evidence = plan_compiled.get("evidence", [])
+                    plan_prompt_record = next(
+                        (
+                            item
+                            for item in plan_evidence
+                            if isinstance(item, dict)
+                            and item.get("kind") == "user-prompt"
+                            and item.get("recordId")
+                        ),
+                        {},
+                    )
+                    plan_record_id = str(plan_prompt_record.get("recordId", ""))
+                    plan_prompt_text = str(plan_prompt_record.get("text", ""))
+                    plan_redaction_ok = (
+                        bool(plan_secret_canary)
+                        and plan_secret_canary not in plan_prompt_text
+                        and "[REDACTED:" in plan_prompt_text
+                    )
+                    if not plan_redaction_ok:
+                        failures.append(
+                            "typed Plan recovery evidence did not redact the Plan-specific secret canary"
+                        )
+                    plan_transition = mcp_call(
+                        project,
+                        "ley_session_memory_verify_typed",
+                        {
+                            "sessionId": session_id,
+                            "expectedEventCount": plan_event_count,
+                            "candidate": {
+                                "kind": "plan",
+                                "text": "Ship the release",
+                                "status": "completed",
+                                "evidenceRecordIds": [plan_record_id],
+                            },
+                            "deferredEvidenceRecordIds": [],
+                        },
+                    )
+                    plan_commit_args = {
+                        "sessionId": session_id,
+                        "requestId": request_id(f"{scenario['id']}:plan-memory-recovery"),
+                        "expectedEventCount": plan_event_count,
+                        "candidateFingerprint": plan_transition.get("candidateFingerprint", ""),
+                        "text": "Ship the release",
+                        "status": "completed",
+                        "evidenceRecordIds": [plan_record_id],
+                    }
+                    plan_receipt = mcp_call(
+                        project,
+                        "ley_session_memory_commit_plan",
+                        plan_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    plan_retry = mcp_call(
+                        project,
+                        "ley_session_memory_commit_plan",
+                        plan_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    plan_session = mcp_call(
+                        project,
+                        "ley_session_get",
+                        {"sessionId": session_id, "maxCheckpoints": 10, "maxCharacters": 16_000},
+                    )
+                    plan_checkpoints = plan_session.get("checkpoints", [])
+                    plan_checkpoint = (
+                        plan_checkpoints[-1]
+                        if isinstance(plan_checkpoints, list)
+                        and plan_checkpoints
+                        and isinstance(plan_checkpoints[-1], dict)
+                        else {}
+                    )
+                    plan_diagnostic = cli_json(["doctor", str(project), "--json"])
+                    plan_identity = (
+                        plan_diagnostic.get("identity", {})
+                        if isinstance(plan_diagnostic, dict)
+                        else {}
+                    )
+                    plan_project_id = (
+                        str(plan_identity.get("projectId", ""))
+                        if isinstance(plan_identity, dict)
+                        else ""
+                    )
+                    plan_projection_path = (
+                        vault
+                        / ".ley"
+                        / "agent-memory"
+                        / "projects"
+                        / plan_project_id
+                        / "sessions"
+                        / session_id
+                        / "session-v10.json"
+                    )
+                    if plan_project_id and plan_projection_path.is_file():
+                        loaded_plan_projection = json.loads(
+                            plan_projection_path.read_text(encoding="utf-8")
+                        )
+                        if isinstance(loaded_plan_projection, dict):
+                            plan_projection = loaded_plan_projection
+                    durable_plan_checkpoints = (
+                        plan_projection.get("checkpoints", [])
+                        if isinstance(plan_projection, dict)
+                        else []
+                    )
+                    durable_plan_checkpoint = (
+                        durable_plan_checkpoints[-1]
+                        if isinstance(durable_plan_checkpoints, list)
+                        and durable_plan_checkpoints
+                        and isinstance(durable_plan_checkpoints[-1], dict)
+                        else {}
+                    )
+                    durable_plan_records = durable_plan_checkpoint.get("plan", [])
+                    durable_plan_ok = (
+                        isinstance(durable_plan_records, list)
+                        and len(durable_plan_records) == 1
+                        and isinstance(durable_plan_records[0], dict)
+                        and durable_plan_records[0].get("text") == "Ship the release"
+                        and durable_plan_records[0].get("status") == "completed"
+                        and plan_secret_canary not in serialized(plan_projection)
+                    )
+                    if not durable_plan_ok:
+                        failures.append(
+                            "typed Plan recovery did not durably preserve exact state or leaked the Plan secret canary"
+                        )
+                    plan_binding_ok = (
+                        plan_transition.get("state") == "review-required"
+                        and plan_transition.get("semanticFaithfulnessProven") is False
+                        and plan_transition.get("liveSourceChecked") is False
+                        and bool(plan_transition.get("coverage", {}).get("coverageComplete"))
+                        and str(plan_transition.get("candidateFingerprint", "")).startswith("sha256:")
+                        and plan_receipt.get("eventCount") == plan_event_count + 1
+                        and plan_receipt.get("replayed") is False
+                        and plan_retry.get("eventCount") == plan_event_count + 1
+                        and plan_retry.get("replayed") is True
+                        and plan_session.get("schemaVersion") == 10
+                        and plan_checkpoint.get("summary") == "Ship the release"
+                        and plan_checkpoint.get("decisions") == []
+                        and plan_checkpoint.get("tasks") == []
+                        and plan_checkpoint.get("problems") == []
+                        and plan_checkpoint.get("unresolved") == []
+                        and durable_plan_ok
+                        and plan_redaction_ok
+                    )
+                    if not plan_binding_ok:
+                        failures.append(
+                            "typed Plan recovery did not preserve verifier binding/idempotency/projection"
+                        )
+                    if scenario.get("expected_origin_lineage"):
+                        plan_checkpoint_id = str(plan_checkpoint.get("checkpointId", ""))
+                        plan_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(f"{scenario['id']}:plan-origin-lineage"),
+                                "kind": "fact",
+                                "title": "Recovered release Plan state",
+                                "guidance": "Ship the release plan completed",
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": plan_checkpoint_id,
+                                        "note": "Derived only from the typed Plan recovery checkpoint.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        plan_learning_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(plan_learning.get("learningId", "")),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        plan_lineage = plan_learning_context.get("originLineage", {})
+                        plan_sources = (
+                            plan_lineage.get("sources", [])
+                            if isinstance(plan_lineage, dict)
+                            else []
+                        )
+                        plan_lineage_ok = (
+                            bool(plan_checkpoint_id)
+                            and plan_lineage.get("mechanicallyResolved") is True
+                            and plan_lineage.get("causalCompletenessProven") is False
+                            and plan_lineage.get("automaticAuthorityCeiling") == "review-required"
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == plan_transition.get("candidateFingerprint")
+                                for source in plan_sources
+                            )
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == plan_record_id
+                                for source in plan_sources
+                            )
+                        )
+                        if not plan_lineage_ok:
+                            failures.append(
+                                "typed Plan recovery-derived learning did not preserve the bound origin chain"
+                            )
+                    plan_after = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                    )
+                    plan_after_ok = (
+                        plan_after.get("state") == "no-unconsolidated-evidence"
+                        and plan_after.get("totalUnconsolidatedEvidence") == 0
+                    )
+                    scores["memory_binding"] = (
+                        binding_ok and typed_binding_ok and task_binding_ok and plan_binding_ok
+                    )
+                    if scenario.get("expected_origin_lineage"):
+                        scores["origin_lineage"] = (
+                            lineage_ok
+                            and typed_lineage_ok
+                            and task_lineage_ok
+                            and plan_lineage_ok
+                        )
                 recovery_ok = (
                     state_ok
                     and transition_ok
@@ -6563,6 +6814,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and task_binding_ok
                     and task_lineage_ok
                     and task_after_ok
+                    and plan_binding_ok
+                    and plan_lineage_ok
+                    and plan_after_ok
                 )
             scores["memory_recovery"] = recovery_ok
             privacy_payloads = [compiled]
@@ -6572,9 +6826,15 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 privacy_payloads.append(task_compiled)
             if task_projection is not None:
                 privacy_payloads.append(task_projection)
+            if plan_compiled is not None:
+                privacy_payloads.append(plan_compiled)
+            if plan_projection is not None:
+                privacy_payloads.append(plan_projection)
             privacy_canaries = [str(project), str(vault)]
             if task_secret_canary:
                 privacy_canaries.append(task_secret_canary)
+            if plan_secret_canary:
+                privacy_canaries.append(plan_secret_canary)
             scores["privacy_violation_rate"] = privacy_violation_rate(
                 privacy_canaries, privacy_payloads
             )

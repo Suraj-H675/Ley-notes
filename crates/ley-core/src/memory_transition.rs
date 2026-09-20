@@ -1,13 +1,15 @@
 use crate::session::{
-    checkpoint_recovered_structured_session, checkpoint_recovered_task_session,
-    checkpoint_recovered_unresolved_session, read_session_for_memory_compiler,
+    checkpoint_recovered_plan_session, checkpoint_recovered_structured_session,
+    checkpoint_recovered_task_session, checkpoint_recovered_unresolved_session,
+    read_session_for_memory_compiler, replay_recovered_plan_session_if_present,
     replay_recovered_structured_session_if_present, replay_recovered_task_session_if_present,
-    replay_recovered_unresolved_session_if_present, RecoveredStructuredCheckpointInput,
-    RecoveredStructuredKind, RecoveredTaskCheckpointInput, RecoveredUnresolvedCheckpointInput,
+    replay_recovered_unresolved_session_if_present, RecoveredPlanCheckpointInput,
+    RecoveredStructuredCheckpointInput, RecoveredStructuredKind, RecoveredTaskCheckpointInput,
+    RecoveredUnresolvedCheckpointInput,
 };
 use crate::{
-    AgentSession, LeyCoreError, SessionMutation, SessionStatus, SessionTurnEvidence, TaskStatus,
-    TurnEvidenceRetention, SESSION_EVENT_LIMIT,
+    AgentSession, LeyCoreError, PlanStatus, SessionMutation, SessionStatus, SessionTurnEvidence,
+    TaskStatus, TurnEvidenceRetention, SESSION_EVENT_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -119,6 +121,17 @@ pub struct CommitTaskMemoryTransitionInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitPlanMemoryTransitionInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub text: String,
+    pub status: PlanStatus,
+    pub evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
     rename_all = "kebab-case",
@@ -126,6 +139,11 @@ pub struct CommitTaskMemoryTransitionInput {
     deny_unknown_fields
 )]
 pub enum TypedMemoryCandidateClaim {
+    Plan {
+        text: String,
+        status: PlanStatus,
+        evidence_record_ids: Vec<String>,
+    },
     Task {
         title: String,
         status: TaskStatus,
@@ -270,6 +288,20 @@ pub fn verify_typed_memory_transition(
     });
     verification.overlaps.clear();
     match &input.candidate {
+        TypedMemoryCandidateClaim::Plan { text, status, .. } => {
+            if let Some(check) = verification.claim_checks.first_mut() {
+                check.subject = text.trim().to_owned();
+            }
+            if !text.trim().is_empty() {
+                for overlap in find_plan_overlaps(0, text, *status, &session) {
+                    if verification.overlaps.len() >= MAX_MEMORY_TRANSITION_OVERLAPS {
+                        break;
+                    }
+                    verification.issues.push(overlap_issue(&overlap));
+                    verification.overlaps.push(overlap);
+                }
+            }
+        }
         TypedMemoryCandidateClaim::Task {
             title,
             status,
@@ -462,6 +494,57 @@ pub fn commit_task_memory_transition(
     checkpoint_recovered_task_session(project_start, vault, session_id, bound_input)
 }
 
+pub fn commit_plan_memory_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: CommitPlanMemoryTransitionInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    let bound_input = RecoveredPlanCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        evidence_record_ids: input.evidence_record_ids.clone(),
+        text: input.text.clone(),
+        status: input.status,
+    };
+    if let Some(replayed) = replay_recovered_plan_session_if_present(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        bound_input.clone(),
+    )? {
+        return Ok(replayed);
+    }
+    let verification = verify_typed_memory_transition(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        TypedMemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            candidate: TypedMemoryCandidateClaim::Plan {
+                text: input.text.clone(),
+                status: input.status,
+                evidence_record_ids: input.evidence_record_ids.clone(),
+            },
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "bound plan recovery commit requires one current review-required plan candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "plan recovery candidate fingerprint does not match the current typed transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_plan_session(project_start, vault, session_id, bound_input)
+}
+
 fn validate_typed_input(input: &TypedMemoryTransitionInput) -> Result<(), LeyCoreError> {
     if input.deferred_evidence_record_ids.len() > MAX_MEMORY_TRANSITION_DEFERRED_EVIDENCE {
         return Err(LeyCoreError::InvalidSessionRequest(format!(
@@ -469,6 +552,22 @@ fn validate_typed_input(input: &TypedMemoryTransitionInput) -> Result<(), LeyCor
         )));
     }
     match &input.candidate {
+        TypedMemoryCandidateClaim::Plan {
+            text,
+            evidence_record_ids,
+            ..
+        } => {
+            if text.chars().count() > MAX_MEMORY_TRANSITION_STATEMENT_CHARACTERS {
+                return Err(LeyCoreError::InvalidSessionRequest(format!(
+                    "typed plan text exceeds {MAX_MEMORY_TRANSITION_STATEMENT_CHARACTERS} characters"
+                )));
+            }
+            if evidence_record_ids.len() > MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM {
+                return Err(LeyCoreError::InvalidSessionRequest(format!(
+                    "typed plan cannot cite more than {MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM} evidence records"
+                )));
+            }
+        }
         TypedMemoryCandidateClaim::Task {
             title,
             details,
@@ -497,6 +596,16 @@ fn validate_typed_input(input: &TypedMemoryTransitionInput) -> Result<(), LeyCor
 
 fn typed_candidate_as_generic_input(input: &TypedMemoryTransitionInput) -> MemoryTransitionInput {
     let claim = match &input.candidate {
+        TypedMemoryCandidateClaim::Plan {
+            text,
+            evidence_record_ids,
+            ..
+        } => MemoryCandidateClaim {
+            kind: MemoryCandidateKind::Plan,
+            subject: "typed-plan".to_owned(),
+            statement: text.clone(),
+            evidence_record_ids: evidence_record_ids.clone(),
+        },
         TypedMemoryCandidateClaim::Task {
             title,
             details,
@@ -551,6 +660,27 @@ pub(crate) fn task_candidate_fingerprint(
     )
 }
 
+pub(crate) fn plan_candidate_fingerprint(
+    session_id: &str,
+    expected_event_count: u64,
+    text: &str,
+    status: PlanStatus,
+    evidence_record_ids: &[String],
+) -> String {
+    typed_candidate_fingerprint(
+        session_id,
+        &TypedMemoryTransitionInput {
+            expected_event_count,
+            candidate: TypedMemoryCandidateClaim::Plan {
+                text: text.to_owned(),
+                status,
+                evidence_record_ids: evidence_record_ids.to_vec(),
+            },
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )
+}
+
 fn typed_candidate_fingerprint(session_id: &str, input: &TypedMemoryTransitionInput) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"ley-memory-transition-v2-typed");
@@ -559,6 +689,24 @@ fn typed_candidate_fingerprint(session_id: &str, input: &TypedMemoryTransitionIn
     hasher.update([0]);
     hasher.update(input.expected_event_count.to_le_bytes());
     match &input.candidate {
+        TypedMemoryCandidateClaim::Plan {
+            text,
+            status,
+            evidence_record_ids,
+        } => {
+            hasher.update([0]);
+            hasher.update(b"plan");
+            hasher.update([0]);
+            hasher.update(normalize(text).as_bytes());
+            hasher.update([0]);
+            hasher.update(plan_status_label(*status).as_bytes());
+            let mut evidence = evidence_record_ids.clone();
+            evidence.sort();
+            for record_id in evidence {
+                hasher.update([0]);
+                hasher.update(record_id.as_bytes());
+            }
+        }
         TypedMemoryCandidateClaim::Task {
             title,
             status,
@@ -592,6 +740,48 @@ fn typed_candidate_fingerprint(session_id: &str, input: &TypedMemoryTransitionIn
 
 fn task_candidate_statement(status: TaskStatus, details: &str) -> String {
     format!("status: {}; details: {details}", task_status_label(status))
+}
+
+fn plan_status_label(status: PlanStatus) -> &'static str {
+    match status {
+        PlanStatus::Pending => "pending",
+        PlanStatus::InProgress => "in-progress",
+        PlanStatus::Completed => "completed",
+        PlanStatus::Blocked => "blocked",
+    }
+}
+
+fn find_plan_overlaps(
+    claim_index: usize,
+    text: &str,
+    status: PlanStatus,
+    session: &AgentSession,
+) -> Vec<MemoryTransitionOverlap> {
+    let candidate_text = normalize(text);
+    let mut overlaps = Vec::new();
+    for plan in session
+        .checkpoints
+        .iter()
+        .flat_map(|checkpoint| checkpoint.plan.iter())
+        .filter(|plan| normalize(&plan.text) == candidate_text)
+    {
+        overlaps.push(MemoryTransitionOverlap {
+            claim_index,
+            kind: MemoryCandidateKind::Plan,
+            subject: text.trim().to_owned(),
+            overlap_kind: if plan.status == status {
+                MemoryTransitionOverlapKind::ExactDuplicate
+            } else {
+                MemoryTransitionOverlapKind::SameSubjectDifferentContent
+            },
+            existing_record_id: plan.id.clone(),
+            existing_statement: bounded_statement(&format!(
+                "status: {}",
+                plan_status_label(plan.status)
+            )),
+        });
+    }
+    overlaps
 }
 
 fn task_validation_statement(details: &str) -> String {
@@ -1230,7 +1420,7 @@ mod tests {
     use crate::{
         checkpoint_session, ingest_project, initialize_project, record_session_prompt,
         record_session_response, start_session, CaptureMode, CheckpointInput, DecisionInput,
-        StartSessionInput, TaskInput, TurnEvidenceInput, TurnEvidenceOrigin,
+        PlanItemInput, StartSessionInput, TaskInput, TurnEvidenceInput, TurnEvidenceOrigin,
     };
     use tempfile::tempdir;
 
@@ -1352,6 +1542,36 @@ mod tests {
             commands: Vec::new(),
             verification: Vec::new(),
             unresolved: Vec::new(),
+        }
+    }
+
+    fn plan_checkpoint(request_digit: char, text: &str, status: PlanStatus) -> CheckpointInput {
+        CheckpointInput {
+            request_id: format!("req_{}", request_digit.to_string().repeat(32)),
+            summary: format!("Recorded plan: {text}"),
+            plan: vec![PlanItemInput {
+                text: text.to_owned(),
+                status,
+            }],
+            decisions: Vec::new(),
+            tasks: Vec::new(),
+            problems: Vec::new(),
+            touched_artifacts: Vec::new(),
+            commands: Vec::new(),
+            verification: Vec::new(),
+            unresolved: Vec::new(),
+        }
+    }
+
+    fn typed_plan(
+        text: &str,
+        status: PlanStatus,
+        evidence: Vec<String>,
+    ) -> TypedMemoryCandidateClaim {
+        TypedMemoryCandidateClaim::Plan {
+            text: text.to_owned(),
+            status,
+            evidence_record_ids: evidence,
         }
     }
 
@@ -1515,6 +1735,269 @@ mod tests {
             pending.candidate_fingerprint,
             completed.candidate_fingerprint
         );
+    }
+
+    #[test]
+    fn typed_plan_candidate_binds_status_and_accepts_full_text_limit() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Track the implementation plan",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-1",
+            "The implementation plan is pending",
+        );
+        let text = "x".repeat(MAX_MEMORY_TRANSITION_STATEMENT_CHARACTERS);
+        let pending = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: typed_plan(
+                    &text,
+                    PlanStatus::Pending,
+                    vec![response_id.clone(), prompt_id.clone()],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(pending.state, MemoryTransitionState::ReviewRequired);
+        assert!(pending.issues.is_empty());
+        assert!(pending.overlaps.is_empty());
+        assert_eq!(pending.claim_checks[0].kind, MemoryCandidateKind::Plan);
+        assert_eq!(pending.claim_checks[0].subject, text);
+
+        let completed = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: typed_plan(
+                    &text,
+                    PlanStatus::Completed,
+                    vec![prompt_id.clone(), response_id.clone()],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(completed.state, MemoryTransitionState::ReviewRequired);
+        assert_ne!(
+            pending.candidate_fingerprint,
+            completed.candidate_fingerprint
+        );
+        let committed = commit_plan_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CommitPlanMemoryTransitionInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                expected_event_count: 3,
+                candidate_fingerprint: completed.candidate_fingerprint,
+                text: text.clone(),
+                status: PlanStatus::Completed,
+                evidence_record_ids: vec![response_id, prompt_id],
+            },
+        )
+        .unwrap();
+        assert_eq!(committed.session.schema_version, 10);
+        assert_eq!(committed.session.checkpoints[0].plan[0].text, text);
+        assert_eq!(
+            committed.session.checkpoints[0].plan[0].status,
+            PlanStatus::Completed
+        );
+    }
+
+    #[test]
+    fn typed_plan_overlap_treats_status_change_as_revision() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        checkpoint_session(
+            &project,
+            &vault,
+            &session_id,
+            plan_checkpoint('2', "Ship the release", PlanStatus::Pending),
+        )
+        .unwrap();
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-2",
+            "The release plan state changed",
+        );
+
+        let duplicate = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: typed_plan(
+                    "Ship the release",
+                    PlanStatus::Pending,
+                    vec![prompt_id.clone()],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(duplicate.state, MemoryTransitionState::NeedsRevision);
+        assert_eq!(duplicate.overlaps.len(), 1);
+        assert_eq!(
+            duplicate.overlaps[0].overlap_kind,
+            MemoryTransitionOverlapKind::ExactDuplicate
+        );
+        assert!(duplicate.overlaps[0]
+            .existing_statement
+            .contains("status: pending"));
+
+        let changed = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: typed_plan("Ship the release", PlanStatus::Completed, vec![prompt_id]),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(changed.state, MemoryTransitionState::NeedsRevision);
+        assert_eq!(changed.overlaps.len(), 1);
+        assert_eq!(
+            changed.overlaps[0].overlap_kind,
+            MemoryTransitionOverlapKind::SameSubjectDifferentContent
+        );
+    }
+
+    #[test]
+    fn typed_plan_verifier_preserves_fail_closed_evidence_semantics() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Track the implementation plan",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-1",
+            "The implementation plan is pending",
+        );
+
+        let deferred = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: typed_plan(
+                    "Ship the release",
+                    PlanStatus::Pending,
+                    vec![prompt_id.clone()],
+                ),
+                deferred_evidence_record_ids: vec![response_id.clone()],
+            },
+        )
+        .unwrap();
+        assert_eq!(deferred.state, MemoryTransitionState::Deferred);
+        assert!(deferred.coverage.coverage_complete);
+        assert_eq!(deferred.coverage.deferred_evidence, 1);
+
+        let stale = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 2,
+                candidate: typed_plan(
+                    "Ship the release",
+                    PlanStatus::Pending,
+                    vec![prompt_id.clone(), response_id.clone()],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(stale.state, MemoryTransitionState::Stale);
+        assert!(stale
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::StaleEventCount));
+
+        let invalid = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: typed_plan(
+                    "Ship the release",
+                    PlanStatus::Pending,
+                    vec![format!("tev_{}", "f".repeat(32))],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(invalid.state, MemoryTransitionState::NeedsRevision);
+        assert!(invalid
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::InvalidEvidenceReference));
+        assert!(invalid
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::UncoveredEvidence));
+
+        let (_base, minimal_project, minimal_vault, minimal_session_id) =
+            fixture(CaptureMode::Minimal);
+        let minimal_prompt_id = prompt(
+            &minimal_project,
+            &minimal_vault,
+            &minimal_session_id,
+            '4',
+            "turn-minimal",
+            "Track the implementation plan",
+        );
+        let metadata_only = verify_typed_memory_transition(
+            &minimal_project,
+            &minimal_vault,
+            &minimal_session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 2,
+                candidate: typed_plan(
+                    "Ship the release",
+                    PlanStatus::Pending,
+                    vec![minimal_prompt_id],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(metadata_only.state, MemoryTransitionState::NeedsRevision);
+        assert!(metadata_only
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::MetadataOnlyEvidence));
     }
 
     #[test]
@@ -1858,6 +2341,73 @@ mod tests {
     }
 
     #[test]
+    fn verified_plan_candidate_commits_as_schema_v10_and_exact_retry_replays() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Track the implementation plan",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-1",
+            "The implementation plan is completed",
+        );
+        let verification = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: typed_plan(
+                    "Ship the release",
+                    PlanStatus::Completed,
+                    vec![prompt_id.clone(), response_id.clone()],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(verification.state, MemoryTransitionState::ReviewRequired);
+        let input = CommitPlanMemoryTransitionInput {
+            request_id: format!("req_{}", "4".repeat(32)),
+            expected_event_count: 3,
+            candidate_fingerprint: verification.candidate_fingerprint,
+            text: "Ship the release".to_owned(),
+            status: PlanStatus::Completed,
+            evidence_record_ids: vec![response_id, prompt_id],
+        };
+
+        let committed =
+            commit_plan_memory_transition(&project, &vault, &session_id, input.clone()).unwrap();
+        assert!(!committed.replayed);
+        assert_eq!(committed.session.event_count, 4);
+        assert_eq!(committed.session.schema_version, 10);
+        assert!(committed.session_path.ends_with("session-v10.json"));
+        assert_eq!(committed.session.checkpoints.len(), 1);
+        let checkpoint = &committed.session.checkpoints[0];
+        assert_eq!(checkpoint.summary, "Ship the release");
+        assert_eq!(checkpoint.plan.len(), 1);
+        assert_eq!(checkpoint.plan[0].text, "Ship the release");
+        assert_eq!(checkpoint.plan[0].status, PlanStatus::Completed);
+        assert!(checkpoint.decisions.is_empty());
+        assert!(checkpoint.tasks.is_empty());
+        assert!(checkpoint.problems.is_empty());
+        assert!(checkpoint.unresolved.is_empty());
+
+        let replayed = commit_plan_memory_transition(&project, &vault, &session_id, input).unwrap();
+        assert!(replayed.replayed);
+        assert_eq!(replayed.event_id, committed.event_id);
+        assert_eq!(replayed.session.event_count, 4);
+    }
+
+    #[test]
     fn bound_task_commit_rejects_status_substitution_normalization_drift_and_stale_window() {
         let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
         let prompt_id = prompt(
@@ -1963,6 +2513,121 @@ mod tests {
         );
         assert!(matches!(
             commit_task_memory_transition(&project, &vault, &session_id, base),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("review-required")
+        ));
+        assert_eq!(
+            read_session_for_memory_compiler(&project, &vault, &session_id)
+                .unwrap()
+                .0
+                .event_count,
+            4
+        );
+    }
+
+    #[test]
+    fn bound_plan_commit_rejects_status_substitution_normalization_drift_and_stale_window() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Track the implementation plan",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-1",
+            "The implementation plan is completed",
+        );
+        let verification = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: typed_plan(
+                    "Ship the release",
+                    PlanStatus::Completed,
+                    vec![prompt_id.clone(), response_id.clone()],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        let base = CommitPlanMemoryTransitionInput {
+            request_id: format!("req_{}", "4".repeat(32)),
+            expected_event_count: 3,
+            candidate_fingerprint: verification.candidate_fingerprint,
+            text: "Ship the release".to_owned(),
+            status: PlanStatus::Completed,
+            evidence_record_ids: vec![prompt_id.clone(), response_id.clone()],
+        };
+
+        assert!(matches!(
+            commit_plan_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitPlanMemoryTransitionInput {
+                    status: PlanStatus::Pending,
+                    ..base.clone()
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("fingerprint")
+        ));
+
+        let secret_text = "Ship the release with token=secret-value";
+        let secret_verification = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: 3,
+                candidate: typed_plan(
+                    secret_text,
+                    PlanStatus::Completed,
+                    vec![prompt_id.clone(), response_id.clone()],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            secret_verification.state,
+            MemoryTransitionState::ReviewRequired
+        );
+        assert!(matches!(
+            commit_plan_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitPlanMemoryTransitionInput {
+                    request_id: format!("req_{}", "5".repeat(32)),
+                    candidate_fingerprint: secret_verification.candidate_fingerprint,
+                    text: secret_text.to_owned(),
+                    ..base.clone()
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("changed under checkpoint normalization")
+        ));
+
+        prompt(
+            &project,
+            &vault,
+            &session_id,
+            '6',
+            "turn-2",
+            "New evidence arrived after verification",
+        );
+        assert!(matches!(
+            commit_plan_memory_transition(&project, &vault, &session_id, base),
             Err(LeyCoreError::InvalidSessionRequest(message))
                 if message.contains("review-required")
         ));
@@ -2778,6 +3443,26 @@ mod tests {
         assert_eq!(
             fingerprint,
             "sha256:60ec88a999de9f414565284ecb7a301990af31754d1ec22383023930fc8ce4f0"
+        );
+    }
+
+    #[test]
+    fn typed_task_v2_candidate_fingerprint_is_byte_stable() {
+        let session_id = format!("ses_{}", "1".repeat(32));
+        let fingerprint = task_candidate_fingerprint(
+            &session_id,
+            3,
+            "Release build",
+            TaskStatus::Completed,
+            "Smoke test passed",
+            &[
+                format!("tev_{}", "b".repeat(32)),
+                format!("tev_{}", "a".repeat(32)),
+            ],
+        );
+        assert_eq!(
+            fingerprint,
+            "sha256:69a5a1839ba8559de288025d1f1e9b47e72e7206c2fe197332a43343a35856be"
         );
     }
 
