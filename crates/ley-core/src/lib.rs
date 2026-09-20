@@ -59,13 +59,19 @@ pub use binding::{
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
 };
 pub use bootstrap_specification::{
+    compile_bootstrap_context, compile_bootstrap_context_with_registries,
     compile_bootstrap_specifications, compile_bootstrap_specifications_with_registries,
     initialize_project_retiring_bootstrap, BootstrapCompileCoverage, BootstrapCompileExclusion,
-    BootstrapCompileExclusionReason, BootstrapCompiledSpecification, BootstrapSpecificationContext,
-    BootstrapSpecificationGrant, BootstrapSpecificationList, BootstrapSpecificationMutation,
-    BootstrapSpecificationRegistry, BOOTSTRAP_SPECIFICATION_REGISTRY_FILE,
+    BootstrapCompileExclusionReason, BootstrapCompiledReference, BootstrapCompiledSpecification,
+    BootstrapContext, BootstrapReferenceCoverage, BootstrapReferenceExclusion,
+    BootstrapReferenceGrant, BootstrapReferenceList, BootstrapReferenceMutation,
+    BootstrapReferenceScope, BootstrapReferenceScopeState, BootstrapReferenceStatus,
+    BootstrapSpecificationContext, BootstrapSpecificationGrant, BootstrapSpecificationList,
+    BootstrapSpecificationMutation, BootstrapSpecificationRegistry,
+    BOOTSTRAP_CONTEXT_SCHEMA_VERSION, BOOTSTRAP_SPECIFICATION_REGISTRY_FILE,
     BOOTSTRAP_SPECIFICATION_REGISTRY_SCHEMA_VERSION, BOOTSTRAP_SPECIFICATION_SCHEMA_VERSION,
-    MAX_BOOTSTRAP_SPECIFICATIONS_PER_WORKSPACE, MAX_BOOTSTRAP_WORKSPACES,
+    MAX_BOOTSTRAP_REFERENCES_PER_WORKSPACE, MAX_BOOTSTRAP_SPECIFICATIONS_PER_WORKSPACE,
+    MAX_BOOTSTRAP_WORKSPACES,
 };
 pub use consolidation_inbox::{
     consolidation_inbox, ConsolidationAction, ConsolidationInbox, ConsolidationInboxCoverage,

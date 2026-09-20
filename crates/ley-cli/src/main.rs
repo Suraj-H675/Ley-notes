@@ -61,6 +61,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "egress" => egress(&arguments[1..]),
         "connector" => connector(&arguments[1..]),
         "bootstrap-spec" => bootstrap_specification(&arguments[1..]),
+        "bootstrap-ref" => bootstrap_reference(&arguments[1..]),
         "mount" => mount(&arguments[1..]),
         "scope" => scope(&arguments[1..]),
         "policy-bundle" => policy_bundle(&arguments[1..]),
@@ -890,6 +891,136 @@ fn bootstrap_specification(arguments: &[String]) -> Result<(), CliError> {
         }
         _ => Err(CliError::Usage(
             "bootstrap-spec requires attach, list, or detach".to_owned(),
+        )),
+    }
+}
+
+fn bootstrap_reference(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "bootstrap-ref requires attach, list, or detach".to_owned(),
+        ));
+    };
+    let registry = BootstrapSpecificationRegistry::system_default()?;
+    match command {
+        "attach" => {
+            let mut source_project = None;
+            let mut workspace = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if source_project.is_none() => {
+                        source_project = Some(PathBuf::from(value))
+                    }
+                    value if workspace.is_none() => workspace = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let source_project = source_project.ok_or_else(|| {
+                CliError::Usage(
+                    "bootstrap-ref attach requires SOURCE_PROJECT [WORKSPACE]".to_owned(),
+                )
+            })?;
+            let workspace =
+                workspace.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.attach_reference(&workspace, &source_project)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("bootstrap reference attachment is serializable")
+                );
+            } else {
+                println!("Bootstrap Reference: {}", result.grant.grant_id);
+                println!("Source project: {}", result.grant.source_project_id);
+                if let Some(name) = &result.grant.source_project_name {
+                    println!("Source name: {name}");
+                }
+                println!("Status: {:?}", result.grant.status);
+                println!("Target: uninitialized read-only bootstrap authority");
+                println!("Created: {}", result.created);
+            }
+            Ok(())
+        }
+        "list" => {
+            let mut workspace = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if workspace.is_none() => workspace = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let workspace =
+                workspace.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.list_references(&workspace)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("bootstrap reference list is serializable")
+                );
+            } else if result.grants.is_empty() {
+                println!("No Bootstrap References.");
+                if result.target_initialized {
+                    println!("This workspace is initialized; use normal Ley Context Mounts.");
+                }
+            } else {
+                println!("Bootstrap References: {}", result.grants.len());
+                for grant in &result.grants {
+                    println!(
+                        "  {}  source={}  status={:?}",
+                        grant.grant_id, grant.source_project_id, grant.status
+                    );
+                }
+                println!("Permission: read-only captured reference authority; no project writes");
+            }
+            Ok(())
+        }
+        "detach" => {
+            let mut grant_id = None;
+            let mut workspace = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if grant_id.is_none() => grant_id = Some(value.to_owned()),
+                    value if workspace.is_none() => workspace = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let grant_id = grant_id.ok_or_else(|| {
+                CliError::Usage("bootstrap-ref detach requires GRANT_ID [WORKSPACE]".to_owned())
+            })?;
+            let workspace =
+                workspace.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let removed = registry.detach_reference(&workspace, &grant_id)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&removed)
+                        .expect("bootstrap reference detach result is serializable")
+                );
+            } else if let Some(grant) = removed {
+                println!("Detached Bootstrap Reference: {}", grant.grant_id);
+            } else {
+                println!("Bootstrap Reference was not attached.");
+            }
+            Ok(())
+        }
+        _ => Err(CliError::Usage(
+            "bootstrap-ref requires attach, list, or detach".to_owned(),
         )),
     }
 }
@@ -2606,19 +2737,24 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
                 .map_err(|_| CliError::BootstrapAuthorityUnavailable)?
             {
                 return run_unavailable_stdio(
-                    "Ley is inactive for this workspace. Initialize the project, or explicitly attach a Bootstrap Specification for read-only task context.",
+                    "Ley is inactive for this workspace. Initialize the project, or explicitly attach a Bootstrap Specification/reference for read-only task context.",
                 )
                 .map_err(CliError::Mcp);
             }
             let attached = bootstrap
                 .list(&parsed.project)
                 .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
-            if !attached.target_initialized && attached.total_grants > 0 {
+            let references = bootstrap
+                .list_references(&parsed.project)
+                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
+            if !attached.target_initialized
+                && (attached.total_grants > 0 || references.total_grants > 0)
+            {
                 return run_bootstrap_stdio_with_egress_target(parsed.project, egress_target)
                     .map_err(CliError::Mcp);
             }
             return run_unavailable_stdio(
-                "Ley is inactive for this workspace. Initialize the project, or explicitly attach a Bootstrap Specification for read-only task context.",
+                "Ley is inactive for this workspace. Initialize the project, or explicitly attach a Bootstrap Specification/reference for read-only task context.",
             )
             .map_err(CliError::Mcp);
         }
@@ -3860,6 +3996,9 @@ fn print_help() {
     println!("  ley bootstrap-spec attach SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE] [--json]");
     println!("  ley bootstrap-spec list [WORKSPACE] [--json]");
     println!("  ley bootstrap-spec detach GRANT_ID [WORKSPACE] [--json]");
+    println!("  ley bootstrap-ref attach SOURCE_PROJECT [WORKSPACE] [--json]");
+    println!("  ley bootstrap-ref list [WORKSPACE] [--json]");
+    println!("  ley bootstrap-ref detach GRANT_ID [WORKSPACE] [--json]");
     println!("  ley mount add REFERENCE_PROJECT [ACTIVE_PROJECT] [--json]");
     println!("  ley mount list [ACTIVE_PROJECT] [--json]");
     println!("  ley mount remove MOUNT_ID [ACTIVE_PROJECT] [--json]");

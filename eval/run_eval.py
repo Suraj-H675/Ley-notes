@@ -69,6 +69,7 @@ METRIC_NAMES = (
     "historical_host_import",
     "consolidation_inbox",
     "bootstrap_specification",
+    "bootstrap_reference",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -262,6 +263,28 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "empty-workspace-bootstrap-specification",
             "bootstrap_specification",
+            "truthy",
+        ),
+    },
+    "bootstrap-reference-projects": {
+        "adversarial": (
+            "empty-workspace-bootstrap-reference",
+            "bootstrap_reference",
+            "truthy",
+        ),
+        "downstream": (
+            "empty-workspace-bootstrap-reference",
+            "bootstrap_reference",
+            "truthy",
+        ),
+        "privacy": (
+            "empty-workspace-bootstrap-reference",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "empty-workspace-bootstrap-reference",
+            "bootstrap_reference",
             "truthy",
         ),
     },
@@ -1302,6 +1325,7 @@ def context_contract_text(payload: dict[str, object]) -> str:
             "items": payload.get("items", []),
             "mountedReferences": payload.get("mountedReferences", []),
             "sharedKnowledgeReferences": payload.get("sharedKnowledgeReferences", []),
+            "references": payload.get("references", []),
         },
         sort_keys=True,
     )
@@ -1547,6 +1571,171 @@ def evaluate_bootstrap_specification_scenario(
     return not failures, privacy, failures
 
 
+def evaluate_bootstrap_reference_scenario(
+    scenario: dict[str, object],
+    base_dir: Path,
+    target: Path,
+    expectation: dict[str, object],
+) -> tuple[bool, float, list[str]]:
+    failures: list[str] = []
+    source = base_dir / "bootstrap-reference-source"
+    source_vault = base_dir / "bootstrap-reference-vault"
+    unrelated = base_dir / "bootstrap-reference-unrelated"
+    unrelated_vault = base_dir / "bootstrap-reference-unrelated-vault"
+    for path in (source, source_vault, unrelated, unrelated_vault):
+        path.mkdir(parents=True)
+
+    marker = str(expectation.get("marker", ""))
+    task = str(expectation.get("task", marker))
+    unrelated_marker = str(expectation.get("unrelated_marker", ""))
+    target_private_marker = str(expectation.get("target_private_marker", ""))
+    if not marker or not task or not unrelated_marker or not target_private_marker:
+        raise RuntimeError("bootstrap Reference eval fixture is incomplete")
+
+    write_project_files(
+        source,
+        {
+            "REFERENCE.md": (
+                "Captured reference implementation evidence.\n"
+                f"{marker} is the reusable source-project pattern for this task.\n"
+            )
+        },
+    )
+    init_project(source, "Bootstrap Reference source", source_vault)
+    write_project_files(
+        unrelated,
+        {
+            "UNRELATED.md": (
+                "Unattached project with deliberately similar text.\n"
+                f"{marker} {unrelated_marker} must never enter bootstrap context.\n"
+            )
+        },
+    )
+    init_project(unrelated, "Unrelated bootstrap reference", unrelated_vault)
+
+    try:
+        attached = cli_json(
+            [
+                "bootstrap-ref",
+                "attach",
+                str(source),
+                str(target),
+                "--json",
+            ]
+        )
+    except RuntimeError as error:
+        if BOOTSTRAP_UNSUPPORTED_MARKER in str(error):
+            raise BootstrapScenarioUnsupported(
+                "bootstrap Reference authority is unsupported on this platform/filesystem"
+            ) from error
+        raise
+    listed = cli_json(["bootstrap-ref", "list", str(target), "--json"])
+    if (target / ".ley").exists():
+        failures.append("bootstrap Reference attachment initialized target .ley metadata")
+
+    tools = mcp_tools_list(target)
+    tool_names = [str(item.get("name", "")) for item in tools]
+    compiled = mcp_call(
+        target,
+        "ley_compile_context",
+        {"task": task, "maxResults": 8, "maxTokens": 2000},
+    )
+    references = compiled.get("references", [])
+    reference_text = serialized(references)
+    hook = hook_call(
+        target,
+        "codex",
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "bootstrap-reference-eval",
+            "turn_id": "bootstrap-reference-eval-turn-1",
+            "prompt": task,
+        },
+    )
+    initial_ok = (
+        isinstance(attached, dict)
+        and attached.get("created") is True
+        and isinstance(listed, dict)
+        and listed.get("targetInitialized") is False
+        and listed.get("totalGrants") == 1
+        and listed.get("ready") == 1
+        and tool_names == ["ley_compile_context"]
+        and compiled.get("projectMemoryAvailable") is False
+        and compiled.get("referenceMemoryAuthorized") is True
+        and compiled.get("automaticWriteAllowed") is False
+        and compiled.get("targetInitialized") is False
+        and isinstance(references, list)
+        and marker in reference_text
+        and unrelated_marker not in serialized(compiled)
+        and target_private_marker not in serialized(compiled)
+        and hook == {}
+        and not (target / ".ley").exists()
+    )
+    if not initial_ok:
+        failures.append(
+            "explicit Bootstrap Reference did not provide isolated captured MCP context while keeping hooks/target inactive"
+        )
+
+    cli_json(["egress", "project", "never-send", str(source), "--json"])
+    blocked = mcp_call(
+        target,
+        "ley_compile_context",
+        {"task": task, "maxResults": 8, "maxTokens": 2000},
+    )
+    blocked_references = blocked.get("references", [])
+    blocked_coverage = blocked.get("referenceCoverage", {})
+    blocked_ok = (
+        isinstance(blocked_references, list)
+        and len(blocked_references) == 0
+        and isinstance(blocked_coverage, dict)
+        and blocked_coverage.get("egressBlocked") == 1
+        and blocked_coverage.get("searchedSources") == 0
+        and marker not in serialized(blocked_references)
+    )
+    if not blocked_ok:
+        failures.append("source-project never-send policy did not block Bootstrap Reference search")
+
+    cli_json(["egress", "project", "agent-ok", str(source), "--json"])
+    cli_json(
+        [
+            "init",
+            str(target),
+            "--name",
+            "Bootstrap Reference eval target",
+            "--json",
+        ]
+    )
+    after_init = cli_json(["bootstrap-ref", "list", str(target), "--json"])
+    post_init_tools = mcp_tools_list(target)
+    transition_ok = (
+        isinstance(after_init, dict)
+        and after_init.get("targetInitialized") is True
+        and after_init.get("totalGrants") == 0
+        and post_init_tools == []
+        and (target / ".ley").is_dir()
+    )
+    if not transition_ok:
+        failures.append("normal initialization did not retire Bootstrap Reference authority/tooling")
+
+    agent_outputs: list[object] = [tools, compiled, hook, blocked, post_init_tools]
+    privacy = privacy_violation_rate(
+        [
+            str(target),
+            str(source),
+            str(source_vault),
+            str(unrelated),
+            str(unrelated_vault),
+            unrelated_marker,
+            target_private_marker,
+        ],
+        agent_outputs,
+    )
+    if privacy != 0.0:
+        failures.append("Bootstrap Reference agent output leaked a private path or unrelated/target canary")
+
+    return not failures, privacy, failures
+
+
 def create_structured_session(
     project: Path,
     *,
@@ -1648,6 +1837,25 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             bootstrap_expectation,
         )
         scores["bootstrap_specification"] = passed
+        scores["privacy_violation_rate"] = privacy
+        failures.extend(bootstrap_failures)
+        return {
+            "id": str(scenario["id"]),
+            "category": str(scenario.get("category", "")),
+            **scores,
+            "passed": not failures,
+            "failures": failures,
+        }
+
+    bootstrap_reference_expectation = scenario.get("expected_bootstrap_reference")
+    if isinstance(bootstrap_reference_expectation, dict):
+        passed, privacy, bootstrap_failures = evaluate_bootstrap_reference_scenario(
+            scenario,
+            base_dir,
+            project,
+            bootstrap_reference_expectation,
+        )
+        scores["bootstrap_reference"] = passed
         scores["privacy_violation_rate"] = privacy
         failures.extend(bootstrap_failures)
         return {

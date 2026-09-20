@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-20
+- Extended by: ADR 0059 (explicit captured reference-project bootstrap)
 
 ## Context
 
@@ -19,6 +20,10 @@ Specifications.
 ## Decision
 
 Ley adds a separate **Bootstrap Specification** authority for uninitialized workspaces.
+
+ADR 0059 later extends the same target-generation authority record with lower-precedence
+Bootstrap Reference project grants. That extension does not change the exact-revision
+Specification semantics defined here.
 
 The authority is created only by an explicit local-user command:
 
@@ -182,9 +187,11 @@ The slice is covered by:
 
 ## Deliberately deferred
 
-- bootstrap access to captured reference-project sessions, learnings, graph, or artifacts;
 - general empty-workspace Context Mounts or Knowledge Scope/Policy Bundle attachment;
 - desktop UI for selecting/managing Bootstrap Specifications;
 - remote/shared bootstrap authority or collaboration roles;
 - automatic bootstrap discovery, attachment, initialization, capture, or scanning;
 - converting bootstrap outcomes into project/session memory before explicit normal initialization.
+
+Captured reference-project bootstrap is implemented separately by ADR 0059 and remains MCP-only;
+it does not broaden this ADR's prompt-time automatic Specification injection.

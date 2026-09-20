@@ -710,11 +710,11 @@ pub struct CompiledContextPack {
 }
 
 #[derive(Debug)]
-struct AdmittedCandidate {
-    item: ProjectMemorySearchResult,
-    authority: ContextAuthority,
-    admission_basis: ContextAdmissionBasis,
-    estimated_tokens: usize,
+pub(crate) struct AdmittedCandidate {
+    pub item: ProjectMemorySearchResult,
+    pub authority: ContextAuthority,
+    pub admission_basis: ContextAdmissionBasis,
+    pub estimated_tokens: usize,
 }
 
 struct MountedAdmittedCandidate {
@@ -2593,6 +2593,17 @@ fn admit_candidate(
         admission_basis,
         estimated_tokens,
     })
+}
+
+pub(crate) fn admit_reference_memory_candidate(
+    item: ProjectMemorySearchResult,
+    conflicting_entities: &BTreeSet<String>,
+) -> Result<AdmittedCandidate, ContextExclusion> {
+    admit_candidate(item, conflicting_entities, &[])
+}
+
+pub(crate) fn memory_conflicts_with_specification(specification: &str, memory: &str) -> bool {
+    explicit_negation_conflict(specification, memory)
 }
 
 fn relevance_basis(item: &ProjectMemorySearchResult) -> Option<ContextAdmissionBasis> {

@@ -161,6 +161,11 @@ fn cli_bootstrap_specification_is_explicit_read_only_and_retires_on_initializati
     fs::create_dir_all(&target).unwrap();
     fs::write(source.join("README.md"), "# Source\n").unwrap();
     fs::write(
+        source.join("REFERENCE.md"),
+        "bootstrap_reference_hook_private_marker captured reference evidence\n",
+    )
+    .unwrap();
+    fs::write(
         source_vault.join("Specs/Product.md"),
         "# Product\n\nbootstrap_cli_marker must stay exact.\n",
     )
@@ -186,6 +191,7 @@ fn cli_bootstrap_specification_is_explicit_read_only_and_retires_on_initializati
             "--json",
         ],
     );
+    ley(&config, &["ingest", source.to_str().unwrap(), "--json"]);
 
     let specification_id = generate_specification_id();
     let specifications = SpecificationRegistry::at(
@@ -214,6 +220,17 @@ fn cli_bootstrap_specification_is_explicit_read_only_and_retires_on_initializati
         ],
     ));
     assert_eq!(attached["created"], true);
+    let attached_reference = json_stdout(ley(
+        &config,
+        &[
+            "bootstrap-ref",
+            "attach",
+            source.to_str().unwrap(),
+            target.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(attached_reference["created"], true);
     assert_eq!(attached["grant"]["specificationId"], specification_id);
     assert!(attached["grant"]["grantId"]
         .as_str()
@@ -305,6 +322,7 @@ fn cli_bootstrap_specification_is_explicit_read_only_and_retires_on_initializati
         .unwrap();
     assert!(context.starts_with("# Ley bootstrap task context (automatic)"));
     assert!(context.contains("bootstrap_cli_marker"));
+    assert!(!context.contains("bootstrap_reference_hook_private_marker"));
     assert!(context.contains("No Ley project memory or Ley session is active here"));
     assert!(!context.contains(prompt_marker));
     assert!(context.len() <= 3_500);
@@ -330,6 +348,12 @@ fn cli_bootstrap_specification_is_explicit_read_only_and_retires_on_initializati
     assert_eq!(after["targetInitialized"], true);
     assert_eq!(after["totalGrants"], 0);
     assert!(after["grants"].as_array().unwrap().is_empty());
+    let after_references = json_stdout(ley(
+        &config,
+        &["bootstrap-ref", "list", target.to_str().unwrap(), "--json"],
+    ));
+    assert_eq!(after_references["targetInitialized"], true);
+    assert_eq!(after_references["totalGrants"], 0);
 
     let post_init_hook = json_stdout(ley_with_input(
         &config,
@@ -347,6 +371,191 @@ fn cli_bootstrap_specification_is_explicit_read_only_and_retires_on_initializati
     let after_metadata_removal = json_stdout(ley(
         &config,
         &["bootstrap-spec", "list", target.to_str().unwrap(), "--json"],
+    ));
+    assert_eq!(after_metadata_removal["targetInitialized"], false);
+    assert_eq!(after_metadata_removal["totalGrants"], 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_bootstrap_reference_authority_is_explicit_and_retires_on_initialization() {
+    let base = tempdir().unwrap();
+    let config = base.path().join("config");
+    let source = base.path().join("reference-source");
+    let source_vault = base.path().join("reference-vault");
+    let target = base.path().join("reference-target");
+    fs::create_dir_all(&source).unwrap();
+    fs::create_dir_all(&source_vault).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    fs::write(source.join("README.md"), "# Reference source\n").unwrap();
+
+    ley(
+        &config,
+        &[
+            "init",
+            source.to_str().unwrap(),
+            "--name",
+            "Bootstrap reference source",
+            "--json",
+        ],
+    );
+    ley(
+        &config,
+        &[
+            "bind",
+            source.to_str().unwrap(),
+            "--vault",
+            source_vault.to_str().unwrap(),
+            "--json",
+        ],
+    );
+
+    let attached = json_stdout(ley(
+        &config,
+        &[
+            "bootstrap-ref",
+            "attach",
+            source.to_str().unwrap(),
+            target.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(attached["created"], true);
+    let grant_id = attached["grant"]["grantId"].as_str().unwrap().to_owned();
+    assert!(grant_id.starts_with("brg_"));
+    assert_eq!(attached["grant"]["status"], "ready");
+    assert!(!target.join(".ley").exists());
+    let serialized = attached.to_string();
+    assert!(!serialized.contains(source.to_str().unwrap()));
+    assert!(!serialized.contains(source_vault.to_str().unwrap()));
+    assert!(!serialized.contains(target.to_str().unwrap()));
+
+    let replayed = json_stdout(ley(
+        &config,
+        &[
+            "bootstrap-ref",
+            "attach",
+            source.to_str().unwrap(),
+            target.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(replayed["created"], false);
+    assert_eq!(replayed["grant"]["grantId"], grant_id);
+
+    let listed = json_stdout(ley(
+        &config,
+        &["bootstrap-ref", "list", target.to_str().unwrap(), "--json"],
+    ));
+    assert_eq!(listed["targetInitialized"], false);
+    assert_eq!(listed["totalGrants"], 1);
+    assert_eq!(listed["ready"], 1);
+    assert_eq!(listed["grants"][0]["grantId"], grant_id);
+
+    let (mcp_surface, messages) = bootstrap_mcp_surface(&config, &target);
+    assert!(
+        mcp_surface.status.success(),
+        "bootstrap reference MCP failed: {}",
+        String::from_utf8_lossy(&mcp_surface.stderr)
+    );
+    let tools = messages
+        .iter()
+        .find(|message| message.get("id") == Some(&json!(2)))
+        .and_then(|message| message.pointer("/result/tools"))
+        .and_then(Value::as_array)
+        .expect("bootstrap reference MCP tools/list response");
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0]["name"], "ley_compile_context");
+    let resources_response = messages
+        .iter()
+        .find(|message| message.get("id") == Some(&json!(3)))
+        .expect("bootstrap reference MCP resources/list response");
+    let resources_empty = resources_response
+        .pointer("/result/resources")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    let resources_unsupported = resources_response.get("error").is_some();
+    assert!(resources_empty || resources_unsupported);
+
+    let hook = json_stdout(ley_with_input(
+        &config,
+        &["hook", "--host", "codex", target.to_str().unwrap()],
+        &json!({
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "bootstrap-reference-only-thread",
+            "turn_id": "bootstrap-reference-only-turn",
+            "prompt": "reuse bootstrap_reference_mcp_marker",
+        }),
+    ));
+    assert_eq!(hook, json!({}));
+    assert!(!target.join(".ley").exists());
+
+    let detached = json_stdout(ley(
+        &config,
+        &[
+            "bootstrap-ref",
+            "detach",
+            &grant_id,
+            target.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert_eq!(detached["grantId"], grant_id);
+    assert_eq!(
+        json_stdout(ley(
+            &config,
+            &["bootstrap-ref", "list", target.to_str().unwrap(), "--json"],
+        ))["totalGrants"],
+        0
+    );
+
+    ley(
+        &config,
+        &[
+            "bootstrap-ref",
+            "attach",
+            source.to_str().unwrap(),
+            target.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    let initialized = json_stdout(ley(
+        &config,
+        &[
+            "init",
+            target.to_str().unwrap(),
+            "--name",
+            "Reference target",
+            "--json",
+        ],
+    ));
+    assert_eq!(initialized["created"], true);
+    assert!(target.join(".ley").is_dir());
+    let after = json_stdout(ley(
+        &config,
+        &["bootstrap-ref", "list", target.to_str().unwrap(), "--json"],
+    ));
+    assert_eq!(after["targetInitialized"], true);
+    assert_eq!(after["totalGrants"], 0);
+
+    let (post_init_mcp, post_init_messages) = inactive_mcp_tools(&config, &target);
+    assert!(
+        post_init_mcp.status.success(),
+        "post-initialization MCP failed: {}",
+        String::from_utf8_lossy(&post_init_mcp.stderr)
+    );
+    let post_init_tools = post_init_messages
+        .iter()
+        .find(|message| message.get("id") == Some(&json!(2)))
+        .and_then(|message| message.pointer("/result/tools"))
+        .and_then(Value::as_array)
+        .expect("post-initialization tools/list response");
+    assert!(post_init_tools.is_empty());
+
+    fs::remove_dir_all(target.join(".ley")).unwrap();
+    let after_metadata_removal = json_stdout(ley(
+        &config,
+        &["bootstrap-ref", "list", target.to_str().unwrap(), "--json"],
     ));
     assert_eq!(after_metadata_removal["targetInitialized"], false);
     assert_eq!(after_metadata_removal["totalGrants"], 0);

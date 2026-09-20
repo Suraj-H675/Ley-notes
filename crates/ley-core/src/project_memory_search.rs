@@ -8,10 +8,10 @@ use crate::semantic_retrieval::{
 };
 use crate::session::visit_session_records;
 use crate::{
-    find_project_hybrid_context, list_learnings, ContextItemKind, GraphCitation, LearningFreshness,
-    LearningKind, LearningOriginSummary, LearningState, LearningSummary, LearningTrustState,
-    LeyCoreError, ProjectRevisionFreshness, RetrievalLimits, RetrievalMode, RevisionApplicability,
-    RevisionCompatibility, SessionArtifactCitation, SessionSourceKind,
+    diagnose_project, find_project_hybrid_context, list_learnings, ContextItemKind, GraphCitation,
+    LearningFreshness, LearningKind, LearningOriginSummary, LearningState, LearningSummary,
+    LearningTrustState, LeyCoreError, ProjectRevisionFreshness, RetrievalLimits, RetrievalMode,
+    RevisionApplicability, RevisionCompatibility, SessionArtifactCitation, SessionSourceKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -494,6 +494,34 @@ pub fn search_project_memory(
         instruction_warning: INSTRUCTION_WARNING,
         privacy_notice: PRIVACY_NOTICE,
     })
+}
+
+pub(crate) fn search_project_memory_for_expected_project(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    expected_project_id: &str,
+    query: &str,
+    limits: ProjectMemorySearchLimits,
+    revision_filter: Option<RevisionCompatibility>,
+) -> Result<ProjectMemorySearch, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let before = diagnose_project(project_start)?;
+    if before.identity.project_id != expected_project_id {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "source project identity changed before captured-memory search".to_owned(),
+        ));
+    }
+
+    let result = search_project_memory(&before.root, vault, query, limits, revision_filter)?;
+
+    let after = diagnose_project(&before.root)?;
+    if after.identity.project_id != expected_project_id || result.project_id != expected_project_id
+    {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "source project identity changed during captured-memory search".to_owned(),
+        ));
+    }
+    Ok(result)
 }
 
 fn collect_session_candidates(
@@ -1683,6 +1711,48 @@ mod tests {
             .unwrap()
             .contains(project.to_string_lossy().as_ref()));
         assert!(!result.live_source_checked);
+    }
+
+    #[test]
+    fn expected_project_search_rejects_replacement_identity_before_memory_read() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let old_project = root.path().join("old-project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        initialize_project(&project, Some("Original source"), CaptureMode::Structured).unwrap();
+        fs::write(
+            project.join("README.md"),
+            "expected_project_marker original captured evidence\n",
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let expected_project_id = diagnose_project(&project).unwrap().identity.project_id;
+
+        fs::rename(&project, &old_project).unwrap();
+        fs::create_dir(&project).unwrap();
+        initialize_project(
+            &project,
+            Some("Replacement source"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            search_project_memory_for_expected_project(
+                &project,
+                &vault,
+                &expected_project_id,
+                "expected_project_marker",
+                ProjectMemorySearchLimits {
+                    max_results: 4,
+                    max_tokens: 1_000,
+                },
+                None,
+            ),
+            Err(LeyCoreError::InvalidProjectIdentity(_))
+        ));
     }
 
     #[test]

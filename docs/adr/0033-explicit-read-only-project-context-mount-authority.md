@@ -29,4 +29,4 @@ The registry uses the same owner-private, locked, atomic JSON persistence patter
 
 ## Deliberately deferred
 
-The next slice may expose bounded read-only reference retrieval through the Context Compiler after revalidating mount identity and binding. General empty-workspace **Context Mount / captured reference-project** bootstrapping, note/folder/Canvas/bundle mounts, egress policy, and richer mount UI remain separate roadmap work. ADR 0058 separately implements the narrower uninitialized-workspace case for exact already-approved Specifications only; it does not generalize Context Mount authority.
+Bounded read-only mounted-project retrieval for initialized active projects is implemented by ADR 0034. Empty-workspace **captured reference-project** reuse is implemented separately by ADR 0059 as explicit Bootstrap Reference authority; it deliberately does not generalize this Context Mount registry to path-like uninitialized targets. General empty-workspace Knowledge Scope/Policy Bundle/note/folder/Canvas mounts, richer mount UI, and remote/shared authority remain separate roadmap work. ADR 0058 defines the exact-approved-Specification bootstrap channel.
