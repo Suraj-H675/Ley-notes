@@ -108,7 +108,9 @@ candidate through the separate verifier/write flow.
 
 - multi-claim atomic recovery; ADR 0063 later implements it for the already-supported recovery shapes;
 - Plan recovery; ADR 0062 later implements it through the typed-v2 verifier plus schema v10;
-- nested Problem Attempt/Resolution recovery;
+- nested Problem Attempt/Resolution recovery; ADR 0064 later implements one new rich Problem episode
+  with ordered Attempts and an optional Resolution, while updates to an existing historical Problem
+  remain deferred;
 - Command or Verification recovery;
 - automatic/model-generated candidates inside Ley;
 - background/scheduled consolidation;

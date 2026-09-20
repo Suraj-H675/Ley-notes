@@ -122,8 +122,11 @@ The implementation must prove:
 - multi-claim atomic recovery commits; ADR 0063 later implements them for the already-supported
   unresolved/Decision/Problem/Task/Plan shapes without changing this schema-v8 contract;
 - bound Plan/Task/Attempt/Resolution/Command/Verification/Summary writers. ADR 0061 later implements
-  Task through a separate typed-v2 verifier/schema-v9 route, and ADR 0062 later implements Plan through
-  the same typed verifier family plus schema v10, without changing this schema-v8 contract;
+  Task through a separate typed-v2 verifier/schema-v9 route, ADR 0062 later implements Plan through
+  the same typed verifier family plus schema v10, and ADR 0064 later implements one new rich Problem
+  episode containing ordered Attempts and an optional Resolution through a separate typed verifier /
+  schema-v12 route, without changing this schema-v8 contract. Attaching recovered Attempt/Resolution
+  children to an already-existing Problem remains deferred;
 - inference of status, expected behavior, rationale, outcomes, verification, or root cause;
 - cross-session/background consolidation; and
 - automatic trust, learning promotion, or retrieval-ranking changes from a recovery commit.

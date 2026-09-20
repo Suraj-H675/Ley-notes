@@ -2570,13 +2570,16 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, commit_batch_memory_transition, commit_unresolved_memory_transition,
-        erase_session_memory, finish_session, ingest_project, initialize_project,
-        project_memory_overview, read_session, record_session_prompt, record_session_response,
-        start_session, verify_batch_memory_transition, AttemptInput, AttemptOutcome,
+        checkpoint_session, commit_batch_memory_transition, commit_rich_problem_memory_transition,
+        commit_unresolved_memory_transition, erase_session_memory, finish_session, ingest_project,
+        initialize_project, project_memory_overview, read_session, record_session_prompt,
+        record_session_response, start_session, verify_batch_memory_transition,
+        verify_rich_problem_memory_transition, AttemptInput, AttemptOutcome,
         BatchMemoryCandidateClaim, BatchMemoryTransitionInput, CaptureMode, CheckpointInput,
-        CommitBatchMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
-        EraseSessionMemoryInput, FinishSessionInput, ProblemInput, ResolutionInput, SessionSource,
+        CommitBatchMemoryTransitionInput, CommitRichProblemMemoryTransitionInput,
+        CommitUnresolvedMemoryTransitionInput, EraseSessionMemoryInput, FinishSessionInput,
+        ProblemInput, ResolutionInput, RichProblemAttemptCandidate, RichProblemMemoryCandidate,
+        RichProblemMemoryTransitionInput, RichProblemResolutionCandidate, SessionSource,
         SessionSourceKind, SessionStatus, StartSessionInput, TaskStatus, TurnEvidenceInput,
         TurnEvidenceOrigin,
     };
@@ -3231,6 +3234,191 @@ mod tests {
                 LearningOriginSource::TurnEvidence { session_id, record_id }
                     if session_id == &started.session.session_id && record_id == &response_id
             )));
+    }
+
+    #[test]
+    fn rich_problem_recovery_child_lineage_uses_component_specific_evidence() {
+        let (_base, project, vault, _session_id, _record_id) = setup_learning();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('a'),
+                name: "Interrupted debugging episode".to_owned(),
+                goal: "Recover failed attempt and resolution provenance".to_owned(),
+                source: SessionSource {
+                    kind: SessionSourceKind::HostHook,
+                    host: Some("codex".to_owned()),
+                    agent: Some("gpt-5".to_owned()),
+                    source_reference: None,
+                },
+            },
+        )
+        .unwrap();
+        let symptom = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('b'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("rich-problem-1".to_owned()),
+                text: "Refresh returns 401 although the session should survive.".to_owned(),
+            },
+        )
+        .unwrap();
+        let symptom_id = symptom.session.prompts.last().unwrap().record_id.clone();
+        let attempt = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('c'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("rich-problem-1".to_owned()),
+                text: "Clearing cookies had no effect; the 401 remained.".to_owned(),
+            },
+        )
+        .unwrap();
+        let attempt_evidence_id = attempt.session.responses.last().unwrap().record_id.clone();
+        let resolution = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            TurnEvidenceInput {
+                request_id: request_id('d'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("rich-problem-2".to_owned()),
+                text:
+                    "The expired token was the root cause; refreshing it fixed repeated refreshes."
+                        .to_owned(),
+            },
+        )
+        .unwrap();
+        let resolution_evidence_id = resolution.session.prompts.last().unwrap().record_id.clone();
+        let candidate = RichProblemMemoryCandidate {
+            title: "Login refresh failure".to_owned(),
+            symptom: "Refreshing returns 401".to_owned(),
+            expected: "The authenticated session survives refresh".to_owned(),
+            evidence_record_ids: vec![symptom_id.clone()],
+            attempts: vec![RichProblemAttemptCandidate {
+                action: "Clear browser cookies".to_owned(),
+                outcome: AttemptOutcome::NoEffect,
+                evidence: "Refresh still returned 401".to_owned(),
+                evidence_record_ids: vec![attempt_evidence_id.clone()],
+            }],
+            resolution: Some(RichProblemResolutionCandidate {
+                root_cause: "The client reused an expired access token".to_owned(),
+                change: "Refresh the token before protected navigation".to_owned(),
+                verification: "Repeated refreshes remained authenticated".to_owned(),
+                evidence_record_ids: vec![resolution_evidence_id.clone()],
+            }),
+        };
+        let verification = verify_rich_problem_memory_transition(
+            &project,
+            &vault,
+            &started.session.session_id,
+            RichProblemMemoryTransitionInput {
+                expected_event_count: 4,
+                candidate: candidate.clone(),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            verification.state,
+            crate::MemoryTransitionState::ReviewRequired
+        );
+        let fingerprint = verification.candidate_fingerprint.clone();
+        let committed = commit_rich_problem_memory_transition(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CommitRichProblemMemoryTransitionInput {
+                request_id: request_id('e'),
+                expected_event_count: 4,
+                candidate_fingerprint: verification.candidate_fingerprint,
+                candidate,
+            },
+        )
+        .unwrap();
+        let problem = &committed.session.checkpoints.last().unwrap().problems[0];
+        let attempt_id = problem.attempts[0].id.clone();
+        let resolution_id = problem.resolution.as_ref().unwrap().id.clone();
+
+        let mut attempt_input = proposal(request_id('f'), &started.session.session_id, &attempt_id);
+        attempt_input.title = "Cookie clearing did not solve refresh authentication".to_owned();
+        attempt_input.guidance =
+            "Do not treat cookie clearing as the fix for this refresh failure.".to_owned();
+        let attempt_learning = propose_learning(&project, &vault, attempt_input).unwrap();
+        assert!(attempt_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::RecoveryCandidate {
+                    session_id,
+                    candidate_fingerprint,
+                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
+            )));
+        assert!(attempt_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::TurnEvidence { session_id, record_id }
+                    if session_id == &started.session.session_id && record_id == &attempt_evidence_id
+            )));
+        for unrelated in [&symptom_id, &resolution_evidence_id] {
+            assert!(
+                !attempt_learning
+                    .learning
+                    .origin_lineage
+                    .sources
+                    .iter()
+                    .any(|source| matches!(
+                        source,
+                        LearningOriginSource::TurnEvidence { session_id, record_id }
+                            if session_id == &started.session.session_id && record_id == unrelated
+                    ))
+            );
+        }
+
+        let mut resolution_input =
+            proposal(request_id('7'), &started.session.session_id, &resolution_id);
+        resolution_input.title = "Expired token caused refresh authentication failure".to_owned();
+        resolution_input.guidance =
+            "Refresh the access token before protected navigation.".to_owned();
+        let resolution_learning = propose_learning(&project, &vault, resolution_input).unwrap();
+        assert!(resolution_learning
+            .learning
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(
+                source,
+                LearningOriginSource::TurnEvidence { session_id, record_id }
+                    if session_id == &started.session.session_id && record_id == &resolution_evidence_id
+            )));
+        for unrelated in [&symptom_id, &attempt_evidence_id] {
+            assert!(!resolution_learning
+                .learning
+                .origin_lineage
+                .sources
+                .iter()
+                .any(|source| matches!(
+                    source,
+                    LearningOriginSource::TurnEvidence { session_id, record_id }
+                        if session_id == &started.session.session_id && record_id == unrelated
+                )));
+        }
     }
 
     #[test]

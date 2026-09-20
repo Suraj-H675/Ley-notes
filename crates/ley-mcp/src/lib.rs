@@ -2,23 +2,25 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
     commit_batch_memory_transition, commit_plan_memory_transition,
-    commit_structured_memory_transition, commit_task_memory_transition,
-    commit_unresolved_memory_transition, compile_agent_legibility_map,
-    compile_bootstrap_context_with_registries, compile_project_context_for_agent_with_registries,
-    compile_session_memory, compile_topic_dossier, consolidation_inbox, current_project_state,
-    diagnose_project, evaluate_agent_egress, find_project_context, find_project_graph_path,
-    finish_session, inspect_context_pack, list_learning_contexts, memory_health_report,
-    project_activity_view, project_memory_overview, project_resume_context, propose_learning,
+    commit_rich_problem_memory_transition, commit_structured_memory_transition,
+    commit_task_memory_transition, commit_unresolved_memory_transition,
+    compile_agent_legibility_map, compile_bootstrap_context_with_registries,
+    compile_project_context_for_agent_with_registries, compile_session_memory,
+    compile_topic_dossier, consolidation_inbox, current_project_state, diagnose_project,
+    evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
+    inspect_context_pack, list_learning_contexts, memory_health_report, project_activity_view,
+    project_memory_overview, project_resume_context, propose_learning,
     read_external_connector_snapshot_with_registry, read_learning_context,
     read_project_cited_media, read_project_evidence, read_session_context,
     read_session_turns_context, record_context_utility_observation,
     replay_context_utility_binding_if_present, search_project_memory, start_session,
     traverse_project_graph, verify_batch_memory_transition, verify_memory_transition,
-    verify_typed_memory_transition, AgentContextAuthorities, AgentEgressBlockReason,
-    AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits, AttemptInput, AttemptOutcome,
-    BatchMemoryCandidateClaim, BatchMemoryTransitionInput, BootstrapSpecificationRegistry,
-    CheckpointInput, CommandInput, CommitBatchMemoryTransitionInput,
-    CommitPlanMemoryTransitionInput, CommitStructuredMemoryTransitionInput,
+    verify_rich_problem_memory_transition, verify_typed_memory_transition, AgentContextAuthorities,
+    AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits,
+    AttemptInput, AttemptOutcome, BatchMemoryCandidateClaim, BatchMemoryTransitionInput,
+    BootstrapSpecificationRegistry, CheckpointInput, CommandInput,
+    CommitBatchMemoryTransitionInput, CommitPlanMemoryTransitionInput,
+    CommitRichProblemMemoryTransitionInput, CommitStructuredMemoryTransitionInput,
     CommitTaskMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
     ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry,
     ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
@@ -28,14 +30,16 @@ use ley_core::{
     LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits,
     MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry, ProblemInput,
     ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput, ResolutionInput,
-    RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource, SessionSourceKind,
-    SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
-    TaskStatus, TopicDossierLimits, TypedMemoryCandidateClaim, TypedMemoryTransitionInput,
-    VerificationInput, VerificationStatus, DEFAULT_AGENT_LEGIBILITY_CHARACTERS,
-    DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, DEFAULT_AGENT_LEGIBILITY_SESSIONS,
-    DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
-    DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS,
-    DEFAULT_CONTEXT_TOKENS, DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
+    RetrievalLimits, RevisionCompatibility, RichProblemAttemptCandidate,
+    RichProblemMemoryCandidate, RichProblemMemoryTransitionInput, RichProblemResolutionCandidate,
+    SessionMutation, SessionSource, SessionSourceKind, SessionStatus, SpecificationContextLimits,
+    SpecificationRegistry, StartSessionInput, TaskInput, TaskStatus, TopicDossierLimits,
+    TypedMemoryCandidateClaim, TypedMemoryTransitionInput, VerificationInput, VerificationStatus,
+    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
+    DEFAULT_AGENT_LEGIBILITY_SESSIONS, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
+    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_CONTEXT_COMPILE_RESULTS,
+    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
+    DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
     DEFAULT_CURRENT_STATE_SESSIONS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
@@ -143,8 +147,10 @@ historical state as applicable: divergent decisions/revisions are withheld, whil
 remain historical context. The live Git beacon reads metadata only and does not make \
 `liveSourceChecked` true. Prompt and response bodies are excluded from startup context. When a resumed \
 session reports post-checkpoint evidence, inspect only that bounded recovery window with \
-ley_session_memory_compile. Before writing reconstructed structure, check unresolved/Decision/Problem \
-candidates with ley_session_memory_verify and Plan/Task candidates with ley_session_memory_verify_typed; \
+ley_session_memory_compile. Before writing reconstructed structure, check unresolved/Decision/minimal-Problem \
+candidates with ley_session_memory_verify, Plan/Task candidates with ley_session_memory_verify_typed, \
+and one evidence-complete Problem episode with ordered Attempts and optional Resolution using \
+ley_session_memory_verify_problem; \
 when the same recovery window supports two or more already-supported candidates, use \
 ley_session_memory_verify_batch so coverage and typed status are checked together. Batch verification \
 is read-only by itself and never authorizes sequential single-claim writes that would close the window. \
@@ -161,10 +167,14 @@ ley_session_memory_commit_structured with that same exact binding. For a Task, u
 ley_session_memory_verify_typed so status participates in the candidate fingerprint and overlap \
 check, then use ley_session_memory_commit_task with that exact typed binding. For a Plan, use the \
 same typed verifier and then ley_session_memory_commit_plan with the exact Plan text/status binding. \
+For one verifier-approved rich Problem episode, use ley_session_memory_verify_problem so the Problem, \
+each ordered Attempt/outcome/evidence item, and optional Resolution carry exact recovery-evidence \
+bindings, then use ley_session_memory_commit_problem with that exact typed candidate and fingerprint. \
 If ley_session_memory_verify_batch was required because several supported candidates share one recovery \
 window and it returns review-required with no deferred evidence, use exactly one \
 ley_session_memory_commit_batch with the exact batch fingerprint, checkpoint summary, and candidate \
-set; do not commit one candidate first and discard the others. Other candidate kinds remain review-only. \
+set; do not commit one candidate first and discard the others. Standalone Attempt/Resolution updates, \
+Command, Verification, and Summary remain review-only. \
 Do not substitute the generic checkpoint route for any bound recovery flow and \
 do not invent Task status or details. Store concise structure, \
 project-relative touched artifacts, and observed outcomes rather than transcripts or full tool \
@@ -947,6 +957,98 @@ pub struct VerifyTypedSessionMemoryParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpRichProblemAttemptCandidate {
+    #[schemars(length(min = 1, max = 8_000))]
+    pub action: String,
+    pub outcome: McpAttemptOutcome,
+    #[serde(default)]
+    #[schemars(length(max = 8_000))]
+    pub evidence: String,
+    #[schemars(length(min = 1, max = 20))]
+    #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+    pub evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpRichProblemResolutionCandidate {
+    #[schemars(length(min = 1, max = 8_000))]
+    pub root_cause: String,
+    #[schemars(length(min = 1, max = 8_000))]
+    pub change: String,
+    #[serde(default)]
+    #[schemars(length(max = 8_000))]
+    pub verification: String,
+    #[schemars(length(min = 1, max = 20))]
+    #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+    pub evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpRichProblemCandidate {
+    #[schemars(length(min = 1, max = 256))]
+    pub title: String,
+    #[schemars(length(min = 1, max = 8_000))]
+    pub symptom: String,
+    #[serde(default)]
+    #[schemars(length(max = 8_000))]
+    pub expected: String,
+    #[schemars(length(min = 1, max = 20))]
+    #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+    pub evidence_record_ids: Vec<String>,
+    #[serde(default)]
+    #[schemars(length(max = 50))]
+    pub attempts: Vec<McpRichProblemAttemptCandidate>,
+    #[serde(default)]
+    pub resolution: Option<McpRichProblemResolutionCandidate>,
+}
+
+impl From<McpRichProblemCandidate> for RichProblemMemoryCandidate {
+    fn from(value: McpRichProblemCandidate) -> Self {
+        Self {
+            title: value.title,
+            symptom: value.symptom,
+            expected: value.expected,
+            evidence_record_ids: value.evidence_record_ids,
+            attempts: value
+                .attempts
+                .into_iter()
+                .map(|attempt| RichProblemAttemptCandidate {
+                    action: attempt.action,
+                    outcome: attempt.outcome.into(),
+                    evidence: attempt.evidence,
+                    evidence_record_ids: attempt.evidence_record_ids,
+                })
+                .collect(),
+            resolution: value
+                .resolution
+                .map(|resolution| RichProblemResolutionCandidate {
+                    root_cause: resolution.root_cause,
+                    change: resolution.change,
+                    verification: resolution.verification,
+                    evidence_record_ids: resolution.evidence_record_ids,
+                }),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VerifyRichProblemSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    pub candidate: McpRichProblemCandidate,
+    #[serde(default)]
+    #[schemars(length(max = 10_000))]
+    #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+    pub deferred_evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "kebab-case",
@@ -1203,6 +1305,24 @@ pub struct CommitPlanSessionMemoryParams {
     #[schemars(length(min = 1, max = 20))]
     #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
     pub evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitRichProblemSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    /// Caller-stable idempotency key. Reuse only when retrying this exact rich Problem recovery write.
+    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
+    pub request_id: String,
+    /// Exact event count used by ley_session_memory_verify_problem.
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    /// Exact sha256 fingerprint returned by ley_session_memory_verify_problem.
+    #[schemars(regex(pattern = "^sha256:[0-9a-f]{64}$"))]
+    pub candidate_fingerprint: String,
+    /// Exact rich Problem candidate that was verified. Ley does not infer missing attempts/outcomes/resolution fields.
+    pub candidate: McpRichProblemCandidate,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
@@ -1729,6 +1849,7 @@ impl LeyMcpServer {
             tool_router.disable_route("ley_session_checkpoint");
             tool_router.disable_route("ley_session_memory_commit_batch");
             tool_router.disable_route("ley_session_memory_commit_plan");
+            tool_router.disable_route("ley_session_memory_commit_problem");
             tool_router.disable_route("ley_session_memory_commit_structured");
             tool_router.disable_route("ley_session_memory_commit_task");
             tool_router.disable_route("ley_session_memory_commit_unresolved");
@@ -2965,6 +3086,38 @@ impl LeyMcpServer {
         }))
     }
 
+    /// Verify exactly one rich Problem recovery candidate, including expected behavior, ordered
+    /// Attempts/outcomes/evidence, and an optional Resolution. Each durable component carries its
+    /// own exact recovery-evidence binding. This route is read-only and proves structural accounting,
+    /// not semantic faithfulness or live-source correctness.
+    #[tool(
+        name = "ley_session_memory_verify_problem",
+        annotations(
+            title = "Verify a rich Ley Problem recovery candidate",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_verify_problem(
+        &self,
+        Parameters(params): Parameters<VerifyRichProblemSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_historical_tool_result(|| {
+            verify_rich_problem_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                RichProblemMemoryTransitionInput {
+                    expected_event_count: params.expected_event_count,
+                    candidate: params.candidate.into(),
+                    deferred_evidence_record_ids: params.deferred_evidence_record_ids,
+                },
+            )
+        }))
+    }
+
     /// Commit exactly one verifier-approved unresolved recovery claim.
     /// Ley re-verifies the current recovery window and binds the immutable checkpoint to the
     /// candidate fingerprint plus the complete cited turn-evidence set.
@@ -3099,6 +3252,39 @@ impl LeyMcpServer {
                     text: params.text,
                     status: params.status.into(),
                     evidence_record_ids: params.evidence_record_ids,
+                },
+            )
+        }))
+    }
+
+    /// Commit exactly one verifier-approved rich Problem recovery candidate.
+    /// Ley re-runs the complete typed Problem verifier under the session writer lock, requires the
+    /// exact fingerprint and recovery window, and appends one schema-v12 checkpoint with per-Problem,
+    /// per-Attempt, and optional Resolution evidence bindings.
+    #[tool(
+        name = "ley_session_memory_commit_problem",
+        annotations(
+            title = "Commit a verified rich Ley Problem recovery candidate",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_commit_problem(
+        &self,
+        Parameters(params): Parameters<CommitRichProblemSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_session_write_result(|| {
+            commit_rich_problem_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                CommitRichProblemMemoryTransitionInput {
+                    request_id: params.request_id,
+                    expected_event_count: params.expected_event_count,
+                    candidate_fingerprint: params.candidate_fingerprint,
+                    candidate: params.candidate.into(),
                 },
             )
         }))
@@ -4073,6 +4259,7 @@ mod tests {
                 "ley_session_memory_compile",
                 "ley_session_memory_verify",
                 "ley_session_memory_verify_batch",
+                "ley_session_memory_verify_problem",
                 "ley_session_memory_verify_typed",
                 "ley_session_turns_get",
                 "ley_sessions_list",
@@ -4446,6 +4633,36 @@ mod tests {
         }
         assert!(!typed_verifier_schema_text.contains("decision"));
         assert!(!typed_verifier_schema_text.contains("problem"));
+        let rich_problem_verifier_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_session_memory_verify_problem")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            rich_problem_verifier_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        let rich_problem_verifier_text = rich_problem_verifier_schema.to_string();
+        for value in [
+            "title",
+            "symptom",
+            "expected",
+            "attempts",
+            "resolution",
+            "helped",
+            "no-effect",
+            "worsened",
+            "unknown",
+            "rootCause",
+            "change",
+            "verification",
+            "evidenceRecordIds",
+        ] {
+            assert!(rich_problem_verifier_text.contains(value));
+        }
         for tool in tools {
             let annotations = tool.annotations.unwrap();
             assert_eq!(annotations.read_only_hint, Some(true));
@@ -4490,12 +4707,14 @@ mod tests {
                 "ley_session_get",
                 "ley_session_memory_commit_batch",
                 "ley_session_memory_commit_plan",
+                "ley_session_memory_commit_problem",
                 "ley_session_memory_commit_structured",
                 "ley_session_memory_commit_task",
                 "ley_session_memory_commit_unresolved",
                 "ley_session_memory_compile",
                 "ley_session_memory_verify",
                 "ley_session_memory_verify_batch",
+                "ley_session_memory_verify_problem",
                 "ley_session_memory_verify_typed",
                 "ley_session_start",
                 "ley_session_turns_get",
@@ -4706,6 +4925,33 @@ mod tests {
             assert!(plan_schema_text.contains(status));
         }
         assert!(!plan_schema_text.contains("cancelled"));
+        let rich_problem_commit_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_session_memory_commit_problem")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            rich_problem_commit_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        let rich_problem_commit_text = rich_problem_commit_schema.to_string();
+        for value in [
+            "attempts",
+            "resolution",
+            "helped",
+            "no-effect",
+            "worsened",
+            "unknown",
+            "rootCause",
+            "change",
+            "verification",
+            "evidenceRecordIds",
+        ] {
+            assert!(rich_problem_commit_text.contains(value));
+        }
         for tool in tools {
             let annotations = tool.annotations.unwrap();
             let writes_session = matches!(
@@ -4716,6 +4962,7 @@ mod tests {
                     | "ley_session_checkpoint"
                     | "ley_session_memory_commit_batch"
                     | "ley_session_memory_commit_plan"
+                    | "ley_session_memory_commit_problem"
                     | "ley_session_memory_commit_structured"
                     | "ley_session_memory_commit_task"
                     | "ley_session_memory_commit_unresolved"
@@ -6892,6 +7139,204 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rich_problem_recovery_write_flow_commits_once_replays_and_closes_window() {
+        let (_temporary, project, vault, _) = fixture();
+        let write_server =
+            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "7".repeat(32)),
+                name: "Rich Problem MCP recovery".to_owned(),
+                goal: "Recover a debugging episode through the public MCP flow".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
+        for (request_digit, correlation, text, response) in [
+            (
+                '2',
+                "rich-problem-mcp-1",
+                "Refresh returns 401 although authentication should survive",
+                false,
+            ),
+            (
+                '3',
+                "rich-problem-mcp-1",
+                "Clearing browser cookies had no effect on the 401",
+                true,
+            ),
+            (
+                '4',
+                "rich-problem-mcp-2",
+                "Refreshing the access token before navigation kept authentication alive",
+                false,
+            ),
+            (
+                '5',
+                "rich-problem-mcp-2",
+                "The expired access token was the root cause; repeated refreshes now pass",
+                true,
+            ),
+        ] {
+            let input = TurnEvidenceInput {
+                request_id: format!("req_{}", request_digit.to_string().repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some(correlation.to_owned()),
+                text: text.to_owned(),
+            };
+            if response {
+                record_session_response(&project, &vault, &session_id, input).unwrap();
+            } else {
+                record_session_prompt(&project, &vault, &session_id, input).unwrap();
+            }
+        }
+        let pack = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id: session_id.clone(),
+                max_results: Some(20),
+                max_characters: Some(8_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let evidence_record_ids = pack["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["recordId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(evidence_record_ids.len(), 4);
+
+        let candidate = || McpRichProblemCandidate {
+            title: "Login refresh failure".to_owned(),
+            symptom: "Refreshing returns 401".to_owned(),
+            expected: "The authenticated session survives refresh".to_owned(),
+            evidence_record_ids: vec![evidence_record_ids[0].clone()],
+            attempts: vec![
+                McpRichProblemAttemptCandidate {
+                    action: "Clear browser cookies".to_owned(),
+                    outcome: McpAttemptOutcome::NoEffect,
+                    evidence: "Refresh still returned 401".to_owned(),
+                    evidence_record_ids: vec![evidence_record_ids[1].clone()],
+                },
+                McpRichProblemAttemptCandidate {
+                    action: "Refresh the access token before navigation".to_owned(),
+                    outcome: McpAttemptOutcome::Helped,
+                    evidence: "Refresh kept the session authenticated".to_owned(),
+                    evidence_record_ids: vec![evidence_record_ids[2].clone()],
+                },
+            ],
+            resolution: Some(McpRichProblemResolutionCandidate {
+                root_cause: "The client reused an expired access token".to_owned(),
+                change: "Refresh the token before protected navigation".to_owned(),
+                verification: "Repeated refreshes remained authenticated".to_owned(),
+                evidence_record_ids: vec![evidence_record_ids[3].clone()],
+            }),
+        };
+        let transition = write_server
+            .session_memory_verify_problem(Parameters(VerifyRichProblemSessionMemoryParams {
+                session_id: session_id.clone(),
+                expected_event_count: 5,
+                candidate: candidate(),
+                deferred_evidence_record_ids: Vec::new(),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(transition["state"], "review-required");
+        assert_eq!(transition["semanticFaithfulnessProven"], false);
+        assert_eq!(transition["liveSourceChecked"], false);
+        assert_eq!(transition["coverage"]["coverageComplete"], true);
+        assert_eq!(transition["coverage"]["totalCurrentEvidence"], 4);
+        assert_eq!(transition["claimChecks"].as_array().unwrap().len(), 4);
+        let candidate_fingerprint = transition["candidateFingerprint"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let request_id = format!("req_{}", "6".repeat(32));
+
+        let committed = write_server
+            .session_memory_commit_problem(Parameters(CommitRichProblemSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id: request_id.clone(),
+                expected_event_count: 5,
+                candidate_fingerprint: candidate_fingerprint.clone(),
+                candidate: candidate(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(committed.is_error, Some(false));
+        assert_eq!(
+            committed.structured_content.as_ref().unwrap()["eventCount"],
+            6
+        );
+        assert_eq!(
+            committed.structured_content.as_ref().unwrap()["replayed"],
+            false
+        );
+
+        let retry = write_server
+            .session_memory_commit_problem(Parameters(CommitRichProblemSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id,
+                expected_event_count: 5,
+                candidate_fingerprint,
+                candidate: candidate(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(retry.is_error, Some(false));
+        assert_eq!(retry.structured_content.as_ref().unwrap()["eventCount"], 6);
+        assert_eq!(retry.structured_content.as_ref().unwrap()["replayed"], true);
+
+        let session = write_server
+            .session_get(Parameters(SessionContextParams {
+                session_id: session_id.clone(),
+                max_checkpoints: Some(5),
+                max_characters: Some(12_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(session["schemaVersion"], 12);
+        assert_eq!(session["eventCount"], 6);
+        let checkpoints = session["checkpoints"].as_array().unwrap();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0]["summary"], "Login refresh failure");
+        let problems = checkpoints[0]["problems"].as_array().unwrap();
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0]["title"], "Login refresh failure");
+        assert_eq!(problems[0]["symptom"], "Refreshing returns 401");
+        assert_eq!(problems[0]["attempts"].as_array().unwrap().len(), 2);
+        assert_eq!(problems[0]["attempts"][0]["outcome"], "no-effect");
+        assert_eq!(problems[0]["attempts"][1]["outcome"], "helped");
+        assert_eq!(
+            problems[0]["resolutionDetail"]["rootCause"],
+            "The client reused an expired access token"
+        );
+
+        let after = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id,
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(after["state"], "no-unconsolidated-evidence");
+        assert_eq!(after["totalUnconsolidatedEvidence"], 0);
+    }
+
+    #[tokio::test]
     async fn bound_task_recovery_uses_typed_verifier_and_replays_exact_retry() {
         let (_temporary, project, vault, _) = fixture();
         let write_server =
@@ -8269,7 +8714,7 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 28);
+        assert_eq!(tools.len(), 29);
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_consolidation_inbox"));
@@ -8288,6 +8733,9 @@ mod tests {
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_session_memory_verify_batch"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == "ley_session_memory_verify_problem"));
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await

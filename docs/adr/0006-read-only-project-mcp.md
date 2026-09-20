@@ -13,7 +13,7 @@ MCP Roots are client-supplied workspace hints, not an authorization boundary, an
 
 `ley mcp [project] [--vault <temporary-vault>]` starts a local stdio MCP server using protocol version `2025-11-25`. Startup resolves exactly one initialized project and its persisted or explicit temporary vault binding. A ready server requires an existing, internally consistent artifact and graph snapshot. ADR 0018 later adds one packaging-safe fallback: outside a ready project, the process can complete MCP initialization with zero capabilities, tools, and resources so a global host integration does not fail startup. That inactive process still never discovers or creates projects, consumes MCP Roots, or accepts a project/vault selector in a tool call.
 
-The default read-only server currently exposes twenty-eight tools (the original surface plus later ADR extensions):
+The default read-only server currently exposes twenty-nine tools (the original surface plus later ADR extensions):
 
 | Tool | Result boundary |
 | --- | --- |
@@ -40,6 +40,7 @@ The default read-only server currently exposes twenty-eight tools (the original 
 | `ley_session_memory_verify` | Read-only structural verification of a proposed recovery transition against exact evidence IDs, current event count, coverage, and duplicate/revision overlap; never semantic proof |
 | `ley_session_memory_verify_typed` | Read-only verification of one typed Plan or Task recovery candidate with exact evidence IDs and status-aware fingerprint/duplicate/revision checks; never semantic proof |
 | `ley_session_memory_verify_batch` | Read-only verification of one 2–50-candidate atomic recovery set with explicit checkpoint summary, typed candidate payloads, complete-window coverage, and intra-batch duplicate/conflict checks; never semantic proof |
+| `ley_session_memory_verify_problem` | Read-only verification of one rich Problem episode with exact expected state, ordered Attempts/outcomes/evidence, optional Resolution, component-specific recovery evidence, and full-window accounting; never semantic proof |
 | `ley_session_turns_get` | Explicit bounded prompt/response evidence read; turn bodies never enter startup context automatically |
 | `ley_learnings_list` | Trusted-first bounded learning summaries with explicit review/all scopes |
 | `ley_learning_get` | One bounded learning pack with trust, freshness, provenance, citations, and history |

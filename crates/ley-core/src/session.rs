@@ -35,6 +35,7 @@ pub const SESSION_TYPED_RECOVERY_SCHEMA_VERSION: u32 = 8;
 pub const SESSION_TASK_RECOVERY_SCHEMA_VERSION: u32 = 9;
 pub const SESSION_PLAN_RECOVERY_SCHEMA_VERSION: u32 = 10;
 pub const SESSION_BATCH_RECOVERY_SCHEMA_VERSION: u32 = 11;
+pub const SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION: u32 = 12;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
@@ -62,6 +63,7 @@ const SESSION_V8_FILE: &str = "session-v8.json";
 const SESSION_V9_FILE: &str = "session-v9.json";
 const SESSION_V10_FILE: &str = "session-v10.json";
 const SESSION_V11_FILE: &str = "session-v11.json";
+const SESSION_V12_FILE: &str = "session-v12.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1045,6 +1047,14 @@ pub(crate) struct RecoveredBatchCheckpointInput {
     pub candidates: Vec<crate::memory_transition::BatchMemoryCandidateClaim>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct RecoveredRichProblemCheckpointInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub candidate: crate::memory_transition::RichProblemMemoryCandidate,
+}
+
 pub(crate) fn replay_recovered_unresolved_session_if_present(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -1152,6 +1162,28 @@ pub(crate) fn checkpoint_recovered_batch_session(
 ) -> Result<SessionMutation, LeyCoreError> {
     let (project_id, pending) =
         recovered_batch_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
+    mutate_session(&project_id, session_id, pending, vault)
+}
+
+pub(crate) fn replay_recovered_rich_problem_session_if_present(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredRichProblemCheckpointInput,
+) -> Result<Option<SessionMutation>, LeyCoreError> {
+    let (project_id, pending) =
+        recovered_rich_problem_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
+    replay_pending_event_if_present(&project_id, session_id, pending, vault)
+}
+
+pub(crate) fn checkpoint_recovered_rich_problem_session(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredRichProblemCheckpointInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    let (project_id, pending) =
+        recovered_rich_problem_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
     mutate_session(&project_id, session_id, pending, vault)
 }
 
@@ -1762,6 +1794,177 @@ fn recovered_batch_pending(
     ))
 }
 
+fn recovered_rich_problem_pending(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: RecoveredRichProblemCheckpointInput,
+) -> Result<(String, PendingEvent), LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    if !is_sha256(&input.candidate_fingerprint) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "rich problem recovery candidate fingerprint must be sha256".to_owned(),
+        ));
+    }
+
+    let candidate = input.candidate;
+    let problem_evidence =
+        validate_rich_problem_component_evidence("problem", candidate.evidence_record_ids.clone())?;
+    let mut all_evidence = problem_evidence.iter().cloned().collect::<BTreeSet<_>>();
+    let mut attempt_inputs = Vec::with_capacity(candidate.attempts.len());
+    let mut attempt_evidence = Vec::with_capacity(candidate.attempts.len());
+    for (index, attempt) in candidate.attempts.into_iter().enumerate() {
+        let evidence = validate_rich_problem_component_evidence(
+            &format!("attempt {index}"),
+            attempt.evidence_record_ids,
+        )?;
+        all_evidence.extend(evidence.iter().cloned());
+        attempt_inputs.push(AttemptInput {
+            action: attempt.action,
+            outcome: attempt.outcome,
+            evidence: attempt.evidence,
+        });
+        attempt_evidence.push(evidence);
+    }
+    let (resolution_input, resolution_evidence) = match candidate.resolution {
+        Some(resolution) => {
+            let evidence = validate_rich_problem_component_evidence(
+                "resolution",
+                resolution.evidence_record_ids,
+            )?;
+            all_evidence.extend(evidence.iter().cloned());
+            (
+                Some(ResolutionInput {
+                    root_cause: resolution.root_cause,
+                    change: resolution.change,
+                    verification: resolution.verification,
+                }),
+                Some(evidence),
+            )
+        }
+        None => (None, None),
+    };
+    if all_evidence.is_empty() || all_evidence.len() > SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "rich problem recovery binding must cite between 1 and {SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT} distinct evidence records"
+        )));
+    }
+    let evidence_record_ids = all_evidence.into_iter().collect::<Vec<_>>();
+
+    let diagnostic = diagnose_project(project_start)?;
+    let memory = load_project_memory(&diagnostic.root, vault)?;
+    let event_id = deterministic_id(
+        "evt",
+        &format!(
+            "{session_id}:{}:recovery-checkpoint-recorded",
+            input.request_id
+        ),
+        64,
+    );
+    let recorded_at = unix_time_ms();
+    let checkpoint_input = CheckpointInput {
+        request_id: input.request_id.clone(),
+        summary: candidate.title.clone(),
+        plan: Vec::new(),
+        decisions: Vec::new(),
+        tasks: Vec::new(),
+        problems: vec![ProblemInput {
+            title: candidate.title,
+            symptom: candidate.symptom,
+            expected: candidate.expected,
+            attempts: attempt_inputs,
+            resolution: resolution_input,
+        }],
+        touched_artifacts: Vec::new(),
+        commands: Vec::new(),
+        verification: Vec::new(),
+        unresolved: Vec::new(),
+    };
+    let (checkpoint, redactions) =
+        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let problem = checkpoint.problems.first().ok_or_else(|| {
+        LeyCoreError::InvalidSessionRequest(
+            "rich problem recovery normalization produced no problem".to_owned(),
+        )
+    })?;
+    let mut record_bindings =
+        Vec::with_capacity(1 + problem.attempts.len() + usize::from(problem.resolution.is_some()));
+    record_bindings.push(RecoveryRecordBinding {
+        record_id: problem.id.clone(),
+        evidence_record_ids: problem_evidence,
+    });
+    for (attempt, evidence) in problem.attempts.iter().zip(attempt_evidence) {
+        record_bindings.push(RecoveryRecordBinding {
+            record_id: attempt.id.clone(),
+            evidence_record_ids: evidence,
+        });
+    }
+    if let (Some(resolution), Some(evidence)) = (&problem.resolution, resolution_evidence) {
+        record_bindings.push(RecoveryRecordBinding {
+            record_id: resolution.id.clone(),
+            evidence_record_ids: evidence,
+        });
+    }
+    let binding_fingerprint = recovery_binding_fingerprint_v6(
+        session_id,
+        input.expected_event_count,
+        &input.candidate_fingerprint,
+        &evidence_record_ids,
+        &checkpoint,
+        &record_bindings,
+    );
+    Ok((
+        diagnostic.identity.project_id,
+        PendingEvent {
+            event_id,
+            request_id: input.request_id,
+            redactions,
+            payload: SessionEventPayload::RecoveryCheckpointRecorded(RecoveryCheckpointEvent {
+                checkpoint: Box::new(checkpoint),
+                provenance: RecoveryCheckpointProvenance {
+                    expected_event_count: input.expected_event_count,
+                    candidate_fingerprint: input.candidate_fingerprint,
+                    binding_fingerprint,
+                    evidence_record_ids,
+                    record_bindings,
+                },
+            }),
+            schema_version: SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(input.expected_event_count),
+        },
+    ))
+}
+
+fn validate_rich_problem_component_evidence(
+    label: &str,
+    mut evidence_record_ids: Vec<String>,
+) -> Result<Vec<String>, LeyCoreError> {
+    if evidence_record_ids.is_empty()
+        || evidence_record_ids.len()
+            > crate::memory_transition::MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "rich problem {label} must cite between 1 and {} evidence records",
+            crate::memory_transition::MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM
+        )));
+    }
+    evidence_record_ids.sort();
+    if evidence_record_ids
+        .windows(2)
+        .any(|window| window[0] == window[1])
+        || evidence_record_ids
+            .iter()
+            .any(|record_id| !valid_prefixed_hex(record_id, "tev_", 32))
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "rich problem {label} evidence IDs must be unique tev_ identifiers"
+        )));
+    }
+    Ok(evidence_record_ids)
+}
+
 fn validate_batch_candidate_evidence(
     mut evidence_record_ids: Vec<String>,
 ) -> Result<Vec<String>, LeyCoreError> {
@@ -2271,9 +2474,11 @@ pub(crate) fn read_recovery_derivation_origin(
     match &event.payload {
         SessionEventPayload::CheckpointRecorded(_) => Ok(None),
         SessionEventPayload::RecoveryCheckpointRecorded(recovery) => {
-            let evidence_record_ids = if event.schema_version
-                == SESSION_BATCH_RECOVERY_SCHEMA_VERSION
-                && record_id != recovery.checkpoint.id
+            let evidence_record_ids = if matches!(
+                event.schema_version,
+                SESSION_BATCH_RECOVERY_SCHEMA_VERSION
+                    | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
+            ) && record_id != recovery.checkpoint.id
             {
                 recovery
                     .provenance
@@ -2283,7 +2488,7 @@ pub(crate) fn read_recovery_derivation_origin(
                     .map(|binding| binding.evidence_record_ids.clone())
                     .ok_or_else(|| {
                         LeyCoreError::InvalidSessionStore(
-                            "schema-v11 recovery child record is missing its evidence binding"
+                            "bound recovery child record is missing its evidence binding"
                                 .to_owned(),
                         )
                     })?
@@ -3183,6 +3388,48 @@ fn validate_pending_recovery_window(
             }
             verification.candidate_fingerprint
         }
+        SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION => {
+            let rich_problem = rich_problem_recovery_transition_input(
+                &recovery.checkpoint,
+                &recovery.provenance.record_bindings,
+                &recovery.provenance.evidence_record_ids,
+                recovery.provenance.expected_event_count,
+            )
+            .map_err(|_| {
+                LeyCoreError::InvalidSessionRequest(
+                    "rich problem recovery checkpoint changed under normalization; recompile and reverify the sanitized content"
+                        .to_owned(),
+                )
+            })?;
+            let boundary_sequence = existing
+                .iter()
+                .rev()
+                .find_map(|event| {
+                    matches!(
+                        &event.payload,
+                        SessionEventPayload::CheckpointRecorded(_)
+                            | SessionEventPayload::RecoveryCheckpointRecorded(_)
+                    )
+                    .then_some(event.sequence)
+                })
+                .unwrap_or(0);
+            let session = replay_events(existing, project_id, session_id)?;
+            let verification =
+                crate::memory_transition::verify_rich_problem_memory_transition_against_session(
+                    &session,
+                    boundary_sequence,
+                    session_id,
+                    rich_problem,
+                )?;
+            if verification.state != crate::memory_transition::MemoryTransitionState::ReviewRequired
+            {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "rich problem recovery commit no longer verifies as review-required under the session writer lock; recompile and reverify"
+                        .to_owned(),
+                ));
+            }
+            verification.candidate_fingerprint
+        }
         _ => {
             return Err(LeyCoreError::InvalidSessionRequest(
                 "recovery checkpoint uses an unsupported schema version".to_owned(),
@@ -3626,7 +3873,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_BATCH_RECOVERY_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION {
+        SESSION_V12_FILE
+    } else if session.schema_version >= SESSION_BATCH_RECOVERY_SCHEMA_VERSION {
         SESSION_V11_FILE
     } else if session.schema_version >= SESSION_PLAN_RECOVERY_SCHEMA_VERSION {
         SESSION_V10_FILE
@@ -4158,6 +4407,7 @@ fn validate_event(
             | SESSION_TASK_RECOVERY_SCHEMA_VERSION
             | SESSION_PLAN_RECOVERY_SCHEMA_VERSION
             | SESSION_BATCH_RECOVERY_SCHEMA_VERSION
+            | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -4387,6 +4637,13 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
             "schema version 11 is reserved for atomic bound recovery checkpoints",
         );
     }
+    if event.schema_version == SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
+        && !is_recovery_checkpoint
+    {
+        return invalid_session_store(
+            "schema version 12 is reserved for rich problem bound recovery checkpoints",
+        );
+    }
     if event.schema_version == SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
         && !is_verification_evidence_checkpoint
     {
@@ -4607,10 +4864,13 @@ fn validate_recovery_checkpoint_event(
     }
     validate_stored_text("checkpoint.summary", &checkpoint.summary, 1, 16_000)?;
     validate_checkpoint_records(checkpoint, &event.event_id)?;
-    if event.schema_version == SESSION_BATCH_RECOVERY_SCHEMA_VERSION {
+    if matches!(
+        event.schema_version,
+        SESSION_BATCH_RECOVERY_SCHEMA_VERSION | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
+    ) {
         if recovery.provenance.record_bindings.is_empty() {
             return invalid_session_store(
-                "schema-v11 atomic recovery checkpoint requires per-record evidence bindings",
+                "bound recovery checkpoint requires per-record evidence bindings",
             );
         }
     } else if !recovery.provenance.record_bindings.is_empty() {
@@ -4664,6 +4924,14 @@ fn validate_recovery_checkpoint_event(
                     "schema-v11 atomic recovery checkpoint candidate count is invalid",
                 );
             }
+        }
+        SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION => {
+            rich_problem_recovery_transition_input(
+                checkpoint,
+                &recovery.provenance.record_bindings,
+                &recovery.provenance.evidence_record_ids,
+                recovery.provenance.expected_event_count,
+            )?;
         }
         _ => return invalid_session_store("bound recovery checkpoint schema version is invalid"),
     }
@@ -4754,6 +5022,18 @@ fn validate_recovery_checkpoint_event(
                 recovery.provenance.expected_event_count,
             )?;
             crate::memory_transition::batch_candidate_fingerprint(&event.session_id, &batch)
+        }
+        SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION => {
+            let rich_problem = rich_problem_recovery_transition_input(
+                checkpoint,
+                &recovery.provenance.record_bindings,
+                evidence,
+                recovery.provenance.expected_event_count,
+            )?;
+            crate::memory_transition::rich_problem_candidate_fingerprint(
+                &event.session_id,
+                &rich_problem,
+            )
         }
         _ => unreachable!("recovery schema checked above"),
     };
@@ -5431,6 +5711,186 @@ fn recovery_binding_fingerprint_v5(
     format!("sha256:{:x}", hasher.finalize())
 }
 
+fn recovery_binding_fingerprint_v6(
+    session_id: &str,
+    expected_event_count: u64,
+    candidate_fingerprint: &str,
+    evidence_record_ids: &[String],
+    checkpoint: &SessionCheckpoint,
+    record_bindings: &[RecoveryRecordBinding],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ley-recovery-checkpoint-binding-v6-rich-problem");
+    hasher.update([0]);
+    hasher.update(session_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(expected_event_count.to_le_bytes());
+    hasher.update([0]);
+    hasher.update(candidate_fingerprint.as_bytes());
+    hasher.update([0]);
+    hasher.update(checkpoint.summary.as_bytes());
+    if let Some(problem) = checkpoint.problems.first() {
+        hasher.update([0xf5]);
+        hasher.update(problem.id.as_bytes());
+        for field in [&problem.title, &problem.symptom, &problem.expected] {
+            hasher.update([0]);
+            hasher.update(field.as_bytes());
+        }
+        for attempt in &problem.attempts {
+            hasher.update([0xf6]);
+            hasher.update(attempt.id.as_bytes());
+            hasher.update([0]);
+            hasher.update(attempt.action.as_bytes());
+            hasher.update([0]);
+            hasher.update(enum_label(attempt.outcome).as_bytes());
+            hasher.update([0]);
+            hasher.update(attempt.evidence.as_bytes());
+        }
+        if let Some(resolution) = &problem.resolution {
+            hasher.update([0xf7]);
+            hasher.update(resolution.id.as_bytes());
+            for field in [
+                &resolution.root_cause,
+                &resolution.change,
+                &resolution.verification,
+            ] {
+                hasher.update([0]);
+                hasher.update(field.as_bytes());
+            }
+        } else {
+            hasher.update([0xf8]);
+        }
+    }
+    for record_id in evidence_record_ids {
+        hasher.update([0xfc]);
+        hasher.update(record_id.as_bytes());
+    }
+    for binding in record_bindings {
+        hasher.update([0xfd]);
+        hasher.update(binding.record_id.as_bytes());
+        for record_id in &binding.evidence_record_ids {
+            hasher.update([0]);
+            hasher.update(record_id.as_bytes());
+        }
+        hasher.update([0xff]);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn rich_problem_recovery_transition_input(
+    checkpoint: &SessionCheckpoint,
+    record_bindings: &[RecoveryRecordBinding],
+    full_evidence: &[String],
+    expected_event_count: u64,
+) -> Result<crate::memory_transition::RichProblemMemoryTransitionInput, LeyCoreError> {
+    if !checkpoint.plan.is_empty()
+        || !checkpoint.decisions.is_empty()
+        || !checkpoint.tasks.is_empty()
+        || checkpoint.problems.len() != 1
+        || !checkpoint.touched_artifacts.is_empty()
+        || !checkpoint.commands.is_empty()
+        || !checkpoint.verification.is_empty()
+        || !checkpoint.unresolved.is_empty()
+    {
+        return invalid_session_store(
+            "schema-v12 rich problem recovery checkpoint contains unsupported record kinds",
+        );
+    }
+    let problem = &checkpoint.problems[0];
+    if checkpoint.summary != problem.title {
+        return invalid_session_store(
+            "schema-v12 rich problem recovery checkpoint summary does not match its problem title",
+        );
+    }
+    let expected_bindings = 1 + problem.attempts.len() + usize::from(problem.resolution.is_some());
+    if record_bindings.len() != expected_bindings {
+        return invalid_session_store("schema-v12 rich problem recovery binding count is invalid");
+    }
+    let full_evidence_set = full_evidence.iter().cloned().collect::<BTreeSet<_>>();
+    let mut bound_evidence_union = BTreeSet::new();
+    for binding in record_bindings {
+        if binding.evidence_record_ids.is_empty()
+            || binding.evidence_record_ids.len()
+                > crate::memory_transition::MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM
+            || binding
+                .evidence_record_ids
+                .iter()
+                .any(|record_id| !valid_prefixed_hex(record_id, "tev_", 32))
+            || binding
+                .evidence_record_ids
+                .windows(2)
+                .any(|window| window[0] >= window[1])
+            || binding
+                .evidence_record_ids
+                .iter()
+                .any(|record_id| !full_evidence_set.contains(record_id))
+        {
+            return invalid_session_store(
+                "schema-v12 rich problem recovery record binding evidence is invalid",
+            );
+        }
+        bound_evidence_union.extend(binding.evidence_record_ids.iter().cloned());
+    }
+    if bound_evidence_union != full_evidence_set {
+        return invalid_session_store(
+            "schema-v12 rich problem recovery bindings do not cover the complete recovery window",
+        );
+    }
+
+    let mut binding_index = 0usize;
+    let problem_binding = &record_bindings[binding_index];
+    if problem_binding.record_id != problem.id {
+        return invalid_session_store(
+            "schema-v12 rich problem parent binding record ID is invalid",
+        );
+    }
+    binding_index += 1;
+    let mut attempts = Vec::with_capacity(problem.attempts.len());
+    for attempt in &problem.attempts {
+        let binding = &record_bindings[binding_index];
+        if binding.record_id != attempt.id {
+            return invalid_session_store(
+                "schema-v12 rich problem attempt binding record ID is invalid",
+            );
+        }
+        attempts.push(crate::memory_transition::RichProblemAttemptCandidate {
+            action: attempt.action.clone(),
+            outcome: attempt.outcome,
+            evidence: attempt.evidence.clone(),
+            evidence_record_ids: binding.evidence_record_ids.clone(),
+        });
+        binding_index += 1;
+    }
+    let resolution = if let Some(resolution) = &problem.resolution {
+        let binding = &record_bindings[binding_index];
+        if binding.record_id != resolution.id {
+            return invalid_session_store(
+                "schema-v12 rich problem resolution binding record ID is invalid",
+            );
+        }
+        Some(crate::memory_transition::RichProblemResolutionCandidate {
+            root_cause: resolution.root_cause.clone(),
+            change: resolution.change.clone(),
+            verification: resolution.verification.clone(),
+            evidence_record_ids: binding.evidence_record_ids.clone(),
+        })
+    } else {
+        None
+    };
+    Ok(crate::memory_transition::RichProblemMemoryTransitionInput {
+        expected_event_count,
+        candidate: crate::memory_transition::RichProblemMemoryCandidate {
+            title: problem.title.clone(),
+            symptom: problem.symptom.clone(),
+            expected: problem.expected.clone(),
+            evidence_record_ids: problem_binding.evidence_record_ids.clone(),
+            attempts,
+            resolution,
+        },
+        deferred_evidence_record_ids: Vec::new(),
+    })
+}
+
 fn batch_recovery_transition_input(
     checkpoint: &SessionCheckpoint,
     record_bindings: &[RecoveryRecordBinding],
@@ -5446,8 +5906,7 @@ fn batch_recovery_transition_input(
         );
     }
     let candidate_count = input_candidate_count(checkpoint);
-    if candidate_count < 2
-        || candidate_count > crate::memory_transition::MAX_MEMORY_TRANSITION_CLAIMS
+    if !(2..=crate::memory_transition::MAX_MEMORY_TRANSITION_CLAIMS).contains(&candidate_count)
         || record_bindings.len() != candidate_count
     {
         return invalid_session_store(
@@ -5748,6 +6207,14 @@ fn recovery_binding_fingerprint_for_event(
             ))
         }
         SESSION_BATCH_RECOVERY_SCHEMA_VERSION => Ok(recovery_binding_fingerprint_v5(
+            &event.session_id,
+            recovery.provenance.expected_event_count,
+            &recovery.provenance.candidate_fingerprint,
+            &recovery.provenance.evidence_record_ids,
+            &recovery.checkpoint,
+            &recovery.provenance.record_bindings,
+        )),
+        SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION => Ok(recovery_binding_fingerprint_v6(
             &event.session_id,
             recovery.provenance.expected_event_count,
             &recovery.provenance.candidate_fingerprint,
@@ -8705,7 +9172,122 @@ mod tests {
     }
 
     #[test]
-    fn recovery_ledger_replays_schema_v3_v8_v9_v10_and_v11_events_together() {
+    fn rich_problem_recovery_replay_rejects_child_evidence_rebinding() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('9'))).unwrap();
+        let symptom = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(
+                request_id('a'),
+                "Refresh returns 401 although authentication should survive",
+            ),
+        )
+        .unwrap();
+        let symptom_id = symptom.session.prompts[0].record_id.clone();
+        let attempt = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('b'), "Clearing cookies had no effect on the 401"),
+        )
+        .unwrap();
+        let attempt_id = attempt.session.responses[0].record_id.clone();
+        let resolution = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(
+                request_id('c'),
+                "Expired access token was the root cause; refreshing it fixed repeated refreshes",
+            ),
+        )
+        .unwrap();
+        let resolution_id = resolution.session.prompts.last().unwrap().record_id.clone();
+        let candidate = crate::memory_transition::RichProblemMemoryCandidate {
+            title: "Login refresh failure".to_owned(),
+            symptom: "Refreshing returns 401".to_owned(),
+            expected: "The authenticated session survives refresh".to_owned(),
+            evidence_record_ids: vec![symptom_id],
+            attempts: vec![crate::memory_transition::RichProblemAttemptCandidate {
+                action: "Clear browser cookies".to_owned(),
+                outcome: AttemptOutcome::NoEffect,
+                evidence: "Refresh still returned 401".to_owned(),
+                evidence_record_ids: vec![attempt_id],
+            }],
+            resolution: Some(crate::memory_transition::RichProblemResolutionCandidate {
+                root_cause: "The client reused an expired access token".to_owned(),
+                change: "Refresh the token before protected navigation".to_owned(),
+                verification: "Repeated refreshes remained authenticated".to_owned(),
+                evidence_record_ids: vec![resolution_id],
+            }),
+        };
+        let candidate_fingerprint = crate::memory_transition::rich_problem_candidate_fingerprint(
+            &started.session.session_id,
+            &crate::memory_transition::RichProblemMemoryTransitionInput {
+                expected_event_count: 4,
+                candidate: candidate.clone(),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        );
+        let committed = checkpoint_recovered_rich_problem_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            RecoveredRichProblemCheckpointInput {
+                request_id: request_id('d'),
+                expected_event_count: 4,
+                candidate_fingerprint,
+                candidate,
+            },
+        )
+        .unwrap();
+        let event_path = session_directory(&project, &vault, &started.session.session_id)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", committed.event_id));
+        let mut event: SessionEvent =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        let SessionEventPayload::RecoveryCheckpointRecorded(recovery) = &mut event.payload else {
+            panic!("expected rich problem recovery checkpoint event");
+        };
+        let attempt_evidence = recovery.provenance.record_bindings[1]
+            .evidence_record_ids
+            .clone();
+        recovery.provenance.record_bindings[1].evidence_record_ids =
+            recovery.provenance.record_bindings[2]
+                .evidence_record_ids
+                .clone();
+        recovery.provenance.record_bindings[2].evidence_record_ids = attempt_evidence;
+        let rich_problem = rich_problem_recovery_transition_input(
+            &recovery.checkpoint,
+            &recovery.provenance.record_bindings,
+            &recovery.provenance.evidence_record_ids,
+            recovery.provenance.expected_event_count,
+        )
+        .unwrap();
+        recovery.provenance.candidate_fingerprint =
+            crate::memory_transition::rich_problem_candidate_fingerprint(
+                &event.session_id,
+                &rich_problem,
+            );
+        event.request_fingerprint = request_fingerprint(
+            &event.project_id,
+            &event.session_id,
+            &event.request_id,
+            &event.payload,
+        )
+        .unwrap();
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&event).unwrap()).unwrap();
+        assert!(matches!(
+            read_session(&project, &vault, &started.session.session_id),
+            Err(LeyCoreError::InvalidSessionStore(message))
+                if message.contains("binding fingerprint")
+        ));
+    }
+
+    #[test]
+    fn recovery_ledger_replays_schema_v3_v8_v9_v10_v11_and_v12_events_together() {
         let (_base, project, vault) = setup_memory();
         let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
         let session_id = started.session.session_id.clone();
@@ -9000,13 +9582,108 @@ mod tests {
         );
         assert!(batch.session_path.ends_with(SESSION_V11_FILE));
 
+        let rich_problem_prompt = record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            turn_input(
+                format!("req_{}", "ab".repeat(16)),
+                "Refresh returns 401 although authentication should survive",
+            ),
+        )
+        .unwrap();
+        let rich_problem_prompt_id = rich_problem_prompt
+            .session
+            .prompts
+            .last()
+            .unwrap()
+            .record_id
+            .clone();
+        let rich_problem_attempt = record_session_response(
+            &project,
+            &vault,
+            &session_id,
+            turn_input(
+                format!("req_{}", "ac".repeat(16)),
+                "Clearing cookies had no effect on the 401",
+            ),
+        )
+        .unwrap();
+        let rich_problem_attempt_id = rich_problem_attempt
+            .session
+            .responses
+            .last()
+            .unwrap()
+            .record_id
+            .clone();
+        let rich_problem_resolution = record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            turn_input(
+                format!("req_{}", "ad".repeat(16)),
+                "Expired access token was the root cause; refreshing it fixed repeated refreshes",
+            ),
+        )
+        .unwrap();
+        let rich_problem_resolution_id = rich_problem_resolution
+            .session
+            .prompts
+            .last()
+            .unwrap()
+            .record_id
+            .clone();
+        let rich_problem_candidate = crate::memory_transition::RichProblemMemoryCandidate {
+            title: "Login refresh failure".to_owned(),
+            symptom: "Refreshing returns 401".to_owned(),
+            expected: "The authenticated session survives refresh".to_owned(),
+            evidence_record_ids: vec![rich_problem_prompt_id],
+            attempts: vec![crate::memory_transition::RichProblemAttemptCandidate {
+                action: "Clear browser cookies".to_owned(),
+                outcome: AttemptOutcome::NoEffect,
+                evidence: "Refresh still returned 401".to_owned(),
+                evidence_record_ids: vec![rich_problem_attempt_id],
+            }],
+            resolution: Some(crate::memory_transition::RichProblemResolutionCandidate {
+                root_cause: "The client reused an expired access token".to_owned(),
+                change: "Refresh the token before protected navigation".to_owned(),
+                verification: "Repeated refreshes remained authenticated".to_owned(),
+                evidence_record_ids: vec![rich_problem_resolution_id],
+            }),
+        };
+        let rich_problem_fingerprint = crate::memory_transition::rich_problem_candidate_fingerprint(
+            &session_id,
+            &crate::memory_transition::RichProblemMemoryTransitionInput {
+                expected_event_count: 19,
+                candidate: rich_problem_candidate.clone(),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        );
+        let rich_problem = checkpoint_recovered_rich_problem_session(
+            &project,
+            &vault,
+            &session_id,
+            RecoveredRichProblemCheckpointInput {
+                request_id: format!("req_{}", "ae".repeat(16)),
+                expected_event_count: 19,
+                candidate_fingerprint: rich_problem_fingerprint,
+                candidate: rich_problem_candidate,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            rich_problem.session.schema_version,
+            SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
+        );
+        assert!(rich_problem.session_path.ends_with(SESSION_V12_FILE));
+
         let replayed = read_session(&project, &vault, &session_id).unwrap();
         assert_eq!(
             replayed.schema_version,
-            SESSION_BATCH_RECOVERY_SCHEMA_VERSION
+            SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
         );
-        assert_eq!(replayed.event_count, 16);
-        assert_eq!(replayed.checkpoints.len(), 5);
+        assert_eq!(replayed.event_count, 20);
+        assert_eq!(replayed.checkpoints.len(), 6);
         assert_eq!(
             replayed.checkpoints[0].unresolved,
             vec!["The retry investigation remains open"]
@@ -9045,6 +9722,19 @@ mod tests {
         assert_eq!(
             replayed.checkpoints[4].tasks[0].status,
             TaskStatus::Completed
+        );
+        assert_eq!(replayed.checkpoints[5].problems.len(), 1);
+        assert_eq!(
+            replayed.checkpoints[5].problems[0].attempts[0].outcome,
+            AttemptOutcome::NoEffect
+        );
+        assert_eq!(
+            replayed.checkpoints[5].problems[0]
+                .resolution
+                .as_ref()
+                .unwrap()
+                .root_cause,
+            "The client reused an expired access token"
         );
     }
 

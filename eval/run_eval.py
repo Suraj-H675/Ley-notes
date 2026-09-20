@@ -5983,6 +5983,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             batch_compiled: dict[str, object] | None = None
             batch_projection: dict[str, object] | None = None
             batch_secret_canary = str(scenario.get("batch_secret_canary", ""))
+            rich_problem_compiled: dict[str, object] | None = None
+            rich_problem_projection: dict[str, object] | None = None
+            rich_problem_secret_canary = str(
+                scenario.get("rich_problem_secret_canary", "")
+            )
             if scenario.get("expected_recovery_checkpoint"):
                 event_count = int(compiled.get("sessionEventCount", 0))
                 evidence = compiled.get("evidence", [])
@@ -6143,6 +6148,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 batch_binding_ok = True
                 batch_lineage_ok = True
                 batch_after_ok = True
+                rich_problem_binding_ok = True
+                rich_problem_lineage_ok = True
+                rich_problem_after_ok = True
                 if scenario.get("expected_typed_recovery"):
                     typed_prompt = "Use SQLite for local-first persistence"
                     hook_call(
@@ -7241,6 +7249,449 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             and plan_lineage_ok
                             and batch_lineage_ok
                         )
+                if scenario.get("expected_rich_problem_recovery"):
+                    rich_problem_prompts = [
+                        (
+                            "ley-eval-rich-problem-turn-1",
+                            "Login refresh failure: refreshing returns 401 although the authenticated session should survive. "
+                            f"api_key: {rich_problem_secret_canary}",
+                        ),
+                        (
+                            "ley-eval-rich-problem-turn-2",
+                            "Attempt: clear browser cookies. Outcome: no effect; refresh still returned 401.",
+                        ),
+                        (
+                            "ley-eval-rich-problem-turn-3",
+                            "Attempt: refresh the access token before navigation. Outcome: helped; refresh kept the session authenticated.",
+                        ),
+                        (
+                            "ley-eval-rich-problem-turn-4",
+                            "Resolution: the client reused an expired access token; refresh the token before protected navigation; repeated refreshes remained authenticated.",
+                        ),
+                    ]
+                    for turn_id, prompt_text in rich_problem_prompts:
+                        hook_call(
+                            project,
+                            "codex",
+                            {
+                                "hook_event_name": "UserPromptSubmit",
+                                "session_id": "ley-eval-crash-thread",
+                                "turn_id": turn_id,
+                                "prompt": prompt_text,
+                            },
+                        )
+                    rich_problem_compiled = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 12_000},
+                    )
+                    rich_problem_event_count = int(
+                        rich_problem_compiled.get("sessionEventCount", 0)
+                    )
+                    rich_problem_evidence = [
+                        item
+                        for item in rich_problem_compiled.get("evidence", [])
+                        if isinstance(item, dict)
+                        and item.get("kind") == "user-prompt"
+                        and item.get("recordId")
+                    ]
+                    rich_problem_record_ids = [
+                        str(item.get("recordId", "")) for item in rich_problem_evidence
+                    ]
+                    rich_problem_first_text = (
+                        str(rich_problem_evidence[0].get("text", ""))
+                        if rich_problem_evidence
+                        else ""
+                    )
+                    rich_problem_redaction_ok = (
+                        len(rich_problem_record_ids) == 4
+                        and bool(rich_problem_secret_canary)
+                        and rich_problem_secret_canary not in rich_problem_first_text
+                        and "[REDACTED:" in rich_problem_first_text
+                        and all(rich_problem_record_ids)
+                    )
+                    if not rich_problem_redaction_ok:
+                        failures.append(
+                            "rich Problem recovery evidence did not preserve four bounded component records with secret redaction"
+                        )
+
+                    rich_problem_candidate = {
+                        "title": "Login refresh failure",
+                        "symptom": "Refreshing returns 401",
+                        "expected": "The authenticated session survives refresh",
+                        "evidenceRecordIds": [rich_problem_record_ids[0]],
+                        "attempts": [
+                            {
+                                "action": "Clear browser cookies",
+                                "outcome": "no-effect",
+                                "evidence": "Refresh still returned 401",
+                                "evidenceRecordIds": [rich_problem_record_ids[1]],
+                            },
+                            {
+                                "action": "Refresh the access token before navigation",
+                                "outcome": "helped",
+                                "evidence": "Refresh kept the session authenticated",
+                                "evidenceRecordIds": [rich_problem_record_ids[2]],
+                            },
+                        ],
+                        "resolution": {
+                            "rootCause": "The client reused an expired access token",
+                            "change": "Refresh the token before protected navigation",
+                            "verification": "Repeated refreshes remained authenticated",
+                            "evidenceRecordIds": [rich_problem_record_ids[3]],
+                        },
+                    }
+                    rich_problem_transition = mcp_call(
+                        project,
+                        "ley_session_memory_verify_problem",
+                        {
+                            "sessionId": session_id,
+                            "expectedEventCount": rich_problem_event_count,
+                            "candidate": rich_problem_candidate,
+                            "deferredEvidenceRecordIds": [],
+                        },
+                    )
+                    rich_problem_commit_args = {
+                        "sessionId": session_id,
+                        "requestId": request_id(
+                            f"{scenario['id']}:rich-problem-memory-recovery"
+                        ),
+                        "expectedEventCount": rich_problem_event_count,
+                        "candidateFingerprint": rich_problem_transition.get(
+                            "candidateFingerprint", ""
+                        ),
+                        "candidate": rich_problem_candidate,
+                    }
+                    rich_problem_receipt = mcp_call(
+                        project,
+                        "ley_session_memory_commit_problem",
+                        rich_problem_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    rich_problem_retry = mcp_call(
+                        project,
+                        "ley_session_memory_commit_problem",
+                        rich_problem_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    rich_problem_session = mcp_call(
+                        project,
+                        "ley_session_get",
+                        {"sessionId": session_id, "maxCheckpoints": 16, "maxCharacters": 24_000},
+                    )
+                    rich_problem_checkpoints = rich_problem_session.get("checkpoints", [])
+                    rich_problem_checkpoint = (
+                        rich_problem_checkpoints[-1]
+                        if isinstance(rich_problem_checkpoints, list)
+                        and rich_problem_checkpoints
+                        and isinstance(rich_problem_checkpoints[-1], dict)
+                        else {}
+                    )
+                    rich_problem_rows = rich_problem_checkpoint.get("problems", [])
+                    rich_problem_row = (
+                        rich_problem_rows[0]
+                        if isinstance(rich_problem_rows, list)
+                        and rich_problem_rows
+                        and isinstance(rich_problem_rows[0], dict)
+                        else {}
+                    )
+                    rich_problem_attempt_rows = rich_problem_row.get("attempts", [])
+                    rich_problem_resolution_row = rich_problem_row.get("resolutionDetail", {})
+
+                    rich_problem_diagnostic = cli_json(["doctor", str(project), "--json"])
+                    rich_problem_identity = (
+                        rich_problem_diagnostic.get("identity", {})
+                        if isinstance(rich_problem_diagnostic, dict)
+                        else {}
+                    )
+                    rich_problem_project_id = (
+                        str(rich_problem_identity.get("projectId", ""))
+                        if isinstance(rich_problem_identity, dict)
+                        else ""
+                    )
+                    rich_problem_projection_path = (
+                        vault
+                        / ".ley"
+                        / "agent-memory"
+                        / "projects"
+                        / rich_problem_project_id
+                        / "sessions"
+                        / session_id
+                        / "session-v12.json"
+                    )
+                    if rich_problem_project_id and rich_problem_projection_path.is_file():
+                        loaded_rich_problem_projection = json.loads(
+                            rich_problem_projection_path.read_text(encoding="utf-8")
+                        )
+                        if isinstance(loaded_rich_problem_projection, dict):
+                            rich_problem_projection = loaded_rich_problem_projection
+                    durable_rich_checkpoints = (
+                        rich_problem_projection.get("checkpoints", [])
+                        if isinstance(rich_problem_projection, dict)
+                        else []
+                    )
+                    durable_rich_checkpoint = (
+                        durable_rich_checkpoints[-1]
+                        if isinstance(durable_rich_checkpoints, list)
+                        and durable_rich_checkpoints
+                        and isinstance(durable_rich_checkpoints[-1], dict)
+                        else {}
+                    )
+                    durable_rich_problems = durable_rich_checkpoint.get("problems", [])
+                    durable_rich_problem = (
+                        durable_rich_problems[0]
+                        if isinstance(durable_rich_problems, list)
+                        and durable_rich_problems
+                        and isinstance(durable_rich_problems[0], dict)
+                        else {}
+                    )
+                    durable_rich_attempts = durable_rich_problem.get("attempts", [])
+                    durable_rich_resolution = durable_rich_problem.get("resolution", {})
+                    durable_rich_ok = (
+                        durable_rich_problem.get("title") == "Login refresh failure"
+                        and durable_rich_problem.get("symptom") == "Refreshing returns 401"
+                        and durable_rich_problem.get("expected")
+                        == "The authenticated session survives refresh"
+                        and isinstance(durable_rich_attempts, list)
+                        and len(durable_rich_attempts) == 2
+                        and isinstance(durable_rich_attempts[0], dict)
+                        and durable_rich_attempts[0].get("action") == "Clear browser cookies"
+                        and durable_rich_attempts[0].get("outcome") == "no-effect"
+                        and durable_rich_attempts[0].get("evidence")
+                        == "Refresh still returned 401"
+                        and isinstance(durable_rich_attempts[1], dict)
+                        and durable_rich_attempts[1].get("action")
+                        == "Refresh the access token before navigation"
+                        and durable_rich_attempts[1].get("outcome") == "helped"
+                        and durable_rich_resolution.get("rootCause")
+                        == "The client reused an expired access token"
+                        and durable_rich_resolution.get("change")
+                        == "Refresh the token before protected navigation"
+                        and durable_rich_resolution.get("verification")
+                        == "Repeated refreshes remained authenticated"
+                        and rich_problem_secret_canary not in serialized(rich_problem_projection)
+                    )
+                    if not durable_rich_ok:
+                        failures.append(
+                            "rich Problem recovery did not durably preserve exact Problem/Attempt/Resolution state or leaked its secret canary"
+                        )
+                    rich_problem_binding_ok = (
+                        rich_problem_transition.get("state") == "review-required"
+                        and rich_problem_transition.get("semanticFaithfulnessProven") is False
+                        and rich_problem_transition.get("liveSourceChecked") is False
+                        and bool(
+                            rich_problem_transition.get("coverage", {}).get("coverageComplete")
+                        )
+                        and rich_problem_transition.get("coverage", {}).get(
+                            "totalCurrentEvidence"
+                        )
+                        == 4
+                        and len(rich_problem_transition.get("claimChecks", [])) == 4
+                        and str(
+                            rich_problem_transition.get("candidateFingerprint", "")
+                        ).startswith("sha256:")
+                        and rich_problem_receipt.get("eventCount")
+                        == rich_problem_event_count + 1
+                        and rich_problem_receipt.get("replayed") is False
+                        and rich_problem_retry.get("eventCount")
+                        == rich_problem_event_count + 1
+                        and rich_problem_retry.get("eventId")
+                        == rich_problem_receipt.get("eventId")
+                        and rich_problem_retry.get("replayed") is True
+                        and rich_problem_session.get("schemaVersion") == 12
+                        and rich_problem_checkpoint.get("summary") == "Login refresh failure"
+                        and rich_problem_row.get("title") == "Login refresh failure"
+                        and isinstance(rich_problem_attempt_rows, list)
+                        and len(rich_problem_attempt_rows) == 2
+                        and rich_problem_attempt_rows[0].get("outcome") == "no-effect"
+                        and rich_problem_attempt_rows[1].get("outcome") == "helped"
+                        and isinstance(rich_problem_resolution_row, dict)
+                        and rich_problem_resolution_row.get("rootCause")
+                        == "The client reused an expired access token"
+                        and durable_rich_ok
+                        and rich_problem_redaction_ok
+                    )
+                    if not rich_problem_binding_ok:
+                        failures.append(
+                            "rich Problem recovery did not preserve verifier binding/idempotency/schema-v12 projection"
+                        )
+
+                    if scenario.get("expected_origin_lineage"):
+                        rich_attempt_id = (
+                            str(rich_problem_attempt_rows[0].get("id", ""))
+                            if isinstance(rich_problem_attempt_rows, list)
+                            and rich_problem_attempt_rows
+                            and isinstance(rich_problem_attempt_rows[0], dict)
+                            else ""
+                        )
+                        rich_resolution_id = (
+                            str(rich_problem_resolution_row.get("id", ""))
+                            if isinstance(rich_problem_resolution_row, dict)
+                            else ""
+                        )
+                        rich_attempt_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(
+                                    f"{scenario['id']}:rich-problem-attempt-lineage"
+                                ),
+                                "kind": "pitfall",
+                                "title": "Cookie clearing did not fix refresh authentication",
+                                "guidance": "Do not treat cookie clearing as the fix for this refresh failure.",
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": rich_attempt_id,
+                                        "note": "Derived only from the failed recovered Attempt.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        rich_attempt_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(rich_attempt_learning.get("learningId", "")),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        rich_attempt_lineage = rich_attempt_context.get("originLineage", {})
+                        rich_attempt_sources = (
+                            rich_attempt_lineage.get("sources", [])
+                            if isinstance(rich_attempt_lineage, dict)
+                            else []
+                        )
+                        rich_attempt_lineage_ok = (
+                            bool(rich_attempt_id)
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == rich_problem_transition.get("candidateFingerprint")
+                                for source in rich_attempt_sources
+                            )
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == rich_problem_record_ids[1]
+                                for source in rich_attempt_sources
+                            )
+                            and not any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") in {
+                                    rich_problem_record_ids[0],
+                                    rich_problem_record_ids[2],
+                                    rich_problem_record_ids[3],
+                                }
+                                for source in rich_attempt_sources
+                            )
+                        )
+
+                        rich_resolution_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(
+                                    f"{scenario['id']}:rich-problem-resolution-lineage"
+                                ),
+                                "kind": "procedure",
+                                "title": "Refresh the token before protected navigation",
+                                "guidance": "Refresh the access token before protected navigation when the previous token is expired.",
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": rich_resolution_id,
+                                        "note": "Derived only from the recovered Resolution.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        rich_resolution_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(
+                                    rich_resolution_learning.get("learningId", "")
+                                ),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        rich_resolution_lineage = rich_resolution_context.get(
+                            "originLineage", {}
+                        )
+                        rich_resolution_sources = (
+                            rich_resolution_lineage.get("sources", [])
+                            if isinstance(rich_resolution_lineage, dict)
+                            else []
+                        )
+                        rich_resolution_lineage_ok = (
+                            bool(rich_resolution_id)
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == rich_problem_transition.get("candidateFingerprint")
+                                for source in rich_resolution_sources
+                            )
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == rich_problem_record_ids[3]
+                                for source in rich_resolution_sources
+                            )
+                            and not any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") in {
+                                    rich_problem_record_ids[0],
+                                    rich_problem_record_ids[1],
+                                    rich_problem_record_ids[2],
+                                }
+                                for source in rich_resolution_sources
+                            )
+                        )
+                        rich_problem_lineage_ok = (
+                            rich_attempt_lineage_ok and rich_resolution_lineage_ok
+                        )
+                        if not rich_problem_lineage_ok:
+                            failures.append(
+                                "rich Problem Attempt/Resolution learning did not preserve component-specific recovery lineage"
+                            )
+
+                    rich_problem_after = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                    )
+                    rich_problem_after_ok = (
+                        rich_problem_after.get("state") == "no-unconsolidated-evidence"
+                        and rich_problem_after.get("totalUnconsolidatedEvidence") == 0
+                    )
+                    scores["memory_binding"] = (
+                        binding_ok
+                        and typed_binding_ok
+                        and task_binding_ok
+                        and plan_binding_ok
+                        and batch_binding_ok
+                        and rich_problem_binding_ok
+                    )
+                    if scenario.get("expected_origin_lineage"):
+                        scores["origin_lineage"] = (
+                            lineage_ok
+                            and typed_lineage_ok
+                            and task_lineage_ok
+                            and plan_lineage_ok
+                            and batch_lineage_ok
+                            and rich_problem_lineage_ok
+                        )
                 recovery_ok = (
                     state_ok
                     and transition_ok
@@ -7260,6 +7711,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and batch_binding_ok
                     and batch_lineage_ok
                     and batch_after_ok
+                    and rich_problem_binding_ok
+                    and rich_problem_lineage_ok
+                    and rich_problem_after_ok
                 )
             scores["memory_recovery"] = recovery_ok
             privacy_payloads = [compiled]
@@ -7277,6 +7731,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 privacy_payloads.append(batch_compiled)
             if batch_projection is not None:
                 privacy_payloads.append(batch_projection)
+            if rich_problem_compiled is not None:
+                privacy_payloads.append(rich_problem_compiled)
+            if rich_problem_projection is not None:
+                privacy_payloads.append(rich_problem_projection)
             privacy_canaries = [str(project), str(vault)]
             if task_secret_canary:
                 privacy_canaries.append(task_secret_canary)
@@ -7284,6 +7742,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 privacy_canaries.append(plan_secret_canary)
             if batch_secret_canary:
                 privacy_canaries.append(batch_secret_canary)
+            if rich_problem_secret_canary:
+                privacy_canaries.append(rich_problem_secret_canary)
             scores["privacy_violation_rate"] = privacy_violation_rate(
                 privacy_canaries, privacy_payloads
             )
