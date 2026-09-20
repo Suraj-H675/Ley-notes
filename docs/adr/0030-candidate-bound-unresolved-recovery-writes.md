@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-16
+- Extended by: ADR 0060 (lossless bound Decision/Problem recovery)
 
 ## Context
 
@@ -28,6 +29,6 @@ The MCP route `ley_session_memory_commit_unresolved` is absent by default and ap
 - The supported recovery write is structurally bound to the candidate that passed verification and to the full current recovery window.
 - Semantic faithfulness and live-source correctness are still not proven by this route; it prevents payload substitution, not false interpretation.
 - Generic checkpoints remain useful for ordinary deliberate capture but are not the candidate-bound recovery mechanism.
-- Richer candidate kinds remain review-only until Ley has lossless typed bound writers for their required fields.
+- Richer candidate kinds remain review-only until Ley has lossless typed bound writers for their required fields. ADR 0060 later adds a separate schema-v8 writer for exactly one Decision or Problem; this ADR's schema-v3 unresolved contract remains unchanged.
 - Schema-v1 and schema-v2 immutable events remain unchanged and readable; reading old sessions does not rewrite them.
 - Exact retries remain idempotent even after the recovery checkpoint has closed the window.

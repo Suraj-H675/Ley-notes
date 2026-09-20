@@ -55,6 +55,14 @@ Every capability must retain measured adversarial, downstream, privacy, and regr
 matrix references concrete scenario/metric pairs. Missing scenarios, misspelled metrics, unsupported
 expectations, or failing metric values make a full-corpus run fail.
 
+The crash-recovery representative now exercises both candidate-bound recovery writers through the real
+MCP server. It first verifies and idempotently commits one unresolved claim through the legacy schema-v3
+route, then records a new bounded host prompt, verifies one Decision claim, commits it through
+`ley_session_memory_commit_structured`, and requires schema-v8 structured projection, exact replay,
+closed recovery-window state, mechanically preserved recovery-candidate/turn-evidence lineage, and
+zero privacy leakage. The typed route is therefore part of the existing Reliable Memory Compiler,
+memory-binding, and origin-lineage gates rather than a separate weaker metric.
+
 Focused subset runs validate the matrix schema but intentionally skip full result-value coverage because
 not every representative scenario was executed.
 

@@ -42,11 +42,14 @@ request, repository policy, or inspection of live source.
    `deferred` means at least one current recovery record must stay unconsolidated,
    so do not advance the recovery checkpoint boundary. `review-required` therefore
    means no current recovery evidence remains deferred. For one unresolved recovery claim, use
-   `ley_session_memory_commit_unresolved` with the exact verifier fingerprint,
-   `sessionEventCount` as `expectedEventCount`, subject, statement, and cited
-   `recordId` values. Ley re-verifies and binds
-   that payload to the immutable evidence. Do not substitute the generic checkpoint
-   tool; if the bound write is stale, recompile and reverify.
+   `ley_session_memory_commit_unresolved`. For one Decision or Problem, use
+   `ley_session_memory_commit_structured` with the exact verifier fingerprint,
+   `sessionEventCount` as `expectedEventCount`, `kind`, subject, statement, and cited
+   `recordId` values. Ley re-verifies and binds that payload to the immutable evidence;
+   the typed route stores only the minimal lossless fields and must not invent rationale,
+   status, attempts, outcomes, resolution, or verification. Other candidate kinds remain
+   review-only in this bound recovery flow. Do not substitute the generic checkpoint tool;
+   if the bound write is stale, recompile and reverify.
 4. For a concrete current task, first use either the normal
    `# Ley task context (automatic)` block or the uninitialized-workspace
    `# Ley bootstrap task context (automatic)` block injected alongside

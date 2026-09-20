@@ -1,6 +1,8 @@
 use crate::session::{
-    checkpoint_recovered_unresolved_session, read_session_for_memory_compiler,
-    replay_recovered_unresolved_session_if_present, RecoveredUnresolvedCheckpointInput,
+    checkpoint_recovered_structured_session, checkpoint_recovered_unresolved_session,
+    read_session_for_memory_compiler, replay_recovered_structured_session_if_present,
+    replay_recovered_unresolved_session_if_present, RecoveredStructuredCheckpointInput,
+    RecoveredStructuredKind, RecoveredUnresolvedCheckpointInput,
 };
 use crate::{
     AgentSession, LeyCoreError, SessionMutation, SessionStatus, SessionTurnEvidence,
@@ -85,6 +87,18 @@ pub struct CommitUnresolvedMemoryTransitionInput {
     pub request_id: String,
     pub expected_event_count: u64,
     pub candidate_fingerprint: String,
+    pub subject: String,
+    pub statement: String,
+    pub evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitStructuredMemoryTransitionInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub kind: MemoryCandidateKind,
     pub subject: String,
     pub statement: String,
     pub evidence_record_ids: Vec<String>,
@@ -247,6 +261,70 @@ pub fn commit_unresolved_memory_transition(
         ));
     }
     checkpoint_recovered_unresolved_session(project_start, vault, session_id, bound_input)
+}
+
+pub fn commit_structured_memory_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: CommitStructuredMemoryTransitionInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    let structured_kind = match input.kind {
+        MemoryCandidateKind::Decision => RecoveredStructuredKind::Decision,
+        MemoryCandidateKind::Problem => RecoveredStructuredKind::Problem,
+        _ => {
+            return Err(LeyCoreError::InvalidSessionRequest(
+                "bound structured recovery commit supports only decision or problem candidates"
+                    .to_owned(),
+            ))
+        }
+    };
+    let bound_input = RecoveredStructuredCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        evidence_record_ids: input.evidence_record_ids.clone(),
+        kind: structured_kind,
+        subject: input.subject.clone(),
+        statement: input.statement.clone(),
+    };
+    if let Some(replayed) = replay_recovered_structured_session_if_present(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        bound_input.clone(),
+    )? {
+        return Ok(replayed);
+    }
+    let transition = MemoryTransitionInput {
+        expected_event_count: input.expected_event_count,
+        claims: vec![MemoryCandidateClaim {
+            kind: input.kind,
+            subject: input.subject.clone(),
+            statement: input.statement.clone(),
+            evidence_record_ids: input.evidence_record_ids.clone(),
+        }],
+        deferred_evidence_record_ids: Vec::new(),
+    };
+    let verification = verify_memory_transition(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        transition,
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "bound structured recovery commit requires one current review-required decision or problem candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery candidate fingerprint does not match the current verified transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_structured_session(project_start, vault, session_id, bound_input)
 }
 
 fn validate_input(input: &MemoryTransitionInput) -> Result<(), LeyCoreError> {
@@ -562,12 +640,30 @@ pub(crate) fn unresolved_candidate_fingerprint(
     statement: &str,
     evidence_record_ids: &[String],
 ) -> String {
+    recovery_candidate_fingerprint(
+        session_id,
+        expected_event_count,
+        MemoryCandidateKind::Unresolved,
+        subject,
+        statement,
+        evidence_record_ids,
+    )
+}
+
+pub(crate) fn recovery_candidate_fingerprint(
+    session_id: &str,
+    expected_event_count: u64,
+    kind: MemoryCandidateKind,
+    subject: &str,
+    statement: &str,
+    evidence_record_ids: &[String],
+) -> String {
     candidate_fingerprint(
         session_id,
         &MemoryTransitionInput {
             expected_event_count,
             claims: vec![MemoryCandidateClaim {
-                kind: MemoryCandidateKind::Unresolved,
+                kind,
                 subject: subject.to_owned(),
                 statement: statement.to_owned(),
                 evidence_record_ids: evidence_record_ids.to_vec(),
@@ -1034,6 +1130,298 @@ mod tests {
         assert!(replayed.replayed);
         assert_eq!(replayed.event_id, committed.event_id);
         assert_eq!(replayed.session.event_count, 4);
+    }
+
+    #[test]
+    fn verified_decision_candidate_commits_as_schema_v8_and_exact_retry_replays() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Choose the local persistence engine",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-1",
+            "Use SQLite for the local-first store",
+        );
+        let transition = MemoryTransitionInput {
+            expected_event_count: 3,
+            claims: vec![claim(
+                MemoryCandidateKind::Decision,
+                "Persistence engine",
+                "Use SQLite for the local-first store",
+                vec![prompt_id.clone(), response_id.clone()],
+            )],
+            deferred_evidence_record_ids: Vec::new(),
+        };
+        let verification =
+            verify_memory_transition(&project, &vault, &session_id, transition).unwrap();
+        assert_eq!(verification.state, MemoryTransitionState::ReviewRequired);
+        let input = CommitStructuredMemoryTransitionInput {
+            request_id: format!("req_{}", "4".repeat(32)),
+            expected_event_count: 3,
+            candidate_fingerprint: verification.candidate_fingerprint,
+            kind: MemoryCandidateKind::Decision,
+            subject: "Persistence engine".to_owned(),
+            statement: "Use SQLite for the local-first store".to_owned(),
+            evidence_record_ids: vec![prompt_id, response_id],
+        };
+
+        let committed =
+            commit_structured_memory_transition(&project, &vault, &session_id, input.clone())
+                .unwrap();
+        assert!(!committed.replayed);
+        assert_eq!(committed.session.event_count, 4);
+        assert_eq!(committed.session.schema_version, 8);
+        assert!(committed.session_path.ends_with("session-v8.json"));
+        assert_eq!(committed.session.checkpoints.len(), 1);
+        let checkpoint = &committed.session.checkpoints[0];
+        assert_eq!(checkpoint.summary, "Persistence engine");
+        assert_eq!(checkpoint.decisions.len(), 1);
+        assert_eq!(checkpoint.decisions[0].title, "Persistence engine");
+        assert_eq!(
+            checkpoint.decisions[0].decision,
+            "Use SQLite for the local-first store"
+        );
+        assert!(checkpoint.decisions[0].rationale.is_empty());
+        assert!(checkpoint.decisions[0].alternatives.is_empty());
+        assert!(checkpoint.problems.is_empty());
+        assert!(checkpoint.unresolved.is_empty());
+
+        let replayed =
+            commit_structured_memory_transition(&project, &vault, &session_id, input).unwrap();
+        assert!(replayed.replayed);
+        assert_eq!(replayed.event_id, committed.event_id);
+        assert_eq!(replayed.session.event_count, 4);
+    }
+
+    #[test]
+    fn verified_problem_candidate_commits_without_inventing_resolution_state() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Investigate intermittent login failures",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "turn-1",
+            "Users can be rejected when an expired session cookie remains present",
+        );
+        let verification = verify_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            MemoryTransitionInput {
+                expected_event_count: 3,
+                claims: vec![claim(
+                    MemoryCandidateKind::Problem,
+                    "Intermittent login failure",
+                    "An expired session cookie can cause authentication rejection",
+                    vec![prompt_id.clone(), response_id.clone()],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        let committed = commit_structured_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CommitStructuredMemoryTransitionInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                expected_event_count: 3,
+                candidate_fingerprint: verification.candidate_fingerprint,
+                kind: MemoryCandidateKind::Problem,
+                subject: "Intermittent login failure".to_owned(),
+                statement: "An expired session cookie can cause authentication rejection"
+                    .to_owned(),
+                evidence_record_ids: vec![prompt_id, response_id],
+            },
+        )
+        .unwrap();
+        let checkpoint = &committed.session.checkpoints[0];
+        assert!(checkpoint.decisions.is_empty());
+        assert_eq!(checkpoint.problems.len(), 1);
+        let problem = &checkpoint.problems[0];
+        assert_eq!(problem.title, "Intermittent login failure");
+        assert_eq!(
+            problem.symptom,
+            "An expired session cookie can cause authentication rejection"
+        );
+        assert!(problem.expected.is_empty());
+        assert!(problem.attempts.is_empty());
+        assert!(problem.resolution.is_none());
+    }
+
+    #[test]
+    fn structured_bound_commit_rejects_unsupported_kinds_and_changed_candidate_content() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Choose the persistence engine",
+        );
+        let response_id = response(&project, &vault, &session_id, '3', "turn-1", "Use SQLite");
+        let verification = verify_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            MemoryTransitionInput {
+                expected_event_count: 3,
+                claims: vec![claim(
+                    MemoryCandidateKind::Decision,
+                    "Persistence engine",
+                    "Use SQLite",
+                    vec![prompt_id.clone(), response_id.clone()],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        let base = CommitStructuredMemoryTransitionInput {
+            request_id: format!("req_{}", "4".repeat(32)),
+            expected_event_count: 3,
+            candidate_fingerprint: verification.candidate_fingerprint,
+            kind: MemoryCandidateKind::Decision,
+            subject: "Persistence engine".to_owned(),
+            statement: "Use SQLite".to_owned(),
+            evidence_record_ids: vec![prompt_id.clone(), response_id.clone()],
+        };
+
+        assert!(matches!(
+            commit_structured_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitStructuredMemoryTransitionInput {
+                    kind: MemoryCandidateKind::Task,
+                    ..base.clone()
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("decision or problem")
+        ));
+        assert!(matches!(
+            commit_structured_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitStructuredMemoryTransitionInput {
+                    statement: "Use PostgreSQL".to_owned(),
+                    ..base.clone()
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("fingerprint") || message.contains("review-required")
+        ));
+
+        let incomplete = verify_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            MemoryTransitionInput {
+                expected_event_count: 3,
+                claims: vec![claim(
+                    MemoryCandidateKind::Decision,
+                    "Persistence engine",
+                    "Use SQLite",
+                    vec![prompt_id.clone()],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(incomplete.state, MemoryTransitionState::NeedsRevision);
+        assert!(matches!(
+            commit_structured_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitStructuredMemoryTransitionInput {
+                    request_id: format!("req_{}", "5".repeat(32)),
+                    candidate_fingerprint: incomplete.candidate_fingerprint,
+                    evidence_record_ids: vec![prompt_id.clone()],
+                    ..base.clone()
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("review-required")
+        ));
+
+        let secret_statement = "Use SQLite with token=secret-value";
+        let secret_verification = verify_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            MemoryTransitionInput {
+                expected_event_count: 3,
+                claims: vec![claim(
+                    MemoryCandidateKind::Decision,
+                    "Persistence engine",
+                    secret_statement,
+                    vec![prompt_id.clone(), response_id.clone()],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            secret_verification.state,
+            MemoryTransitionState::ReviewRequired
+        );
+        assert!(matches!(
+            commit_structured_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitStructuredMemoryTransitionInput {
+                    request_id: format!("req_{}", "6".repeat(32)),
+                    candidate_fingerprint: secret_verification.candidate_fingerprint,
+                    statement: secret_statement.to_owned(),
+                    ..base.clone()
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("changed under checkpoint normalization")
+        ));
+
+        prompt(
+            &project,
+            &vault,
+            &session_id,
+            '7',
+            "turn-2",
+            "New evidence arrived after verification",
+        );
+        assert!(matches!(
+            commit_structured_memory_transition(&project, &vault, &session_id, base),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("review-required")
+        ));
+        assert_eq!(
+            read_session_for_memory_compiler(&project, &vault, &session_id)
+                .unwrap()
+                .0
+                .event_count,
+            4
+        );
     }
 
     #[test]

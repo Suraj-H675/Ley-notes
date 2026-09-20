@@ -210,7 +210,8 @@ pub use memory_health::{
     MIN_MEMORY_HEALTH_CHARACTERS,
 };
 pub use memory_transition::{
-    commit_unresolved_memory_transition, verify_memory_transition,
+    commit_structured_memory_transition, commit_unresolved_memory_transition,
+    verify_memory_transition, CommitStructuredMemoryTransitionInput,
     CommitUnresolvedMemoryTransitionInput, MemoryCandidateClaim, MemoryCandidateKind,
     MemoryEvidenceAnchorQuality, MemoryTransitionClaimCheck, MemoryTransitionCoverage,
     MemoryTransitionInput, MemoryTransitionIssue, MemoryTransitionIssueKind,

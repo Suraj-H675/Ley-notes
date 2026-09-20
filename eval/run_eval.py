@@ -5973,6 +5973,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             expected_state = str(scenario["expected_memory_compiler_state"])
             state_ok = compiled.get("state") == expected_state
             recovery_ok = state_ok
+            typed_compiled: dict[str, object] | None = None
             if scenario.get("expected_recovery_checkpoint"):
                 event_count = int(compiled.get("sessionEventCount", 0))
                 evidence = compiled.get("evidence", [])
@@ -6121,6 +6122,187 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     scores["origin_lineage"] = lineage_ok
                     if not lineage_ok:
                         failures.append("derived learning did not preserve the bound recovery origin chain")
+                typed_binding_ok = True
+                typed_lineage_ok = True
+                typed_after_ok = True
+                if scenario.get("expected_typed_recovery"):
+                    typed_prompt = "Use SQLite for local-first persistence"
+                    hook_call(
+                        project,
+                        "codex",
+                        {
+                            "hook_event_name": "UserPromptSubmit",
+                            "session_id": "ley-eval-crash-thread",
+                            "turn_id": "ley-eval-typed-recovery-turn",
+                            "prompt": typed_prompt,
+                        },
+                    )
+                    typed_compiled = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                    )
+                    typed_event_count = int(typed_compiled.get("sessionEventCount", 0))
+                    typed_evidence = typed_compiled.get("evidence", [])
+                    typed_prompt_record = next(
+                        (
+                            item
+                            for item in typed_evidence
+                            if isinstance(item, dict)
+                            and item.get("kind") == "user-prompt"
+                            and item.get("recordId")
+                        ),
+                        {},
+                    )
+                    typed_record_id = str(typed_prompt_record.get("recordId", ""))
+                    typed_statement = str(typed_prompt_record.get("text", "")) or typed_prompt
+                    typed_transition = mcp_call(
+                        project,
+                        "ley_session_memory_verify",
+                        {
+                            "sessionId": session_id,
+                            "expectedEventCount": typed_event_count,
+                            "claims": [
+                                {
+                                    "kind": "decision",
+                                    "subject": "Persistence engine",
+                                    "statement": typed_statement,
+                                    "evidenceRecordIds": [typed_record_id],
+                                }
+                            ],
+                            "deferredEvidenceRecordIds": [],
+                        },
+                    )
+                    typed_commit_args = {
+                        "sessionId": session_id,
+                        "requestId": request_id(f"{scenario['id']}:typed-memory-recovery"),
+                        "expectedEventCount": typed_event_count,
+                        "candidateFingerprint": typed_transition.get("candidateFingerprint", ""),
+                        "kind": "decision",
+                        "subject": "Persistence engine",
+                        "statement": typed_statement,
+                        "evidenceRecordIds": [typed_record_id],
+                    }
+                    typed_receipt = mcp_call(
+                        project,
+                        "ley_session_memory_commit_structured",
+                        typed_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    typed_retry = mcp_call(
+                        project,
+                        "ley_session_memory_commit_structured",
+                        typed_commit_args,
+                        WRITE_FLAGS,
+                    )
+                    typed_session = mcp_call(
+                        project,
+                        "ley_session_get",
+                        {"sessionId": session_id, "maxCheckpoints": 5, "maxCharacters": 8_000},
+                    )
+                    typed_checkpoints = typed_session.get("checkpoints", [])
+                    typed_checkpoint = (
+                        typed_checkpoints[-1]
+                        if isinstance(typed_checkpoints, list)
+                        and typed_checkpoints
+                        and isinstance(typed_checkpoints[-1], dict)
+                        else {}
+                    )
+                    typed_decisions = typed_checkpoint.get("decisions", [])
+                    typed_binding_ok = (
+                        typed_transition.get("state") == "review-required"
+                        and typed_transition.get("semanticFaithfulnessProven") is False
+                        and typed_transition.get("liveSourceChecked") is False
+                        and bool(typed_transition.get("coverage", {}).get("coverageComplete"))
+                        and str(typed_transition.get("candidateFingerprint", "")).startswith("sha256:")
+                        and typed_receipt.get("eventCount") == typed_event_count + 1
+                        and typed_receipt.get("replayed") is False
+                        and typed_retry.get("eventCount") == typed_event_count + 1
+                        and typed_retry.get("replayed") is True
+                        and typed_session.get("schemaVersion") == 8
+                        and isinstance(typed_decisions, list)
+                        and len(typed_decisions) == 1
+                        and isinstance(typed_decisions[0], dict)
+                        and typed_decisions[0].get("title") == "Persistence engine"
+                        and typed_decisions[0].get("decision") == typed_statement
+                        and typed_checkpoint.get("problems") == []
+                        and typed_checkpoint.get("unresolved") == []
+                    )
+                    if not typed_binding_ok:
+                        failures.append(
+                            "typed bound recovery did not preserve verifier binding/idempotency/projection"
+                        )
+                    if scenario.get("expected_origin_lineage"):
+                        typed_checkpoint_id = str(typed_checkpoint.get("checkpointId", ""))
+                        typed_learning = mcp_call(
+                            project,
+                            "ley_learning_propose",
+                            {
+                                "requestId": request_id(f"{scenario['id']}:typed-origin-lineage"),
+                                "kind": "fact",
+                                "title": "Recovered persistence decision",
+                                "guidance": typed_statement,
+                                "confidencePercent": 50,
+                                "provenance": "inferred",
+                                "evidence": [
+                                    {
+                                        "sessionId": session_id,
+                                        "recordId": typed_checkpoint_id,
+                                        "note": "Derived only from the typed bound recovery checkpoint.",
+                                    }
+                                ],
+                            },
+                            WRITE_FLAGS,
+                        )
+                        typed_learning_context = mcp_call(
+                            project,
+                            "ley_learning_get",
+                            {
+                                "learningId": str(typed_learning.get("learningId", "")),
+                                "maxCharacters": 4_000,
+                            },
+                        )
+                        typed_lineage = typed_learning_context.get("originLineage", {})
+                        typed_sources = (
+                            typed_lineage.get("sources", [])
+                            if isinstance(typed_lineage, dict)
+                            else []
+                        )
+                        typed_lineage_ok = (
+                            bool(typed_checkpoint_id)
+                            and typed_lineage.get("mechanicallyResolved") is True
+                            and typed_lineage.get("causalCompletenessProven") is False
+                            and typed_lineage.get("automaticAuthorityCeiling") == "review-required"
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "recovery-candidate"
+                                and source.get("candidateFingerprint")
+                                == typed_transition.get("candidateFingerprint")
+                                for source in typed_sources
+                            )
+                            and any(
+                                isinstance(source, dict)
+                                and source.get("kind") == "turn-evidence"
+                                and source.get("recordId") == typed_record_id
+                                for source in typed_sources
+                            )
+                        )
+                        if not typed_lineage_ok:
+                            failures.append(
+                                "typed recovery-derived learning did not preserve the bound origin chain"
+                            )
+                    typed_after = mcp_call(
+                        project,
+                        "ley_session_memory_compile",
+                        {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+                    )
+                    typed_after_ok = (
+                        typed_after.get("state") == "no-unconsolidated-evidence"
+                        and typed_after.get("totalUnconsolidatedEvidence") == 0
+                    )
+                    scores["memory_binding"] = binding_ok and typed_binding_ok
+                    if scenario.get("expected_origin_lineage"):
+                        scores["origin_lineage"] = lineage_ok and typed_lineage_ok
                 recovery_ok = (
                     state_ok
                     and transition_ok
@@ -6128,10 +6310,16 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and lineage_ok
                     and after.get("state") == "no-unconsolidated-evidence"
                     and after.get("totalUnconsolidatedEvidence") == 0
+                    and typed_binding_ok
+                    and typed_lineage_ok
+                    and typed_after_ok
                 )
             scores["memory_recovery"] = recovery_ok
+            privacy_payloads = [compiled]
+            if typed_compiled is not None:
+                privacy_payloads.append(typed_compiled)
             scores["privacy_violation_rate"] = privacy_violation_rate(
-                [str(project), str(vault)], [compiled]
+                [str(project), str(vault)], privacy_payloads
             )
             if not recovery_ok:
                 failures.append(

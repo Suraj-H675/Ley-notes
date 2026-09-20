@@ -31,6 +31,7 @@ pub const SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION: u32 = 4;
 pub const SESSION_CONTEXT_UTILITY_SCHEMA_VERSION: u32 = 5;
 pub const SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION: u32 = 6;
 pub const SESSION_IMPORTED_TURN_SCHEMA_VERSION: u32 = 7;
+pub const SESSION_TYPED_RECOVERY_SCHEMA_VERSION: u32 = 8;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
@@ -54,6 +55,7 @@ const SESSION_V4_FILE: &str = "session-v4.json";
 const SESSION_V5_FILE: &str = "session-v5.json";
 const SESSION_V6_FILE: &str = "session-v6.json";
 const SESSION_V7_FILE: &str = "session-v7.json";
+const SESSION_V8_FILE: &str = "session-v8.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -981,6 +983,23 @@ pub(crate) struct RecoveredUnresolvedCheckpointInput {
     pub unresolved: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecoveredStructuredKind {
+    Decision,
+    Problem,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RecoveredStructuredCheckpointInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub evidence_record_ids: Vec<String>,
+    pub kind: RecoveredStructuredKind,
+    pub subject: String,
+    pub statement: String,
+}
+
 pub(crate) fn replay_recovered_unresolved_session_if_present(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -1000,6 +1019,28 @@ pub(crate) fn checkpoint_recovered_unresolved_session(
 ) -> Result<SessionMutation, LeyCoreError> {
     let (project_id, pending) =
         recovered_unresolved_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
+    mutate_session(&project_id, session_id, pending, vault)
+}
+
+pub(crate) fn replay_recovered_structured_session_if_present(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredStructuredCheckpointInput,
+) -> Result<Option<SessionMutation>, LeyCoreError> {
+    let (project_id, pending) =
+        recovered_structured_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
+    replay_pending_event_if_present(&project_id, session_id, pending, vault)
+}
+
+pub(crate) fn checkpoint_recovered_structured_session(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredStructuredCheckpointInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    let (project_id, pending) =
+        recovered_structured_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
     mutate_session(&project_id, session_id, pending, vault)
 }
 
@@ -1086,6 +1127,123 @@ fn recovered_unresolved_pending(
                 },
             }),
             schema_version: SESSION_RECOVERY_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(input.expected_event_count),
+        },
+    ))
+}
+
+fn recovered_structured_pending(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: RecoveredStructuredCheckpointInput,
+) -> Result<(String, PendingEvent), LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    if !is_sha256(&input.candidate_fingerprint) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery candidate fingerprint must be sha256".to_owned(),
+        ));
+    }
+    if input.evidence_record_ids.is_empty()
+        || input.evidence_record_ids.len() > SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "recovery binding must cite between 1 and {SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT} evidence records"
+        )));
+    }
+    let mut evidence_record_ids = input.evidence_record_ids;
+    evidence_record_ids.sort();
+    if evidence_record_ids
+        .windows(2)
+        .any(|window| window[0] == window[1])
+        || evidence_record_ids
+            .iter()
+            .any(|record_id| !valid_prefixed_hex(record_id, "tev_", 32))
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery binding evidence IDs must be unique tev_ identifiers".to_owned(),
+        ));
+    }
+
+    let diagnostic = diagnose_project(project_start)?;
+    let memory = load_project_memory(&diagnostic.root, vault)?;
+    let event_id = deterministic_id(
+        "evt",
+        &format!(
+            "{session_id}:{}:recovery-checkpoint-recorded",
+            input.request_id
+        ),
+        64,
+    );
+    let recorded_at = unix_time_ms();
+    let (decisions, problems) = match input.kind {
+        RecoveredStructuredKind::Decision => (
+            vec![DecisionInput {
+                title: input.subject.clone(),
+                decision: input.statement.clone(),
+                rationale: String::new(),
+                alternatives: Vec::new(),
+            }],
+            Vec::new(),
+        ),
+        RecoveredStructuredKind::Problem => (
+            Vec::new(),
+            vec![ProblemInput {
+                title: input.subject.clone(),
+                symptom: input.statement.clone(),
+                expected: String::new(),
+                attempts: Vec::new(),
+                resolution: None,
+            }],
+        ),
+    };
+    let checkpoint_input = CheckpointInput {
+        request_id: input.request_id.clone(),
+        summary: input.subject,
+        plan: Vec::new(),
+        decisions,
+        tasks: Vec::new(),
+        problems,
+        touched_artifacts: Vec::new(),
+        commands: Vec::new(),
+        verification: Vec::new(),
+        unresolved: Vec::new(),
+    };
+    let (checkpoint, redactions) =
+        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let (kind, subject, statement) =
+        typed_recovery_checkpoint_claim(&checkpoint).ok_or_else(|| {
+            LeyCoreError::InvalidSessionRequest(
+                "typed recovery checkpoint normalization produced an unsupported shape".to_owned(),
+            )
+        })?;
+    let binding_fingerprint = recovery_binding_fingerprint_v2(
+        session_id,
+        input.expected_event_count,
+        &input.candidate_fingerprint,
+        &evidence_record_ids,
+        kind,
+        subject,
+        statement,
+    );
+    Ok((
+        diagnostic.identity.project_id,
+        PendingEvent {
+            event_id,
+            request_id: input.request_id,
+            redactions,
+            payload: SessionEventPayload::RecoveryCheckpointRecorded(RecoveryCheckpointEvent {
+                checkpoint: Box::new(checkpoint),
+                provenance: RecoveryCheckpointProvenance {
+                    expected_event_count: input.expected_event_count,
+                    candidate_fingerprint: input.candidate_fingerprint,
+                    binding_fingerprint,
+                    evidence_record_ids,
+                },
+            }),
+            schema_version: SESSION_TYPED_RECOVERY_SCHEMA_VERSION,
             allow_create: false,
             expected_event_count: Some(input.expected_event_count),
         },
@@ -2320,6 +2478,7 @@ fn replay_pending_event_if_present(
 
 fn validate_pending_recovery_window(
     session_id: &str,
+    schema_version: u32,
     payload: &SessionEventPayload,
     existing: &[SessionEvent],
 ) -> Result<(), LeyCoreError> {
@@ -2349,14 +2508,42 @@ fn validate_pending_recovery_window(
             "recovery evidence window changed; recompile and reverify before saving".to_owned(),
         ));
     }
-    let normalized_candidate_fingerprint =
-        crate::memory_transition::unresolved_candidate_fingerprint(
-            session_id,
-            recovery.provenance.expected_event_count,
-            &recovery.checkpoint.summary,
-            &recovery.checkpoint.unresolved[0],
-            &recovery.provenance.evidence_record_ids,
-        );
+    let normalized_candidate_fingerprint = match schema_version {
+        SESSION_RECOVERY_SCHEMA_VERSION => {
+            crate::memory_transition::unresolved_candidate_fingerprint(
+                session_id,
+                recovery.provenance.expected_event_count,
+                &recovery.checkpoint.summary,
+                recovery.checkpoint.unresolved.first().ok_or_else(|| {
+                    LeyCoreError::InvalidSessionRequest(
+                        "bound unresolved recovery checkpoint lost its unresolved claim".to_owned(),
+                    )
+                })?,
+                &recovery.provenance.evidence_record_ids,
+            )
+        }
+        SESSION_TYPED_RECOVERY_SCHEMA_VERSION => {
+            let (kind, subject, statement) = typed_recovery_checkpoint_claim(&recovery.checkpoint)
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidSessionRequest(
+                        "typed recovery checkpoint changed under normalization".to_owned(),
+                    )
+                })?;
+            crate::memory_transition::recovery_candidate_fingerprint(
+                session_id,
+                recovery.provenance.expected_event_count,
+                recovery_memory_candidate_kind(kind),
+                subject,
+                statement,
+                &recovery.provenance.evidence_record_ids,
+            )
+        }
+        _ => {
+            return Err(LeyCoreError::InvalidSessionRequest(
+                "recovery checkpoint uses an unsupported schema version".to_owned(),
+            ))
+        }
+    };
     if normalized_candidate_fingerprint != recovery.provenance.candidate_fingerprint {
         return Err(LeyCoreError::InvalidSessionRequest(
             "recovery candidate changed under checkpoint normalization; recompile and reverify the sanitized content"
@@ -2590,7 +2777,12 @@ fn mutate_session(
             )));
         }
     }
-    validate_pending_recovery_window(session_id, &pending.payload, &existing)?;
+    validate_pending_recovery_window(
+        session_id,
+        pending.schema_version,
+        &pending.payload,
+        &existing,
+    )?;
     let sequence = existing.len() as u64 + 1;
     if sequence as usize > SESSION_EVENT_LIMIT {
         return Err(LeyCoreError::InvalidSessionStore(format!(
@@ -2788,7 +2980,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_IMPORTED_TURN_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_TYPED_RECOVERY_SCHEMA_VERSION {
+        SESSION_V8_FILE
+    } else if session.schema_version >= SESSION_IMPORTED_TURN_SCHEMA_VERSION {
         SESSION_V7_FILE
     } else if session.schema_version >= SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION {
         SESSION_V6_FILE
@@ -3209,14 +3403,7 @@ fn validate_recovery_checkpoint_history(
             "recovery checkpoint evidence does not match the complete post-checkpoint window",
         );
     }
-    let expected_binding = recovery_binding_fingerprint(
-        &event.session_id,
-        recovery.provenance.expected_event_count,
-        &recovery.provenance.candidate_fingerprint,
-        &recovery.provenance.evidence_record_ids,
-        &recovery.checkpoint.summary,
-        &recovery.checkpoint.unresolved[0],
-    );
+    let expected_binding = recovery_binding_fingerprint_for_event(event, recovery)?;
     if expected_binding != recovery.provenance.binding_fingerprint {
         return invalid_session_store("recovery checkpoint binding fingerprint is invalid");
     }
@@ -3315,6 +3502,7 @@ fn validate_event(
             | SESSION_CONTEXT_UTILITY_SCHEMA_VERSION
             | SESSION_MULTIMODAL_EVIDENCE_SCHEMA_VERSION
             | SESSION_IMPORTED_TURN_SCHEMA_VERSION
+            | SESSION_TYPED_RECOVERY_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -3522,6 +3710,11 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
     if event.schema_version == SESSION_RECOVERY_SCHEMA_VERSION && !is_recovery_checkpoint {
         return invalid_session_store(
             "schema version 3 is reserved for bound recovery checkpoints",
+        );
+    }
+    if event.schema_version == SESSION_TYPED_RECOVERY_SCHEMA_VERSION && !is_recovery_checkpoint {
+        return invalid_session_store(
+            "schema version 8 is reserved for typed bound recovery checkpoints",
         );
     }
     if event.schema_version == SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
@@ -3744,18 +3937,30 @@ fn validate_recovery_checkpoint_event(
     }
     validate_stored_text("checkpoint.summary", &checkpoint.summary, 1, 16_000)?;
     validate_checkpoint_records(checkpoint, &event.event_id)?;
-    if !checkpoint.plan.is_empty()
-        || !checkpoint.decisions.is_empty()
-        || !checkpoint.tasks.is_empty()
-        || !checkpoint.problems.is_empty()
-        || !checkpoint.touched_artifacts.is_empty()
-        || !checkpoint.commands.is_empty()
-        || !checkpoint.verification.is_empty()
-        || checkpoint.unresolved.len() != 1
-    {
-        return invalid_session_store(
-            "bound recovery checkpoint must contain exactly one unresolved claim and no other typed records",
-        );
+    match event.schema_version {
+        SESSION_RECOVERY_SCHEMA_VERSION => {
+            if !checkpoint.plan.is_empty()
+                || !checkpoint.decisions.is_empty()
+                || !checkpoint.tasks.is_empty()
+                || !checkpoint.problems.is_empty()
+                || !checkpoint.touched_artifacts.is_empty()
+                || !checkpoint.commands.is_empty()
+                || !checkpoint.verification.is_empty()
+                || checkpoint.unresolved.len() != 1
+            {
+                return invalid_session_store(
+                    "schema-v3 bound recovery checkpoint must contain exactly one unresolved claim and no other typed records",
+                );
+            }
+        }
+        SESSION_TYPED_RECOVERY_SCHEMA_VERSION => {
+            if typed_recovery_checkpoint_claim(checkpoint).is_none() {
+                return invalid_session_store(
+                    "schema-v8 bound recovery checkpoint must contain exactly one minimal decision or problem claim",
+                );
+            }
+        }
+        _ => return invalid_session_store("bound recovery checkpoint schema version is invalid"),
     }
     if recovery.provenance.expected_event_count != event.sequence.saturating_sub(1) {
         return invalid_session_store(
@@ -3780,26 +3985,40 @@ fn validate_recovery_checkpoint_event(
             "recovery checkpoint evidence IDs must be sorted unique tev_ identifiers",
         );
     }
-    let expected_candidate = crate::memory_transition::unresolved_candidate_fingerprint(
-        &event.session_id,
-        recovery.provenance.expected_event_count,
-        &checkpoint.summary,
-        &checkpoint.unresolved[0],
-        evidence,
-    );
+    let expected_candidate = match event.schema_version {
+        SESSION_RECOVERY_SCHEMA_VERSION => {
+            crate::memory_transition::unresolved_candidate_fingerprint(
+                &event.session_id,
+                recovery.provenance.expected_event_count,
+                &checkpoint.summary,
+                &checkpoint.unresolved[0],
+                evidence,
+            )
+        }
+        SESSION_TYPED_RECOVERY_SCHEMA_VERSION => {
+            let (kind, subject, statement) = typed_recovery_checkpoint_claim(checkpoint)
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidSessionStore(
+                        "typed recovery checkpoint claim shape is invalid".to_owned(),
+                    )
+                })?;
+            crate::memory_transition::recovery_candidate_fingerprint(
+                &event.session_id,
+                recovery.provenance.expected_event_count,
+                recovery_memory_candidate_kind(kind),
+                subject,
+                statement,
+                evidence,
+            )
+        }
+        _ => unreachable!("recovery schema checked above"),
+    };
     if recovery.provenance.candidate_fingerprint != expected_candidate {
         return invalid_session_store(
             "recovery checkpoint candidate fingerprint does not match its bound unresolved claim",
         );
     }
-    let expected_binding = recovery_binding_fingerprint(
-        &event.session_id,
-        recovery.provenance.expected_event_count,
-        &recovery.provenance.candidate_fingerprint,
-        evidence,
-        &checkpoint.summary,
-        &checkpoint.unresolved[0],
-    );
+    let expected_binding = recovery_binding_fingerprint_for_event(event, recovery)?;
     if recovery.provenance.binding_fingerprint != expected_binding {
         return invalid_session_store("recovery checkpoint binding fingerprint is invalid");
     }
@@ -4297,6 +4516,130 @@ fn recovery_binding_fingerprint(
         hasher.update(record_id.as_bytes());
     }
     format!("sha256:{:x}", hasher.finalize())
+}
+
+fn recovery_binding_fingerprint_v2(
+    session_id: &str,
+    expected_event_count: u64,
+    candidate_fingerprint: &str,
+    evidence_record_ids: &[String],
+    kind: RecoveredStructuredKind,
+    subject: &str,
+    statement: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ley-recovery-checkpoint-binding-v2");
+    hasher.update([0]);
+    hasher.update(session_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(expected_event_count.to_le_bytes());
+    hasher.update([0]);
+    hasher.update(candidate_fingerprint.as_bytes());
+    hasher.update([0]);
+    hasher.update(match kind {
+        RecoveredStructuredKind::Decision => b"decision".as_slice(),
+        RecoveredStructuredKind::Problem => b"problem".as_slice(),
+    });
+    hasher.update([0]);
+    hasher.update(subject.as_bytes());
+    hasher.update([0]);
+    hasher.update(statement.as_bytes());
+    for record_id in evidence_record_ids {
+        hasher.update([0]);
+        hasher.update(record_id.as_bytes());
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn typed_recovery_checkpoint_claim(
+    checkpoint: &SessionCheckpoint,
+) -> Option<(RecoveredStructuredKind, &str, &str)> {
+    let no_other_records = checkpoint.plan.is_empty()
+        && checkpoint.tasks.is_empty()
+        && checkpoint.touched_artifacts.is_empty()
+        && checkpoint.commands.is_empty()
+        && checkpoint.verification.is_empty()
+        && checkpoint.unresolved.is_empty();
+    if !no_other_records {
+        return None;
+    }
+    if checkpoint.decisions.len() == 1 && checkpoint.problems.is_empty() {
+        let decision = &checkpoint.decisions[0];
+        if checkpoint.summary == decision.title
+            && decision.rationale.is_empty()
+            && decision.alternatives.is_empty()
+        {
+            return Some((
+                RecoveredStructuredKind::Decision,
+                decision.title.as_str(),
+                decision.decision.as_str(),
+            ));
+        }
+    }
+    if checkpoint.problems.len() == 1 && checkpoint.decisions.is_empty() {
+        let problem = &checkpoint.problems[0];
+        if checkpoint.summary == problem.title
+            && problem.expected.is_empty()
+            && problem.attempts.is_empty()
+            && problem.resolution.is_none()
+        {
+            return Some((
+                RecoveredStructuredKind::Problem,
+                problem.title.as_str(),
+                problem.symptom.as_str(),
+            ));
+        }
+    }
+    None
+}
+
+fn recovery_memory_candidate_kind(
+    kind: RecoveredStructuredKind,
+) -> crate::memory_transition::MemoryCandidateKind {
+    match kind {
+        RecoveredStructuredKind::Decision => {
+            crate::memory_transition::MemoryCandidateKind::Decision
+        }
+        RecoveredStructuredKind::Problem => crate::memory_transition::MemoryCandidateKind::Problem,
+    }
+}
+
+fn recovery_binding_fingerprint_for_event(
+    event: &SessionEvent,
+    recovery: &RecoveryCheckpointEvent,
+) -> Result<String, LeyCoreError> {
+    match event.schema_version {
+        SESSION_RECOVERY_SCHEMA_VERSION => Ok(recovery_binding_fingerprint(
+            &event.session_id,
+            recovery.provenance.expected_event_count,
+            &recovery.provenance.candidate_fingerprint,
+            &recovery.provenance.evidence_record_ids,
+            &recovery.checkpoint.summary,
+            recovery.checkpoint.unresolved.first().ok_or_else(|| {
+                LeyCoreError::InvalidSessionStore(
+                    "schema-v3 recovery checkpoint has no unresolved claim".to_owned(),
+                )
+            })?,
+        )),
+        SESSION_TYPED_RECOVERY_SCHEMA_VERSION => {
+            let (kind, subject, statement) = typed_recovery_checkpoint_claim(&recovery.checkpoint)
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidSessionStore(
+                        "schema-v8 recovery checkpoint claim shape is invalid".to_owned(),
+                    )
+                })?;
+            Ok(recovery_binding_fingerprint_v2(
+                &event.session_id,
+                recovery.provenance.expected_event_count,
+                &recovery.provenance.candidate_fingerprint,
+                &recovery.provenance.evidence_record_ids,
+                kind,
+                subject,
+                statement,
+            ))
+        }
+        _ => invalid_session_store("recovery checkpoint schema version is invalid"),
+    }
 }
 
 fn request_fingerprint(
@@ -4982,6 +5325,26 @@ mod tests {
             evidence_record_ids,
             summary: summary.to_owned(),
             unresolved: unresolved.to_owned(),
+        }
+    }
+
+    fn recovered_structured_input(
+        request_id: String,
+        expected_event_count: u64,
+        candidate_fingerprint: String,
+        evidence_record_ids: Vec<String>,
+        kind: RecoveredStructuredKind,
+        subject: &str,
+        statement: &str,
+    ) -> RecoveredStructuredCheckpointInput {
+        RecoveredStructuredCheckpointInput {
+            request_id,
+            expected_event_count,
+            candidate_fingerprint,
+            evidence_record_ids,
+            kind,
+            subject: subject.to_owned(),
+            statement: statement.to_owned(),
         }
     }
 
@@ -6423,6 +6786,147 @@ mod tests {
             read_session(&project, &vault, &started.session.session_id),
             Err(LeyCoreError::InvalidSessionStore(message))
                 if message.contains("binding fingerprint")
+        ));
+    }
+
+    #[test]
+    fn typed_bound_recovery_is_schema_v8_and_rejects_rebinding_or_kind_tamper() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
+        let prompt = record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('2'), "Choose the persistence engine"),
+        )
+        .unwrap();
+        let prompt_id = prompt.session.prompts[0].record_id.clone();
+        let response = record_session_response(
+            &project,
+            &vault,
+            &started.session.session_id,
+            turn_input(request_id('3'), "Use SQLite for local-first persistence"),
+        )
+        .unwrap();
+        let response_id = response.session.responses[0].record_id.clone();
+        let candidate_fingerprint = crate::memory_transition::recovery_candidate_fingerprint(
+            &started.session.session_id,
+            3,
+            crate::memory_transition::MemoryCandidateKind::Decision,
+            "Persistence engine",
+            "Use SQLite for local-first persistence",
+            &[prompt_id.clone(), response_id.clone()],
+        );
+        let committed = checkpoint_recovered_structured_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            recovered_structured_input(
+                request_id('4'),
+                3,
+                candidate_fingerprint.clone(),
+                vec![response_id.clone(), prompt_id.clone()],
+                RecoveredStructuredKind::Decision,
+                "Persistence engine",
+                "Use SQLite for local-first persistence",
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            committed.session.schema_version,
+            SESSION_TYPED_RECOVERY_SCHEMA_VERSION
+        );
+        assert!(committed.session_path.ends_with(SESSION_V8_FILE));
+        assert_eq!(committed.session.checkpoints.len(), 1);
+        assert_eq!(committed.session.checkpoints[0].decisions.len(), 1);
+        assert!(committed.session.checkpoints[0].problems.is_empty());
+        let replayed = checkpoint_recovered_structured_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            recovered_structured_input(
+                request_id('4'),
+                3,
+                candidate_fingerprint,
+                vec![prompt_id.clone(), response_id.clone()],
+                RecoveredStructuredKind::Decision,
+                "Persistence engine",
+                "Use SQLite for local-first persistence",
+            ),
+        )
+        .unwrap();
+        assert!(replayed.replayed);
+
+        let event_path = session_directory(&project, &vault, &started.session.session_id)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", committed.event_id));
+        let original = std::fs::read(&event_path).unwrap();
+        let mut event: SessionEvent = serde_json::from_slice(&original).unwrap();
+        let SessionEventPayload::RecoveryCheckpointRecorded(recovery) = &mut event.payload else {
+            panic!("expected typed recovery checkpoint event");
+        };
+        recovery.provenance.evidence_record_ids.pop();
+        let (kind, subject, statement) = typed_recovery_checkpoint_claim(&recovery.checkpoint)
+            .expect("typed recovery checkpoint must retain one claim");
+        recovery.provenance.candidate_fingerprint =
+            crate::memory_transition::recovery_candidate_fingerprint(
+                &event.session_id,
+                recovery.provenance.expected_event_count,
+                recovery_memory_candidate_kind(kind),
+                subject,
+                statement,
+                &recovery.provenance.evidence_record_ids,
+            );
+        recovery.provenance.binding_fingerprint = recovery_binding_fingerprint_v2(
+            &event.session_id,
+            recovery.provenance.expected_event_count,
+            &recovery.provenance.candidate_fingerprint,
+            &recovery.provenance.evidence_record_ids,
+            kind,
+            subject,
+            statement,
+        );
+        event.request_fingerprint = request_fingerprint(
+            &event.project_id,
+            &event.session_id,
+            &event.request_id,
+            &event.payload,
+        )
+        .unwrap();
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&event).unwrap()).unwrap();
+        assert!(matches!(
+            read_session(&project, &vault, &started.session.session_id),
+            Err(LeyCoreError::InvalidSessionStore(message))
+                if message.contains("complete post-checkpoint window")
+        ));
+
+        std::fs::write(&event_path, original).unwrap();
+        let mut event: SessionEvent =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        let SessionEventPayload::RecoveryCheckpointRecorded(recovery) = &mut event.payload else {
+            panic!("expected typed recovery checkpoint event");
+        };
+        let decision = recovery.checkpoint.decisions.remove(0);
+        recovery.checkpoint.problems.push(ProblemRecord {
+            id: child_id("prb", &event.event_id, 0),
+            title: decision.title,
+            symptom: decision.decision,
+            expected: String::new(),
+            attempts: Vec::new(),
+            resolution: None,
+        });
+        event.request_fingerprint = request_fingerprint(
+            &event.project_id,
+            &event.session_id,
+            &event.request_id,
+            &event.payload,
+        )
+        .unwrap();
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&event).unwrap()).unwrap();
+        assert!(matches!(
+            read_session(&project, &vault, &started.session.session_id),
+            Err(LeyCoreError::InvalidSessionStore(message))
+                if message.contains("candidate fingerprint")
         ));
     }
 

@@ -1,12 +1,13 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
-    commit_unresolved_memory_transition, compile_agent_legibility_map,
-    compile_bootstrap_context_with_registries, compile_project_context_for_agent_with_registries,
-    compile_session_memory, compile_topic_dossier, consolidation_inbox, current_project_state,
-    diagnose_project, evaluate_agent_egress, find_project_context, find_project_graph_path,
-    finish_session, inspect_context_pack, list_learning_contexts, memory_health_report,
-    project_activity_view, project_memory_overview, project_resume_context, propose_learning,
+    commit_structured_memory_transition, commit_unresolved_memory_transition,
+    compile_agent_legibility_map, compile_bootstrap_context_with_registries,
+    compile_project_context_for_agent_with_registries, compile_session_memory,
+    compile_topic_dossier, consolidation_inbox, current_project_state, diagnose_project,
+    evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
+    inspect_context_pack, list_learning_contexts, memory_health_report, project_activity_view,
+    project_memory_overview, project_resume_context, propose_learning,
     read_external_connector_snapshot_with_registry, read_learning_context,
     read_project_cited_media, read_project_evidence, read_session_context,
     read_session_turns_context, record_context_utility_observation,
@@ -14,22 +15,23 @@ use ley_core::{
     traverse_project_graph, verify_memory_transition, AgentContextAuthorities,
     AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits,
     AttemptInput, AttemptOutcome, BootstrapSpecificationRegistry, CheckpointInput, CommandInput,
-    CommitUnresolvedMemoryTransitionInput, ConsolidationInboxLimits, ContextCompileLimits,
-    ContextMountRegistry, ContextUtilityBindingInput, ContextUtilityObservationInput,
-    CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, ExternalConnector,
-    ExternalConnectorRegistry, FinishSessionInput, GraphDirection, GraphEdgeKind,
-    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningKind, LearningListScope,
-    LearningMutation, LearningProvenance, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
-    MemoryHealthLimits, MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry,
-    ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
-    ResolutionInput, RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource,
-    SessionSourceKind, SessionStatus, SpecificationContextLimits, SpecificationRegistry,
-    StartSessionInput, TaskInput, TaskStatus, TopicDossierLimits, VerificationInput,
-    VerificationStatus, DEFAULT_AGENT_LEGIBILITY_CHARACTERS,
-    DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, DEFAULT_AGENT_LEGIBILITY_SESSIONS,
-    DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
-    DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS,
-    DEFAULT_CONTEXT_TOKENS, DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
+    CommitStructuredMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
+    ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry,
+    ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
+    DecisionInput, EgressPolicyRegistry, ExternalConnector, ExternalConnectorRegistry,
+    FinishSessionInput, GraphDirection, GraphEdgeKind, KnowledgeScopeRegistry, LearningActor,
+    LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
+    LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits,
+    MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry, ProblemInput,
+    ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput, ResolutionInput,
+    RetrievalLimits, RevisionCompatibility, SessionMutation, SessionSource, SessionSourceKind,
+    SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
+    TaskStatus, TopicDossierLimits, VerificationInput, VerificationStatus,
+    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
+    DEFAULT_AGENT_LEGIBILITY_SESSIONS, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
+    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_CONTEXT_COMPILE_RESULTS,
+    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
+    DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
     DEFAULT_CURRENT_STATE_SESSIONS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
@@ -146,7 +148,9 @@ const WRITE_INSTRUCTIONS: &str =
 Checkpoint after meaningful decisions, implementation slices, diagnoses, failed attempts, \
 solutions, verification results, and handoffs. For a verifier-approved single unresolved recovery \
 claim, use ley_session_memory_commit_unresolved with the exact candidate fingerprint and recovery \
-evidence set; do not substitute the generic checkpoint route. Store concise structure, \
+evidence set. For one verifier-approved `decision` or `problem` recovery claim, use \
+ley_session_memory_commit_structured with that same exact binding; other candidate kinds remain \
+review-only. Do not substitute the generic checkpoint route for either bound recovery flow. Store concise structure, \
 project-relative touched artifacts, and observed outcomes rather than transcripts or full tool \
 output. A verification may include `evidenceArtifactPaths` only for directly supporting artifacts \
 already present in the approved captured snapshot; returned `evidenceArtifacts` are immutable \
@@ -911,6 +915,50 @@ pub struct CommitUnresolvedSessionMemoryParams {
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
+pub enum McpStructuredMemoryCandidateKind {
+    Decision,
+    Problem,
+}
+
+impl From<McpStructuredMemoryCandidateKind> for MemoryCandidateKind {
+    fn from(value: McpStructuredMemoryCandidateKind) -> Self {
+        match value {
+            McpStructuredMemoryCandidateKind::Decision => Self::Decision,
+            McpStructuredMemoryCandidateKind::Problem => Self::Problem,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitStructuredSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    /// Caller-stable idempotency key. Reuse only when retrying this exact bound recovery write.
+    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
+    pub request_id: String,
+    /// Exact event count used by the successful verifier call.
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    /// Exact sha256 fingerprint returned by ley_session_memory_verify.
+    #[schemars(regex(pattern = "^sha256:[0-9a-f]{64}$"))]
+    pub candidate_fingerprint: String,
+    /// Lossless typed recovery target. Only decision and problem are supported in this slice.
+    pub kind: McpStructuredMemoryCandidateKind,
+    /// Decision title or problem title from the verified candidate.
+    #[schemars(length(min = 1, max = 256))]
+    pub subject: String,
+    /// Decision text or problem symptom from the verified candidate.
+    #[schemars(length(min = 1, max = 4_000))]
+    pub statement: String,
+    /// Exact recovery evidence IDs cited by the verified candidate.
+    #[schemars(length(min = 1, max = 20))]
+    #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
+    pub evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum McpLearningScope {
     CurrentTrusted,
     NeedsReview,
@@ -1431,6 +1479,7 @@ impl LeyMcpServer {
         if !session_writes_enabled {
             tool_router.disable_route("ley_session_start");
             tool_router.disable_route("ley_session_checkpoint");
+            tool_router.disable_route("ley_session_memory_commit_structured");
             tool_router.disable_route("ley_session_memory_commit_unresolved");
             tool_router.disable_route("ley_session_finish");
             tool_router.disable_route("ley_context_utility_bind");
@@ -2571,6 +2620,42 @@ impl LeyMcpServer {
         }))
     }
 
+    /// Commit exactly one verifier-approved Decision or Problem recovery claim.
+    /// Ley re-verifies the exact recovery window and persists only the lossless minimal typed
+    /// fields represented by the candidate; it does not infer rationale, status, attempts,
+    /// resolution, or verification state.
+    #[tool(
+        name = "ley_session_memory_commit_structured",
+        annotations(
+            title = "Commit a verified typed Ley recovery claim",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_commit_structured(
+        &self,
+        Parameters(params): Parameters<CommitStructuredSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_session_write_result(|| {
+            commit_structured_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                CommitStructuredMemoryTransitionInput {
+                    request_id: params.request_id,
+                    expected_event_count: params.expected_event_count,
+                    candidate_fingerprint: params.candidate_fingerprint,
+                    kind: params.kind.into(),
+                    subject: params.subject,
+                    statement: params.statement,
+                    evidence_record_ids: params.evidence_record_ids,
+                },
+            )
+        }))
+    }
+
     /// List bounded project lessons, defaulting to current user-trusted memory only.
     #[tool(
         name = "ley_learnings_list",
@@ -3232,11 +3317,11 @@ mod tests {
     use super::*;
     use ley_core::{
         checkpoint_session, generate_specification_id, ingest_project, initialize_project,
-        record_session_prompt, start_session, AgentEgressPolicy, AttemptInput, BindingRegistry,
-        BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, DecisionInput, ProblemInput,
-        ResolutionInput, SessionSource, SpecificationRegistry, StartSessionInput,
-        TurnEvidenceInput, TurnEvidenceOrigin, BINDING_REGISTRY_FILE,
-        BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_FILE,
+        record_session_prompt, record_session_response, start_session, AgentEgressPolicy,
+        AttemptInput, BindingRegistry, BootstrapSpecificationRegistry, CaptureMode,
+        CheckpointInput, DecisionInput, ProblemInput, ResolutionInput, SessionSource,
+        SpecificationRegistry, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
+        BINDING_REGISTRY_FILE, BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_FILE,
         MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS, MAX_PROJECT_ACTIVITY_RESULTS,
         SPECIFICATION_REGISTRY_FILE,
     };
@@ -3879,6 +3964,7 @@ mod tests {
                 "ley_session_checkpoint",
                 "ley_session_finish",
                 "ley_session_get",
+                "ley_session_memory_commit_structured",
                 "ley_session_memory_commit_unresolved",
                 "ley_session_memory_compile",
                 "ley_session_memory_verify",
@@ -3970,6 +4056,27 @@ mod tests {
             recovery_commit_schema["properties"]["evidenceRecordIds"]["maxItems"],
             20
         );
+        let structured_recovery_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_session_memory_commit_structured")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            structured_recovery_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        assert_eq!(
+            structured_recovery_schema["properties"]["evidenceRecordIds"]["maxItems"],
+            20
+        );
+        let structured_schema_text = structured_recovery_schema.to_string();
+        assert!(structured_schema_text.contains("decision"));
+        assert!(structured_schema_text.contains("problem"));
+        assert!(!structured_schema_text.contains("unresolved"));
+        assert!(!structured_schema_text.contains("verification"));
         for tool in tools {
             let annotations = tool.annotations.unwrap();
             let writes_session = matches!(
@@ -3978,6 +4085,7 @@ mod tests {
                     | "ley_context_utility_observe"
                     | "ley_session_start"
                     | "ley_session_checkpoint"
+                    | "ley_session_memory_commit_structured"
                     | "ley_session_memory_commit_unresolved"
                     | "ley_session_finish"
             );
@@ -5695,6 +5803,166 @@ mod tests {
             .unwrap();
         assert_eq!(retry.is_error, Some(false));
         assert_eq!(retry.structured_content.as_ref().unwrap()["replayed"], true);
+
+        let after = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id,
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(after["state"], "no-unconsolidated-evidence");
+        assert_eq!(after["totalUnconsolidatedEvidence"], 0);
+    }
+
+    #[tokio::test]
+    async fn bound_structured_recovery_commits_verified_decision_and_replays_exact_retry() {
+        let (_temporary, project, vault, _) = fixture();
+        let write_server =
+            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "7".repeat(32)),
+                name: "Typed bound recovery".to_owned(),
+                goal: "Recover a durable decision from bounded turn evidence".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
+        record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "8".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("typed-bound-recovery-turn".to_owned()),
+                text: "Choose the persistence engine for the local-first store".to_owned(),
+            },
+        )
+        .unwrap();
+        record_session_response(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "9".repeat(32)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("typed-bound-recovery-turn".to_owned()),
+                text: "Use SQLite for local-first persistence".to_owned(),
+            },
+        )
+        .unwrap();
+        let pack = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id: session_id.clone(),
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let evidence_record_ids = pack["evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["recordId"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(evidence_record_ids.len(), 2);
+        let transition = write_server
+            .session_memory_verify(Parameters(VerifySessionMemoryParams {
+                session_id: session_id.clone(),
+                expected_event_count: 3,
+                claims: vec![McpMemoryCandidateClaim {
+                    kind: McpMemoryCandidateKind::Decision,
+                    subject: "Persistence engine".to_owned(),
+                    statement: "Use SQLite for local-first persistence".to_owned(),
+                    evidence_record_ids: evidence_record_ids.clone(),
+                }],
+                deferred_evidence_record_ids: Vec::new(),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(transition["state"], "review-required");
+        let request_id = format!("req_{}", "a".repeat(32));
+        let committed = write_server
+            .session_memory_commit_structured(Parameters(CommitStructuredSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id: request_id.clone(),
+                expected_event_count: 3,
+                candidate_fingerprint: transition["candidateFingerprint"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                kind: McpStructuredMemoryCandidateKind::Decision,
+                subject: "Persistence engine".to_owned(),
+                statement: "Use SQLite for local-first persistence".to_owned(),
+                evidence_record_ids: evidence_record_ids.clone(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(committed.is_error, Some(false));
+        assert_eq!(
+            committed.structured_content.as_ref().unwrap()["eventCount"],
+            4
+        );
+        assert_eq!(
+            committed.structured_content.as_ref().unwrap()["replayed"],
+            false
+        );
+
+        let retry = write_server
+            .session_memory_commit_structured(Parameters(CommitStructuredSessionMemoryParams {
+                session_id: session_id.clone(),
+                request_id,
+                expected_event_count: 3,
+                candidate_fingerprint: transition["candidateFingerprint"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                kind: McpStructuredMemoryCandidateKind::Decision,
+                subject: "Persistence engine".to_owned(),
+                statement: "Use SQLite for local-first persistence".to_owned(),
+                evidence_record_ids,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(retry.is_error, Some(false));
+        assert_eq!(retry.structured_content.as_ref().unwrap()["replayed"], true);
+
+        let session = write_server
+            .session_get(Parameters(SessionContextParams {
+                session_id: session_id.clone(),
+                max_checkpoints: Some(5),
+                max_characters: Some(8_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(session["eventCount"], 4);
+        let checkpoints = session["checkpoints"].as_array().unwrap();
+        assert_eq!(checkpoints.len(), 1);
+        let decisions = checkpoints[0]["decisions"].as_array().unwrap();
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0]["title"], "Persistence engine");
+        assert_eq!(
+            decisions[0]["decision"],
+            "Use SQLite for local-first persistence"
+        );
+        assert!(checkpoints[0]["problems"].as_array().unwrap().is_empty());
+        assert!(checkpoints[0]["unresolved"].as_array().unwrap().is_empty());
 
         let after = write_server
             .session_memory_compile(Parameters(CompileSessionMemoryParams {
