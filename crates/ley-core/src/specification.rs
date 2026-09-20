@@ -535,38 +535,48 @@ impl SpecificationRegistry {
         validate_specification_id(specification_id)
             .map_err(LeyCoreError::InvalidSpecificationRequest)?;
         let diagnostic = diagnose_project(project_start)?;
-        let project_id = diagnostic.identity.project_id;
+        self.read_approved_source_for_project_id(
+            &diagnostic.identity.project_id,
+            vault.as_ref(),
+            specification_id,
+        )
+    }
+
+    pub(crate) fn read_approved_source_for_expected_project(
+        &self,
+        project_start: impl AsRef<Path>,
+        vault: impl AsRef<Path>,
+        expected_project_id: &str,
+        specification_id: &str,
+    ) -> Result<ApprovedSpecificationSource, LeyCoreError> {
+        validate_project_id(expected_project_id)
+            .map_err(|error| LeyCoreError::InvalidSpecificationRequest(error.to_string()))?;
+        validate_specification_id(specification_id)
+            .map_err(LeyCoreError::InvalidSpecificationRequest)?;
+        let diagnostic = diagnose_project(project_start)?;
+        if diagnostic.identity.project_id != expected_project_id {
+            return Err(LeyCoreError::InvalidProjectIdentity(
+                "source project identity changed during approved Specification read".to_owned(),
+            ));
+        }
+        self.read_approved_source_for_project_id(
+            expected_project_id,
+            vault.as_ref(),
+            specification_id,
+        )
+    }
+
+    fn read_approved_source_for_project_id(
+        &self,
+        project_id: &str,
+        vault: &Path,
+        specification_id: &str,
+    ) -> Result<ApprovedSpecificationSource, LeyCoreError> {
         self.with_locked_document(|document| {
-            let entry = document
-                .approvals
-                .get(&project_id)
-                .and_then(|approvals| approvals.get(specification_id))
-                .ok_or_else(|| {
-                    LeyCoreError::SpecificationNotApproved(specification_id.to_owned())
-                })?;
-            let source = read_stable_specification_bytes(vault.as_ref(), &entry.relative_path)?;
-            let content_hash = specification_content_hash(&source);
-            if content_hash != entry.content_hash {
-                return Err(LeyCoreError::SpecificationApprovalStale {
-                    specification_id: specification_id.to_owned(),
-                    path: entry.relative_path.clone(),
-                });
+            SpecificationAuthoritySnapshot {
+                approvals: &document.approvals,
             }
-            let source = String::from_utf8(source).map_err(|_| {
-                LeyCoreError::InvalidSpecificationRequest(
-                    "approved Specification Markdown must be valid UTF-8".to_owned(),
-                )
-            })?;
-            Ok(ApprovedSpecificationSource {
-                project_id: project_id.clone(),
-                specification_id: specification_id.to_owned(),
-                relative_path: entry.relative_path.clone(),
-                content_hash,
-                approved_at_unix_ms: entry.approved_at_unix_ms,
-                source,
-                source_boundary: "user-approved-specification",
-                authority: "human-intent",
-            })
+            .read_approved_source(project_id, vault, specification_id)
         })
     }
 

@@ -1,32 +1,35 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+#[cfg(test)]
+use ley_core::initialize_project;
 use ley_core::{
     correct_learning, diagnose_project, erase_project_memory, erase_session_memory,
     generate_learning_request_id, generate_request_id, ingest_project,
-    ingest_project_with_expected_capture_plan, initialize_project, list_learning_contexts,
-    list_sessions, preview_initial_capture, project_activity_view, project_artifact_inventory,
-    project_graph_history, project_graph_view_filtered, project_memory_overview,
-    project_resume_context, project_session_stats, read_learning, read_learning_context,
-    read_project_cited_evidence, read_project_cited_media, read_project_graph_evidence,
-    read_session_context, read_session_turns_context, rename_session, review_learning,
-    search_observed_projects, search_project_memory, update_capture_mode, ArtifactMediaType,
-    BindingRegistry, BindingSource, CaptureFile, CaptureMode, CapturePolicy, CorrectLearningInput,
-    CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt, GraphCitation, IngestionResult,
-    LearningActor, LearningContextPack, LearningEvidenceInput, LearningFeedbackAction,
-    LearningList, LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView,
-    ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic, ProjectGraphFilters,
-    ProjectGraphHistory, ProjectGraphView, ProjectMemorySearch, ProjectMemorySearchLimits,
-    ProjectProblemScope, ProjectResumePack, ProjectVaultBinding, RenameSessionInput,
-    ReviewLearningInput, RevisionCompatibility, SessionContextPack, SessionMemoryErasure,
-    SessionSummary, SessionTurnsContextPack, SpecificationAuthorityList, SpecificationRegistry,
-    DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_GRAPH_HISTORY_RESULTS,
-    DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
-    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
-    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
-    DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS, MAX_MEDIA_EVIDENCE_BYTES,
+    ingest_project_with_expected_capture_plan, initialize_project_retiring_bootstrap,
+    list_learning_contexts, list_sessions, preview_initial_capture, project_activity_view,
+    project_artifact_inventory, project_graph_history, project_graph_view_filtered,
+    project_memory_overview, project_resume_context, project_session_stats, read_learning,
+    read_learning_context, read_project_cited_evidence, read_project_cited_media,
+    read_project_graph_evidence, read_session_context, read_session_turns_context, rename_session,
+    review_learning, search_observed_projects, search_project_memory, update_capture_mode,
+    ArtifactMediaType, BindingRegistry, BindingSource, CaptureFile, CaptureMode, CapturePolicy,
+    CorrectLearningInput, CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt,
+    GraphCitation, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
+    LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
+    ProjectActivityView, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
+    ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView, ProjectMemorySearch,
+    ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
+    RenameSessionInput, ReviewLearningInput, RevisionCompatibility, SessionContextPack,
+    SessionMemoryErasure, SessionSummary, SessionTurnsContextPack, SpecificationAuthorityList,
+    SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS,
+    DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
+    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
+    DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_PROJECT_CATALOG_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS,
+    MAX_MEDIA_EVIDENCE_BYTES,
 };
 use ley_core::{
     semantic_model_status as local_semantic_model_status, supported_semantic_model,
@@ -977,8 +980,9 @@ fn initialize_agent_project(
     if reviewed.approval_fingerprint != expected_approval_fingerprint {
         return Err(LeyCoreError::CapturePreviewChanged.to_string());
     }
-    let initialization = initialize_project(&project_path, None, CaptureMode::Structured)
-        .map_err(|error| error.to_string())?;
+    let initialization =
+        initialize_project_retiring_bootstrap(&project_path, None, CaptureMode::Structured)
+            .map_err(|error| error.to_string())?;
     if !initialization.created {
         return Err(LeyCoreError::CapturePreviewChanged.to_string());
     }

@@ -68,6 +68,7 @@ METRIC_NAMES = (
     "policy_bundle",
     "historical_host_import",
     "consolidation_inbox",
+    "bootstrap_specification",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -242,6 +243,28 @@ P0_CAPABILITY_COVERAGE = {
 }
 
 P1_CAPABILITY_COVERAGE = {
+    "bootstrap-specifications": {
+        "adversarial": (
+            "empty-workspace-bootstrap-specification",
+            "bootstrap_specification",
+            "truthy",
+        ),
+        "downstream": (
+            "empty-workspace-bootstrap-specification",
+            "bootstrap_specification",
+            "truthy",
+        ),
+        "privacy": (
+            "empty-workspace-bootstrap-specification",
+            "privacy_violation_rate",
+            "zero",
+        ),
+        "regression": (
+            "empty-workspace-bootstrap-specification",
+            "bootstrap_specification",
+            "truthy",
+        ),
+    },
     "topic-dossiers": {
         "adversarial": (
             "session-erasure-derived-residue",
@@ -609,6 +632,13 @@ def find_ley() -> str:
 
 LEY = find_ley()
 EVAL_ENV: dict[str, str] = {}
+BOOTSTRAP_UNSUPPORTED_MARKER = (
+    "cannot establish the directory generation required for Ley bootstrap Specification authority"
+)
+
+
+class BootstrapScenarioUnsupported(RuntimeError):
+    pass
 
 
 def request_id(seed: str) -> str:
@@ -1296,6 +1326,227 @@ def privacy_violation_rate(canaries: list[str], outputs: list[object]) -> float:
     return exposed / len(canaries)
 
 
+def evaluate_bootstrap_specification_scenario(
+    scenario: dict[str, object],
+    base_dir: Path,
+    target: Path,
+    expectation: dict[str, object],
+) -> tuple[bool, float, list[str]]:
+    failures: list[str] = []
+    source = base_dir / "bootstrap-source"
+    source_vault = base_dir / "bootstrap-source-vault"
+    source.mkdir(parents=True)
+    source_vault.mkdir(parents=True)
+    write_project_files(source, {"README.md": "Bootstrap source project.\n"})
+    init_project(source, "Bootstrap Specification source", source_vault)
+
+    relative_path = str(expectation.get("path", "Specs/Product.md"))
+    source_text = str(expectation.get("source", ""))
+    marker = str(expectation.get("marker", ""))
+    task = str(expectation.get("task", marker))
+    prompt_marker = str(expectation.get("prompt_marker", ""))
+    target_private_marker = str(expectation.get("target_private_marker", ""))
+    if not source_text or not marker or not task or not prompt_marker or not target_private_marker:
+        raise RuntimeError("bootstrap Specification eval fixture is incomplete")
+
+    definitions: list[dict[str, object]] = [
+        {"path": relative_path, "source": source_text}
+    ]
+    install_specification_approvals(source, source_vault, definitions)
+    specification_id = str(definitions[0].get("resolved_specification_id", ""))
+    if not specification_id.startswith("spec_"):
+        raise RuntimeError("bootstrap Specification fixture did not resolve a specification ID")
+
+    try:
+        attached = cli_json(
+            [
+                "bootstrap-spec",
+                "attach",
+                str(source),
+                specification_id,
+                str(target),
+                "--json",
+            ]
+        )
+    except RuntimeError as error:
+        if BOOTSTRAP_UNSUPPORTED_MARKER in str(error):
+            raise BootstrapScenarioUnsupported(
+                "bootstrap Specification authority is unsupported on this platform/filesystem"
+            ) from error
+        raise
+    listed = cli_json(["bootstrap-spec", "list", str(target), "--json"])
+    if (target / ".ley").exists():
+        failures.append("bootstrap attachment initialized or mutated target .ley metadata")
+
+    tools = mcp_tools_list(target)
+    tool_names = [str(item.get("name", "")) for item in tools]
+    compiled = mcp_call(
+        target,
+        "ley_compile_context",
+        {"task": task, "maxResults": 8, "maxTokens": 1500},
+    )
+
+    codex_start = hook_call(
+        target,
+        "codex",
+        {"hook_event_name": "SessionStart", "session_id": "bootstrap-eval-codex"},
+    )
+    claude_start = hook_call(
+        target,
+        "claude",
+        {"hook_event_name": "SessionStart", "session_id": "bootstrap-eval-claude"},
+    )
+    codex_prompt = hook_call(
+        target,
+        "codex",
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "bootstrap-eval-codex",
+            "turn_id": "bootstrap-eval-turn-1",
+            "prompt": f"{task} {prompt_marker}",
+        },
+    )
+    claude_prompt = hook_call(
+        target,
+        "claude",
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "bootstrap-eval-claude",
+            "prompt": f"{task} {prompt_marker}",
+        },
+    )
+    codex_context = hook_additional_context(codex_prompt)
+    claude_context = hook_additional_context(claude_prompt)
+
+    initial_specifications = compiled.get("specifications", [])
+    initial_spec = (
+        initial_specifications[0]
+        if isinstance(initial_specifications, list) and initial_specifications
+        and isinstance(initial_specifications[0], dict)
+        else {}
+    )
+    initial_ok = (
+        isinstance(attached, dict)
+        and attached.get("created") is True
+        and isinstance(listed, dict)
+        and listed.get("targetInitialized") is False
+        and listed.get("totalGrants") == 1
+        and tool_names == ["ley_compile_context"]
+        and compiled.get("projectMemoryAvailable") is False
+        and compiled.get("automaticWriteAllowed") is False
+        and compiled.get("targetInitialized") is False
+        and initial_spec.get("source") == source_text
+        and initial_spec.get("specificationId") == specification_id
+        and codex_start == {}
+        and claude_start == {}
+        and codex_context.startswith("# Ley bootstrap task context (automatic)")
+        and claude_context.startswith("# Ley bootstrap task context (automatic)")
+        and marker in codex_context
+        and marker in claude_context
+        and prompt_marker not in codex_context
+        and prompt_marker not in claude_context
+        and len(codex_context.encode("utf-8")) <= 3500
+        and len(claude_context.encode("utf-8")) <= 3500
+        and not (target / ".ley").exists()
+    )
+    if not initial_ok:
+        failures.append(
+            "bootstrap Specification was not delivered through the single-tool MCP and both prompt hooks without initializing the target"
+        )
+
+    cli_json(
+        [
+            "egress",
+            "specification",
+            specification_id,
+            "never-send",
+            str(source),
+            "--json",
+        ]
+    )
+    blocked = mcp_call(
+        target,
+        "ley_compile_context",
+        {"task": task, "maxResults": 8, "maxTokens": 1500},
+    )
+    blocked_specs = blocked.get("specifications", [])
+    blocked_coverage = blocked.get("coverage", {})
+    blocked_ok = (
+        isinstance(blocked_specs, list)
+        and len(blocked_specs) == 0
+        and isinstance(blocked_coverage, dict)
+        and blocked_coverage.get("egressBlocked") == 1
+        and marker not in serialized(blocked)
+    )
+    if not blocked_ok:
+        failures.append("source Specification never-send policy did not fail closed in bootstrap MCP")
+
+    cli_json(
+        [
+            "egress",
+            "specification",
+            specification_id,
+            "agent-ok",
+            str(source),
+            "--json",
+        ]
+    )
+    cli_json(
+        [
+            "init",
+            str(target),
+            "--name",
+            "Bootstrap eval target",
+            "--json",
+        ]
+    )
+    after_init = cli_json(["bootstrap-spec", "list", str(target), "--json"])
+    post_init_hook = hook_call(
+        target,
+        "codex",
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "bootstrap-eval-codex",
+            "turn_id": "bootstrap-eval-turn-2",
+            "prompt": task,
+        },
+    )
+    transition_ok = (
+        isinstance(after_init, dict)
+        and after_init.get("targetInitialized") is True
+        and after_init.get("totalGrants") == 0
+        and post_init_hook == {}
+        and (target / ".ley").is_dir()
+    )
+    if not transition_ok:
+        failures.append("normal initialization did not retire bootstrap authority cleanly")
+
+    agent_outputs: list[object] = [
+        tools,
+        compiled,
+        codex_start,
+        claude_start,
+        codex_prompt,
+        claude_prompt,
+        blocked,
+        post_init_hook,
+    ]
+    privacy = privacy_violation_rate(
+        [
+            str(target),
+            str(source),
+            str(source_vault),
+            target_private_marker,
+            prompt_marker,
+        ],
+        agent_outputs,
+    )
+    if privacy != 0.0:
+        failures.append("bootstrap Specification agent output leaked a private path or prompt/live-target canary")
+
+    return not failures, privacy, failures
+
+
 def create_structured_session(
     project: Path,
     *,
@@ -1387,6 +1638,25 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     events = scenario.get("session_events", [])
     if isinstance(events, list):
         ensure_learning_citations(project, [event for event in events if isinstance(event, dict)])
+
+    bootstrap_expectation = scenario.get("expected_bootstrap_specification")
+    if isinstance(bootstrap_expectation, dict):
+        passed, privacy, bootstrap_failures = evaluate_bootstrap_specification_scenario(
+            scenario,
+            base_dir,
+            project,
+            bootstrap_expectation,
+        )
+        scores["bootstrap_specification"] = passed
+        scores["privacy_violation_rate"] = privacy
+        failures.extend(bootstrap_failures)
+        return {
+            "id": str(scenario["id"]),
+            "category": str(scenario.get("category", "")),
+            **scores,
+            "passed": not failures,
+            "failures": failures,
+        }
 
     init_project(
         project,
@@ -5685,7 +5955,9 @@ def metric_requirement_passes(
     result: dict[str, object],
     metric: str,
     expectation: str,
-) -> bool:
+) -> bool | None:
+    if result.get("skipped"):
+        return None
     value = result.get(metric)
     if expectation == "truthy":
         return value is True
@@ -5856,6 +6128,15 @@ def main(argv: list[str] | None = None) -> int:
         for index, scenario in enumerate(scenarios, start=1):
             try:
                 result = evaluate_scenario(scenario, Path(temporary) / str(scenario["id"]))
+            except BootstrapScenarioUnsupported as error:
+                result = {
+                    "id": str(scenario["id"]),
+                    "category": str(scenario.get("category", "")),
+                    "passed": False,
+                    "skipped": True,
+                    "skip_reason": str(error),
+                    "failures": [],
+                }
             except Exception as error:  # one broken scenario must not hide the rest
                 result = {
                     "id": str(scenario["id"]),
@@ -5864,19 +6145,31 @@ def main(argv: list[str] | None = None) -> int:
                     "failures": [f"unhandled scenario error: {error}"],
                 }
             results.append(result)
-            print(
-                f"[{index}/{len(scenarios)}] {scenario['id']}: {'PASS' if result.get('passed') else 'FAIL'}",
-                flush=True,
+            status = (
+                "SKIP"
+                if result.get("skipped")
+                else ("PASS" if result.get("passed") else "FAIL")
             )
+            print(f"[{index}/{len(scenarios)}] {scenario['id']}: {status}", flush=True)
+            if result.get("skipped"):
+                print(f"  skip_reason: {result.get('skip_reason', '')}", flush=True)
             for metric in METRIC_NAMES:
                 if result.get(metric) is not None:
                     print(f"  {metric}: {result[metric]}", flush=True)
             for failure in result.get("failures", []):
                 print(f"  ERROR: {failure}", flush=True)
 
-    passed = sum(bool(result.get("passed")) for result in results)
+    skipped = sum(bool(result.get("skipped")) for result in results)
+    passed = sum(
+        bool(result.get("passed"))
+        for result in results
+        if not result.get("skipped")
+    )
+    runnable = len(results) - skipped
     print(f"\n=== Aggregate ({len(results)} scenarios) ===", flush=True)
-    print(f"Scenarios passed: {passed}/{len(results)}", flush=True)
+    print(f"Scenarios passed: {passed}/{runnable}", flush=True)
+    if skipped:
+        print(f"Scenarios skipped as unsupported: {skipped}", flush=True)
     rate_metrics = {
         "recall@k": f"Mean recall@{K}",
         "precision": "Mean precision",
@@ -5923,8 +6216,10 @@ def main(argv: list[str] | None = None) -> int:
             for dimension, (scenario_id, metric, expectation) in dimensions.items():
                 result = result_by_id.get(scenario_id, {})
                 ok = metric_requirement_passes(result, metric, expectation)
-                dimension_results.append(f"{dimension}={'PASS' if ok else 'FAIL'}")
-                if not ok:
+                dimension_results.append(
+                    f"{dimension}={'SKIP' if ok is None else ('PASS' if ok else 'FAIL')}"
+                )
+                if ok is False:
                     coverage_failures.append(
                         f"{capability}/{dimension} requires {scenario_id}:{metric}={expectation}"
                     )
@@ -5950,8 +6245,10 @@ def main(argv: list[str] | None = None) -> int:
             for dimension, (scenario_id, metric, expectation) in dimensions.items():
                 result = result_by_id.get(scenario_id, {})
                 ok = metric_requirement_passes(result, metric, expectation)
-                dimension_results.append(f"{dimension}={'PASS' if ok else 'FAIL'}")
-                if not ok:
+                dimension_results.append(
+                    f"{dimension}={'SKIP' if ok is None else ('PASS' if ok else 'FAIL')}"
+                )
+                if ok is False:
                     coverage_failures.append(
                         f"{capability}/{dimension} requires {scenario_id}:{metric}={expectation}"
                     )
@@ -5981,8 +6278,10 @@ def main(argv: list[str] | None = None) -> int:
             for dimension, (scenario_id, metric, expectation) in dimensions.items():
                 result = result_by_id.get(scenario_id, {})
                 ok = metric_requirement_passes(result, metric, expectation)
-                dimension_results.append(f"{dimension}={'PASS' if ok else 'FAIL'}")
-                if not ok:
+                dimension_results.append(
+                    f"{dimension}={'SKIP' if ok is None else ('PASS' if ok else 'FAIL')}"
+                )
+                if ok is False:
                     coverage_failures.append(
                         f"{capability}/{dimension} requires {scenario_id}:{metric}={expectation}"
                     )
@@ -5999,7 +6298,7 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
 
-    return 0 if passed == len(results) and not coverage_failures else 1
+    return 0 if passed == runnable and not coverage_failures else 1
 
 
 if __name__ == "__main__":

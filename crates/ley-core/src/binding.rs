@@ -143,6 +143,43 @@ impl BindingRegistry {
         self.resolve_diagnostic(diagnostic, None)
     }
 
+    pub(crate) fn with_resolved_observed_locked<T>(
+        &self,
+        diagnostic: &crate::ProjectDiagnostic,
+        operation: impl FnOnce(&ProjectVaultBinding) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let project_id = diagnostic.identity.project_id.clone();
+        let lock = self.acquire_lock()?;
+        let result = (|| {
+            let document = self.read_document()?;
+            let stored = document
+                .bindings
+                .get(&project_id)
+                .ok_or_else(|| LeyCoreError::VaultNotBound(project_id.clone()))?;
+            let stored_path = PathBuf::from(stored);
+            let vault_path = canonical_directory(&stored_path).map_err(|_| {
+                LeyCoreError::BoundVaultUnavailable {
+                    project_id: project_id.clone(),
+                    path: stored_path.clone(),
+                }
+            })?;
+            operation(&ProjectVaultBinding {
+                project_id,
+                vault_path,
+                source: BindingSource::Persisted,
+            })
+        })();
+        let unlock_result = File::unlock(&lock);
+        match (result, unlock_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(source)) => Err(LeyCoreError::Io {
+                path: self.lock_path(),
+                source,
+            }),
+        }
+    }
+
     fn resolve_diagnostic(
         &self,
         diagnostic: &crate::ProjectDiagnostic,
@@ -396,7 +433,8 @@ fn reject_non_regular_if_present(path: &Path) -> Result<(), LeyCoreError> {
 mod tests {
     use super::*;
     use crate::{initialize_project, CaptureMode};
-    use std::sync::{Arc, Barrier};
+    use std::sync::{mpsc, Arc, Barrier};
+    use std::time::Duration;
     use tempfile::tempdir;
 
     fn make_test_registry_private(path: &Path) {
@@ -521,6 +559,60 @@ mod tests {
         };
         assert_eq!(keys, sorted);
         assert!(body.ends_with('\n'));
+    }
+
+    #[test]
+    fn locked_resolution_serializes_rebind_until_the_read_finishes() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let first_vault = base.path().join("first-vault");
+        let second_vault = base.path().join("second-vault");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&first_vault).unwrap();
+        fs::create_dir(&second_vault).unwrap();
+        initialize_project(&project, None, CaptureMode::Structured).unwrap();
+        let diagnostic = crate::diagnose_project(&project).unwrap();
+        let registry = BindingRegistry::at(base.path().join("config/bindings.json"));
+        registry.bind(&project, &first_vault).unwrap();
+
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let reader_registry = registry.clone();
+        let reader_diagnostic = diagnostic.clone();
+        let reader_entered = entered.clone();
+        let reader_release = release.clone();
+        let first_vault_canonical = first_vault.canonicalize().unwrap();
+        let reader = std::thread::spawn(move || {
+            reader_registry
+                .with_resolved_observed_locked(&reader_diagnostic, |binding| {
+                    assert_eq!(binding.vault_path, first_vault_canonical);
+                    reader_entered.wait();
+                    reader_release.wait();
+                    Ok(())
+                })
+                .unwrap();
+        });
+        entered.wait();
+
+        let writer_registry = registry.clone();
+        let writer_project = project.clone();
+        let writer_vault = second_vault.clone();
+        let (tx, rx) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            writer_registry
+                .bind(&writer_project, &writer_vault)
+                .unwrap();
+            tx.send(()).unwrap();
+        });
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+        release.wait();
+        reader.join().unwrap();
+        rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        writer.join().unwrap();
+        assert_eq!(
+            registry.resolve(&project, None).unwrap().vault_path,
+            second_vault.canonicalize().unwrap()
+        );
     }
 
     #[test]

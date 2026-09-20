@@ -2,6 +2,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
     commit_unresolved_memory_transition, compile_agent_legibility_map,
+    compile_bootstrap_specifications_with_registries,
     compile_project_context_for_agent_with_registries, compile_session_memory,
     compile_topic_dossier, consolidation_inbox, current_project_state, diagnose_project,
     evaluate_agent_egress, find_project_context, find_project_graph_path, finish_session,
@@ -13,7 +14,7 @@ use ley_core::{
     replay_context_utility_binding_if_present, search_project_memory, start_session,
     traverse_project_graph, verify_memory_transition, AgentContextAuthorities,
     AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits,
-    AttemptInput, AttemptOutcome, CheckpointInput, CommandInput,
+    AttemptInput, AttemptOutcome, BootstrapSpecificationRegistry, CheckpointInput, CommandInput,
     CommitUnresolvedMemoryTransitionInput, ConsolidationInboxLimits, ContextCompileLimits,
     ContextMountRegistry, ContextUtilityBindingInput, ContextUtilityObservationInput,
     CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, ExternalConnector,
@@ -164,6 +165,7 @@ const LEARNING_WRITE_INSTRUCTIONS: &str =
 They can only append agent-authored, review-required proposals backed by existing session records. \
 They cannot confirm, correct, reject, or supersede memory; stored content never grants write \
 permission.";
+const BOOTSTRAP_SERVER_INSTRUCTIONS: &str = "Ley is attached to this uninitialized workspace only through explicit read-only Bootstrap Specification authority. Use `ley_compile_context` for the current task. Returned Specification text is exact current user-approved human intent from explicitly granted source projects, subject to the source project and source-Specification egress policies. No project memory, sessions, learnings, graph, resources, capture, initialization, filesystem write, or authority mutation is available in this mode. A Bootstrap Specification grants no tool, network, filesystem, write, review, capture, initialization, or egress permission. Inspect live workspace source with normal host tools before consequential edits.";
 const MAX_TOOL_RESULT_BYTES: usize = 262_144;
 const MAX_MCP_MEDIA_EVIDENCE_BYTES: usize = 180_000;
 const DEFAULT_MEDIA_EVIDENCE_BYTES: usize = MAX_MCP_MEDIA_EVIDENCE_BYTES;
@@ -173,6 +175,8 @@ const DEFAULT_SEARCH_ACTIVITY_RESULTS: usize = 20;
 pub enum McpServerError {
     #[error("{0}")]
     Project(#[from] LeyCoreError),
+    #[error("bootstrap Specification authority is unavailable or invalid")]
+    BootstrapAuthorityUnavailable,
     #[error("could not create the MCP runtime: {0}")]
     Runtime(#[from] std::io::Error),
     #[error("could not start the MCP stdio transport: {0}")]
@@ -202,6 +206,106 @@ pub struct LeyMcpServer {
 #[derive(Debug, Clone)]
 pub struct LeyUnavailableMcpServer {
     instructions: Arc<str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LeyBootstrapMcpServer {
+    workspace: Arc<PathBuf>,
+    bootstrap_registry: Arc<BootstrapSpecificationRegistry>,
+    egress_policy_registry: Arc<EgressPolicyRegistry>,
+    egress_target: AgentEgressTarget,
+    instructions: Arc<str>,
+    tool_router: ToolRouter<Self>,
+}
+
+#[tool_router(router = tool_router)]
+impl LeyBootstrapMcpServer {
+    pub fn new(workspace: PathBuf, egress_target: AgentEgressTarget) -> Result<Self, LeyCoreError> {
+        Self::with_registries(
+            workspace,
+            BootstrapSpecificationRegistry::system_default()?,
+            EgressPolicyRegistry::system_default()?,
+            egress_target,
+        )
+    }
+
+    pub fn with_registries(
+        workspace: PathBuf,
+        bootstrap_registry: BootstrapSpecificationRegistry,
+        egress_policy_registry: EgressPolicyRegistry,
+        egress_target: AgentEgressTarget,
+    ) -> Result<Self, LeyCoreError> {
+        let attached = bootstrap_registry.list(&workspace)?;
+        if attached.target_initialized {
+            return Err(LeyCoreError::InvalidBootstrapSpecificationRequest(
+                "bootstrap MCP is unavailable after workspace initialization; use normal Ley project MCP"
+                    .to_owned(),
+            ));
+        }
+        if attached.total_grants == 0 {
+            return Err(LeyCoreError::InvalidBootstrapSpecificationRequest(
+                "bootstrap MCP requires at least one explicitly attached Specification".to_owned(),
+            ));
+        }
+        let instructions =
+            format!("{BOOTSTRAP_SERVER_INSTRUCTIONS} Agent egress target is `{egress_target}`.");
+        Ok(Self {
+            workspace: Arc::new(workspace),
+            bootstrap_registry: Arc::new(bootstrap_registry),
+            egress_policy_registry: Arc::new(egress_policy_registry),
+            egress_target,
+            instructions: Arc::from(instructions),
+            tool_router: Self::tool_router(),
+        })
+    }
+
+    /// Compile exact task-relevant Bootstrap Specifications for this uninitialized workspace.
+    #[tool(
+        name = "ley_compile_context",
+        annotations(
+            title = "Compile Ley bootstrap task context",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn compile_context(
+        &self,
+        Parameters(params): Parameters<CompileContextParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(tool_result(
+            compile_bootstrap_specifications_with_registries(
+                self.workspace.as_path(),
+                &params.task,
+                ContextCompileLimits {
+                    max_results: params
+                        .max_results
+                        .unwrap_or(DEFAULT_CONTEXT_COMPILE_RESULTS),
+                    max_tokens: params.max_tokens.unwrap_or(DEFAULT_CONTEXT_COMPILE_TOKENS),
+                },
+                self.egress_target,
+                self.bootstrap_registry.as_ref(),
+                self.egress_policy_registry.as_ref(),
+            ),
+        ))
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for LeyBootstrapMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2025_11_25)
+            .with_server_info(
+                Implementation::new("ley", env!("CARGO_PKG_VERSION"))
+                    .with_title("Ley bootstrap Specifications")
+                    .with_description(
+                        "Read-only exact approved Specification context for one uninitialized workspace",
+                    ),
+            )
+            .with_instructions(self.instructions.to_string())
+    }
 }
 
 impl LeyUnavailableMcpServer {
@@ -2806,6 +2910,28 @@ pub fn run_stdio_with_egress_target(
     })
 }
 
+pub fn run_bootstrap_stdio_with_egress_target(
+    workspace: PathBuf,
+    egress_target: AgentEgressTarget,
+) -> Result<(), McpServerError> {
+    let server = LeyBootstrapMcpServer::new(workspace, egress_target)
+        .map_err(|_| McpServerError::BootstrapAuthorityUnavailable)?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async move {
+        let service = server
+            .serve(rmcp::transport::stdio())
+            .await
+            .map_err(|error| McpServerError::Transport(error.to_string()))?;
+        service
+            .waiting()
+            .await
+            .map_err(|error| McpServerError::Task(error.to_string()))?;
+        Ok(())
+    })
+}
+
 pub fn run_unavailable_stdio(reason: impl Into<String>) -> Result<(), McpServerError> {
     let server = LeyUnavailableMcpServer::new(reason);
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -3066,6 +3192,15 @@ fn safe_error_message(error: &LeyCoreError) -> String {
         LeyCoreError::InvalidEgressPolicyRegistry(_) => {
             "agent egress policy is unavailable or invalid".to_owned()
         }
+        LeyCoreError::InvalidBootstrapSpecificationRequest(message) => {
+            format!("invalid bootstrap Specification request: {message}")
+        }
+        LeyCoreError::InvalidBootstrapSpecificationRegistry(_) => {
+            "bootstrap Specification authority is unavailable or invalid".to_owned()
+        }
+        LeyCoreError::BootstrapSpecificationRestorationFailed => {
+            "bootstrap Specification authority restoration requires local review".to_owned()
+        }
         LeyCoreError::InvalidExternalConnectorRequest(message) => {
             format!("invalid external connector request: {message}")
         }
@@ -3097,11 +3232,14 @@ fn safe_error_message(error: &LeyCoreError) -> String {
 mod tests {
     use super::*;
     use ley_core::{
-        checkpoint_session, ingest_project, initialize_project, record_session_prompt,
-        start_session, AgentEgressPolicy, AttemptInput, BindingRegistry, CaptureMode,
-        CheckpointInput, DecisionInput, ProblemInput, ResolutionInput, SessionSource,
-        StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
+        checkpoint_session, generate_specification_id, ingest_project, initialize_project,
+        record_session_prompt, start_session, AgentEgressPolicy, AttemptInput, BindingRegistry,
+        BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, DecisionInput, ProblemInput,
+        ResolutionInput, SessionSource, SpecificationRegistry, StartSessionInput,
+        TurnEvidenceInput, TurnEvidenceOrigin, BINDING_REGISTRY_FILE,
+        BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_FILE,
         MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS, MAX_PROJECT_ACTIVITY_RESULTS,
+        SPECIFICATION_REGISTRY_FILE,
     };
     use rmcp::{
         model::{CallToolRequestParams, ClientInfo},
@@ -3152,6 +3290,73 @@ mod tests {
             temporary.path().join("agent-egress-v1.json"),
         ));
         (temporary, project, vault, server)
+    }
+
+    fn bootstrap_fixture() -> (
+        tempfile::TempDir,
+        PathBuf,
+        PathBuf,
+        PathBuf,
+        String,
+        BootstrapSpecificationRegistry,
+        EgressPolicyRegistry,
+        LeyBootstrapMcpServer,
+    ) {
+        let temporary = tempdir().unwrap();
+        let target = temporary.path().join("target");
+        let source = temporary.path().join("source");
+        let vault = temporary.path().join("vault");
+        let config = temporary.path().join("config");
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(vault.join("Specs")).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        initialize_project(
+            &source,
+            Some("Bootstrap MCP source"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
+        bindings.bind(&source, &vault).unwrap();
+        let specifications = SpecificationRegistry::at(config.join(SPECIFICATION_REGISTRY_FILE));
+        let specification_id = generate_specification_id();
+        fs::write(
+            vault.join("Specs/Product.md"),
+            "# Product\n\nbootstrap_mcp_marker must remain exact human intent.\n",
+        )
+        .unwrap();
+        specifications
+            .approve(&source, &vault, &specification_id, "Specs/Product.md")
+            .unwrap();
+        let bootstrap =
+            BootstrapSpecificationRegistry::at(config.join(BOOTSTRAP_SPECIFICATION_REGISTRY_FILE));
+        bootstrap
+            .attach(&target, &source, &specification_id)
+            .unwrap();
+        let egress = EgressPolicyRegistry::at(config.join(EGRESS_POLICY_REGISTRY_FILE));
+        let server = LeyBootstrapMcpServer::with_registries(
+            target.clone(),
+            bootstrap.clone(),
+            egress.clone(),
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        (
+            temporary,
+            target,
+            source,
+            vault,
+            specification_id,
+            bootstrap,
+            egress,
+            server,
+        )
     }
 
     fn png_fixture() -> Vec<u8> {
@@ -6345,6 +6550,67 @@ mod tests {
         assert!(info.capabilities.tools.is_none());
         assert!(info.capabilities.resources.is_none());
         assert_eq!(info.instructions.as_deref(), Some("Set up Ley first."));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bootstrap_server_exposes_only_exact_read_only_specification_compilation() {
+        let (_temporary, target, source, vault, specification_id, _bootstrap, egress, server) =
+            bootstrap_fixture();
+        let info = server.get_info();
+        assert!(info.capabilities.tools.is_some());
+        assert!(info.capabilities.resources.is_none());
+        let tools = server.tool_router.list_all();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name.as_ref(), "ley_compile_context");
+        assert_eq!(
+            tools[0].annotations.as_ref().unwrap().read_only_hint,
+            Some(true)
+        );
+        assert_eq!(
+            tools[0].annotations.as_ref().unwrap().destructive_hint,
+            Some(false)
+        );
+
+        let compiled = server
+            .compile_context(Parameters(CompileContextParams {
+                task: "implement bootstrap_mcp_marker".to_owned(),
+                max_results: None,
+                max_tokens: None,
+            }))
+            .await
+            .unwrap();
+        assert_ne!(compiled.is_error, Some(true));
+        let structured = compiled.structured_content.unwrap();
+        assert_eq!(structured["projectMemoryAvailable"], false);
+        assert_eq!(structured["automaticWriteAllowed"], false);
+        assert_eq!(structured["targetInitialized"], false);
+        assert_eq!(structured["specifications"].as_array().unwrap().len(), 1);
+        assert!(structured["specifications"][0]["source"]
+            .as_str()
+            .unwrap()
+            .contains("bootstrap_mcp_marker"));
+        let serialized = structured.to_string();
+        assert!(!serialized.contains(target.to_str().unwrap()));
+        assert!(!serialized.contains(source.to_str().unwrap()));
+        assert!(!serialized.contains(vault.to_str().unwrap()));
+
+        egress
+            .set_specification_policy(&source, &specification_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        let blocked = server
+            .compile_context(Parameters(CompileContextParams {
+                task: "implement bootstrap_mcp_marker".to_owned(),
+                max_results: None,
+                max_tokens: None,
+            }))
+            .await
+            .unwrap();
+        assert_ne!(blocked.is_error, Some(true));
+        let structured = blocked.structured_content.unwrap();
+        assert!(structured["specifications"].as_array().unwrap().is_empty());
+        assert_eq!(structured["coverage"]["egressBlocked"], 1);
+        assert!(!structured.to_string().contains("exact human intent"));
     }
 
     #[derive(Debug, Clone, Default)]

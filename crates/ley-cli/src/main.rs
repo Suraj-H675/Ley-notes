@@ -2,30 +2,34 @@ use ley_core::{
     checkpoint_session, compile_reviewed_runbook, consolidation_inbox, correct_learning,
     diagnose_project, erase_session_memory, export_reviewed_runbook_skill, finish_session,
     generate_learning_request_id, generate_request_id, import_codex_message_history,
-    ingest_project, initialize_project, learning_review_inbox, list_learnings, list_sessions,
-    preview_capture, process_host_hook_for_agent_with_registries, project_resume_context,
-    propose_learning, read_external_connector_snapshot_with_registry, read_learning,
-    read_project_graph, read_session, read_session_context, read_session_turns_context,
-    record_session_prompt, record_session_response, remove_external_connector_with_registry,
-    rename_session, review_learning, search_project_memory, semantic_model_status, start_session,
+    ingest_project, initialize_project_retiring_bootstrap, learning_review_inbox, list_learnings,
+    list_sessions, preview_capture, process_bootstrap_host_hook_for_agent_with_registries,
+    process_host_hook_for_agent_with_registries, project_resume_context, propose_learning,
+    read_external_connector_snapshot_with_registry, read_learning, read_project_graph,
+    read_session, read_session_context, read_session_turns_context, record_session_prompt,
+    record_session_response, remove_external_connector_with_registry, rename_session,
+    review_learning, search_project_memory, semantic_model_status, start_session,
     store_external_connector_snapshot_with_registry, supported_semantic_model, AgentEgressPolicy,
-    AgentEgressTarget, AgentHost, BindingRegistry, CaptureMode, CheckpointInput, CommandInput,
-    ConsolidationInboxLimits, ContextMountRegistry, CorrectLearningInput, EgressPolicyRegistry,
-    EraseSessionMemoryInput, ExternalConnectorRegistry, FinishSessionInput, GraphNodeKind,
-    HostAgentContextRegistries, KnowledgeScopeKind, KnowledgeScopeRegistry, LearningActor,
-    LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance, LearningState,
-    LearningTrustState, LeyCoreError, PolicyBundleRegistry, PolicyBundleSourceInput,
-    ProjectMemorySearchLimits, ProposeLearningInput, RenameSessionInput, ReviewLearningInput,
-    ReviewedRunbookInput, RevisionCompatibility, RunbookSkillExportInput, RunbookSkillHost,
-    SemanticModelStatus, SessionSource, SessionSourceKind, SessionStatus, SpecificationRegistry,
-    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
-    VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
-    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
-    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    AgentEgressTarget, AgentHost, BindingRegistry, BootstrapSpecificationRegistry, CaptureMode,
+    CheckpointInput, CommandInput, ConsolidationInboxLimits, ContextMountRegistry,
+    CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput, ExternalConnectorRegistry,
+    FinishSessionInput, GraphNodeKind, HostAgentContextRegistries, KnowledgeScopeKind,
+    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningFeedbackAction,
+    LearningKind, LearningProvenance, LearningState, LearningTrustState, LeyCoreError,
+    PolicyBundleRegistry, PolicyBundleSourceInput, ProjectMemorySearchLimits, ProposeLearningInput,
+    RenameSessionInput, ReviewLearningInput, ReviewedRunbookInput, RevisionCompatibility,
+    RunbookSkillExportInput, RunbookSkillHost, SemanticModelStatus, SessionSource,
+    SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
+    TurnEvidenceOrigin, VerificationInput, VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
+    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_github_connector::{fetch_public_github_reference, GitHubConnectorError};
-use ley_mcp::{run_stdio_with_egress_target, run_unavailable_stdio};
+use ley_mcp::{
+    run_bootstrap_stdio_with_egress_target, run_stdio_with_egress_target, run_unavailable_stdio,
+};
 use ley_semantic_installer::{
     install_supported_semantic_model_with_progress, SemanticModelInstallerError,
 };
@@ -56,6 +60,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "mcp" => mcp(&arguments[1..]),
         "egress" => egress(&arguments[1..]),
         "connector" => connector(&arguments[1..]),
+        "bootstrap-spec" => bootstrap_specification(&arguments[1..]),
         "mount" => mount(&arguments[1..]),
         "scope" => scope(&arguments[1..]),
         "policy-bundle" => policy_bundle(&arguments[1..]),
@@ -747,6 +752,148 @@ fn mount(arguments: &[String]) -> Result<(), CliError> {
     }
 }
 
+fn bootstrap_specification(arguments: &[String]) -> Result<(), CliError> {
+    let Some(command) = arguments.first().map(String::as_str) else {
+        return Err(CliError::Usage(
+            "bootstrap-spec requires attach, list, or detach".to_owned(),
+        ));
+    };
+    let registry = BootstrapSpecificationRegistry::system_default()?;
+    match command {
+        "attach" => {
+            let mut source_project = None;
+            let mut specification_id = None;
+            let mut workspace = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if source_project.is_none() => {
+                        source_project = Some(PathBuf::from(value))
+                    }
+                    value if specification_id.is_none() => {
+                        specification_id = Some(value.to_owned())
+                    }
+                    value if workspace.is_none() => workspace = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let source_project = source_project.ok_or_else(|| {
+                CliError::Usage(
+                    "bootstrap-spec attach requires SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE]"
+                        .to_owned(),
+                )
+            })?;
+            let specification_id = specification_id.ok_or_else(|| {
+                CliError::Usage(
+                    "bootstrap-spec attach requires SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE]"
+                        .to_owned(),
+                )
+            })?;
+            let workspace =
+                workspace.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.attach(&workspace, &source_project, &specification_id)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("bootstrap Specification attachment is serializable")
+                );
+            } else {
+                println!("Bootstrap Specification: {}", result.grant.grant_id);
+                println!("Source project: {}", result.grant.source_project_id);
+                println!("Specification: {}", result.grant.specification_id);
+                println!("Revision: {}", result.grant.content_hash);
+                println!("Target: uninitialized read-only bootstrap authority");
+                println!("Created: {}", result.created);
+            }
+            Ok(())
+        }
+        "list" => {
+            let mut workspace = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if workspace.is_none() => workspace = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let workspace =
+                workspace.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let result = registry.list(&workspace)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result)
+                        .expect("bootstrap Specification list is serializable")
+                );
+            } else if result.grants.is_empty() {
+                println!("No Bootstrap Specifications.");
+                if result.target_initialized {
+                    println!("This workspace is initialized; use normal Ley project context.");
+                }
+            } else {
+                println!("Bootstrap Specifications: {}", result.grants.len());
+                for grant in &result.grants {
+                    println!(
+                        "  {}  source={}  specification={}  revision={}",
+                        grant.grant_id,
+                        grant.source_project_id,
+                        grant.specification_id,
+                        grant.content_hash,
+                    );
+                }
+                println!("Permission: read-only task context; no project memory or writes");
+            }
+            Ok(())
+        }
+        "detach" => {
+            let mut grant_id = None;
+            let mut workspace = None;
+            let mut json = false;
+            for argument in &arguments[1..] {
+                match argument.as_str() {
+                    "--json" => json = true,
+                    value if value.starts_with('-') => {
+                        return Err(CliError::Usage(format!("unknown option '{value}'")))
+                    }
+                    value if grant_id.is_none() => grant_id = Some(value.to_owned()),
+                    value if workspace.is_none() => workspace = Some(PathBuf::from(value)),
+                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
+                }
+            }
+            let grant_id = grant_id.ok_or_else(|| {
+                CliError::Usage("bootstrap-spec detach requires GRANT_ID [WORKSPACE]".to_owned())
+            })?;
+            let workspace =
+                workspace.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let removed = registry.detach(&workspace, &grant_id)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&removed)
+                        .expect("bootstrap Specification detach result is serializable")
+                );
+            } else if let Some(grant) = removed {
+                println!("Detached Bootstrap Specification: {}", grant.grant_id);
+            } else {
+                println!("Bootstrap Specification was not attached.");
+            }
+            Ok(())
+        }
+        _ => Err(CliError::Usage(
+            "bootstrap-spec requires attach, list, or detach".to_owned(),
+        )),
+    }
+}
+
 fn scope(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
@@ -1338,7 +1485,42 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
     // must not produce a warning on every agent turn.
     match diagnose_project(&project) {
         Ok(_) => {}
-        Err(LeyCoreError::ProjectNotFound(_)) | Err(LeyCoreError::NotDirectory(_)) => {
+        Err(LeyCoreError::ProjectNotFound(_)) => {
+            let bootstrap = BootstrapSpecificationRegistry::system_default()
+                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
+            if !bootstrap
+                .authority_file_present()
+                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?
+            {
+                println!("{{}}");
+                return Ok(());
+            }
+            let attached = bootstrap
+                .list(&project)
+                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
+            if attached.target_initialized || attached.total_grants == 0 {
+                println!("{{}}");
+                return Ok(());
+            }
+            let payload = read_hook_payload()?;
+            let egress_registry = EgressPolicyRegistry::system_default()
+                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
+            let result = process_bootstrap_host_hook_for_agent_with_registries(
+                &project,
+                host,
+                payload,
+                &bootstrap,
+                &egress_registry,
+                egress_target,
+            )
+            .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
+            println!(
+                "{}",
+                serde_json::to_string(&result.output).expect("hook output is serializable")
+            );
+            return Ok(());
+        }
+        Err(LeyCoreError::NotDirectory(_)) => {
             println!("{{}}");
             return Ok(());
         }
@@ -1354,15 +1536,7 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
         Err(error) => return Err(error.into()),
     };
 
-    let mut bytes = Vec::new();
-    std::io::stdin()
-        .take(1_048_577)
-        .read_to_end(&mut bytes)
-        .map_err(CliError::HookInput)?;
-    if bytes.len() > 1_048_576 {
-        return Err(CliError::Usage("hook input cannot exceed 1 MiB".to_owned()));
-    }
-    let payload = serde_json::from_slice(&bytes).map_err(CliError::HookJson)?;
+    let payload = read_hook_payload()?;
     let egress_registry = EgressPolicyRegistry::system_default()?;
     let mount_registry = ContextMountRegistry::system_default()?;
     let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
@@ -1387,6 +1561,18 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
         serde_json::to_string(&result.output).expect("hook output is serializable")
     );
     Ok(())
+}
+
+fn read_hook_payload() -> Result<serde_json::Value, CliError> {
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(1_048_577)
+        .read_to_end(&mut bytes)
+        .map_err(CliError::HookInput)?;
+    if bytes.len() > 1_048_576 {
+        return Err(CliError::Usage("hook input cannot exceed 1 MiB".to_owned()));
+    }
+    serde_json::from_slice(&bytes).map_err(CliError::HookJson)
 }
 
 fn resume(arguments: &[String]) -> Result<(), CliError> {
@@ -2412,8 +2598,31 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
     let registry = BindingRegistry::system_default()?;
     let binding = match registry.resolve(&parsed.project, parsed.vault.as_deref()) {
         Ok(binding) => binding,
-        Err(LeyCoreError::ProjectNotFound(_))
-        | Err(LeyCoreError::NotDirectory(_))
+        Err(LeyCoreError::ProjectNotFound(_)) => {
+            let bootstrap = BootstrapSpecificationRegistry::system_default()
+                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
+            if !bootstrap
+                .authority_file_present()
+                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?
+            {
+                return run_unavailable_stdio(
+                    "Ley is inactive for this workspace. Initialize the project, or explicitly attach a Bootstrap Specification for read-only task context.",
+                )
+                .map_err(CliError::Mcp);
+            }
+            let attached = bootstrap
+                .list(&parsed.project)
+                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
+            if !attached.target_initialized && attached.total_grants > 0 {
+                return run_bootstrap_stdio_with_egress_target(parsed.project, egress_target)
+                    .map_err(CliError::Mcp);
+            }
+            return run_unavailable_stdio(
+                "Ley is inactive for this workspace. Initialize the project, or explicitly attach a Bootstrap Specification for read-only task context.",
+            )
+            .map_err(CliError::Mcp);
+        }
+        Err(LeyCoreError::NotDirectory(_))
         | Err(LeyCoreError::VaultNotBound(_))
         | Err(LeyCoreError::BoundVaultUnavailable { .. }) => {
             return run_unavailable_stdio(
@@ -3544,7 +3753,7 @@ fn initialize(arguments: &[String]) -> Result<(), CliError> {
         index += 1;
     }
     let root = path.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-    let result = initialize_project(&root, name.as_deref(), capture)?;
+    let result = initialize_project_retiring_bootstrap(&root, name.as_deref(), capture)?;
     if json {
         println!(
             "{}",
@@ -3648,6 +3857,9 @@ fn print_help() {
     println!("  ley connector refresh CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley connector show CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley connector remove CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
+    println!("  ley bootstrap-spec attach SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE] [--json]");
+    println!("  ley bootstrap-spec list [WORKSPACE] [--json]");
+    println!("  ley bootstrap-spec detach GRANT_ID [WORKSPACE] [--json]");
     println!("  ley mount add REFERENCE_PROJECT [ACTIVE_PROJECT] [--json]");
     println!("  ley mount list [ACTIVE_PROJECT] [--json]");
     println!("  ley mount remove MOUNT_ID [ACTIVE_PROJECT] [--json]");
@@ -3711,6 +3923,7 @@ fn print_help() {
 #[derive(Debug)]
 enum CliError {
     Usage(String),
+    BootstrapAuthorityUnavailable,
     Core(LeyCoreError),
     GitHubConnector(GitHubConnectorError),
     Mcp(ley_mcp::McpServerError),
@@ -3729,6 +3942,12 @@ impl std::fmt::Display for CliError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Usage(message) => write!(formatter, "{message}; run 'ley help'"),
+            Self::BootstrapAuthorityUnavailable => {
+                write!(
+                    formatter,
+                    "bootstrap Specification authority is unavailable or invalid"
+                )
+            }
             Self::Core(error) => error.fmt(formatter),
             Self::GitHubConnector(error) => error.fmt(formatter),
             Self::Mcp(error) => error.fmt(formatter),

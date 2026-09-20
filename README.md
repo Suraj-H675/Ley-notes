@@ -128,23 +128,27 @@ Reusable team/organization knowledge is an explicit local authority workflow rat
 
 Reusable team/organization **Policy Bundles** deliberately compose that scope authority with already-approved Specifications. `ley policy-bundle create SCOPE_ID NAME --source SOURCE_PROJECT SPECIFICATION_ID...` pins an immutable bounded set of exact approved source-Specification revisions, and `policy-bundle attach/attached/status/detach` controls active-project use. A parent Knowledge Scope must already be attached. In compiled context, active-project Specifications remain highest-precedence human intent and override conflicting bundled policy; admitted bundled policy carries stable bundle/scope/source/spec/hash provenance as `user-approved-policy-bundle-specification`. Source-project and source-Specification egress are checked before policy text is opened, and bounded ancestry survives detach so historical derivatives cannot be laundered. MCP and host integrations may consume allowed bundle output but cannot create/list/attach/detach bundle authority. See [ADR 0053](docs/adr/0053-explicit-reusable-team-organization-policy-bundles.md).
 
+An **uninitialized** workspace can also consume exact already-approved human intent without becoming a Ley project. `ley bootstrap-spec attach SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE]` creates owner-private read-only bootstrap authority for that exact source Specification revision; `bootstrap-spec list/detach` inspects or revokes it. Bootstrap currently requires a supported Unix filesystem that exposes device/inode plus filesystem creation time for non-reusable target generation; otherwise this narrow feature fails closed without affecting normal Ley project initialization. The target gets no `.ley`, binding, capture, session, project memory, or write authority. In that mode `ley mcp WORKSPACE` exposes only read-only `ley_compile_context`, while prompt-time hooks may inject a bounded `# Ley bootstrap task context (automatic)` block without retaining the prompt or creating a session. Bootstrap Specifications are returned whole or omitted whole, source binding is held stable for the in-flight read, source-project plus exact source-Specification egress is checked before the note is opened, and a missing approved note is reported as an exclusion without aborting other valid grants. Attach, compile, and every public initialization path serialize through the same non-persistent target-directory transition lock; successful initialization permanently retires the old grant before creating writable project identity. Captured reference-project memory bootstrap remains deferred. See [ADR 0058](docs/adr/0058-bootstrap-specifications-for-uninitialized-workspaces.md).
+
 The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), [ADR 0008](docs/adr/0008-explicit-mcp-session-write-consent.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
 
 For automatic session continuity, install Ley's Codex or Claude Code package.
 Each combines the same local MCP tools, lifecycle hooks, and
 structured-memory skill while keeping host-specific packaging isolated.
 Adapters use documented session, prompt, and final-response fields, never read
-transcript paths, no-op outside explicitly initialized and bound projects, and
-replay exact retries idempotently. On each bounded `UserPromptSubmit`, the installed
-host adapter also runs the same authority- and egress-aware Context Compiler used by
-`ley_compile_context` and injects a compact task pack; oversized/unrepresentable tasks
-fall back without truncating the user's intent, and the agent can explicitly refine the
-query through MCP when needed. Structured mode stores bounded pattern-redacted
+transcript paths, and replay exact retries idempotently. Ordinary uninitialized or unavailable
+workspaces remain no-ops; an explicitly bootstrapped uninitialized workspace is the narrow
+exception and receives only whole approved Bootstrap Specification context with no Ley session or
+turn capture. In an initialized project, each bounded `UserPromptSubmit` also runs the same
+authority- and egress-aware Context Compiler used by `ley_compile_context` and injects a compact
+task pack; oversized/unrepresentable tasks fall back without truncating the user's intent, and the
+agent can explicitly refine the query through MCP when needed. Structured mode stores bounded pattern-redacted
 prompt/response records; Minimal stores body-free observations. Neither stream is
 automatic startup context. See
 [Connect Ley to coding agents](docs/agent-memory/host-integrations.md) and
 [ADR 0018](docs/adr/0018-stable-lifecycle-host-adapters.md) plus
-[ADR 0057](docs/adr/0057-automatic-host-task-context.md).
+[ADR 0057](docs/adr/0057-automatic-host-task-context.md) and
+[ADR 0058](docs/adr/0058-bootstrap-specifications-for-uninitialized-workspaces.md).
 
 Historical host data is a separate explicit local workflow. The first supported importer is
 `ley session import codex-history PROJECT --source FILE --host-session UUID`, which accepts

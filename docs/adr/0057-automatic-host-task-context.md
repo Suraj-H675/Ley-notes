@@ -115,6 +115,10 @@ This ADR does not add:
 - automatic setup, capture expansion, mounts/scopes/bundles, or egress changes;
 - broader host integrations beyond the existing Codex/Claude Code lifecycle contracts.
 
+ADR 0058 separately defines the narrow uninitialized-workspace Bootstrap Specification exception.
+That mode creates no Ley session or turn capture and has its own whole-document automatic renderer;
+it does not change this ADR's normal initialized-project semantics.
+
 ## Primary host references
 
 - Codex hooks: <https://developers.openai.com/docs/hooks>

@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 mod agent_legibility;
 mod binding;
+mod bootstrap_specification;
 mod consolidation_inbox;
 mod context_compiler;
 mod context_mount;
@@ -56,6 +57,15 @@ pub use agent_legibility::{
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
+};
+pub use bootstrap_specification::{
+    compile_bootstrap_specifications, compile_bootstrap_specifications_with_registries,
+    initialize_project_retiring_bootstrap, BootstrapCompileCoverage, BootstrapCompileExclusion,
+    BootstrapCompileExclusionReason, BootstrapCompiledSpecification, BootstrapSpecificationContext,
+    BootstrapSpecificationGrant, BootstrapSpecificationList, BootstrapSpecificationMutation,
+    BootstrapSpecificationRegistry, BOOTSTRAP_SPECIFICATION_REGISTRY_FILE,
+    BOOTSTRAP_SPECIFICATION_REGISTRY_SCHEMA_VERSION, BOOTSTRAP_SPECIFICATION_SCHEMA_VERSION,
+    MAX_BOOTSTRAP_SPECIFICATIONS_PER_WORKSPACE, MAX_BOOTSTRAP_WORKSPACES,
 };
 pub use consolidation_inbox::{
     consolidation_inbox, ConsolidationAction, ConsolidationInbox, ConsolidationInboxCoverage,
@@ -132,8 +142,9 @@ pub use historical_host_import::{
     MAX_CODEX_HISTORY_IMPORT_RECORDS,
 };
 pub use host_adapter::{
-    process_host_hook, process_host_hook_for_agent_with_registries, AgentHost,
-    HostAgentContextRegistries, HostHookDisposition, HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
+    process_bootstrap_host_hook_for_agent_with_registries, process_host_hook,
+    process_host_hook_for_agent_with_registries, AgentHost, HostAgentContextRegistries,
+    HostHookDisposition, HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
 };
 pub use ingestion::{
     erase_project_memory, ingest_project, ingest_project_with_expected_capture_plan,
@@ -533,6 +544,14 @@ pub enum LeyCoreError {
     InvalidSpecificationRegistry(String),
     #[error("invalid Ley specification request: {0}")]
     InvalidSpecificationRequest(String),
+    #[error("invalid Ley bootstrap Specification registry: {0}")]
+    InvalidBootstrapSpecificationRegistry(String),
+    #[error("invalid Ley bootstrap Specification request: {0}")]
+    InvalidBootstrapSpecificationRequest(String),
+    #[error("this platform or filesystem cannot establish the directory generation required for Ley bootstrap Specification authority")]
+    BootstrapWorkspaceGenerationUnavailable,
+    #[error("project initialization failed and Ley could not restore retired bootstrap Specification authority; inspect local bootstrap authority before retrying")]
+    BootstrapSpecificationRestorationFailed,
     #[error("Ley Specification is not approved for this project: {0}")]
     SpecificationNotApproved(String),
     #[error("approved Ley Specification {specification_id} changed at {path}; review and approve the new revision")]
@@ -617,6 +636,18 @@ pub enum LeyCoreError {
 }
 
 pub fn initialize_project(
+    root: impl AsRef<Path>,
+    requested_name: Option<&str>,
+    mode: CaptureMode,
+) -> Result<ProjectInitialization, LeyCoreError> {
+    bootstrap_specification::initialize_project_retiring_bootstrap(
+        root.as_ref(),
+        requested_name,
+        mode,
+    )
+}
+
+pub(crate) fn initialize_project_uncoordinated(
     root: impl AsRef<Path>,
     requested_name: Option<&str>,
     mode: CaptureMode,

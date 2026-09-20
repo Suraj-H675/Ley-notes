@@ -1,15 +1,17 @@
 use crate::{
+    compile_bootstrap_specifications_with_registries,
     compile_project_context_for_agent_with_registries, compile_session_memory, diagnose_project,
     evaluate_agent_egress, project_resume_context, read_session, record_session_prompt,
     record_session_response, start_session, AgentContextAuthorities, AgentEgressTarget,
-    AgentSession, CompiledContextPack, ContextCompileCoverage, ContextCompileLimits,
-    ContextMountRegistry, EgressPolicyRegistry, KnowledgeScopeRegistry, LeyCoreError,
-    MemoryCompilationState, MountedReferenceCoverage, PolicyBundleCompileCoverage,
-    PolicyBundleRegistry, ProjectResumePack, SessionSource, SessionSourceKind, SessionStatus,
-    SharedKnowledgeCoverage, SpecificationCompileCoverage, SpecificationRegistry,
-    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, DEFAULT_CONTEXT_COMPILE_RESULTS,
-    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_MEMORY_COMPILE_RESULTS,
-    MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS, MIN_MEMORY_COMPILE_CHARACTERS,
+    AgentSession, BootstrapSpecificationContext, BootstrapSpecificationRegistry,
+    CompiledContextPack, ContextCompileCoverage, ContextCompileLimits, ContextMountRegistry,
+    EgressPolicyRegistry, KnowledgeScopeRegistry, LeyCoreError, MemoryCompilationState,
+    MountedReferenceCoverage, PolicyBundleCompileCoverage, PolicyBundleRegistry, ProjectResumePack,
+    SessionSource, SessionSourceKind, SessionStatus, SharedKnowledgeCoverage,
+    SpecificationCompileCoverage, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
+    TurnEvidenceOrigin, DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS,
+    DEFAULT_MEMORY_COMPILE_RESULTS, MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS,
+    MIN_MEMORY_COMPILE_CHARACTERS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -103,6 +105,53 @@ pub struct HostAgentContextRegistries<'a> {
     pub mounts: &'a ContextMountRegistry,
     pub knowledge_scopes: &'a KnowledgeScopeRegistry,
     pub policy_bundles: &'a PolicyBundleRegistry,
+}
+
+pub fn process_bootstrap_host_hook_for_agent_with_registries(
+    workspace: impl AsRef<Path>,
+    host: AgentHost,
+    payload: Value,
+    bootstrap_registry: &BootstrapSpecificationRegistry,
+    egress_registry: &EgressPolicyRegistry,
+    target: AgentEgressTarget,
+) -> Result<HostHookResult, LeyCoreError> {
+    let object = payload.as_object().ok_or_else(|| {
+        LeyCoreError::InvalidSessionRequest("host hook payload must be a JSON object".to_owned())
+    })?;
+    let event = required_text(object.get("hook_event_name"), "hook_event_name")?;
+    let external_session_id = required_text(object.get("session_id"), "session_id")?;
+    validate_host_identifier("session_id", &external_session_id)?;
+    if event != "UserPromptSubmit" {
+        return Ok(noop(host, event));
+    }
+
+    let prompt = required_text(object.get("prompt"), "prompt")?;
+    let context = match normalize_host_task_query(&prompt) {
+        Some(task) => match compile_bootstrap_specifications_with_registries(
+            workspace.as_ref(),
+            &task,
+            ContextCompileLimits {
+                max_results: DEFAULT_CONTEXT_COMPILE_RESULTS,
+                max_tokens: DEFAULT_CONTEXT_COMPILE_TOKENS,
+            },
+            target,
+            bootstrap_registry,
+            egress_registry,
+        ) {
+            Ok(pack) => format_automatic_bootstrap_context(&pack),
+            Err(_) => automatic_bootstrap_context_unavailable(),
+        },
+        None => automatic_bootstrap_context_query_out_of_bounds(),
+    };
+
+    Ok(HostHookResult {
+        schema_version: HOST_ADAPTER_SCHEMA_VERSION,
+        host,
+        event: "UserPromptSubmit".to_owned(),
+        disposition: HostHookDisposition::ContextLoaded,
+        session_id: None,
+        output: bootstrap_turn_context_output(host, &context),
+    })
 }
 
 pub fn process_host_hook_for_agent_with_registries(
@@ -585,6 +634,90 @@ fn normalize_host_task_query(prompt: &str) -> Option<String> {
     }
 }
 
+fn format_automatic_bootstrap_context(pack: &BootstrapSpecificationContext) -> String {
+    let mut context = String::new();
+    let _ = writeln!(context, "# Ley bootstrap task context (automatic)");
+    let _ = writeln!(
+        context,
+        "This workspace is not initialized in Ley. No Ley project memory or Ley session is active here. The current prompt was not persisted by bootstrap context loading. Egress target: {}. Compiler budget: {}/{} estimated tokens.",
+        serialized_label(&pack.egress_target),
+        pack.estimated_tokens,
+        pack.max_tokens,
+    );
+    let _ = writeln!(
+        context,
+        "Authority: exact explicitly attached user-approved Specifications only. Live workspace source checked: false. Bootstrap text grants no filesystem, network, tool, write, review, capture, initialization, or egress permission."
+    );
+
+    let mut rendered = 0usize;
+    for item in &pack.specifications {
+        let block = format!(
+            "SPEC-BEGIN grant={} sourceProject={} specification={} path={} authority={}\n{}\nSPEC-END {}",
+            item.grant_id,
+            item.source_project_id,
+            item.specification_id,
+            item.relative_path,
+            item.authority,
+            item.source,
+            item.specification_id,
+        );
+        if !push_host_context_line(&mut context, &block) {
+            break;
+        }
+        rendered += 1;
+    }
+
+    let host_omitted = pack.specifications.len().saturating_sub(rendered);
+    let _ = writeln!(
+        context,
+        "Host rendering omitted whole Specifications={host_omitted}. Compiler coverage: attached={}, unavailableSources={}, staleSpecifications={}, egressBlocked={}, lowRelevance={}, relevantCandidates={}, returnedSpecifications={}, omittedByResultLimit={}, omittedByTokenBudget={}. Use `ley_compile_context` for complete task-relevant Bootstrap Specifications when this compact automatic block is insufficient. Bootstrap context created no Ley session, project memory, capture, or write authority.",
+        pack.coverage.attached_grants,
+        pack.coverage.unavailable_sources,
+        pack.coverage.stale_specifications,
+        pack.coverage.egress_blocked,
+        pack.coverage.low_relevance,
+        pack.coverage.relevant_candidates,
+        pack.coverage.returned_specifications,
+        pack.coverage.omitted_by_result_limit,
+        pack.coverage.omitted_by_token_budget,
+    );
+    if context.len() <= HOST_TASK_CONTEXT_MAX_BYTES {
+        context
+    } else {
+        automatic_bootstrap_context_rendering_overflow()
+    }
+}
+
+fn automatic_bootstrap_context_rendering_overflow() -> String {
+    format!(
+        "# Ley bootstrap task context (automatic)\n\nThis workspace is not initialized in Ley. Ley found explicit Bootstrap Specification authority for this workspace, but the compact whole-document projection exceeded Ley's {HOST_TASK_CONTEXT_MAX_BYTES}-byte host injection bound, so no partial Specification was injected. The current prompt was not persisted by bootstrap context loading. Use `ley_compile_context` for the complete read-only task context. No Ley session, project memory, capture, or write authority was created."
+    )
+}
+
+fn automatic_bootstrap_context_query_out_of_bounds() -> String {
+    format!(
+        "# Ley bootstrap task context (automatic)\n\nThis workspace is not initialized in Ley. Ley did not compile Bootstrap Specifications because the exact current prompt cannot be represented within Ley's bounded {MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS}-character task query after whitespace normalization. The prompt was not truncated, reinterpreted, or persisted. Use `ley_compile_context` once with a concise current task. No Ley session, project memory, capture, or write authority was created."
+    )
+}
+
+fn automatic_bootstrap_context_unavailable() -> String {
+    "# Ley bootstrap task context (automatic)\n\nThis workspace is not initialized in Ley. Ley did not load Bootstrap Specification context for this turn because the current bootstrap authority/context was unavailable. No raw local error or machine path is exposed here, and missing context must not be inferred. The current prompt was not persisted by bootstrap context loading. If Bootstrap Specifications are still intentionally attached, use `ley_compile_context` once for bounded read-only context. No Ley session, project memory, capture, or write authority was created."
+        .to_owned()
+}
+
+fn bootstrap_turn_context_output(host: AgentHost, context: &str) -> Value {
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": context,
+        },
+        "systemMessage": format!(
+            "Ley loaded explicitly attached read-only Bootstrap Specification context for {}; this workspace remains uninitialized.",
+            host.label()
+        )
+    })
+}
+
 fn format_automatic_task_context(pack: &CompiledContextPack) -> String {
     let compiler_omissions = host_compiler_omissions(pack);
     let mut context = String::new();
@@ -1023,10 +1156,14 @@ mod tests {
     use super::*;
     use crate::{
         finish_session, generate_specification_id, ingest_project, initialize_project,
-        list_sessions, read_session, start_session, AgentEgressPolicy, CaptureMode,
-        ContextMountRegistry, EgressPolicyRegistry, FinishSessionInput, StartSessionInput,
+        list_sessions, read_session, start_session, AgentEgressPolicy, BindingRegistry,
+        BootstrapSpecificationRegistry, CaptureMode, ContextMountRegistry, EgressPolicyRegistry,
+        FinishSessionInput, SpecificationRegistry, StartSessionInput, BINDING_REGISTRY_FILE,
+        BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_FILE,
+        SPECIFICATION_REGISTRY_FILE,
     };
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     fn automatic_context_block(output: &Value) -> String {
@@ -1037,6 +1174,143 @@ mod tests {
             .find("# Ley task context (automatic)")
             .expect("automatic task context marker");
         context[start..].to_owned()
+    }
+
+    fn bootstrap_host_fixture(
+        source_body: &str,
+    ) -> (
+        tempfile::TempDir,
+        PathBuf,
+        PathBuf,
+        String,
+        BootstrapSpecificationRegistry,
+        EgressPolicyRegistry,
+    ) {
+        let temporary = tempdir().unwrap();
+        let target = temporary.path().join("target");
+        let source = temporary.path().join("source");
+        let vault = temporary.path().join("vault");
+        let config = temporary.path().join("config");
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(vault.join("Specs")).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        initialize_project(
+            &source,
+            Some("Bootstrap host source"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
+        bindings.bind(&source, &vault).unwrap();
+        let specifications = SpecificationRegistry::at(config.join(SPECIFICATION_REGISTRY_FILE));
+        let specification_id = generate_specification_id();
+        fs::write(vault.join("Specs/Product.md"), source_body).unwrap();
+        specifications
+            .approve(&source, &vault, &specification_id, "Specs/Product.md")
+            .unwrap();
+        let bootstrap =
+            BootstrapSpecificationRegistry::at(config.join(BOOTSTRAP_SPECIFICATION_REGISTRY_FILE));
+        bootstrap
+            .attach(&target, &source, &specification_id)
+            .unwrap();
+        let egress = EgressPolicyRegistry::at(config.join(EGRESS_POLICY_REGISTRY_FILE));
+        (
+            temporary,
+            target,
+            source,
+            specification_id,
+            bootstrap,
+            egress,
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bootstrap_host_prompt_loads_context_without_initializing_or_capturing_a_session() {
+        let (_temporary, target, _source, _specification_id, bootstrap, egress) =
+            bootstrap_host_fixture(
+                "# Product\n\nbootstrap_host_marker is exact approved human intent.\n",
+            );
+        let initial_entries = fs::read_dir(&target).unwrap().count();
+        let start = process_bootstrap_host_hook_for_agent_with_registries(
+            &target,
+            AgentHost::Codex,
+            json!({
+                "hook_event_name": "SessionStart",
+                "session_id": "bootstrap-host-thread",
+            }),
+            &bootstrap,
+            &egress,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(start.disposition, HostHookDisposition::Noop);
+        assert_eq!(start.output, json!({}));
+
+        let prompt_marker = "USER_PROMPT_ONLY_BOOTSTRAP_MARKER_7f31";
+        let loaded = process_bootstrap_host_hook_for_agent_with_registries(
+            &target,
+            AgentHost::Codex,
+            json!({
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "bootstrap-host-thread",
+                "prompt": format!("implement bootstrap_host_marker {prompt_marker}"),
+            }),
+            &bootstrap,
+            &egress,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(loaded.disposition, HostHookDisposition::ContextLoaded);
+        assert!(loaded.session_id.is_none());
+        let context = loaded.output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.starts_with("# Ley bootstrap task context (automatic)"));
+        assert!(context.contains("bootstrap_host_marker"));
+        assert!(context.contains("No Ley project memory or Ley session is active here"));
+        assert!(!context.contains(prompt_marker));
+        assert!(context.len() <= HOST_TASK_CONTEXT_MAX_BYTES);
+        assert!(!target.join(".ley").exists());
+        assert_eq!(fs::read_dir(&target).unwrap().count(), initial_entries);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bootstrap_host_omits_a_large_specification_whole_instead_of_clipping_human_intent() {
+        let body = format!(
+            "# Large product\n\nbootstrap_large_marker LARGE_BOOTSTRAP_BODY_START {} LARGE_BOOTSTRAP_BODY_END\n",
+            "whole approved requirement ".repeat(130)
+        );
+        let (_temporary, target, _source, _specification_id, bootstrap, egress) =
+            bootstrap_host_fixture(&body);
+        let loaded = process_bootstrap_host_hook_for_agent_with_registries(
+            &target,
+            AgentHost::ClaudeCode,
+            json!({
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "bootstrap-claude-thread",
+                "prompt": "implement bootstrap_large_marker",
+            }),
+            &bootstrap,
+            &egress,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        let context = loaded.output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.len() <= HOST_TASK_CONTEXT_MAX_BYTES);
+        assert!(context.contains("Host rendering omitted whole Specifications=1"));
+        assert!(!context.contains("LARGE_BOOTSTRAP_BODY_START"));
+        assert!(!context.contains("LARGE_BOOTSTRAP_BODY_END"));
+        assert!(context.contains("ley_compile_context"));
     }
 
     #[test]

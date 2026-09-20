@@ -29,4 +29,4 @@ The registry uses the same owner-private, locked, atomic JSON persistence patter
 
 ## Deliberately deferred
 
-The next slice may expose bounded read-only reference retrieval through the Context Compiler after revalidating mount identity and binding. Specification/note/folder/Canvas/bundle mounts, empty-workspace bootstrapping, egress policy, and richer mount UI remain separate roadmap work.
+The next slice may expose bounded read-only reference retrieval through the Context Compiler after revalidating mount identity and binding. General empty-workspace **Context Mount / captured reference-project** bootstrapping, note/folder/Canvas/bundle mounts, egress policy, and richer mount UI remain separate roadmap work. ADR 0058 separately implements the narrower uninitialized-workspace case for exact already-approved Specifications only; it does not generalize Context Mount authority.

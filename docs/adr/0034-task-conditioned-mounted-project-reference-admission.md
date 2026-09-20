@@ -41,4 +41,4 @@ MCP gains no mount-management or ambient cross-project tool. Mounted session/lea
 
 ## Deliberately deferred
 
-Per-source egress classes beyond this explicit mount opt-in, mounted Specification/note/folder/Canvas/bundle sources, empty-workspace bootstrapping, mount-specific deep evidence/session readers, live-source freshness across references, branch-aware reference adjudication, and any write capability to mounted projects remain separate roadmap work.
+Per-source egress classes beyond this explicit mount opt-in, mounted Specification/note/folder/Canvas/bundle sources, **captured reference-project memory in an empty workspace**, mount-specific deep evidence/session readers, live-source freshness across references, branch-aware reference adjudication, and any write capability to mounted projects remain separate roadmap work. ADR 0058 separately adds the narrower empty-workspace case for exact already-approved Specifications only; it does not generalize Context Mounts.
