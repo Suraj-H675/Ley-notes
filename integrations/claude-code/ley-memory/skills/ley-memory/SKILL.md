@@ -37,7 +37,11 @@ request, repository policy, or inspection of live source.
    observations are supporting provenance only: `returned` does not mean the
    command/test succeeded, and current recovery candidate anchors still come only
    from `evidence` `tev_` records; never use a `toe_` record as a verifier/writer
-   evidence ID. Do not infer completion, verification, root cause, a Plan
+   evidence ID. A complete retained Bash row may also yield a read-only
+   `automaticCommandCandidates` proposal with `exitCode: null`; use its referenced
+   `supportingToolEvidence` command only as observed invocation provenance. The
+   proposal is not persisted, bindable, write-authorized, Verification evidence,
+   or proof of any outcome. Do not infer completion, verification, root cause, a Plan
    or Task status, or a solution that the captured window does not support. For an
    exactly one unresolved/Decision/minimal-Problem candidate, form a bounded generic claim that cites
    exact `recordId` values and call `ley_session_memory_verify` with the pack's

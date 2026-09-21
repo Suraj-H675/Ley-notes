@@ -151,6 +151,11 @@ session reports post-checkpoint evidence, inspect only that bounded recovery win
 ley_session_memory_compile. Its `evidence` `tev_` records are the current candidate-bound recovery anchors; \
 schema-v14 `supportingToolEvidence` rows are untrusted supporting provenance only, `returned` is not proof \
 that a command or test succeeded, and `toe_` records must not be used as verifier/writer evidence IDs. \
+When a returned tool row says `automaticCommandCandidateEligibility: eligible`, the pack may also expose \
+a matching read-only `automaticCommandCandidates` row that points back to that exact `toe_` record and \
+sets `exitCode` to null. Treat it only as a deterministic proposal that the observed Bash invocation could \
+be represented as a Command; it is not persisted, bindable, write-authorized, or Verification evidence, \
+and it proves no outcome. \
 Before writing reconstructed structure, check unresolved/Decision/minimal-Problem \
 candidates with ley_session_memory_verify, Plan/Task candidates with ley_session_memory_verify_typed, \
 and one evidence-complete Problem episode with ordered Attempts and optional Resolution using \
@@ -2937,7 +2942,8 @@ impl LeyMcpServer {
     }
 
     /// Compile bounded post-checkpoint turn evidence plus separate supporting host-tool provenance.
-    /// Tool observations are not current recovery anchors. This is read-only and never creates a checkpoint or trusted learning by itself.
+    /// Complete retained Bash observations may additionally yield read-only automatic Command candidates with unknown exit/outcome state.
+    /// Tool observations and derived Command candidates are not current recovery anchors. This is read-only and never creates a checkpoint or trusted learning by itself.
     #[tool(
         name = "ley_session_memory_compile",
         annotations(
@@ -6846,6 +6852,13 @@ mod tests {
         assert_eq!(pack["totalSupportingToolEvidence"], 1);
         assert_eq!(pack["returnedSupportingToolEvidence"], 1);
         assert_eq!(pack["toolEvidenceCandidateBindingAllowed"], false);
+        assert_eq!(pack["totalAutomaticCommandCandidateSources"], 1);
+        assert_eq!(pack["returnedAutomaticCommandCandidates"], 1);
+        assert_eq!(pack["omittedAutomaticCommandCandidateSources"], 0);
+        assert_eq!(pack["suppressedAutomaticCommandCandidateSources"], 0);
+        assert_eq!(pack["ineligibleAutomaticCommandObservations"], 0);
+        assert_eq!(pack["automaticCommandCandidateBindingAllowed"], false);
+        assert_eq!(pack["automaticCommandWriteAllowed"], false);
         let tool = &pack["supportingToolEvidence"][0];
         assert!(tool["recordId"].as_str().unwrap().starts_with("toe_"));
         assert!(tool["toolCallReference"]
@@ -6855,8 +6868,19 @@ mod tests {
         assert_eq!(tool["toolName"], "Bash");
         assert_eq!(tool["observationKind"], "returned");
         assert_eq!(tool["candidateBindingAllowed"], false);
+        assert_eq!(tool["automaticCommandCandidateEligibility"], "eligible");
         assert!(tool["command"].as_str().unwrap().contains("[REDACTED:"));
         assert!(tool["result"].as_str().unwrap().contains("[REDACTED:"));
+        let candidate = &pack["automaticCommandCandidates"][0];
+        assert_eq!(candidate["sourceRecordId"], tool["recordId"]);
+        assert_eq!(candidate["observationKind"], "returned");
+        assert_eq!(candidate["commandField"], "supportingToolEvidence.command");
+        assert!(candidate["exitCode"].is_null());
+        assert_eq!(candidate["persisted"], false);
+        assert_eq!(candidate["candidateBindingAllowed"], false);
+        assert_eq!(candidate["automaticWriteAllowed"], false);
+        assert_eq!(candidate["verificationClaimed"], false);
+        assert_eq!(candidate["outcomeProven"], false);
 
         let history = server
             .session_turns_get(Parameters(SessionTurnsParams {

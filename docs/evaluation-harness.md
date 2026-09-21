@@ -237,7 +237,10 @@ After all v3-v13 recovery windows are closed, the same scenario sends one real C
 as supporting Memory Compiler provenance and bounded explicit session history, keep
 `totalUnconsolidatedEvidence == 0`, remain ineligible for candidate binding, preserve the existing
 checkpoint count, and label the normal post-tool event only as `returned` even when the synthetic
-response carries non-zero-looking metadata.
+response carries non-zero-looking metadata. The same compiler call must derive exactly one read-only
+automatic Command candidate from the complete retained command, reference the exact `toe_` source row,
+serialize `exitCode: null`, keep binding/write/Verification/outcome proof false, and persist no candidate
+into schema-v14 session state.
 Task-, Plan-, batch-, rich-Problem-, and composite-specific secret canaries are injected into captured
 host prompts and must be redacted from recovery packs and absent from durable `session-v9.json`,
 `session-v10.json`, `session-v11.json`, `session-v12.json`, and `session-v13.json`. A separate Bash

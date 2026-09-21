@@ -196,7 +196,8 @@ pub use learning_context::{
     MIN_LEARNING_CONTEXT_CHARACTERS,
 };
 pub use memory_compiler::{
-    compile_session_memory, MemoryCompilationBoundary, MemoryCompilationEvidence,
+    compile_session_memory, MemoryCompilationBoundary, MemoryCompilationCommandCandidate,
+    MemoryCompilationCommandCandidateEligibility, MemoryCompilationEvidence,
     MemoryCompilationEvidenceKind, MemoryCompilationState, MemoryCompilationToolEvidence,
     SessionMemoryCompilationPack, DEFAULT_MEMORY_COMPILE_CHARACTERS,
     DEFAULT_MEMORY_COMPILE_RESULTS, MAX_MEMORY_COMPILE_CHARACTERS, MAX_MEMORY_COMPILE_RESULTS,

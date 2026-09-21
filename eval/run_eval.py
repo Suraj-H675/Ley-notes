@@ -8330,6 +8330,16 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             else {}
                         )
                         tool_record_id = str(tool_row.get("recordId", ""))
+                        command_candidates = tool_compiled.get(
+                            "automaticCommandCandidates", []
+                        )
+                        command_candidate = (
+                            command_candidates[-1]
+                            if isinstance(command_candidates, list)
+                            and command_candidates
+                            and isinstance(command_candidates[-1], dict)
+                            else {}
+                        )
                         durable_checkpoint_count = len(
                             tool_projection.get("checkpoints", [])
                             if isinstance(tool_projection, dict)
@@ -8353,6 +8363,34 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                                 "toolEvidenceCandidateBindingAllowed"
                             )
                             is False,
+                            "command-candidate-source-count": tool_compiled.get(
+                                "totalAutomaticCommandCandidateSources"
+                            )
+                            == 1,
+                            "command-candidate-returned-count": tool_compiled.get(
+                                "returnedAutomaticCommandCandidates"
+                            )
+                            == 1,
+                            "command-candidate-omitted-count": tool_compiled.get(
+                                "omittedAutomaticCommandCandidateSources"
+                            )
+                            == 0,
+                            "command-candidate-suppressed-count": tool_compiled.get(
+                                "suppressedAutomaticCommandCandidateSources"
+                            )
+                            == 0,
+                            "command-candidate-ineligible-count": tool_compiled.get(
+                                "ineligibleAutomaticCommandObservations"
+                            )
+                            == 0,
+                            "command-candidate-binding-disabled": tool_compiled.get(
+                                "automaticCommandCandidateBindingAllowed"
+                            )
+                            is False,
+                            "command-candidate-write-disabled": tool_compiled.get(
+                                "automaticCommandWriteAllowed"
+                            )
+                            is False,
                             "compiler-one-row": isinstance(tool_rows, list)
                             and len(tool_rows) == 1,
                             "opaque-record-id": tool_record_id.startswith("toe_"),
@@ -8362,16 +8400,55 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             "tool-name": tool_row.get("toolName") == "Bash",
                             "returned-not-success": tool_row.get("observationKind") == "returned",
                             "row-binding-disabled": tool_row.get("candidateBindingAllowed") is False,
+                            "row-command-candidate-eligible": tool_row.get(
+                                "automaticCommandCandidateEligibility"
+                            )
+                            == "eligible",
                             "command-redacted": "[REDACTED:"
                             in str(tool_row.get("command", "")),
                             "result-redacted": "[REDACTED:"
                             in str(tool_row.get("result", "")),
+                            "one-derived-command-candidate": isinstance(
+                                command_candidates, list
+                            )
+                            and len(command_candidates) == 1,
+                            "candidate-provenance": command_candidate.get(
+                                "sourceRecordId"
+                            )
+                            == tool_record_id,
+                            "candidate-command-reference": command_candidate.get(
+                                "commandField"
+                            )
+                            == "supportingToolEvidence.command",
+                            "candidate-explicit-null-exit": "exitCode"
+                            in command_candidate
+                            and command_candidate.get("exitCode") is None,
+                            "candidate-not-persisted": command_candidate.get("persisted")
+                            is False,
+                            "candidate-not-bindable": command_candidate.get(
+                                "candidateBindingAllowed"
+                            )
+                            is False,
+                            "candidate-no-write": command_candidate.get(
+                                "automaticWriteAllowed"
+                            )
+                            is False,
+                            "candidate-no-verification": command_candidate.get(
+                                "verificationClaimed"
+                            )
+                            is False,
+                            "candidate-no-outcome-proof": command_candidate.get(
+                                "outcomeProven"
+                            )
+                            is False,
                             "history-schema-v14": tool_history.get("schemaVersion") == 14,
                             "history-count": tool_history.get("toolObservationCount", 0) >= 1,
                             "history-record": history_row.get("recordId") == tool_record_id,
                             "history-kind": history_row.get("observationKind") == "returned",
                             "durable-record": durable_tool_row.get("recordId") == tool_record_id,
                             "durable-kind": durable_tool_row.get("observationKind") == "returned",
+                            "candidate-not-durable": "automaticCommandCandidates"
+                            not in (tool_projection or {}),
                             "no-checkpoint-authority": durable_checkpoint_count
                             == checkpoint_count_before_tool,
                             "secret-absent": tool_secret_canary not in tool_payload_text,
