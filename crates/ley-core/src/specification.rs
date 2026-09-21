@@ -24,6 +24,7 @@ pub const MAX_SPECIFICATION_BYTES: u64 = 1_048_576;
 pub const MAX_SPECIFICATION_PATH_CHARACTERS: usize = 1_024;
 pub const MAX_SPECIFICATION_APPROVALS_PER_PROJECT: usize = 64;
 pub const MAX_SPECIFICATION_ACCEPTANCE_CRITERIA: usize = 64;
+pub const MAX_SPECIFICATION_VERIFICATION_METHODS: usize = 64;
 
 const PRIVACY_NOTICE: &str = "Specification approval stores only project/specification identity, a vault-relative Markdown path, an exact content hash, and approval time. Specification text remains in the user's ordinary vault note.";
 
@@ -109,6 +110,45 @@ pub struct SpecificationAcceptanceCriteria {
     pub heading_line: Option<u64>,
     pub criteria: Vec<SpecificationAcceptanceCriterion>,
     pub source_revision_bound: bool,
+    pub status_interpreted: bool,
+    pub persisted: bool,
+    pub authority: &'static str,
+    pub source_boundary: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SpecificationVerificationMethodsState {
+    Available,
+    Empty,
+    Absent,
+    Ambiguous,
+    OmittedLimit,
+    OmittedBudget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecificationVerificationMethod {
+    pub method_id: String,
+    pub text: String,
+    pub start_line: u64,
+    pub end_line: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpecificationVerificationMethods {
+    pub state: SpecificationVerificationMethodsState,
+    pub total_methods: usize,
+    pub returned_methods: usize,
+    pub omitted_methods: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heading_line: Option<u64>,
+    pub methods: Vec<SpecificationVerificationMethod>,
+    pub source_revision_bound: bool,
+    pub criterion_binding_proven: bool,
+    pub observed_result_binding_proven: bool,
     pub status_interpreted: bool,
     pub persisted: bool,
     pub authority: &'static str,
@@ -240,6 +280,8 @@ pub struct SpecificationContextItem {
     pub characters: usize,
     pub acceptance_criteria_characters: usize,
     pub acceptance_criteria: SpecificationAcceptanceCriteria,
+    pub verification_methods_characters: usize,
+    pub verification_methods: SpecificationVerificationMethods,
     pub authority: &'static str,
     pub source_boundary: &'static str,
 }
@@ -276,6 +318,7 @@ pub struct ProjectSpecificationsContext {
     pub max_characters: usize,
     pub text_characters: usize,
     pub acceptance_criteria_characters: usize,
+    pub verification_methods_characters: usize,
     pub specifications: Vec<SpecificationContextItem>,
     pub exclusions: Vec<SpecificationContextExclusion>,
     pub total_approved: usize,
@@ -338,6 +381,30 @@ fn fit_specification_acceptance_criteria_characters(
         } else {
             omit_acceptance_criteria_for_budget(&mut specification.acceptance_criteria);
             specification.acceptance_criteria_characters = 0;
+        }
+    }
+    used
+}
+
+fn fit_specification_verification_methods_characters(
+    specifications: &mut [SpecificationContextItem],
+    mut remaining_characters: usize,
+) -> usize {
+    let mut used = 0usize;
+    for specification in specifications {
+        let required =
+            verification_methods_projection_characters(&specification.verification_methods);
+        if required == 0 {
+            specification.verification_methods_characters = 0;
+            continue;
+        }
+        if required <= remaining_characters {
+            specification.verification_methods_characters = required;
+            remaining_characters -= required;
+            used = used.saturating_add(required);
+        } else {
+            omit_verification_methods_for_budget(&mut specification.verification_methods);
+            specification.verification_methods_characters = 0;
         }
     }
     used
@@ -925,6 +992,11 @@ impl SpecificationRegistry {
                 &approved.content_hash,
                 &approved.source,
             );
+            let verification_methods = derive_specification_verification_methods(
+                &approved.specification_id,
+                &approved.content_hash,
+                &approved.source,
+            );
             text_characters += characters;
             specifications.push(SpecificationContextItem {
                 specification_id: approved.specification_id,
@@ -935,6 +1007,8 @@ impl SpecificationRegistry {
                 characters,
                 acceptance_criteria_characters: 0,
                 acceptance_criteria,
+                verification_methods_characters: 0,
+                verification_methods,
                 authority: approved.authority,
                 source_boundary: approved.source_boundary,
             });
@@ -943,12 +1017,20 @@ impl SpecificationRegistry {
             &mut specifications,
             limits.max_characters.saturating_sub(text_characters),
         );
+        let verification_methods_characters = fit_specification_verification_methods_characters(
+            &mut specifications,
+            limits
+                .max_characters
+                .saturating_sub(text_characters)
+                .saturating_sub(acceptance_criteria_characters),
+        );
         let omitted_specifications = total_approved.saturating_sub(specifications.len());
         Ok(ProjectSpecificationsContext {
             project_id: authority.project_id,
             max_characters: limits.max_characters,
             text_characters,
             acceptance_criteria_characters,
+            verification_methods_characters,
             specifications,
             exclusions,
             total_approved,
@@ -1121,6 +1203,11 @@ impl SpecificationRegistry {
                     &content_hash,
                     &source,
                 );
+                let verification_methods = derive_specification_verification_methods(
+                    &specification_id,
+                    &content_hash,
+                    &source,
+                );
                 text_characters += characters;
                 specifications.push(SpecificationContextItem {
                     specification_id,
@@ -1131,6 +1218,8 @@ impl SpecificationRegistry {
                     characters,
                     acceptance_criteria_characters: 0,
                     acceptance_criteria,
+                    verification_methods_characters: 0,
+                    verification_methods,
                     authority: "human-intent",
                     source_boundary: "user-approved-specification",
                 });
@@ -1140,12 +1229,20 @@ impl SpecificationRegistry {
                 &mut specifications,
                 limits.max_characters.saturating_sub(text_characters),
             );
+            let verification_methods_characters = fit_specification_verification_methods_characters(
+                &mut specifications,
+                limits
+                    .max_characters
+                    .saturating_sub(text_characters)
+                    .saturating_sub(acceptance_criteria_characters),
+            );
             let omitted_specifications = total_approved.saturating_sub(specifications.len());
             Ok(ProjectSpecificationsContext {
                 project_id: project_id.to_owned(),
                 max_characters: limits.max_characters,
                 text_characters,
                 acceptance_criteria_characters,
+                verification_methods_characters,
                 specifications,
                 exclusions,
                 total_approved,
@@ -1649,6 +1746,235 @@ fn specification_acceptance_criterion_id(
     format!("acr_{:x}", digest.finalize())
 }
 
+pub fn derive_specification_verification_methods(
+    specification_id: &str,
+    content_hash: &str,
+    source: &str,
+) -> SpecificationVerificationMethods {
+    let lines = markdown_source_lines(source);
+    let frontmatter_end = markdown_frontmatter_end(&lines);
+    let headings = verification_method_headings(&lines, frontmatter_end);
+    if headings.is_empty() {
+        return verification_methods_projection(
+            SpecificationVerificationMethodsState::Absent,
+            None,
+            Vec::new(),
+            0,
+        );
+    }
+    if headings.len() != 1 {
+        return verification_methods_projection(
+            SpecificationVerificationMethodsState::Ambiguous,
+            None,
+            Vec::new(),
+            0,
+        );
+    }
+
+    let (heading_index, heading_level) = headings[0];
+    let heading_line = lines[heading_index].number;
+    let mut methods = Vec::new();
+    let mut total_methods = 0usize;
+    let mut index = heading_index + 1;
+    let mut in_fence: Option<(u8, usize)> = None;
+    let mut child_subsection = false;
+
+    while index < lines.len() {
+        let line = &lines[index];
+        if let Some((marker, minimum)) = in_fence {
+            if closes_fence(line.text, marker, minimum) {
+                in_fence = None;
+            }
+            index += 1;
+            continue;
+        }
+        if let Some((marker, minimum)) = opens_fence(line.text) {
+            in_fence = Some((marker, minimum));
+            index += 1;
+            continue;
+        }
+        if let Some((level, _)) = parse_atx_heading(line.text) {
+            if level <= heading_level {
+                break;
+            }
+            child_subsection = true;
+            index += 1;
+            continue;
+        }
+        if child_subsection {
+            index += 1;
+            continue;
+        }
+        if direct_list_marker_end(line.text).is_none() {
+            index += 1;
+            continue;
+        }
+
+        total_methods = total_methods.saturating_add(1);
+        let start_index = index;
+        let mut end_index = index;
+        let mut cursor = index + 1;
+        let mut blank_seen = false;
+        while cursor < lines.len() {
+            let next = &lines[cursor];
+            if let Some((level, _)) = parse_atx_heading(next.text) {
+                if level <= heading_level {
+                    break;
+                }
+                child_subsection = true;
+                break;
+            }
+            if direct_list_marker_end(next.text).is_some()
+                || opens_fence(next.text).is_some()
+                || next.text.starts_with('>')
+            {
+                break;
+            }
+            if next.text.trim().is_empty() {
+                blank_seen = true;
+                cursor += 1;
+                continue;
+            }
+            if blank_seen && markdown_leading_spaces(next.text) < 4 {
+                break;
+            }
+            end_index = cursor;
+            blank_seen = false;
+            cursor += 1;
+        }
+
+        if total_methods <= MAX_SPECIFICATION_VERIFICATION_METHODS {
+            let start = lines[start_index].start;
+            let end = lines[end_index].content_end;
+            let text = source[start..end].to_owned();
+            let method_id = specification_verification_method_id(
+                specification_id,
+                content_hash,
+                heading_line,
+                lines[start_index].number,
+                lines[end_index].number,
+                total_methods,
+                &text,
+            );
+            methods.push(SpecificationVerificationMethod {
+                method_id,
+                text,
+                start_line: lines[start_index].number,
+                end_line: lines[end_index].number,
+            });
+        }
+        index = cursor.max(index + 1);
+    }
+
+    if total_methods > MAX_SPECIFICATION_VERIFICATION_METHODS {
+        return verification_methods_projection(
+            SpecificationVerificationMethodsState::OmittedLimit,
+            Some(heading_line),
+            Vec::new(),
+            total_methods,
+        );
+    }
+    if methods.is_empty() {
+        verification_methods_projection(
+            SpecificationVerificationMethodsState::Empty,
+            Some(heading_line),
+            Vec::new(),
+            0,
+        )
+    } else {
+        verification_methods_projection(
+            SpecificationVerificationMethodsState::Available,
+            Some(heading_line),
+            methods,
+            total_methods,
+        )
+    }
+}
+
+pub(crate) fn verification_methods_projection_characters(
+    projection: &SpecificationVerificationMethods,
+) -> usize {
+    if projection.state != SpecificationVerificationMethodsState::Available {
+        return 0;
+    }
+    projection.methods.iter().fold(0usize, |total, method| {
+        total
+            .saturating_add(method.method_id.chars().count())
+            .saturating_add(method.text.chars().count())
+            .saturating_add(40)
+    })
+}
+
+pub(crate) fn verification_methods_projection_tokens(
+    projection: &SpecificationVerificationMethods,
+) -> usize {
+    let characters = verification_methods_projection_characters(projection);
+    if characters == 0 {
+        0
+    } else {
+        16usize.saturating_add(characters.div_ceil(4))
+    }
+}
+
+pub(crate) fn omit_verification_methods_for_budget(
+    projection: &mut SpecificationVerificationMethods,
+) {
+    if projection.state != SpecificationVerificationMethodsState::Available {
+        return;
+    }
+    projection.state = SpecificationVerificationMethodsState::OmittedBudget;
+    projection.returned_methods = 0;
+    projection.omitted_methods = projection.total_methods;
+    projection.methods.clear();
+}
+
+fn verification_methods_projection(
+    state: SpecificationVerificationMethodsState,
+    heading_line: Option<u64>,
+    methods: Vec<SpecificationVerificationMethod>,
+    total_methods: usize,
+) -> SpecificationVerificationMethods {
+    let returned_methods = methods.len();
+    SpecificationVerificationMethods {
+        state,
+        total_methods,
+        returned_methods,
+        omitted_methods: total_methods.saturating_sub(returned_methods),
+        heading_line,
+        methods,
+        source_revision_bound: true,
+        criterion_binding_proven: false,
+        observed_result_binding_proven: false,
+        status_interpreted: false,
+        persisted: false,
+        authority: "human-intent",
+        source_boundary: "derived-from-approved-specification",
+    }
+}
+
+fn specification_verification_method_id(
+    specification_id: &str,
+    content_hash: &str,
+    heading_line: u64,
+    start_line: u64,
+    end_line: u64,
+    ordinal: usize,
+    text: &str,
+) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"ley-specification-verification-method-v1\0");
+    digest.update(specification_id.as_bytes());
+    digest.update(b"\0");
+    digest.update(content_hash.as_bytes());
+    digest.update(b"\0");
+    digest.update(heading_line.to_be_bytes());
+    digest.update(start_line.to_be_bytes());
+    digest.update(end_line.to_be_bytes());
+    digest.update((ordinal as u64).to_be_bytes());
+    digest.update(text.as_bytes());
+    format!("vmd_{:x}", digest.finalize())
+}
+
 #[derive(Debug, Clone, Copy)]
 struct MarkdownSourceLine<'a> {
     number: u64,
@@ -1717,6 +2043,37 @@ fn acceptance_criteria_headings(
         }
         if let Some((level, heading)) = parse_atx_heading(line.text) {
             if heading.eq_ignore_ascii_case("acceptance criteria") {
+                headings.push((index, level));
+            }
+        }
+    }
+    headings
+}
+
+fn verification_method_headings(
+    lines: &[MarkdownSourceLine<'_>],
+    frontmatter_end: Option<usize>,
+) -> Vec<(usize, u8)> {
+    let Some(start) = frontmatter_end else {
+        return Vec::new();
+    };
+    let mut headings = Vec::new();
+    let mut in_fence: Option<(u8, usize)> = None;
+    for (index, line) in lines.iter().enumerate().skip(start) {
+        if let Some((marker, minimum)) = in_fence {
+            if closes_fence(line.text, marker, minimum) {
+                in_fence = None;
+            }
+            continue;
+        }
+        if let Some((marker, minimum)) = opens_fence(line.text) {
+            in_fence = Some((marker, minimum));
+            continue;
+        }
+        if let Some((level, heading)) = parse_atx_heading(line.text) {
+            if heading.eq_ignore_ascii_case("verification method")
+                || heading.eq_ignore_ascii_case("verification methods")
+            {
                 headings.push((index, level));
             }
         }
@@ -2195,6 +2552,188 @@ mod tests {
             MAX_SPECIFICATION_ACCEPTANCE_CRITERIA + 1
         );
         assert!(projection.criteria.is_empty());
+    }
+
+    #[test]
+    fn verification_methods_projection_preserves_exact_markdown_without_inventing_bindings() {
+        let specification_id = "spec_55555555555555555555555555555555";
+        let source = concat!(
+            "---\r\n",
+            "title: Verification example\r\n",
+            "---\r\n",
+            "# Product\r\n",
+            "\r\n",
+            "## Acceptance criteria\r\n",
+            "- CLI startup works offline.\r\n",
+            "\r\n",
+            "## Verification methods\r\n",
+            "\r\n",
+            "- Run cargo test offline_startup.\r\n",
+            "1. Disconnect the network\r\n",
+            "    and launch the CLI from a clean profile.\r\n",
+            "\r\n",
+            "## Observed verification results\r\n",
+            "- Historical result text is not a Verification method.\r\n",
+        );
+        let content_hash = specification_content_hash(source.as_bytes());
+        let first =
+            derive_specification_verification_methods(specification_id, &content_hash, source);
+        let second =
+            derive_specification_verification_methods(specification_id, &content_hash, source);
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first.state,
+            SpecificationVerificationMethodsState::Available
+        );
+        assert_eq!(first.heading_line, Some(9));
+        assert_eq!(first.total_methods, 2);
+        assert_eq!(first.returned_methods, 2);
+        assert_eq!(first.omitted_methods, 0);
+        assert!(first.source_revision_bound);
+        assert!(!first.criterion_binding_proven);
+        assert!(!first.observed_result_binding_proven);
+        assert!(!first.status_interpreted);
+        assert!(!first.persisted);
+        assert_eq!(first.authority, "human-intent");
+        assert_eq!(first.source_boundary, "derived-from-approved-specification");
+        assert_eq!(first.methods[0].text, "- Run cargo test offline_startup.");
+        assert_eq!(first.methods[0].start_line, 11);
+        assert_eq!(first.methods[0].end_line, 11);
+        assert_eq!(
+            first.methods[1].text,
+            "1. Disconnect the network\r\n    and launch the CLI from a clean profile."
+        );
+        assert_eq!(first.methods[1].start_line, 12);
+        assert_eq!(first.methods[1].end_line, 13);
+        assert!(first
+            .methods
+            .iter()
+            .all(|method| method.method_id.starts_with("vmd_")));
+
+        let changed_hash = specification_content_hash(b"different approved revision");
+        let changed =
+            derive_specification_verification_methods(specification_id, &changed_hash, source);
+        assert_ne!(first.methods[0].method_id, changed.methods[0].method_id);
+    }
+
+    #[test]
+    fn verification_methods_projection_fails_closed_on_fake_or_ambiguous_sections() {
+        let specification_id = "spec_66666666666666666666666666666666";
+        let fake = concat!(
+            "---\n",
+            "fake: |\n",
+            "  ## Verification method\n",
+            "  - frontmatter fake\n",
+            "---\n",
+            "# Product\n",
+            "~~~\n",
+            "## Verification methods\n",
+            "- fenced fake\n",
+            "~~~\n",
+            "> ## Verification method\n",
+            "> - quoted fake\n",
+            "Verification method\n",
+            "-------------------\n",
+            "- setext fake\n",
+            "  ## Verification method\n",
+            "  - indented fake\n",
+        );
+        let fake_hash = specification_content_hash(fake.as_bytes());
+        let fake_projection =
+            derive_specification_verification_methods(specification_id, &fake_hash, fake);
+        assert_eq!(
+            fake_projection.state,
+            SpecificationVerificationMethodsState::Absent
+        );
+        assert!(fake_projection.methods.is_empty());
+
+        let ambiguous = concat!(
+            "# Product\n",
+            "## Verification method\n",
+            "- first\n",
+            "## Verification methods\n",
+            "- second\n",
+        );
+        let ambiguous_hash = specification_content_hash(ambiguous.as_bytes());
+        let ambiguous_projection =
+            derive_specification_verification_methods(specification_id, &ambiguous_hash, ambiguous);
+        assert_eq!(
+            ambiguous_projection.state,
+            SpecificationVerificationMethodsState::Ambiguous
+        );
+        assert!(ambiguous_projection.methods.is_empty());
+    }
+
+    #[test]
+    fn verification_methods_projection_omits_atomically_when_count_limit_is_exceeded() {
+        let specification_id = "spec_77777777777777777777777777777777";
+        let mut source = String::from("# Product\n## Verification method\n");
+        for index in 0..=MAX_SPECIFICATION_VERIFICATION_METHODS {
+            source.push_str(&format!("- method {index}\n"));
+        }
+        let content_hash = specification_content_hash(source.as_bytes());
+        let projection =
+            derive_specification_verification_methods(specification_id, &content_hash, &source);
+        assert_eq!(
+            projection.state,
+            SpecificationVerificationMethodsState::OmittedLimit
+        );
+        assert_eq!(
+            projection.total_methods,
+            MAX_SPECIFICATION_VERIFICATION_METHODS + 1
+        );
+        assert_eq!(projection.returned_methods, 0);
+        assert_eq!(
+            projection.omitted_methods,
+            MAX_SPECIFICATION_VERIFICATION_METHODS + 1
+        );
+        assert!(projection.methods.is_empty());
+    }
+
+    #[test]
+    fn direct_context_gives_acceptance_criteria_budget_priority_over_verification_methods() {
+        let (_base, project, vault, registry) = setup();
+        let source = format!(
+            "# Offline\n\nRequirement body remains authoritative.\n{}\n\n## Acceptance criteria\n\n- CLI startup works offline.\n\n## Verification method\n\n- {}\n",
+            "x".repeat(500),
+            "m".repeat(180),
+        );
+        fs::write(vault.join("Spec.md"), &source).unwrap();
+        let specification_id = generate_specification_id();
+        registry
+            .approve(&project, &vault, &specification_id, "Spec.md")
+            .unwrap();
+        let context = registry
+            .context(
+                &project,
+                &vault,
+                SpecificationContextLimits {
+                    max_results: 8,
+                    max_characters: 1_000,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            context.specifications[0].acceptance_criteria.state,
+            SpecificationAcceptanceCriteriaState::Available
+        );
+        assert!(context.specifications[0].acceptance_criteria_characters > 0);
+        assert_eq!(
+            context.specifications[0].verification_methods.state,
+            SpecificationVerificationMethodsState::OmittedBudget
+        );
+        assert_eq!(
+            context.specifications[0].verification_methods.total_methods,
+            1
+        );
+        assert!(context.specifications[0]
+            .verification_methods
+            .methods
+            .is_empty());
+        assert_eq!(context.specifications[0].verification_methods_characters, 0);
+        assert_eq!(context.verification_methods_characters, 0);
     }
 
     #[test]

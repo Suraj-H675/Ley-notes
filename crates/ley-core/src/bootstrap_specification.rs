@@ -5,8 +5,10 @@ use crate::project_memory_search::{lexical_score, search_project_memory_for_expe
 use crate::revision::estimate_revision_freshness_tokens;
 use crate::specification::{
     acceptance_criteria_projection_tokens, derive_specification_acceptance_criteria,
-    omit_acceptance_criteria_for_budget, specification_task_terms, validate_specification_id,
-    SpecificationAcceptanceCriteria,
+    derive_specification_verification_methods, omit_acceptance_criteria_for_budget,
+    omit_verification_methods_for_budget, specification_task_terms, validate_specification_id,
+    verification_methods_projection_tokens, SpecificationAcceptanceCriteria,
+    SpecificationVerificationMethods,
 };
 use crate::{
     canonical_directory, default_binding_registry_path, diagnose_project, evaluate_agent_egress,
@@ -294,6 +296,8 @@ pub struct BootstrapCompiledSpecification {
     pub source: String,
     pub acceptance_criteria_tokens: usize,
     pub acceptance_criteria: SpecificationAcceptanceCriteria,
+    pub verification_methods_tokens: usize,
+    pub verification_methods: SpecificationVerificationMethods,
     pub relevance_score: u32,
     pub exact_match: bool,
     pub authority: &'static str,
@@ -1310,7 +1314,7 @@ pub fn compile_bootstrap_specifications_with_registries(
             compile_bootstrap_specifications_locked(
                 workspace, entry, task, limits, target, registry, policies,
             )
-            .map(finalize_bootstrap_specification_acceptance_criteria)
+            .map(finalize_bootstrap_specification_projections)
         })
     })
 }
@@ -1535,6 +1539,11 @@ fn compile_bootstrap_specifications_locked(
             &candidate.content_hash,
             &candidate.source,
         );
+        let verification_methods = derive_specification_verification_methods(
+            &candidate.specification_id,
+            &candidate.content_hash,
+            &candidate.source,
+        );
         estimated_tokens += candidate.estimated_tokens;
         specifications.push(BootstrapCompiledSpecification {
             grant_id: candidate.grant_id,
@@ -1547,6 +1556,8 @@ fn compile_bootstrap_specifications_locked(
             source: candidate.source,
             acceptance_criteria_tokens: 0,
             acceptance_criteria,
+            verification_methods_tokens: 0,
+            verification_methods,
             relevance_score: candidate.relevance_score,
             exact_match: candidate.exact_match,
             authority: "human-intent",
@@ -1577,7 +1588,7 @@ fn compile_bootstrap_specifications_locked(
     })
 }
 
-fn finalize_bootstrap_specification_acceptance_criteria(
+fn finalize_bootstrap_specification_projections(
     mut context: BootstrapSpecificationContext,
 ) -> BootstrapSpecificationContext {
     let acceptance_criteria_tokens = fit_bootstrap_acceptance_criteria_tokens(
@@ -1587,6 +1598,14 @@ fn finalize_bootstrap_specification_acceptance_criteria(
     context.estimated_tokens = context
         .estimated_tokens
         .saturating_add(acceptance_criteria_tokens)
+        .min(context.max_tokens);
+    let verification_methods_tokens = fit_bootstrap_verification_methods_tokens(
+        &mut context.specifications,
+        context.max_tokens.saturating_sub(context.estimated_tokens),
+    );
+    context.estimated_tokens = context
+        .estimated_tokens
+        .saturating_add(verification_methods_tokens)
         .min(context.max_tokens);
     context
 }
@@ -1646,6 +1665,13 @@ pub fn compile_bootstrap_context_with_registries(
             );
             estimated_tokens = estimated_tokens
                 .saturating_add(acceptance_criteria_tokens)
+                .min(limits.max_tokens);
+            let verification_methods_tokens = fit_bootstrap_verification_methods_tokens(
+                &mut specifications.specifications,
+                limits.max_tokens.saturating_sub(estimated_tokens),
+            );
+            estimated_tokens = estimated_tokens
+                .saturating_add(verification_methods_tokens)
                 .min(limits.max_tokens);
             Ok(BootstrapContext {
                 schema_version: BOOTSTRAP_CONTEXT_SCHEMA_VERSION,
@@ -2261,6 +2287,31 @@ fn fit_bootstrap_acceptance_criteria_tokens(
     used
 }
 
+fn fit_bootstrap_verification_methods_tokens(
+    specifications: &mut [BootstrapCompiledSpecification],
+    mut remaining_tokens: usize,
+) -> usize {
+    let mut used = 0usize;
+    for specification in specifications {
+        let required = verification_methods_projection_tokens(&specification.verification_methods);
+        if required == 0 {
+            specification.verification_methods_tokens = 0;
+            continue;
+        }
+        if required <= remaining_tokens {
+            specification.verification_methods_tokens = required;
+            specification.estimated_tokens =
+                specification.estimated_tokens.saturating_add(required);
+            remaining_tokens -= required;
+            used = used.saturating_add(required);
+        } else {
+            omit_verification_methods_for_budget(&mut specification.verification_methods);
+            specification.verification_methods_tokens = 0;
+        }
+    }
+    used
+}
+
 fn validate_compile_limits(task: &str, limits: ContextCompileLimits) -> Result<(), LeyCoreError> {
     if task.trim().is_empty() {
         return Err(LeyCoreError::InvalidBootstrapSpecificationRequest(
@@ -2488,7 +2539,7 @@ mod tests {
     #[test]
     fn explicit_bootstrap_grant_is_non_mutating_and_compiles_exact_approved_specification() {
         let fixture = fixture(
-            "# Offline product\n\nThe bootstrap_offline_marker app must work fully offline.\n\n## Acceptance criteria\n\n- bootstrap_acceptance_marker remains explicit human intent.\n",
+            "# Offline product\n\nThe bootstrap_offline_marker app must work fully offline.\n\n## Acceptance criteria\n\n- bootstrap_acceptance_marker remains explicit human intent.\n\n## Verification method\n\n- bootstrap_verification_method_marker remains explicit human intent.\n",
         );
         let before = fs::read_dir(&fixture.target).unwrap().count();
 
@@ -2517,6 +2568,28 @@ mod tests {
             .text
             .contains("bootstrap_acceptance_marker"));
         assert!(context.specifications[0].acceptance_criteria_tokens > 0);
+        assert_eq!(
+            context.specifications[0].verification_methods.state,
+            crate::SpecificationVerificationMethodsState::Available
+        );
+        assert_eq!(
+            context.specifications[0].verification_methods.methods.len(),
+            1
+        );
+        assert!(context.specifications[0].verification_methods.methods[0]
+            .text
+            .contains("bootstrap_verification_method_marker"));
+        assert!(
+            !context.specifications[0]
+                .verification_methods
+                .criterion_binding_proven
+        );
+        assert!(
+            !context.specifications[0]
+                .verification_methods
+                .observed_result_binding_proven
+        );
+        assert!(context.specifications[0].verification_methods_tokens > 0);
         assert_eq!(context.specifications[0].authority, "human-intent");
         assert_eq!(
             context.specifications[0].source_boundary,
@@ -2869,6 +2942,42 @@ mod tests {
             crate::SpecificationAcceptanceCriteriaState::OmittedBudget
         );
         assert_eq!(context.specifications[0].acceptance_criteria_tokens, 0);
+        assert!(context.estimated_tokens <= context.max_tokens);
+    }
+
+    #[test]
+    fn bootstrap_acceptance_criteria_keep_budget_precedence_over_verification_methods() {
+        let method = format!("- bootstrap_method_budget_marker {}\n", "m".repeat(1_000));
+        let fixture = fixture(&format!(
+            "# Product\n\nbootstrap_method_budget_marker is required.\n\n## Acceptance criteria\n\n- Existing bootstrap criterion stays available.\n\n## Verification method\n\n{method}"
+        ));
+        fixture
+            .bootstrap
+            .attach(&fixture.target, &fixture.source, &fixture.specification_id)
+            .unwrap();
+
+        let context = compile(&fixture, "bootstrap_method_budget_marker", 600);
+
+        assert_eq!(context.specifications.len(), 1);
+        assert_eq!(
+            context.specifications[0].acceptance_criteria.state,
+            crate::SpecificationAcceptanceCriteriaState::Available
+        );
+        assert!(context.specifications[0].acceptance_criteria_tokens > 0);
+        assert_eq!(
+            context.specifications[0].verification_methods.state,
+            crate::SpecificationVerificationMethodsState::OmittedBudget
+        );
+        assert_eq!(
+            context.specifications[0].verification_methods.total_methods,
+            1
+        );
+        assert!(context.specifications[0]
+            .verification_methods
+            .methods
+            .is_empty());
+        assert_eq!(context.specifications[0].verification_methods_tokens, 0);
+        assert!(context.specifications[0].source.contains(&method));
         assert!(context.estimated_tokens <= context.max_tokens);
     }
 

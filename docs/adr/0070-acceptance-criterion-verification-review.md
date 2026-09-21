@@ -94,10 +94,12 @@ This ADR adds no session event, checkpoint field, registry entry, completion sta
 maintenance. It does not alter schema-v1/v4/v6 checkpoint meaning and does not create a durable
 criterion-to-Verification edge.
 
-A future persistent Verification-method/result model would need a separate design for authoring
-authority, current-vs-historical applicability, semantic coverage, invalidation after implementation
-changes, and whether/how a human may mark a criterion satisfied. This review primitive is deliberately
-not that model.
+ADR 0072 later extends this same read-only review with an optional exact current `vmd_`
+Verification-method handle. It preserves this ADR's no-persistence/no-satisfaction boundary and does
+not infer the method relationship automatically. A future persistent Verification-method/result model
+would still need a separate design for authoring authority, current-vs-historical applicability,
+semantic coverage, invalidation after implementation changes, and whether/how a human may mark a
+criterion satisfied. This review primitive is deliberately not that model.
 
 ## Consequences
 

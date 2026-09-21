@@ -46,7 +46,8 @@ mod specification;
 mod topic_dossier;
 
 pub use acceptance_verification::{
-    review_acceptance_criterion_verification, AcceptanceCriterionVerificationReview,
+    review_acceptance_criterion_verification, review_acceptance_criterion_verification_with_method,
+    AcceptanceCriterionVerificationReview, AcceptanceCriterionVerificationReviewInput,
 };
 pub use agent_legibility::{
     compile_agent_legibility_map, AgentLegibilityCoverage, AgentLegibilityLimits,
@@ -348,19 +349,21 @@ pub use session_context::{
     MIN_SESSION_TURN_CHARACTERS,
 };
 pub use specification::{
-    derive_specification_acceptance_criteria, generate_specification_id,
-    project_specifications_context, specification_content_hash, ApprovedSpecificationSource,
-    ProjectSpecificationsContext, SpecificationAcceptanceCriteria,
+    derive_specification_acceptance_criteria, derive_specification_verification_methods,
+    generate_specification_id, project_specifications_context, specification_content_hash,
+    ApprovedSpecificationSource, ProjectSpecificationsContext, SpecificationAcceptanceCriteria,
     SpecificationAcceptanceCriteriaState, SpecificationAcceptanceCriterion, SpecificationApproval,
     SpecificationApprovalState, SpecificationAuthority, SpecificationAuthorityList,
     SpecificationContextExclusion, SpecificationContextExclusionReason, SpecificationContextItem,
     SpecificationContextLimits, SpecificationEgressCoverage, SpecificationEgressExclusion,
-    SpecificationRegistry, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
+    SpecificationRegistry, SpecificationVerificationMethod, SpecificationVerificationMethods,
+    SpecificationVerificationMethodsState, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
     DEFAULT_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_ACCEPTANCE_CRITERIA,
     MAX_SPECIFICATION_APPROVALS_PER_PROJECT, MAX_SPECIFICATION_BYTES,
     MAX_SPECIFICATION_CONTEXT_CHARACTERS, MAX_SPECIFICATION_CONTEXT_RESULTS,
-    MAX_SPECIFICATION_PATH_CHARACTERS, MIN_SPECIFICATION_CONTEXT_CHARACTERS,
-    SPECIFICATION_REGISTRY_FILE, SPECIFICATION_REGISTRY_SCHEMA_VERSION,
+    MAX_SPECIFICATION_PATH_CHARACTERS, MAX_SPECIFICATION_VERIFICATION_METHODS,
+    MIN_SPECIFICATION_CONTEXT_CHARACTERS, SPECIFICATION_REGISTRY_FILE,
+    SPECIFICATION_REGISTRY_SCHEMA_VERSION,
 };
 pub use topic_dossier::{
     compile_topic_dossier, TopicDossier, TopicDossierArtifact, TopicDossierCoverage,

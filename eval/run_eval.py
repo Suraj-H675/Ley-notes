@@ -1495,6 +1495,54 @@ def evaluate_bootstrap_specification_scenario(
                 ):
                     acceptance_ok = False
                     break
+    expected_methods = expectation.get("verification_methods", [])
+    methods_projection = initial_spec.get("verificationMethods", {})
+    method_rows = (
+        methods_projection.get("methods", [])
+        if isinstance(methods_projection, dict)
+        else []
+    )
+    verification_methods_ok = True
+    if isinstance(expected_methods, list) and expected_methods:
+        verification_methods_ok = (
+            isinstance(methods_projection, dict)
+            and methods_projection.get("state") == "available"
+            and methods_projection.get("totalMethods") == len(expected_methods)
+            and methods_projection.get("returnedMethods") == len(expected_methods)
+            and methods_projection.get("omittedMethods") == 0
+            and methods_projection.get("sourceRevisionBound") is True
+            and methods_projection.get("criterionBindingProven") is False
+            and methods_projection.get("observedResultBindingProven") is False
+            and methods_projection.get("statusInterpreted") is False
+            and methods_projection.get("persisted") is False
+            and isinstance(method_rows, list)
+            and len(method_rows) == len(expected_methods)
+            and int(initial_spec.get("verificationMethodsTokens", 0)) > 0
+        )
+        if verification_methods_ok:
+            for expected, actual in zip(expected_methods, method_rows):
+                if not isinstance(expected, dict) or not isinstance(actual, dict):
+                    verification_methods_ok = False
+                    break
+                if not (
+                    actual.get("text") == expected.get("text")
+                    and actual.get("startLine") == expected.get("start_line")
+                    and actual.get("endLine") == expected.get("end_line")
+                    and str(actual.get("methodId", "")).startswith("vmd_")
+                    and all(
+                        field not in actual
+                        for field in (
+                            "criterionId",
+                            "verificationRecordId",
+                            "passed",
+                            "verified",
+                            "satisfied",
+                            "status",
+                        )
+                    )
+                ):
+                    verification_methods_ok = False
+                    break
     initial_ok = (
         isinstance(attached, dict)
         and attached.get("created") is True
@@ -1508,6 +1556,7 @@ def evaluate_bootstrap_specification_scenario(
         and initial_spec.get("source") == source_text
         and initial_spec.get("specificationId") == specification_id
         and acceptance_ok
+        and verification_methods_ok
         and codex_start == {}
         and claude_start == {}
         and codex_context.startswith("# Ley bootstrap task context (automatic)")
@@ -2524,6 +2573,64 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 and int(relevant_specification.get("acceptanceCriteriaTokens", 0)) > 0
             )
         )
+        expected_method = str(
+            specification_expectation.get("verification_method", "")
+        )
+        verification_methods_projection = relevant_specification.get(
+            "verificationMethods", {}
+        )
+        verification_method_rows = (
+            verification_methods_projection.get("methods", [])
+            if isinstance(verification_methods_projection, dict)
+            else []
+        )
+        verification_method_row = (
+            verification_method_rows[0]
+            if isinstance(verification_method_rows, list)
+            and verification_method_rows
+            and isinstance(verification_method_rows[0], dict)
+            else {}
+        )
+        verification_methods_ok = (
+            not expected_method
+            or (
+                isinstance(verification_methods_projection, dict)
+                and verification_methods_projection.get("state") == "available"
+                and verification_methods_projection.get("totalMethods") == 1
+                and verification_methods_projection.get("returnedMethods") == 1
+                and verification_methods_projection.get("omittedMethods") == 0
+                and verification_methods_projection.get("sourceRevisionBound") is True
+                and verification_methods_projection.get("criterionBindingProven") is False
+                and verification_methods_projection.get("observedResultBindingProven")
+                is False
+                and verification_methods_projection.get("statusInterpreted") is False
+                and verification_methods_projection.get("persisted") is False
+                and verification_methods_projection.get("authority") == "human-intent"
+                and verification_methods_projection.get("sourceBoundary")
+                == "derived-from-approved-specification"
+                and verification_method_row.get("text") == expected_method
+                and verification_method_row.get("startLine")
+                == specification_expectation.get("verification_start_line")
+                and verification_method_row.get("endLine")
+                == specification_expectation.get("verification_end_line")
+                and str(verification_method_row.get("methodId", "")).startswith("vmd_")
+                and all(
+                    field not in verification_method_row
+                    for field in (
+                        "criterionId",
+                        "verificationRecordId",
+                        "passed",
+                        "verified",
+                        "satisfied",
+                        "status",
+                    )
+                )
+                and int(
+                    relevant_specification.get("verificationMethodsTokens", 0)
+                )
+                > 0
+            )
+        )
         expected_verification_summary = str(
             specification_expectation.get("acceptance_verification_summary", "")
         )
@@ -2531,6 +2638,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if expected_verification_summary:
             acceptance_verification_ok = False
             criterion_id = str(acceptance_row.get("criterionId", ""))
+            verification_method_id = str(
+                verification_method_row.get("methodId", "")
+            )
             if session_id and criterion_id:
                 verification_session = mcp_call(
                     project,
@@ -2560,6 +2670,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                         {
                             "specificationId": relevant_id,
                             "criterionId": criterion_id,
+                            **(
+                                {"verificationMethodId": verification_method_id}
+                                if verification_method_id
+                                else {}
+                            ),
                             "sessionId": session_id,
                             "verificationRecordId": verification_record_id,
                         },
@@ -2571,6 +2686,13 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             "criterionId"
                         )
                         == criterion_id
+                        and (
+                            not verification_method_id
+                            or acceptance_verification_review.get(
+                                "verificationMethod", {}
+                            ).get("methodId")
+                            == verification_method_id
+                        )
                         and acceptance_verification_review.get("sessionId") == session_id
                         and acceptance_verification_review.get("verification", {}).get(
                             "id"
@@ -2592,6 +2714,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                         )
                         is True
                         and acceptance_verification_review.get(
+                            "verificationMethodChecked"
+                        )
+                        is bool(verification_method_id)
+                        and acceptance_verification_review.get(
                             "verificationRecordChecked"
                         )
                         is True
@@ -2599,6 +2725,18 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             "relationshipSuppliedByCaller"
                         )
                         is True
+                        and acceptance_verification_review.get(
+                            "verificationMethodRelationshipSuppliedByCaller"
+                        )
+                        is bool(verification_method_id)
+                        and acceptance_verification_review.get(
+                            "verificationMethodExecutionProven"
+                        )
+                        is False
+                        and acceptance_verification_review.get(
+                            "verificationMethodOutcomeProven"
+                        )
+                        is False
                         and acceptance_verification_review.get(
                             "verificationStatusInterpretedAsSatisfaction"
                         )
@@ -2629,7 +2767,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                         )
                         == "untrusted-historical-verification"
                         and acceptance_verification_review.get("relationshipBoundary")
-                        == "caller-supplied-criterion-verification-review-link"
+                        == (
+                            "caller-supplied-criterion-method-verification-review-link"
+                            if verification_method_id
+                            else "caller-supplied-criterion-verification-review-link"
+                        )
                     )
                     evidence_text.extend(
                         [verification_session, acceptance_verification_review]
@@ -2641,6 +2783,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and historical_withheld
             and direct_evidence_preserved
             and acceptance_criteria_ok
+            and verification_methods_ok
             and acceptance_verification_ok
             and compiled.get("authorityPrecedence") == "human-intent-over-historical-memory"
             and compiled.get("sourceBoundary") == "mixed-authority-context"
@@ -2655,6 +2798,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             failures.append(
                 "acceptance-criterion Verification review did not preserve exact provenance/non-satisfaction semantics"
             )
+        if not verification_methods_ok:
+            failures.append(
+                "Specification Verification-method projection did not preserve exact human-intent/non-binding semantics"
+            )
 
     egress_expectation = scenario.get("expected_egress_policy")
     if isinstance(egress_expectation, dict):
@@ -2668,9 +2815,19 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             raise RuntimeError("egress fixture Specification has no stable ID")
         marker = str(egress_expectation.get("marker", ""))
         derived_marker = str(egress_expectation.get("derived_marker", ""))
+        verification_method_marker = str(
+            egress_expectation.get("verification_method_marker", "")
+        )
         query = str(egress_expectation.get("query", ""))
-        if not marker or not derived_marker or not query:
-            raise RuntimeError("egress fixture requires marker, derived_marker, and query")
+        if (
+            not marker
+            or not derived_marker
+            or not verification_method_marker
+            or not query
+        ):
+            raise RuntimeError(
+                "egress fixture requires marker, derived_marker, verification_method_marker, and query"
+            )
 
         run(
             [
@@ -2700,6 +2857,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         cloud_blocked = (
             marker not in json.dumps(cloud_direct, sort_keys=True)
             and marker not in json.dumps(cloud_compiled, sort_keys=True)
+            and verification_method_marker
+            not in json.dumps(cloud_direct, sort_keys=True)
+            and verification_method_marker
+            not in json.dumps(cloud_compiled, sort_keys=True)
             and derived_marker not in json.dumps(cloud_compiled, sort_keys=True)
             and derived_marker not in json.dumps(cloud_hook, sort_keys=True)
             and "withheld" in json.dumps(cloud_hook, sort_keys=True).lower()
@@ -2735,6 +2896,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         local_allowed = (
             marker in json.dumps(local_direct, sort_keys=True)
             and marker in json.dumps(local_compiled, sort_keys=True)
+            and verification_method_marker
+            in json.dumps(local_direct, sort_keys=True)
+            and verification_method_marker
+            in json.dumps(local_compiled, sort_keys=True)
             and derived_marker in json.dumps(local_compiled, sort_keys=True)
             and derived_marker in json.dumps(local_hook, sort_keys=True)
             and local_direct.get("egressTarget") == "local"
@@ -2771,9 +2936,13 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         confirm_blocked = marker not in json.dumps(
             confirm_direct, sort_keys=True
-        ) and marker not in json.dumps(confirm_compiled, sort_keys=True) and derived_marker not in json.dumps(
-            confirm_hook, sort_keys=True
-        )
+        ) and marker not in json.dumps(
+            confirm_compiled, sort_keys=True
+        ) and verification_method_marker not in json.dumps(
+            confirm_direct, sort_keys=True
+        ) and verification_method_marker not in json.dumps(
+            confirm_compiled, sort_keys=True
+        ) and derived_marker not in json.dumps(confirm_hook, sort_keys=True)
 
         run(
             [
@@ -2805,9 +2974,13 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         never_blocked = marker not in json.dumps(
             never_direct, sort_keys=True
-        ) and marker not in json.dumps(never_compiled, sort_keys=True) and derived_marker not in json.dumps(
-            never_hook, sort_keys=True
-        )
+        ) and marker not in json.dumps(
+            never_compiled, sort_keys=True
+        ) and verification_method_marker not in json.dumps(
+            never_direct, sort_keys=True
+        ) and verification_method_marker not in json.dumps(
+            never_compiled, sort_keys=True
+        ) and derived_marker not in json.dumps(never_hook, sort_keys=True)
 
         disallowed_probe_groups = [
             [cloud_direct, cloud_compiled, cloud_hook],
@@ -2815,7 +2988,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             [never_direct, never_compiled, never_hook],
         ]
         policy_violations = sum(
-            marker in serialized(group) or derived_marker in serialized(group)
+            marker in serialized(group)
+            or derived_marker in serialized(group)
+            or verification_method_marker in serialized(group)
             for group in disallowed_probe_groups
         )
         scores["privacy_violation_rate"] = policy_violations / len(

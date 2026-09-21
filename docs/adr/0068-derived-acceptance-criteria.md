@@ -103,7 +103,7 @@ If the complete projection cannot fit, the parent Specification remains returned
 
 The 64-criterion ceiling is atomic: Ley does not return a misleading partial list.
 
-MCP keeps its existing 256 KiB serialized-result guard as a final transport boundary. If an otherwise-valid structured result exceeds that limit and contains one or more `available` acceptance-criteria projections, MCP atomically downgrades those optional projections to `omitted-budget`, clears their returned rows/accounting, and retries serialization while preserving the parent Specifications. If the result still exceeds the hard limit after that downgrade, the existing bounded retryable error remains unchanged. This transport fallback does not alter the logical parent Specification authority or create a second context-pack identity.
+MCP keeps its existing 256 KiB serialized-result guard as a final transport boundary. In this ADR's original criteria-only surface, an oversized structured result atomically downgraded `available` acceptance-criteria projections to `omitted-budget` before the existing bounded retryable error. ADR 0071 extends that transport order without weakening this guarantee: optional `verificationMethods` are now dropped first, and the acceptance-criteria downgrade remains the next fallback while preserving the parent Specifications. This transport fallback does not alter logical Specification authority or create a second context-pack identity.
 
 ## Authority, egress, and privacy
 
@@ -156,5 +156,5 @@ The slice must prove:
 - Policy Bundle and bootstrap projections use the same parser;
 - source-level egress blocks both whole source and derived criteria;
 - stale/missing/revoked revisions expose no criteria;
-- MCP output preserves the projection contract and first drops only optional criteria projections before using the existing oversized-result error;
+- MCP output preserves the projection contract; ADR 0071 now inserts optional Verification-method omission before this criteria fallback, while the existing oversized-result error remains last;
 - the existing P0 Specification authority/egress scenarios and bootstrap evaluation cover the projection rather than adding a weaker standalone metric.

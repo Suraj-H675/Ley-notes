@@ -8,8 +8,10 @@ use crate::policy_bundle::{
 use crate::revision::{estimate_revision_applicability_tokens, estimate_revision_freshness_tokens};
 use crate::specification::{
     acceptance_criteria_projection_tokens, derive_specification_acceptance_criteria,
-    omit_acceptance_criteria_for_budget, SpecificationAcceptanceCriteria,
-    TaskSpecificationCandidate, TaskSpecificationExclusionReason, TaskSpecificationScan,
+    derive_specification_verification_methods, omit_acceptance_criteria_for_budget,
+    omit_verification_methods_for_budget, verification_methods_projection_tokens,
+    SpecificationAcceptanceCriteria, SpecificationVerificationMethods, TaskSpecificationCandidate,
+    TaskSpecificationExclusionReason, TaskSpecificationScan,
 };
 use crate::{
     evaluate_agent_egress, search_project_memory, AgentEgressBlockReason, AgentEgressPolicy,
@@ -237,6 +239,8 @@ pub struct CompiledSpecificationItem {
     pub source: String,
     pub acceptance_criteria_tokens: usize,
     pub acceptance_criteria: SpecificationAcceptanceCriteria,
+    pub verification_methods_tokens: usize,
+    pub verification_methods: SpecificationVerificationMethods,
     pub relevance_score: u32,
     pub exact_match: bool,
     pub authority: &'static str,
@@ -308,6 +312,8 @@ pub struct CompiledPolicyBundleItem {
     pub source: String,
     pub acceptance_criteria_tokens: usize,
     pub acceptance_criteria: SpecificationAcceptanceCriteria,
+    pub verification_methods_tokens: usize,
+    pub verification_methods: SpecificationVerificationMethods,
     pub relevance_score: u32,
     pub exact_match: bool,
     pub authority: &'static str,
@@ -842,7 +848,7 @@ pub fn compile_project_context_with_registries(
         );
         mount_registry.with_resolved_project_mounts_locked(project_start, |mounts| {
             append_mounted_references(pack, mounts, task, limits)
-                .map(finalize_context_pack_with_acceptance_criteria)
+                .map(finalize_context_pack_with_specification_projections)
         })
     })
 }
@@ -1096,7 +1102,7 @@ pub fn compile_project_context_for_agent_with_registries(
                         omitted_exclusions: omitted_egress,
                     });
                     pack.egress_exclusions = fitted_egress;
-                    Ok(finalize_context_pack_with_acceptance_criteria(pack))
+                    Ok(finalize_context_pack_with_specification_projections(pack))
                         },
                     )
                         },
@@ -1173,7 +1179,7 @@ fn compile_search_result_with_specifications(
     specification_scan: TaskSpecificationScan,
     limits: ContextCompileLimits,
 ) -> CompiledContextPack {
-    finalize_context_pack_with_acceptance_criteria(
+    finalize_context_pack_with_specification_projections(
         compile_search_result_with_specifications_unfinalized(search, specification_scan, limits),
     )
 }
@@ -1305,6 +1311,11 @@ fn compile_search_result_with_authorities(
             &candidate.source.content_hash,
             &candidate.source.source,
         );
+        let verification_methods = derive_specification_verification_methods(
+            &candidate.source.specification_id,
+            &candidate.source.content_hash,
+            &candidate.source.source,
+        );
         item_tokens = item_tokens.saturating_add(estimated_tokens);
         specifications.push(CompiledSpecificationItem {
             specification_id: candidate.source.specification_id,
@@ -1314,6 +1325,8 @@ fn compile_search_result_with_authorities(
             source: candidate.source.source,
             acceptance_criteria_tokens: 0,
             acceptance_criteria,
+            verification_methods_tokens: 0,
+            verification_methods,
             relevance_score: candidate.lexical_score,
             exact_match: candidate.exact_match,
             authority: candidate.source.authority,
@@ -1361,6 +1374,11 @@ fn compile_search_result_with_authorities(
             &candidate.source.content_hash,
             &candidate.source.source,
         );
+        let verification_methods = derive_specification_verification_methods(
+            &candidate.source.specification_id,
+            &candidate.source.content_hash,
+            &candidate.source.source,
+        );
         item_tokens = item_tokens.saturating_add(estimated_tokens);
         policy_bundle_policies.push(CompiledPolicyBundleItem {
             bundle_id: candidate.bundle_id,
@@ -1375,6 +1393,8 @@ fn compile_search_result_with_authorities(
             source: candidate.source.source,
             acceptance_criteria_tokens: 0,
             acceptance_criteria,
+            verification_methods_tokens: 0,
+            verification_methods,
             relevance_score: candidate.lexical_score,
             exact_match: candidate.exact_match,
             authority: POLICY_BUNDLE_AUTHORITY,
@@ -1594,7 +1614,7 @@ fn compile_search_result_with_authorities(
     }
 }
 
-fn finalize_context_pack_with_acceptance_criteria(
+fn finalize_context_pack_with_specification_projections(
     mut pack: CompiledContextPack,
 ) -> CompiledContextPack {
     let acceptance_criteria_tokens = fit_compiled_acceptance_criteria_tokens(
@@ -1605,6 +1625,15 @@ fn finalize_context_pack_with_acceptance_criteria(
     pack.estimated_tokens = pack
         .estimated_tokens
         .saturating_add(acceptance_criteria_tokens)
+        .min(pack.max_tokens);
+    let verification_methods_tokens = fit_compiled_verification_methods_tokens(
+        &mut pack.specifications,
+        &mut pack.policy_bundle_policies,
+        pack.max_tokens.saturating_sub(pack.estimated_tokens),
+    );
+    pack.estimated_tokens = pack
+        .estimated_tokens
+        .saturating_add(verification_methods_tokens)
         .min(pack.max_tokens);
     finalize_context_pack(pack)
 }
@@ -2741,6 +2770,49 @@ fn fit_compiled_acceptance_criteria_tokens(
         } else {
             omit_acceptance_criteria_for_budget(&mut specification.acceptance_criteria);
             specification.acceptance_criteria_tokens = 0;
+        }
+    }
+    used
+}
+
+fn fit_compiled_verification_methods_tokens(
+    specifications: &mut [CompiledSpecificationItem],
+    policy_bundle_policies: &mut [CompiledPolicyBundleItem],
+    mut remaining_tokens: usize,
+) -> usize {
+    let mut used = 0usize;
+    for specification in specifications {
+        let required = verification_methods_projection_tokens(&specification.verification_methods);
+        if required == 0 {
+            specification.verification_methods_tokens = 0;
+            continue;
+        }
+        if required <= remaining_tokens {
+            specification.verification_methods_tokens = required;
+            specification.estimated_tokens =
+                specification.estimated_tokens.saturating_add(required);
+            remaining_tokens -= required;
+            used = used.saturating_add(required);
+        } else {
+            omit_verification_methods_for_budget(&mut specification.verification_methods);
+            specification.verification_methods_tokens = 0;
+        }
+    }
+    for specification in policy_bundle_policies {
+        let required = verification_methods_projection_tokens(&specification.verification_methods);
+        if required == 0 {
+            specification.verification_methods_tokens = 0;
+            continue;
+        }
+        if required <= remaining_tokens {
+            specification.verification_methods_tokens = required;
+            specification.estimated_tokens =
+                specification.estimated_tokens.saturating_add(required);
+            remaining_tokens -= required;
+            used = used.saturating_add(required);
+        } else {
+            omit_verification_methods_for_budget(&mut specification.verification_methods);
+            specification.verification_methods_tokens = 0;
         }
     }
     used
@@ -4544,6 +4616,63 @@ mod tests {
             .is_empty());
         assert_eq!(pack.specifications[0].acceptance_criteria_tokens, 0);
         assert!(pack.estimated_tokens <= 500);
+    }
+
+    #[test]
+    fn verification_methods_use_only_budget_left_after_acceptance_criteria() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(vault.join("Specs")).unwrap();
+        initialize_project(
+            &project,
+            Some("Verification method budget"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        fs::write(project.join("README.md"), "unrelated captured source\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let method = format!("- method_budget_marker {}\n", "m".repeat(750));
+        let source = format!(
+            "# Method budget\n\nmethod_budget_marker is required.\n\n## Acceptance criteria\n\n- Existing criterion stays available.\n\n## Verification method\n\n{method}"
+        );
+        fs::write(vault.join("Specs/Budget.md"), &source).unwrap();
+        let registry = SpecificationRegistry::at(root.path().join("specifications.json"));
+        let specification_id = crate::generate_specification_id();
+        registry
+            .approve(&project, &vault, &specification_id, "Specs/Budget.md")
+            .unwrap();
+
+        let pack = compile_project_context_with_registry(
+            &project,
+            &vault,
+            "method_budget_marker",
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 600,
+            },
+            &registry,
+        )
+        .unwrap();
+        assert_eq!(pack.specifications.len(), 1);
+        assert_eq!(
+            pack.specifications[0].acceptance_criteria.state,
+            crate::SpecificationAcceptanceCriteriaState::Available
+        );
+        assert!(pack.specifications[0].acceptance_criteria_tokens > 0);
+        assert_eq!(
+            pack.specifications[0].verification_methods.state,
+            crate::SpecificationVerificationMethodsState::OmittedBudget
+        );
+        assert_eq!(pack.specifications[0].verification_methods.total_methods, 1);
+        assert!(pack.specifications[0]
+            .verification_methods
+            .methods
+            .is_empty());
+        assert_eq!(pack.specifications[0].verification_methods_tokens, 0);
+        assert!(pack.specifications[0].source.contains(&method));
+        assert!(pack.estimated_tokens <= 600);
     }
 
     #[test]
@@ -6477,10 +6606,11 @@ mod tests {
         fs::create_dir_all(source_vault.join("Specs")).unwrap();
         let private_marker = "private_bundle_marker signed release process";
         let acceptance_marker = "private_bundle_acceptance_marker";
+        let verification_method_marker = "private_bundle_verification_method_marker";
         fs::write(
             source_vault.join("Specs/Release.md"),
             format!(
-                "# Release policy\n\n{private_marker}\n\n## Acceptance criteria\n\n- {acceptance_marker} must remain private to allowed agents.\n"
+                "# Release policy\n\n{private_marker}\n\n## Acceptance criteria\n\n- {acceptance_marker} must remain private to allowed agents.\n\n## Verification method\n\n- {verification_method_marker} must remain private to allowed agents.\n"
             ),
         )
         .unwrap();
@@ -6604,6 +6734,21 @@ mod tests {
             .text
             .contains(acceptance_marker));
         assert!(local_policy.acceptance_criteria_tokens > 0);
+        assert_eq!(
+            local_policy.verification_methods.state,
+            crate::SpecificationVerificationMethodsState::Available
+        );
+        assert_eq!(local_policy.verification_methods.methods.len(), 1);
+        assert!(local_policy.verification_methods.methods[0]
+            .text
+            .contains(verification_method_marker));
+        assert!(!local_policy.verification_methods.criterion_binding_proven);
+        assert!(
+            !local_policy
+                .verification_methods
+                .observed_result_binding_proven
+        );
+        assert!(local_policy.verification_methods_tokens > 0);
         assert!(local.egress_exclusions.is_empty());
 
         fs::remove_dir_all(&source_vault).unwrap();
