@@ -117,7 +117,7 @@ P0_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "specification-authority-context",
-            "specification_admission",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -139,7 +139,7 @@ P0_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "explicit-project-context-mount",
-            "mounted_reference",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -161,7 +161,7 @@ P0_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "crash-before-session-end-resume",
-            "origin_lineage",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -183,7 +183,7 @@ P0_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "explicit-learning-supersession-premise",
-            "premise_adjudication",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -205,7 +205,7 @@ P0_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "divergent-branch-state-adjudication",
-            "revision_adjudication",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -227,7 +227,7 @@ P0_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "specification-agent-egress-canary",
-            "egress_policy",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -243,6 +243,38 @@ P0_CAPABILITY_COVERAGE = {
     },
 }
 
+P0_INDEPENDENT_DOWNSTREAM_CAPABILITIES = frozenset(
+    {
+        "context-compiler",
+        "specifications",
+        "context-mounts",
+        "origin-lineage",
+        "premise-adjudication",
+        "revision-awareness",
+        "egress-policy",
+    }
+)
+
+P1_INDEPENDENT_DOWNSTREAM_CAPABILITIES = frozenset(
+    {
+        "bootstrap-specifications",
+        "bootstrap-reference-projects",
+        "topic-dossiers",
+        "current-project-state",
+        "reviewed-runbook-skill-export",
+        "richer-graph-relations",
+    }
+)
+
+P2_INDEPENDENT_DOWNSTREAM_CAPABILITIES = frozenset(
+    {
+        "external-reference-connectors",
+        "team-organization-knowledge-scopes",
+        "team-organization-policy-bundles",
+        "explicit-historical-host-import",
+    }
+)
+
 P1_CAPABILITY_COVERAGE = {
     "bootstrap-specifications": {
         "adversarial": (
@@ -252,7 +284,7 @@ P1_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "empty-workspace-bootstrap-specification",
-            "bootstrap_specification",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -274,7 +306,7 @@ P1_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "empty-workspace-bootstrap-reference",
-            "bootstrap_reference",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -294,7 +326,11 @@ P1_CAPABILITY_COVERAGE = {
             "forgetting_residue_rate",
             "zero",
         ),
-        "downstream": ("topic-dossier-authentication", "topic_dossier", "truthy"),
+        "downstream": (
+            "topic-dossier-authentication",
+            "downstream_task_contract",
+            "truthy",
+        ),
         "privacy": (
             "topic-dossier-authentication",
             "privacy_violation_rate",
@@ -310,7 +346,7 @@ P1_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "current-project-state-storage",
-            "current_project_state",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -398,7 +434,7 @@ P1_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "reviewed-runbook-skill-export",
-            "reviewed_runbook",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -464,7 +500,7 @@ P1_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "graph-relative-import-test-impact",
-            "graph_relation_retrieval",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -511,7 +547,7 @@ P2_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "external-github-document-egress",
-            "external_connector",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -555,7 +591,7 @@ P2_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "team-organization-knowledge-scope",
-            "knowledge_scope",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -577,7 +613,7 @@ P2_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "team-organization-policy-bundle",
-            "policy_bundle",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -599,7 +635,7 @@ P2_CAPABILITY_COVERAGE = {
         ),
         "downstream": (
             "explicit-codex-message-history-import",
-            "historical_host_import",
+            "downstream_task_contract",
             "truthy",
         ),
         "privacy": (
@@ -1322,6 +1358,7 @@ def context_contract_text(payload: dict[str, object]) -> str:
     return json.dumps(
         {
             "specifications": payload.get("specifications", []),
+            "policyBundlePolicies": payload.get("policyBundlePolicies", []),
             "items": payload.get("items", []),
             "mountedReferences": payload.get("mountedReferences", []),
             "sharedKnowledgeReferences": payload.get("sharedKnowledgeReferences", []),
@@ -1336,10 +1373,37 @@ def task_contract_success(
     required: list[str],
     forbidden: list[str],
 ) -> bool:
-    text = context_contract_text(payload).lower()
+    return text_contract_success(
+        context_contract_text(payload),
+        required,
+        forbidden,
+    )
+
+
+def text_contract_success(
+    text: str,
+    required: list[str],
+    forbidden: list[str],
+) -> bool:
+    text = text.lower()
     return all(marker.lower() in text for marker in required) and all(
         marker.lower() not in text for marker in forbidden
     )
+
+
+def record_downstream_task_contract(
+    scores: dict[str, object],
+    failures: list[str],
+    passed: bool,
+    failure: str,
+) -> None:
+    """Accumulate independent task-facing contracts without allowing overwrite."""
+    previous = scores.get("downstream_task_contract")
+    scores["downstream_task_contract"] = (
+        bool(passed) if previous is None else bool(previous) and bool(passed)
+    )
+    if not passed:
+        failures.append(failure)
 
 
 def privacy_violation_rate(canaries: list[str], outputs: list[object]) -> float:
@@ -1355,7 +1419,7 @@ def evaluate_bootstrap_specification_scenario(
     base_dir: Path,
     target: Path,
     expectation: dict[str, object],
-) -> tuple[bool, float, list[str]]:
+) -> tuple[bool, bool, float, list[str]]:
     failures: list[str] = []
     source = base_dir / "bootstrap-source"
     source_vault = base_dir / "bootstrap-source-vault"
@@ -1569,9 +1633,32 @@ def evaluate_bootstrap_specification_scenario(
         and len(claude_context.encode("utf-8")) <= 3500
         and not (target / ".ley").exists()
     )
+    downstream_required = [
+        str(value)
+        for value in expectation.get(
+            "downstream_required",
+            [marker],
+        )
+    ]
+    downstream_forbidden = [
+        str(value)
+        for value in expectation.get(
+            "downstream_forbidden",
+            [prompt_marker, target_private_marker],
+        )
+    ]
+    downstream_ok = task_contract_success(
+        compiled,
+        downstream_required,
+        downstream_forbidden,
+    )
     if not initial_ok:
         failures.append(
             "bootstrap Specification was not delivered through the single-tool MCP and both prompt hooks without initializing the target"
+        )
+    if not downstream_ok:
+        failures.append(
+            "bootstrap Specification context did not satisfy the independent downstream human-intent contract"
         )
 
     cli_json(
@@ -1664,7 +1751,7 @@ def evaluate_bootstrap_specification_scenario(
     if privacy != 0.0:
         failures.append("bootstrap Specification agent output leaked a private path or prompt/live-target canary")
 
-    return not failures, privacy, failures
+    return not failures, downstream_ok, privacy, failures
 
 
 def evaluate_bootstrap_reference_scenario(
@@ -1672,7 +1759,7 @@ def evaluate_bootstrap_reference_scenario(
     base_dir: Path,
     target: Path,
     expectation: dict[str, object],
-) -> tuple[bool, float, list[str]]:
+) -> tuple[bool, bool, float, list[str]]:
     failures: list[str] = []
     source = base_dir / "bootstrap-reference-source"
     source_vault = base_dir / "bootstrap-reference-vault"
@@ -1767,9 +1854,32 @@ def evaluate_bootstrap_reference_scenario(
         and hook == {}
         and not (target / ".ley").exists()
     )
+    downstream_required = [
+        str(value)
+        for value in expectation.get(
+            "downstream_required",
+            [marker],
+        )
+    ]
+    downstream_forbidden = [
+        str(value)
+        for value in expectation.get(
+            "downstream_forbidden",
+            [unrelated_marker, target_private_marker],
+        )
+    ]
+    downstream_ok = task_contract_success(
+        compiled,
+        downstream_required,
+        downstream_forbidden,
+    )
     if not initial_ok:
         failures.append(
             "explicit Bootstrap Reference did not provide isolated captured MCP context while keeping hooks/target inactive"
+        )
+    if not downstream_ok:
+        failures.append(
+            "Bootstrap Reference context did not satisfy the independent downstream isolated-reference contract"
         )
 
     cli_json(["egress", "project", "never-send", str(source), "--json"])
@@ -1829,7 +1939,7 @@ def evaluate_bootstrap_reference_scenario(
     if privacy != 0.0:
         failures.append("Bootstrap Reference agent output leaked a private path or unrelated/target canary")
 
-    return not failures, privacy, failures
+    return not failures, downstream_ok, privacy, failures
 
 
 def create_structured_session(
@@ -1926,13 +2036,14 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
     bootstrap_expectation = scenario.get("expected_bootstrap_specification")
     if isinstance(bootstrap_expectation, dict):
-        passed, privacy, bootstrap_failures = evaluate_bootstrap_specification_scenario(
+        passed, downstream, privacy, bootstrap_failures = evaluate_bootstrap_specification_scenario(
             scenario,
             base_dir,
             project,
             bootstrap_expectation,
         )
         scores["bootstrap_specification"] = passed
+        scores["downstream_task_contract"] = downstream
         scores["privacy_violation_rate"] = privacy
         failures.extend(bootstrap_failures)
         return {
@@ -1945,13 +2056,14 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
     bootstrap_reference_expectation = scenario.get("expected_bootstrap_reference")
     if isinstance(bootstrap_reference_expectation, dict):
-        passed, privacy, bootstrap_failures = evaluate_bootstrap_reference_scenario(
+        passed, downstream, privacy, bootstrap_failures = evaluate_bootstrap_reference_scenario(
             scenario,
             base_dir,
             project,
             bootstrap_reference_expectation,
         )
         scores["bootstrap_reference"] = passed
+        scores["downstream_task_contract"] = downstream
         scores["privacy_violation_rate"] = privacy
         failures.extend(bootstrap_failures)
         return {
@@ -2091,6 +2203,25 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and int(compiled.get("estimatedTokens", 0)) <= int(compiled.get("maxTokens", 0))
         )
         scores["premise_adjudication"] = premise_ok
+        downstream_required = [
+            str(value)
+            for value in premise_expectation.get("downstream_required", [])
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in premise_expectation.get("downstream_forbidden", [])
+        ]
+        if downstream_required or downstream_forbidden:
+            record_downstream_task_contract(
+                scores,
+                failures,
+                task_contract_success(
+                    compiled,
+                    downstream_required,
+                    downstream_forbidden,
+                ),
+                "premise adjudication context did not satisfy the independent downstream replacement-state contract",
+            )
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)], [compiled]
         )
@@ -2223,6 +2354,30 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         scores["reviewed_runbook"] = (
             runbook_ok and export_ok and stale_blocked and cloud_blocked and not installed_skill
+        )
+        downstream_required = [
+            str(value)
+            for value in runbook_expectation.get(
+                "downstream_required",
+                markers,
+            )
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in runbook_expectation.get(
+                "downstream_forbidden",
+                [hidden_marker] if hidden_marker else [],
+            )
+        ]
+        record_downstream_task_contract(
+            scores,
+            failures,
+            text_contract_success(
+                skill_content,
+                downstream_required,
+                downstream_forbidden,
+            ),
+            "reviewed Runbook Skill content did not satisfy the independent downstream reusable-procedure contract",
         )
         scores["privacy_violation_rate"] = path_leakage
         evidence_text.extend([compiled_runbook, exported_skill])
@@ -2399,6 +2554,34 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         revision_ok = divergent_ok and merged_ok
         scores["revision_adjudication"] = revision_ok
+        downstream_required_after_merge = [
+            str(value)
+            for value in revision_expectation.get(
+                "downstream_required_after_merge", []
+            )
+        ]
+        downstream_forbidden_while_divergent = [
+            str(value)
+            for value in revision_expectation.get(
+                "downstream_forbidden_while_divergent", []
+            )
+        ]
+        if downstream_required_after_merge or downstream_forbidden_while_divergent:
+            downstream_revision_ok = task_contract_success(
+                divergent,
+                [],
+                downstream_forbidden_while_divergent,
+            ) and task_contract_success(
+                merged,
+                downstream_required_after_merge,
+                [],
+            )
+            record_downstream_task_contract(
+                scores,
+                failures,
+                downstream_revision_ok,
+                "revision-aware context did not withhold divergent task state and re-admit it only after merge",
+            )
         branch_controls_post_merge_ok = True
         branch_controls_evidence: list[object] = []
         if isinstance(branch_controls_expectation, dict):
@@ -2789,6 +2972,25 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and compiled.get("sourceBoundary") == "mixed-authority-context"
         )
         scores["specification_admission"] = specification_ok
+        downstream_required = [
+            str(value)
+            for value in specification_expectation.get("downstream_required", [])
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in specification_expectation.get("downstream_forbidden", [])
+        ]
+        if downstream_required or downstream_forbidden:
+            record_downstream_task_contract(
+                scores,
+                failures,
+                task_contract_success(
+                    compiled,
+                    downstream_required,
+                    downstream_forbidden,
+                ),
+                "Specification context did not satisfy the independent downstream human-intent contract",
+            )
         evidence_text.append(compiled)
         if not specification_ok:
             failures.append(
@@ -2998,6 +3200,39 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         egress_ok = cloud_blocked and local_allowed and confirm_blocked and never_blocked
         scores["egress_policy"] = egress_ok
+        downstream_required_local = [
+            str(value)
+            for value in egress_expectation.get("downstream_required_local", [])
+        ]
+        downstream_forbidden_blocked = [
+            str(value)
+            for value in egress_expectation.get(
+                "downstream_forbidden_blocked", []
+            )
+        ]
+        if downstream_required_local or downstream_forbidden_blocked:
+            downstream_egress_ok = task_contract_success(
+                local_compiled,
+                downstream_required_local,
+                [],
+            ) and all(
+                task_contract_success(
+                    payload,
+                    [],
+                    downstream_forbidden_blocked,
+                )
+                for payload in (
+                    cloud_compiled,
+                    confirm_compiled,
+                    never_compiled,
+                )
+            )
+            record_downstream_task_contract(
+                scores,
+                failures,
+                downstream_egress_ok,
+                "egress-gated context did not satisfy the independent local-allowed/cloud-withheld task contract",
+            )
         evidence_text.extend(
             [
                 cloud_direct,
@@ -3253,6 +3488,35 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and retained_enforced
         )
         scores["external_connector"] = connector_ok
+        downstream_required_local = [
+            str(value)
+            for value in connector_expectation.get(
+                "downstream_required_local",
+                [historical_marker],
+            )
+        ]
+        downstream_forbidden_cloud = [
+            str(value)
+            for value in connector_expectation.get(
+                "downstream_forbidden_cloud",
+                [historical_marker],
+            )
+        ]
+        record_downstream_task_contract(
+            scores,
+            failures,
+            task_contract_success(
+                local_compiled,
+                downstream_required_local,
+                [],
+            )
+            and task_contract_success(
+                cloud_compiled,
+                [],
+                downstream_forbidden_cloud,
+            ),
+            "external connector did not satisfy the independent downstream local-allowed/cloud-withheld context contract",
+        )
         evidence_text.extend(agent_payloads)
         if not connector_ok:
             failures.append(
@@ -3343,6 +3607,25 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and after_clean
         )
         scores["mounted_reference"] = mounted_ok
+        downstream_required = [
+            str(value)
+            for value in mounted_expectation.get("downstream_required", [])
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in mounted_expectation.get("downstream_forbidden", [])
+        ]
+        if downstream_required or downstream_forbidden:
+            record_downstream_task_contract(
+                scores,
+                failures,
+                task_contract_success(
+                    compiled,
+                    downstream_required,
+                    downstream_forbidden,
+                ),
+                "mounted-reference context did not satisfy the independent downstream reference contract",
+            )
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)]
             + [str(path) for pair in mounted_projects for path in pair],
@@ -3626,6 +3909,30 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and local_history_ok
         )
         scores["knowledge_scope"] = knowledge_scope_ok
+        downstream_required = [
+            str(value)
+            for value in knowledge_scope_expectation.get(
+                "downstream_required",
+                markers,
+            )
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in knowledge_scope_expectation.get(
+                "downstream_forbidden",
+                [unrelated_marker] if unrelated_marker else [],
+            )
+        ]
+        record_downstream_task_contract(
+            scores,
+            failures,
+            task_contract_success(
+                compiled,
+                downstream_required,
+                downstream_forbidden,
+            ),
+            "team/organization Knowledge Scope did not satisfy the independent downstream shared-context contract",
+        )
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)]
             + [str(path) for pair in scope_projects for path in pair]
@@ -4093,6 +4400,34 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and local_history_ok
         )
         scores["policy_bundle"] = policy_bundle_ok
+        downstream_required = [
+            str(value)
+            for value in policy_bundle_expectation.get(
+                "downstream_required",
+                [allowed_marker],
+            )
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in policy_bundle_expectation.get(
+                "downstream_forbidden",
+                [
+                    value
+                    for value in (unrelated_marker, conflict_private_marker)
+                    if value
+                ],
+            )
+        ]
+        record_downstream_task_contract(
+            scores,
+            failures,
+            task_contract_success(
+                compiled,
+                downstream_required,
+                downstream_forbidden,
+            ),
+            "team/organization Policy Bundle did not satisfy the independent downstream human-intent contract",
+        )
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)]
             + [str(path) for pair in policy_projects for path in pair]
@@ -4497,6 +4832,31 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and privacy_ok
         )
         scores["historical_host_import"] = historical_host_import_ok
+        downstream_required = [
+            str(value)
+            for value in historical_import_expectation.get(
+                "downstream_required",
+                selected_markers,
+            )
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in historical_import_expectation.get(
+                "downstream_forbidden",
+                [unrelated_marker, secret_marker],
+            )
+        ]
+        record_downstream_task_contract(
+            scores,
+            failures,
+            historical_search_ok
+            and text_contract_success(
+                json.dumps(returned_turns, sort_keys=True),
+                downstream_required,
+                downstream_forbidden,
+            ),
+            "explicit historical host import did not satisfy the independent downstream bounded-evidence contract",
+        )
         scores["privacy_violation_rate"] = privacy_rate
         evidence_text.extend(observable_outputs)
         if not historical_host_import_ok:
@@ -4837,6 +5197,25 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and str(vault) not in dossier_text
         )
         scores["topic_dossier"] = dossier_ok
+        downstream_required = [
+            str(value)
+            for value in dossier_expectation.get("downstream_required", [])
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in dossier_expectation.get("downstream_forbidden", [])
+        ]
+        if downstream_required or downstream_forbidden:
+            record_downstream_task_contract(
+                scores,
+                failures,
+                text_contract_success(
+                    dossier_text,
+                    downstream_required,
+                    downstream_forbidden,
+                ),
+                "Topic Dossier did not satisfy the independent downstream bounded-briefing contract",
+            )
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)], [dossier]
         )
@@ -4899,6 +5278,25 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and str(vault) not in state_text
         )
         scores["current_project_state"] = state_ok
+        downstream_required = [
+            str(value)
+            for value in current_state_expectation.get("downstream_required", [])
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in current_state_expectation.get("downstream_forbidden", [])
+        ]
+        if downstream_required or downstream_forbidden:
+            record_downstream_task_contract(
+                scores,
+                failures,
+                text_contract_success(
+                    state_text,
+                    downstream_required,
+                    downstream_forbidden,
+                ),
+                "Current Project State did not satisfy the independent downstream working-state contract",
+            )
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)], [state]
         )
@@ -5006,6 +5404,35 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and path_edges[0].get("provenance") == "deterministic"
         )
         scores["graph_relation_retrieval"] = graph_relation_ok
+        downstream_required = [
+            str(value)
+            for value in graph_relation_expectation.get(
+                "downstream_required",
+                [relevant_test_path],
+            )
+        ]
+        downstream_forbidden = [
+            str(value)
+            for value in graph_relation_expectation.get(
+                "downstream_forbidden",
+                [unrelated_test_path],
+            )
+        ]
+        record_downstream_task_contract(
+            scores,
+            failures,
+            text_contract_success(
+                json.dumps({"neighbors": neighbors, "path": path}, sort_keys=True),
+                downstream_required,
+                downstream_forbidden,
+            )
+            and not text_contract_success(
+                baseline_text,
+                downstream_required,
+                [],
+            ),
+            "graph relations did not independently surface the related test beyond the direct-search baseline",
+        )
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)], [baseline, neighbors, path]
         )
@@ -6542,6 +6969,88 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     scores["origin_lineage"] = lineage_ok
                     if not lineage_ok:
                         failures.append("derived learning did not preserve the bound recovery origin chain")
+                    cli_json(
+                        [
+                            "learning",
+                            "review",
+                            learning_id,
+                            str(project),
+                            "--actor",
+                            "user",
+                            "--action",
+                            "confirm",
+                            "--note",
+                            "Explicitly reviewed lineage-bearing recovery learning for downstream evaluation.",
+                            "--request-id",
+                            request_id(f"{scenario['id']}:origin-lineage:confirm"),
+                            "--json",
+                        ]
+                    )
+                    reviewed_learning = mcp_call(
+                        project,
+                        "ley_learning_get",
+                        {
+                            "learningId": learning_id,
+                            "maxCharacters": 4_000,
+                        },
+                    )
+                    downstream_lineage_context = mcp_call(
+                        project,
+                        "ley_compile_context",
+                        {
+                            "task": prompt_text or "Fix the login bug",
+                            "maxResults": 8,
+                            "maxTokens": 1_500,
+                        },
+                    )
+                    reviewed_learning_auto_admitted = any(
+                        isinstance(item, dict)
+                        and item.get("learningId") == learning_id
+                        for item in downstream_lineage_context.get("items", [])
+                    )
+                    lineage_preserved_after_review = (
+                        reviewed_learning.get("originLineage")
+                        == learning_context.get("originLineage")
+                    )
+                    reviewed_learning_body_ok = text_contract_success(
+                        json.dumps(
+                            {
+                                "title": reviewed_learning.get("title"),
+                                "guidance": reviewed_learning.get("guidance"),
+                            },
+                            sort_keys=True,
+                        ),
+                        [prompt_text or "Fix the login bug"],
+                        [],
+                    )
+                    downstream_lineage_checks = {
+                        "reviewed-learning-verified":
+                            reviewed_learning.get("state") == "verified",
+                        "reviewed-learning-trusted":
+                            reviewed_learning.get("trustState") == "trusted",
+                        "uncited-learning-not-auto-reusable":
+                            reviewed_learning.get("freshness") == "uncited"
+                            and reviewed_learning.get("trustedForReuse") is False,
+                        "lineage-preserved-after-review": lineage_preserved_after_review,
+                        "required-task-evidence-present": reviewed_learning_body_ok,
+                        "compiler-does-not-auto-admit-uncited-learning":
+                            not reviewed_learning_auto_admitted,
+                    }
+                    failed_downstream_lineage_checks = [
+                        label
+                        for label, passed in downstream_lineage_checks.items()
+                        if not passed
+                    ]
+                    record_downstream_task_contract(
+                        scores,
+                        failures,
+                        all(downstream_lineage_checks.values()),
+                        "origin-lineage learning did not preserve useful progressive disclosure and non-laundering after explicit review: "
+                        + ", ".join(failed_downstream_lineage_checks),
+                    )
+                    evidence_text.extend(
+                        [reviewed_learning, downstream_lineage_context]
+                    )
                 typed_binding_ok = True
                 typed_lineage_ok = True
                 typed_after_ok = True
@@ -9081,6 +9590,30 @@ def validate_coverage_config(
         if set(dimensions) != required_dimensions:
             raise RuntimeError(
                 f"{label} capability {capability} must define exactly {sorted(required_dimensions)}"
+            )
+        if (
+            label == "P0"
+            and capability in P0_INDEPENDENT_DOWNSTREAM_CAPABILITIES
+            and dimensions["downstream"][1] != "downstream_task_contract"
+        ):
+            raise RuntimeError(
+                f"P0 capability {capability} must use downstream_task_contract for independent downstream evidence"
+            )
+        if (
+            label == "P1"
+            and capability in P1_INDEPENDENT_DOWNSTREAM_CAPABILITIES
+            and dimensions["downstream"][1] != "downstream_task_contract"
+        ):
+            raise RuntimeError(
+                f"P1 capability {capability} must use downstream_task_contract for independent downstream evidence"
+            )
+        if (
+            label == "P2"
+            and capability in P2_INDEPENDENT_DOWNSTREAM_CAPABILITIES
+            and dimensions["downstream"][1] != "downstream_task_contract"
+        ):
+            raise RuntimeError(
+                f"P2 capability {capability} must use downstream_task_contract for independent downstream evidence"
             )
         for dimension, (scenario_id, metric, expectation) in dimensions.items():
             if scenario_id not in scenario_ids:

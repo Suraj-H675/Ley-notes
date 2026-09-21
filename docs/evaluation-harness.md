@@ -31,10 +31,77 @@ ADR 0068 extends the existing Specification representatives rather than adding a
 
 ## Downstream task contract and baseline
 
+The deterministic downstream contract is intentionally separate from a feature's own success flag.
+It serializes only task-supporting context bodies and excludes the task/query text itself, so a fixture
+cannot satisfy its own required marker merely by asking for that marker. A contract passes only when
+the assembled context contains all declared required evidence and excludes every declared distractor.
+
 The budgeted-quality scenario compares a 500-token Context Compiler result with a bounded recent-resume
-baseline. The compiler passes only when its returned context bodies contain required task evidence,
-exclude declared distractors, and remain inside the requested budget. The resume baseline uses a
-character budget chosen as an approximate four-characters-per-token equivalent.
+baseline. The compiler passes only when its returned context bodies satisfy that downstream contract
+and remain inside the requested budget. The resume baseline uses a character budget chosen as an
+approximate four-characters-per-token equivalent.
+
+The P0 matrix also uses this same independent contract where a feature has a distinct downstream-use
+surface:
+
+- Context Compiler;
+- Specifications;
+- Context Mounts;
+- origin-preserving derivation lineage;
+- premise/state adjudication;
+- revision awareness; and
+- agent-context egress policy.
+
+Their downstream matrix cell must reference `downstream_task_contract`; the evaluator rejects a P0
+configuration that aliases those cells back to the capability's adversarial/regression metric.
+Representative contracts prove, for example, that a current replacement learning reaches task
+context while its superseded guidance does not; an explicitly mounted reference contributes the
+requested marker while an unmounted project does not; divergent branch state is withheld before merge
+and becomes usable only after Git proves it merged; relevant Specification criteria/method content is
+present while an unrelated Specification is absent; and egress-gated private context is usable for the
+allowed local target while absent from blocked targets. Origin lineage uses a deliberately different
+form of the same contract: after explicit user review, the exact learning guidance and mechanically
+resolved lineage must remain available through `ley_learning_get`, while an `uncited` learning keeps
+`trustedForReuse: false` and must not be auto-injected by the Context Compiler merely because the
+review action marked it trusted.
+
+The same rule is applied selectively to P1 surfaces that actually produce reusable task-facing
+knowledge rather than merely diagnostics. The following P1 downstream cells must also use
+`downstream_task_contract`:
+
+- Bootstrap Specifications;
+- Bootstrap Reference projects;
+- Topic Dossiers;
+- Current Project State;
+- reviewed Runbook/Skill export; and
+- richer graph relations.
+
+Their contracts prove the independently usable projection rather than reusing the feature's overall
+pass bit. For example, a Bootstrap Specification must expose the exact requirement/criteria/method
+while withholding prompt/live-target canaries; a Bootstrap Reference must expose only the attached
+reference marker; a Topic Dossier must contain the bounded decision/open-work/verification/artifact
+briefing; Current Project State must expose working/open state without changing its historical-authority
+semantics; reviewed Skill content must contain only reviewed reusable guidance; and graph traversal
+must surface the relevant test that direct context search intentionally misses while excluding the
+unrelated test.
+
+P2 applies the same rule only where the expansion itself feeds reusable agent context:
+
+- external reference connectors;
+- team/organization Knowledge Scopes;
+- team/organization Policy Bundles; and
+- explicit historical host import.
+
+External-reference contracts require the relevant historical context to be usable for the allowed
+local target while absent from a blocked cloud target. Knowledge Scope contracts require all explicitly
+attached shared markers while excluding unrelated scope material. Policy Bundle contracts require the
+allowed bundled policy plus active-project human intent while excluding unrelated/conflicting private
+policy text. Historical-import contracts require the explicitly selected host turns to remain
+progressively readable/discoverable while unrelated-session and secret markers stay absent.
+
+Multimodal evidence and local consolidation remain on their native provenance/review metrics: their
+downstream value is preserving original evidence or proposing reviewable consolidation, not ordinary
+read-time task-context selection.
 
 This is a deterministic evidence-sufficiency proxy, **not** a score for model reasoning and not a claim
 that Ley has beaten an external agent benchmark. Model-dependent downstream benchmarks can be layered
@@ -210,7 +277,14 @@ A full-corpus run validates a matrix for each P0 capability:
 
 Every capability must retain measured adversarial, downstream, privacy, and regression evidence. The
 matrix references concrete scenario/metric pairs. Missing scenarios, misspelled metrics, unsupported
-expectations, or failing metric values make a full-corpus run fail.
+expectations, or failing metric values make a full-corpus run fail. For task-facing P0 context
+capabilities and origin-lineage progressive disclosure, downstream evidence must use the independent
+`downstream_task_contract` described above. Memory Compiler keeps its separate crash-recovery outcome
+signal because its downstream contract is successful recovery/closure of interrupted evidence rather
+than read-time context selection. P1 capabilities listed in the downstream-contract section above are
+likewise configuration-enforced; diagnostic/inspection surfaces such as Memory Health or Context Pack
+Inspector keep their native metrics rather than being forced into an artificial task-content benchmark.
+The listed P2 reusable-context capabilities are configuration-enforced in the same way.
 
 The crash-recovery representative exercises the supported candidate-bound recovery writers through the
 real MCP server. It first verifies and idempotently commits one unresolved claim through the legacy
