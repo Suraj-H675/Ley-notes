@@ -6101,6 +6101,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             tool_compiled: dict[str, object] | None = None
             tool_history: dict[str, object] | None = None
             tool_projection: dict[str, object] | None = None
+            tool_verification: dict[str, object] | None = None
             tool_secret_canary = str(scenario.get("tool_secret_canary", ""))
             tool_raw_call_id = str(scenario.get("tool_raw_call_id", ""))
             if scenario.get("expected_recovery_checkpoint"):
@@ -8447,6 +8448,17 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             and isinstance(command_candidates[-1], dict)
                             else {}
                         )
+                        tool_verification = mcp_call(
+                            project,
+                            "ley_session_memory_verify_observed_command",
+                            {
+                                "sessionId": session_id,
+                                "expectedEventCount": int(
+                                    tool_compiled.get("sessionEventCount", 0)
+                                ),
+                                "sourceRecordId": tool_record_id,
+                            },
+                        )
                         durable_checkpoint_count = len(
                             tool_projection.get("checkpoints", [])
                             if isinstance(tool_projection, dict)
@@ -8527,6 +8539,13 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                                 "commandField"
                             )
                             == "supportingToolEvidence.command",
+                            "candidate-has-fingerprint": str(
+                                command_candidate.get("candidateFingerprint", "")
+                            ).startswith("sha256:"),
+                            "candidate-verification-allowed": command_candidate.get(
+                                "verificationAllowed"
+                            )
+                            is True,
                             "candidate-explicit-null-exit": "exitCode"
                             in command_candidate
                             and command_candidate.get("exitCode") is None,
@@ -8546,6 +8565,37 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             is False,
                             "candidate-no-outcome-proof": command_candidate.get(
                                 "outcomeProven"
+                            )
+                            is False,
+                            "candidate-verifier-review-required": tool_verification.get(
+                                "state"
+                            )
+                            == "review-required",
+                            "candidate-verifier-source": tool_verification.get(
+                                "sourceRecordId"
+                            )
+                            == tool_record_id,
+                            "candidate-verifier-fingerprint": tool_verification.get(
+                                "candidateFingerprint"
+                            )
+                            == command_candidate.get("candidateFingerprint"),
+                            "candidate-verifier-null-exit": "exitCode"
+                            in tool_verification
+                            and tool_verification.get("exitCode") is None,
+                            "candidate-verifier-no-write": tool_verification.get(
+                                "automaticWriteAllowed"
+                            )
+                            is False,
+                            "candidate-verifier-no-verification": tool_verification.get(
+                                "verificationClaimed"
+                            )
+                            is False,
+                            "candidate-verifier-no-outcome": tool_verification.get(
+                                "outcomeProven"
+                            )
+                            is False,
+                            "candidate-verifier-no-semantic-proof": tool_verification.get(
+                                "semanticFaithfulnessProven"
                             )
                             is False,
                             "history-schema-v14": tool_history.get("schemaVersion") == 14,
@@ -8647,6 +8697,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 privacy_payloads.append(tool_history)
             if tool_projection is not None:
                 privacy_payloads.append(tool_projection)
+            if tool_verification is not None:
+                privacy_payloads.append(tool_verification)
             privacy_canaries = [str(project), str(vault)]
             if task_secret_canary:
                 privacy_canaries.append(task_secret_canary)

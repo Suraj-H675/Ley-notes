@@ -241,8 +241,11 @@ as supporting Memory Compiler provenance and bounded explicit session history, k
 checkpoint count, and label the normal post-tool event only as `returned` even when the synthetic
 response carries non-zero-looking metadata. The same compiler call must derive exactly one read-only
 automatic Command candidate from the complete retained command, reference the exact `toe_` source row,
-serialize `exitCode: null`, keep binding/write/Verification/outcome proof false, and persist no candidate
-into schema-v14 session state.
+serialize `exitCode: null`, and carry a deterministic candidate fingerprint. The scenario then calls
+`ley_session_memory_verify_observed_command` with that exact `toe_` row and event count and requires a
+`review-required` result with the same fingerprint while binding/write/Verification/outcome/semantic
+proof all remain false. Neither the candidate nor verifier result may be persisted into schema-v14
+session state.
 Task-, Plan-, batch-, rich-Problem-, and composite-specific secret canaries are injected into captured
 host prompts and must be redacted from recovery packs and absent from durable `session-v9.json`,
 `session-v10.json`, `session-v11.json`, `session-v12.json`, and `session-v13.json`. A separate Bash

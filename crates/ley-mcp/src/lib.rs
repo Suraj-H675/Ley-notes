@@ -15,32 +15,33 @@ use ley_core::{
     read_session_turns_context, record_context_utility_observation,
     replay_context_utility_binding_if_present, search_project_memory, start_session,
     traverse_project_graph, verify_batch_memory_transition, verify_composite_memory_transition,
-    verify_memory_transition, verify_rich_problem_memory_transition,
-    verify_typed_memory_transition, AgentContextAuthorities, AgentEgressBlockReason,
-    AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits, AttemptInput, AttemptOutcome,
-    BatchMemoryCandidateClaim, BatchMemoryTransitionInput, BootstrapSpecificationRegistry,
-    CheckpointInput, CommandInput, CommitBatchMemoryTransitionInput,
-    CommitCompositeMemoryTransitionInput, CommitPlanMemoryTransitionInput,
-    CommitRichProblemMemoryTransitionInput, CommitStructuredMemoryTransitionInput,
-    CommitTaskMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
-    CompositeMemoryTransitionInput, ConsolidationInboxLimits, ContextCompileLimits,
-    ContextMountRegistry, ContextUtilityBindingInput, ContextUtilityObservationInput,
-    CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, ExternalConnector,
-    ExternalConnectorRegistry, FinishSessionInput, GraphDirection, GraphEdgeKind,
-    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningKind, LearningListScope,
-    LearningMutation, LearningProvenance, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
-    MemoryHealthLimits, MemoryTransitionInput, PlanItemInput, PlanStatus, PolicyBundleRegistry,
-    ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope, ProposeLearningInput,
-    ResolutionInput, RetrievalLimits, RevisionCompatibility, RichProblemAttemptCandidate,
-    RichProblemMemoryCandidate, RichProblemMemoryTransitionInput, RichProblemResolutionCandidate,
-    SessionMutation, SessionSource, SessionSourceKind, SessionStatus, SpecificationContextLimits,
-    SpecificationRegistry, StartSessionInput, TaskInput, TaskStatus, TopicDossierLimits,
-    TypedMemoryCandidateClaim, TypedMemoryTransitionInput, VerificationInput, VerificationStatus,
-    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
-    DEFAULT_AGENT_LEGIBILITY_SESSIONS, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
-    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_CONTEXT_COMPILE_RESULTS,
-    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
-    DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
+    verify_memory_transition, verify_observed_command_memory_transition,
+    verify_rich_problem_memory_transition, verify_typed_memory_transition, AgentContextAuthorities,
+    AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits,
+    AttemptInput, AttemptOutcome, BatchMemoryCandidateClaim, BatchMemoryTransitionInput,
+    BootstrapSpecificationRegistry, CheckpointInput, CommandInput,
+    CommitBatchMemoryTransitionInput, CommitCompositeMemoryTransitionInput,
+    CommitPlanMemoryTransitionInput, CommitRichProblemMemoryTransitionInput,
+    CommitStructuredMemoryTransitionInput, CommitTaskMemoryTransitionInput,
+    CommitUnresolvedMemoryTransitionInput, CompositeMemoryTransitionInput,
+    ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry,
+    ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
+    DecisionInput, EgressPolicyRegistry, ExternalConnector, ExternalConnectorRegistry,
+    FinishSessionInput, GraphDirection, GraphEdgeKind, KnowledgeScopeRegistry, LearningActor,
+    LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
+    LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits,
+    MemoryTransitionInput, ObservedCommandMemoryTransitionInput, PlanItemInput, PlanStatus,
+    PolicyBundleRegistry, ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope,
+    ProposeLearningInput, ResolutionInput, RetrievalLimits, RevisionCompatibility,
+    RichProblemAttemptCandidate, RichProblemMemoryCandidate, RichProblemMemoryTransitionInput,
+    RichProblemResolutionCandidate, SessionMutation, SessionSource, SessionSourceKind,
+    SessionStatus, SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput,
+    TaskStatus, TopicDossierLimits, TypedMemoryCandidateClaim, TypedMemoryTransitionInput,
+    VerificationInput, VerificationStatus, DEFAULT_AGENT_LEGIBILITY_CHARACTERS,
+    DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, DEFAULT_AGENT_LEGIBILITY_SESSIONS,
+    DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
+    DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS,
+    DEFAULT_CONTEXT_TOKENS, DEFAULT_CURRENT_STATE_CHARACTERS, DEFAULT_CURRENT_STATE_KNOWLEDGE,
     DEFAULT_CURRENT_STATE_SESSIONS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
@@ -155,10 +156,12 @@ ley_session_memory_compile. Its `evidence` `tev_` records are the current candid
 schema-v14 `supportingToolEvidence` rows are untrusted supporting provenance only, `returned` is not proof \
 that a command or test succeeded, and `toe_` records must not be used as verifier/writer evidence IDs. \
 When a returned tool row says `automaticCommandCandidateEligibility: eligible`, the pack may also expose \
-a matching read-only `automaticCommandCandidates` row that points back to that exact `toe_` record and \
-sets `exitCode` to null. Treat it only as a deterministic proposal that the observed Bash invocation could \
-be represented as a Command; it is not persisted, bindable, write-authorized, or Verification evidence, \
-and it proves no outcome. \
+a matching read-only `automaticCommandCandidates` row that points back to that exact `toe_` record, \
+sets `exitCode` to null, and carries a deterministic candidate fingerprint. Re-check that exact candidate \
+with `ley_session_memory_verify_observed_command` before relying on it after any session mutation. A \
+`review-required` verifier result proves only that the same complete retained post-checkpoint Bash \
+observation still matches; the candidate remains unpersisted, unavailable to recovery writers, \
+non-write-authorized, and not Verification evidence, and it proves no outcome. \
 Before writing reconstructed structure, check unresolved/Decision/minimal-Problem \
 candidates with ley_session_memory_verify, Plan/Task candidates with ley_session_memory_verify_typed, \
 and one evidence-complete Problem episode with ordered Attempts and optional Resolution using \
@@ -929,6 +932,17 @@ pub struct VerifySessionMemoryParams {
     #[schemars(length(max = 10_000))]
     #[schemars(inner(regex(pattern = "^tev_[0-9a-f]{32}$")))]
     pub deferred_evidence_record_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VerifyObservedCommandSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    #[schemars(regex(pattern = "^toe_[0-9a-f]{32}$"))]
+    pub source_record_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -2975,6 +2989,36 @@ impl LeyMcpServer {
         }))
     }
 
+    /// Re-verify one deterministic automatic Command candidate against its exact retained
+    /// post-checkpoint Bash observation. This is read-only and does not make the candidate a
+    /// checkpoint/writer evidence anchor or prove any execution/verification outcome.
+    #[tool(
+        name = "ley_session_memory_verify_observed_command",
+        annotations(
+            title = "Verify an observed Ley Command candidate",
+            read_only_hint = true,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_verify_observed_command(
+        &self,
+        Parameters(params): Parameters<VerifyObservedCommandSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_historical_tool_result(|| {
+            verify_observed_command_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                ObservedCommandMemoryTransitionInput {
+                    expected_event_count: params.expected_event_count,
+                    source_record_id: params.source_record_id,
+                },
+            )
+        }))
+    }
+
     /// Verify a proposed structured transition against the exact current recovery window.
     /// This is read-only: review-required never means semantically proven or trusted.
     #[tool(
@@ -4509,6 +4553,7 @@ mod tests {
                 "ley_session_memory_verify",
                 "ley_session_memory_verify_batch",
                 "ley_session_memory_verify_composite",
+                "ley_session_memory_verify_observed_command",
                 "ley_session_memory_verify_problem",
                 "ley_session_memory_verify_typed",
                 "ley_session_turns_get",
@@ -5005,6 +5050,7 @@ mod tests {
                 "ley_session_memory_verify",
                 "ley_session_memory_verify_batch",
                 "ley_session_memory_verify_composite",
+                "ley_session_memory_verify_observed_command",
                 "ley_session_memory_verify_problem",
                 "ley_session_memory_verify_typed",
                 "ley_session_start",
@@ -7080,12 +7126,44 @@ mod tests {
         assert_eq!(candidate["sourceRecordId"], tool["recordId"]);
         assert_eq!(candidate["observationKind"], "returned");
         assert_eq!(candidate["commandField"], "supportingToolEvidence.command");
+        assert!(candidate["candidateFingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert_eq!(candidate["verificationAllowed"], true);
         assert!(candidate["exitCode"].is_null());
         assert_eq!(candidate["persisted"], false);
         assert_eq!(candidate["candidateBindingAllowed"], false);
         assert_eq!(candidate["automaticWriteAllowed"], false);
         assert_eq!(candidate["verificationClaimed"], false);
         assert_eq!(candidate["outcomeProven"], false);
+
+        let verified = server
+            .session_memory_verify_observed_command(Parameters(
+                VerifyObservedCommandSessionMemoryParams {
+                    session_id: session_id.clone(),
+                    expected_event_count: pack["sessionEventCount"].as_u64().unwrap(),
+                    source_record_id: tool["recordId"].as_str().unwrap().to_owned(),
+                },
+            ))
+            .await
+            .unwrap();
+        assert_eq!(verified.is_error, Some(false));
+        let verified = verified.structured_content.unwrap();
+        assert_eq!(verified["state"], "review-required");
+        assert_eq!(verified["sourceRecordId"], tool["recordId"]);
+        assert_eq!(verified["observationKind"], "returned");
+        assert_eq!(
+            verified["candidateFingerprint"],
+            candidate["candidateFingerprint"]
+        );
+        assert!(verified["exitCode"].is_null());
+        assert_eq!(verified["persisted"], false);
+        assert_eq!(verified["candidateBindingAllowed"], false);
+        assert_eq!(verified["automaticWriteAllowed"], false);
+        assert_eq!(verified["verificationClaimed"], false);
+        assert_eq!(verified["outcomeProven"], false);
+        assert_eq!(verified["semanticFaithfulnessProven"], false);
 
         let history = server
             .session_turns_get(Parameters(SessionTurnsParams {
@@ -9495,7 +9573,7 @@ mod tests {
         let client = TestClient.serve(client_transport).await.unwrap();
 
         let tools = client.list_all_tools().await.unwrap();
-        assert_eq!(tools.len(), 30);
+        assert_eq!(tools.len(), 31);
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_consolidation_inbox"));
@@ -9520,6 +9598,9 @@ mod tests {
         assert!(tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_session_memory_verify_problem"));
+        assert!(tools
+            .iter()
+            .any(|tool| { tool.name.as_ref() == "ley_session_memory_verify_observed_command" }));
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await
