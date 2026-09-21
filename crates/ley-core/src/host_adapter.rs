@@ -2,16 +2,18 @@ use crate::{
     compile_bootstrap_specifications_with_registries,
     compile_project_context_for_agent_with_registries, compile_session_memory, diagnose_project,
     evaluate_agent_egress, project_resume_context, read_session, record_session_prompt,
-    record_session_response, start_session, AgentContextAuthorities, AgentEgressTarget,
-    AgentSession, BootstrapSpecificationContext, BootstrapSpecificationRegistry,
-    CompiledContextPack, ContextCompileCoverage, ContextCompileLimits, ContextMountRegistry,
-    EgressPolicyRegistry, KnowledgeScopeRegistry, LeyCoreError, MemoryCompilationState,
-    MountedReferenceCoverage, PolicyBundleCompileCoverage, PolicyBundleRegistry, ProjectResumePack,
-    SessionSource, SessionSourceKind, SessionStatus, SharedKnowledgeCoverage,
-    SpecificationCompileCoverage, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
+    record_session_response, record_session_tool_observation, start_session,
+    AgentContextAuthorities, AgentEgressTarget, AgentSession, BootstrapSpecificationContext,
+    BootstrapSpecificationRegistry, CompiledContextPack, ContextCompileCoverage,
+    ContextCompileLimits, ContextMountRegistry, EgressPolicyRegistry, KnowledgeScopeRegistry,
+    LeyCoreError, MemoryCompilationState, MountedReferenceCoverage, PolicyBundleCompileCoverage,
+    PolicyBundleRegistry, ProjectResumePack, SessionSource, SessionSourceKind, SessionStatus,
+    SharedKnowledgeCoverage, SpecificationCompileCoverage, SpecificationRegistry,
+    StartSessionInput, ToolObservationInput, ToolObservationKind, TurnEvidenceInput,
     TurnEvidenceOrigin, DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS,
     DEFAULT_MEMORY_COMPILE_RESULTS, MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS,
-    MIN_MEMORY_COMPILE_CHARACTERS,
+    MIN_MEMORY_COMPILE_CHARACTERS, SESSION_TOOL_COMMAND_LIMIT_CHARACTERS,
+    SESSION_TOOL_RESULT_LIMIT_CHARACTERS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -19,7 +21,7 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::path::Path;
 
-pub const HOST_ADAPTER_SCHEMA_VERSION: u32 = 4;
+pub const HOST_ADAPTER_SCHEMA_VERSION: u32 = 5;
 const MAX_HOST_IDENTIFIER_CHARACTERS: usize = 512;
 const HOST_RESUME_SESSIONS: usize = 3;
 const HOST_RESUME_LEARNINGS: usize = 6;
@@ -27,6 +29,10 @@ const HOST_RESUME_CHARACTERS: usize = 8_000;
 const HOST_TASK_CONTEXT_MAX_BYTES: usize = 3_500;
 const HOST_TASK_CONTEXT_RESERVED_BYTES: usize = 720;
 const HOST_TASK_CONTEXT_BODY_BYTES: usize = 320;
+const HOST_TOOL_COMMAND_INPUT_LIMIT_CHARACTERS: usize = SESSION_TOOL_COMMAND_LIMIT_CHARACTERS * 4;
+const HOST_TOOL_RESULT_INPUT_LIMIT_CHARACTERS: usize = SESSION_TOOL_RESULT_LIMIT_CHARACTERS * 4;
+const HOST_TOOL_RESPONSE_STRUCTURED_VALUE_LIMIT: usize = 10_000;
+const HOST_TOOL_RESPONSE_MAX_DEPTH: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct HostCompilerOmissions {
@@ -83,6 +89,7 @@ pub enum HostHookDisposition {
     ContextWithheld,
     TurnPrepared,
     TurnCaptured,
+    ToolCaptured,
     Noop,
 }
 
@@ -434,8 +441,258 @@ pub fn process_host_hook(
                 output: json!({}),
             })
         }
+        (AgentHost::Codex | AgentHost::ClaudeCode, "PostToolUse")
+        | (AgentHost::ClaudeCode, "PostToolUseFailure") => {
+            let tool_name = required_text(object.get("tool_name"), "tool_name")?;
+            if tool_name != "Bash" {
+                return Ok(noop(host, event));
+            }
+            let tool_use_id = required_text(object.get("tool_use_id"), "tool_use_id")?;
+            validate_host_identifier("tool_use_id", &tool_use_id)?;
+            let tool_input = object
+                .get("tool_input")
+                .and_then(Value::as_object)
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidSessionRequest(
+                        "host Bash tool hook requires an object tool_input".to_owned(),
+                    )
+                })?;
+            let command = required_bounded_text(
+                tool_input.get("command"),
+                "tool_input.command",
+                HOST_TOOL_COMMAND_INPUT_LIMIT_CHARACTERS,
+            )?;
+            let session_id = ensure_host_session(
+                project_start.as_ref(),
+                vault.as_ref(),
+                host,
+                &external_session_id,
+            )?;
+            let session = read_session(project_start.as_ref(), vault.as_ref(), &session_id)?;
+            if session.status != SessionStatus::Active {
+                return Ok(noop_for_session(host, event, session_id));
+            }
+            let turn_correlation = host_turn_correlation(
+                object,
+                host,
+                &external_session_id,
+                &session,
+                TurnSide::Response,
+            )?;
+            let (observation_kind, result) = if event == "PostToolUseFailure" {
+                (
+                    ToolObservationKind::ExplicitFailure,
+                    required_bounded_text(
+                        object.get("error"),
+                        "error",
+                        HOST_TOOL_RESULT_INPUT_LIMIT_CHARACTERS,
+                    )?,
+                )
+            } else {
+                (
+                    ToolObservationKind::Returned,
+                    serialize_tool_response(object.get("tool_response"))?,
+                )
+            };
+            let request_id = stable_request_id(&[
+                "tool",
+                host.source_name(),
+                &external_session_id,
+                &tool_use_id,
+                &event,
+            ]);
+            let mutation = record_session_tool_observation(
+                project_start,
+                vault,
+                &session_id,
+                ToolObservationInput {
+                    request_id,
+                    host: host.source_name().to_owned(),
+                    turn_correlation_material: Some(turn_correlation),
+                    tool_call_correlation_material: format!(
+                        "host={}\nsession={}\ntool-use={}",
+                        host.source_name(),
+                        external_session_id,
+                        tool_use_id
+                    ),
+                    tool_name,
+                    observation_kind,
+                    command,
+                    result,
+                },
+            )?;
+            Ok(HostHookResult {
+                schema_version: HOST_ADAPTER_SCHEMA_VERSION,
+                host,
+                event,
+                disposition: HostHookDisposition::ToolCaptured,
+                session_id: Some(mutation.session.session_id),
+                output: json!({}),
+            })
+        }
         _ => Ok(noop(host, event)),
     }
+}
+
+fn serialize_tool_response(value: Option<&Value>) -> Result<String, LeyCoreError> {
+    let Some(value) = value else {
+        return Ok(String::new());
+    };
+    if let Some(text) = value.as_str() {
+        ensure_tool_response_input_bound(text.chars().count())?;
+        return Ok(text.to_owned());
+    }
+    if value.is_null() {
+        return Ok(String::new());
+    }
+    let mut output = String::new();
+    let mut budget = ToolResponseFlattenBudget::default();
+    flatten_tool_response(value, "", &mut output, &mut budget, 0)?;
+    Ok(output)
+}
+
+#[derive(Debug, Default)]
+struct ToolResponseFlattenBudget {
+    nodes: usize,
+    characters: usize,
+}
+
+fn flatten_tool_response(
+    value: &Value,
+    path: &str,
+    output: &mut String,
+    budget: &mut ToolResponseFlattenBudget,
+    depth: usize,
+) -> Result<(), LeyCoreError> {
+    ensure_tool_response_depth(depth)?;
+    reserve_tool_response_node(budget)?;
+    match value {
+        Value::Null => {
+            if !path.is_empty() {
+                push_tool_response_line(output, budget, Some(path), "null")?;
+            }
+        }
+        Value::Bool(value) => {
+            let value = value.to_string();
+            push_tool_response_line(output, budget, Some(path), &value)?;
+        }
+        Value::Number(value) => {
+            let value = value.to_string();
+            push_tool_response_line(output, budget, Some(path), &value)?;
+        }
+        Value::String(value) => {
+            if path.is_empty() {
+                push_tool_response_line(output, budget, None, value)?;
+            } else {
+                push_tool_response_line(output, budget, Some(path), value)?;
+            }
+        }
+        Value::Array(values) => {
+            ensure_tool_response_children_fit(budget, values.len())?;
+            for (index, value) in values.iter().enumerate() {
+                let segment = format!("[{index}]");
+                let child = bounded_tool_response_path(path, &segment, false)?;
+                flatten_tool_response(value, &child, output, budget, depth + 1)?;
+            }
+        }
+        Value::Object(values) => {
+            ensure_tool_response_children_fit(budget, values.len())?;
+            let mut keys = values.keys().collect::<Vec<_>>();
+            keys.sort();
+            for key in keys {
+                let child = bounded_tool_response_path(path, key, true)?;
+                flatten_tool_response(&values[key], &child, output, budget, depth + 1)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_tool_response_depth(depth: usize) -> Result<(), LeyCoreError> {
+    if depth > HOST_TOOL_RESPONSE_MAX_DEPTH {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "host tool_response exceeds the {HOST_TOOL_RESPONSE_MAX_DEPTH}-level nesting limit"
+        )));
+    }
+    Ok(())
+}
+
+fn reserve_tool_response_node(budget: &mut ToolResponseFlattenBudget) -> Result<(), LeyCoreError> {
+    if budget.nodes >= HOST_TOOL_RESPONSE_STRUCTURED_VALUE_LIMIT {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "host tool_response contains too many structured values".to_owned(),
+        ));
+    }
+    budget.nodes += 1;
+    Ok(())
+}
+
+fn ensure_tool_response_children_fit(
+    budget: &ToolResponseFlattenBudget,
+    child_count: usize,
+) -> Result<(), LeyCoreError> {
+    if child_count > HOST_TOOL_RESPONSE_STRUCTURED_VALUE_LIMIT.saturating_sub(budget.nodes) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "host tool_response contains too many structured values".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn bounded_tool_response_path(
+    path: &str,
+    segment: &str,
+    dot_separator: bool,
+) -> Result<String, LeyCoreError> {
+    let separator_characters = usize::from(!path.is_empty() && dot_separator);
+    let characters = path
+        .chars()
+        .count()
+        .saturating_add(separator_characters)
+        .saturating_add(segment.chars().count());
+    ensure_tool_response_input_bound(characters)?;
+    if path.is_empty() {
+        Ok(segment.to_owned())
+    } else if dot_separator {
+        Ok(format!("{path}.{segment}"))
+    } else {
+        Ok(format!("{path}{segment}"))
+    }
+}
+
+fn push_tool_response_line(
+    output: &mut String,
+    budget: &mut ToolResponseFlattenBudget,
+    path: Option<&str>,
+    value: &str,
+) -> Result<(), LeyCoreError> {
+    let separator_characters = usize::from(!output.is_empty());
+    let path_characters = path.map_or(0, |path| path.chars().count().saturating_add(2));
+    let characters = budget
+        .characters
+        .saturating_add(separator_characters)
+        .saturating_add(path_characters)
+        .saturating_add(value.chars().count());
+    ensure_tool_response_input_bound(characters)?;
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    if let Some(path) = path {
+        output.push_str(path);
+        output.push_str(": ");
+    }
+    output.push_str(value);
+    budget.characters = characters;
+    Ok(())
+}
+
+fn ensure_tool_response_input_bound(characters: usize) -> Result<(), LeyCoreError> {
+    if characters > HOST_TOOL_RESULT_INPUT_LIMIT_CHARACTERS {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "host tool_response exceeds the {HOST_TOOL_RESULT_INPUT_LIMIT_CHARACTERS}-character normalization limit"
+        )));
+    }
+    Ok(())
 }
 
 fn ensure_host_session(
@@ -1130,6 +1387,28 @@ fn required_text(value: Option<&Value>, field: &str) -> Result<String, LeyCoreEr
         })
 }
 
+fn required_bounded_text(
+    value: Option<&Value>,
+    field: &str,
+    max_characters: usize,
+) -> Result<String, LeyCoreError> {
+    let value = value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            LeyCoreError::InvalidSessionRequest(format!(
+                "host hook input requires a non-empty string {field}"
+            ))
+        })?;
+    if value.chars().count() > max_characters {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "host hook {field} exceeds the {max_characters}-character input limit"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
 fn validate_host_identifier(field: &str, value: &str) -> Result<(), LeyCoreError> {
     if value.chars().count() > MAX_HOST_IDENTIFIER_CHARACTERS
         || value.chars().any(|character| character.is_control())
@@ -1500,6 +1779,216 @@ mod tests {
         assert!(resumed_context.contains("expectedEventCount"));
         assert!(!resumed_context.contains("fix the watcher"));
         assert!(!resumed_context.contains("Implemented the vault watcher"));
+    }
+
+    #[test]
+    fn codex_post_tool_use_captures_bash_as_observed_return_without_claiming_success() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(project.join("README.md"), "# Tool hook\n").unwrap();
+        initialize_project(&project, Some("Tool hook"), CaptureMode::Structured).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let prompt = process_host_hook(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            json!({
+                "session_id": "codex-tool-thread",
+                "cwd": project,
+                "hook_event_name": "UserPromptSubmit",
+                "turn_id": "turn-tool-1",
+                "prompt": "Run the focused tests"
+            }),
+        )
+        .unwrap();
+        let raw_tool_use_id = "toolu_codex_raw_123";
+        let payload = json!({
+            "session_id": "codex-tool-thread",
+            "cwd": project,
+            "hook_event_name": "PostToolUse",
+            "turn_id": "turn-tool-1",
+            "tool_name": "Bash",
+            "tool_use_id": raw_tool_use_id,
+            "tool_input": {
+                "command": "cargo test token=codex-tool-secret"
+            },
+            "tool_response": {
+                "output": "tests failed\napi_key=codex-result-secret",
+                "metadata": {"exit_code": 1}
+            }
+        });
+        let captured =
+            process_host_hook(&project, &vault, AgentHost::Codex, payload.clone()).unwrap();
+        let replayed = process_host_hook(&project, &vault, AgentHost::Codex, payload).unwrap();
+        assert_eq!(captured.disposition, HostHookDisposition::ToolCaptured);
+        assert_eq!(captured.session_id, replayed.session_id);
+
+        let session =
+            read_session(&project, &vault, prompt.session_id.as_deref().unwrap()).unwrap();
+        assert_eq!(session.tool_observations.len(), 1);
+        let observation = &session.tool_observations[0];
+        assert_eq!(observation.observation_kind, ToolObservationKind::Returned);
+        assert_eq!(observation.tool_name, "Bash");
+        assert_eq!(
+            observation.turn_reference,
+            session.prompts[0].turn_reference
+        );
+        assert!(observation.tool_call_reference.starts_with("tol_"));
+        assert!(observation
+            .command
+            .as_deref()
+            .unwrap()
+            .contains("[REDACTED:"));
+        assert!(observation
+            .result
+            .as_deref()
+            .unwrap()
+            .contains("[REDACTED:"));
+        let stored = serde_json::to_string(&session).unwrap();
+        assert!(!stored.contains(raw_tool_use_id));
+        assert!(!stored.contains("codex-tool-secret"));
+        assert!(!stored.contains("codex-result-secret"));
+        // Codex PostToolUse also fires for non-zero Bash exits. The adapter
+        // therefore preserves only the observed-return fact and does not
+        // manufacture a durable Verification/Command record.
+        assert!(session.checkpoints.is_empty());
+    }
+
+    #[test]
+    fn tool_hook_normalization_rejects_oversized_inputs_before_copy_or_flatten() {
+        let oversized_result = "r".repeat(HOST_TOOL_RESULT_INPUT_LIMIT_CHARACTERS + 1);
+        let flat_value = Value::String(oversized_result.clone());
+        let flat_error = serialize_tool_response(Some(&flat_value)).unwrap_err();
+        assert!(flat_error.to_string().contains("tool_response exceeds the"));
+
+        let structured_value = json!({
+            "result": oversized_result,
+        });
+        let structured_error = serialize_tool_response(Some(&structured_value)).unwrap_err();
+        assert!(structured_error
+            .to_string()
+            .contains("tool_response exceeds the"));
+
+        let oversized_command =
+            Value::String("c".repeat(HOST_TOOL_COMMAND_INPUT_LIMIT_CHARACTERS + 1));
+        let command_error = required_bounded_text(
+            Some(&oversized_command),
+            "tool_input.command",
+            HOST_TOOL_COMMAND_INPUT_LIMIT_CHARACTERS,
+        )
+        .unwrap_err();
+        assert!(command_error
+            .to_string()
+            .contains("tool_input.command exceeds the"));
+
+        let too_many_empty_containers = Value::Array(
+            (0..HOST_TOOL_RESPONSE_STRUCTURED_VALUE_LIMIT)
+                .map(|_| json!({}))
+                .collect(),
+        );
+        let fanout_error = serialize_tool_response(Some(&too_many_empty_containers)).unwrap_err();
+        assert!(fanout_error
+            .to_string()
+            .contains("too many structured values"));
+
+        let mut too_many_object_keys = serde_json::Map::new();
+        for index in 0..HOST_TOOL_RESPONSE_STRUCTURED_VALUE_LIMIT {
+            too_many_object_keys.insert(format!("key-{index}"), json!({}));
+        }
+        let object_error =
+            serialize_tool_response(Some(&Value::Object(too_many_object_keys))).unwrap_err();
+        assert!(object_error
+            .to_string()
+            .contains("too many structured values"));
+
+        let mut too_deep = json!({});
+        for _ in 0..=HOST_TOOL_RESPONSE_MAX_DEPTH {
+            too_deep = Value::Array(vec![too_deep]);
+        }
+        let depth_error = serialize_tool_response(Some(&too_deep)).unwrap_err();
+        assert!(depth_error.to_string().contains("nesting limit"));
+    }
+
+    #[test]
+    fn claude_post_tool_failure_is_observed_failure_and_non_bash_is_ignored() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(project.join("README.md"), "# Claude tool hook\n").unwrap();
+        initialize_project(&project, Some("Claude tool hook"), CaptureMode::Structured).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let prompt = process_host_hook(
+            &project,
+            &vault,
+            AgentHost::ClaudeCode,
+            json!({
+                "session_id": "claude-tool-thread",
+                "cwd": project,
+                "hook_event_name": "UserPromptSubmit",
+                "prompt": "Run npm test"
+            }),
+        )
+        .unwrap();
+        let failed = process_host_hook(
+            &project,
+            &vault,
+            AgentHost::ClaudeCode,
+            json!({
+                "session_id": "claude-tool-thread",
+                "cwd": project,
+                "hook_event_name": "PostToolUseFailure",
+                "tool_name": "Bash",
+                "tool_use_id": "toolu_claude_failure_raw",
+                "tool_input": {"command": "npm test"},
+                "error": "Exit code 1\napi_key=claude-tool-secret"
+            }),
+        )
+        .unwrap();
+        assert_eq!(failed.disposition, HostHookDisposition::ToolCaptured);
+
+        let ignored = process_host_hook(
+            &project,
+            &vault,
+            AgentHost::ClaudeCode,
+            json!({
+                "session_id": "claude-tool-thread",
+                "cwd": project,
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Write",
+                "tool_use_id": "toolu_claude_write_raw",
+                "tool_input": {"file_path": "/tmp/example"},
+                "tool_response": {"type": "create"}
+            }),
+        )
+        .unwrap();
+        assert_eq!(ignored.disposition, HostHookDisposition::Noop);
+
+        let session =
+            read_session(&project, &vault, prompt.session_id.as_deref().unwrap()).unwrap();
+        assert_eq!(session.tool_observations.len(), 1);
+        let observation = &session.tool_observations[0];
+        assert_eq!(
+            observation.observation_kind,
+            ToolObservationKind::ExplicitFailure
+        );
+        assert_eq!(observation.command.as_deref(), Some("npm test"));
+        assert!(observation
+            .result
+            .as_deref()
+            .unwrap()
+            .contains("[REDACTED:"));
+        let stored = serde_json::to_string(&session).unwrap();
+        assert!(!stored.contains("toolu_claude_failure_raw"));
+        assert!(!stored.contains("toolu_claude_write_raw"));
+        assert!(!stored.contains("claude-tool-secret"));
+        assert!(session.checkpoints.is_empty());
     }
 
     #[test]

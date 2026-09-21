@@ -27,6 +27,19 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ley hook --host codex",
+            "timeout": 20,
+            "statusMessage": "Saving bounded Ley Bash evidence"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

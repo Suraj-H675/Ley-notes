@@ -57,7 +57,13 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
     );
 
     let hooks = json(plugin.join("hooks/hooks.json"));
-    for event in ["SessionStart", "UserPromptSubmit", "Stop"] {
+    for event in [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "Stop",
+    ] {
         let handler = &hooks["hooks"][event][0]["hooks"][0];
         assert_eq!(handler["command"], "ley", "{event}");
         assert_eq!(
@@ -70,6 +76,8 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
         hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["statusMessage"],
         "Loading Ley task context"
     );
+    assert_eq!(hooks["hooks"]["PostToolUse"][0]["matcher"], "Bash");
+    assert_eq!(hooks["hooks"]["PostToolUseFailure"][0]["matcher"], "Bash");
 
     let skill = fs::read_to_string(plugin.join("skills/ley-memory/SKILL.md")).unwrap();
     assert!(skill.contains("ley_session_checkpoint"));
@@ -95,6 +103,13 @@ fn codex_prompt_hook_keeps_automatic_context_inside_an_explicit_host_bound() {
     assert_eq!(handler["command"], "ley hook --host codex");
     assert_eq!(handler["additionalContextLimit"], 5_000);
     assert_eq!(handler["statusMessage"], "Loading Ley task context");
+    let post_tool = &hooks["hooks"]["PostToolUse"][0];
+    assert_eq!(post_tool["matcher"], "Bash");
+    assert_eq!(post_tool["hooks"][0]["command"], "ley hook --host codex");
+    assert_eq!(
+        post_tool["hooks"][0]["statusMessage"],
+        "Saving bounded Ley Bash evidence"
+    );
     assert_portable(plugin.join("hooks/hooks.json"));
 }
 
@@ -467,6 +482,20 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
         );
         assert!(skill.contains("atomic checkpoint"), "{}", path.display());
         assert!(skill.contains("schema-v13"), "{}", path.display());
+        assert!(skill.contains("Schema-v14"), "{}", path.display());
+        assert!(
+            skill.contains("supportingToolEvidence"),
+            "{}",
+            path.display()
+        );
+        assert!(skill.contains("toolObservations"), "{}", path.display());
+        assert!(skill.contains("`toe_`"), "{}", path.display());
+        assert!(
+            normalized_skill.contains("returned does not mean the command/test succeeded")
+                || normalized_skill.contains("`returned` does not mean the command/test succeeded"),
+            "{}",
+            path.display()
+        );
         assert!(
             skill.contains("do not commit them sequentially"),
             "{}",

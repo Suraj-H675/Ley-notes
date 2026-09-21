@@ -2749,9 +2749,10 @@ mod tests {
     use super::*;
     use crate::{
         checkpoint_session, ingest_project, initialize_project, record_session_prompt,
-        record_session_response, start_session, AttemptInput, CaptureMode, CheckpointInput,
-        DecisionInput, PlanItemInput, ProblemInput, ResolutionInput, StartSessionInput, TaskInput,
-        TurnEvidenceInput, TurnEvidenceOrigin,
+        record_session_response, record_session_tool_observation, start_session, AttemptInput,
+        CaptureMode, CheckpointInput, DecisionInput, PlanItemInput, ProblemInput, ResolutionInput,
+        StartSessionInput, TaskInput, ToolObservationInput, ToolObservationKind, TurnEvidenceInput,
+        TurnEvidenceOrigin,
     };
     use tempfile::tempdir;
 
@@ -6535,6 +6536,139 @@ mod tests {
             .issues
             .iter()
             .any(|issue| issue.kind == MemoryTransitionIssueKind::StaleEventCount));
+    }
+
+    #[test]
+    fn observed_tool_event_invalidates_verified_recovery_write_without_becoming_recovery_evidence()
+    {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Keep the interrupted request unresolved",
+        );
+        let verification = verify_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            MemoryTransitionInput {
+                expected_event_count: 2,
+                claims: vec![claim(
+                    MemoryCandidateKind::Unresolved,
+                    "Interrupted request",
+                    "Keep the interrupted request unresolved",
+                    vec![prompt_id.clone()],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(verification.state, MemoryTransitionState::ReviewRequired);
+
+        let tool = record_session_tool_observation(
+            &project,
+            &vault,
+            &session_id,
+            ToolObservationInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                host: "codex".to_owned(),
+                turn_correlation_material: Some("turn-1".to_owned()),
+                tool_call_correlation_material: "stale-tool-event".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test -p ley-core".to_owned(),
+                result: "tool returned".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(tool.session.event_count, 3);
+        assert!(tool.session.checkpoints.is_empty());
+
+        let error = commit_unresolved_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CommitUnresolvedMemoryTransitionInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                expected_event_count: 2,
+                candidate_fingerprint: verification.candidate_fingerprint,
+                subject: "Interrupted request".to_owned(),
+                statement: "Keep the interrupted request unresolved".to_owned(),
+                evidence_record_ids: vec![prompt_id],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("review-required") || message.contains("event count")
+        ));
+        let current = read_session_for_memory_compiler(&project, &vault, &session_id)
+            .unwrap()
+            .0;
+        assert_eq!(current.event_count, 3);
+        assert!(current.checkpoints.is_empty());
+    }
+
+    #[test]
+    fn observed_tool_record_is_not_a_candidate_evidence_anchor() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-1",
+            "Inspect the Bash result but keep recovery evidence separate",
+        );
+        let tool = record_session_tool_observation(
+            &project,
+            &vault,
+            &session_id,
+            ToolObservationInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                host: "codex".to_owned(),
+                turn_correlation_material: Some("turn-1".to_owned()),
+                tool_call_correlation_material: "non-bindable-tool-event".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test -p ley-core".to_owned(),
+                result: "tool returned".to_owned(),
+            },
+        )
+        .unwrap();
+        let tool_record_id = tool.session.tool_observations[0].record_id.clone();
+        assert!(tool_record_id.starts_with("toe_"));
+
+        let verification = verify_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            MemoryTransitionInput {
+                expected_event_count: 3,
+                claims: vec![claim(
+                    MemoryCandidateKind::Verification,
+                    "Focused tests",
+                    "The focused tests passed",
+                    vec![tool_record_id.clone()],
+                )],
+                deferred_evidence_record_ids: vec![prompt_id],
+            },
+        )
+        .unwrap();
+        assert_eq!(verification.state, MemoryTransitionState::NeedsRevision);
+        assert_eq!(verification.coverage.invalid_references, 1);
+        assert!(verification
+            .coverage
+            .invalid_evidence_record_ids
+            .contains(&tool_record_id));
+        assert!(verification.issues.iter().any(|issue| {
+            issue.kind == MemoryTransitionIssueKind::InvalidEvidenceReference
+                && issue.evidence_record_ids.contains(&tool_record_id)
+        }));
     }
     #[test]
     fn all_current_evidence_can_be_explicitly_deferred_without_inventing_memory() {

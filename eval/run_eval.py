@@ -5991,6 +5991,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             composite_compiled: dict[str, object] | None = None
             composite_projection: dict[str, object] | None = None
             composite_secret_canary = str(scenario.get("composite_secret_canary", ""))
+            tool_compiled: dict[str, object] | None = None
+            tool_history: dict[str, object] | None = None
+            tool_projection: dict[str, object] | None = None
+            tool_secret_canary = str(scenario.get("tool_secret_canary", ""))
+            tool_raw_call_id = str(scenario.get("tool_raw_call_id", ""))
             if scenario.get("expected_recovery_checkpoint"):
                 event_count = int(compiled.get("sessionEventCount", 0))
                 evidence = compiled.get("evidence", [])
@@ -6157,6 +6162,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 composite_binding_ok = True
                 composite_lineage_ok = True
                 composite_after_ok = True
+                tool_evidence_ok = True
                 if scenario.get("expected_typed_recovery"):
                     typed_prompt = "Use SQLite for local-first persistence"
                     hook_call(
@@ -8230,6 +8236,156 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                         composite_after.get("state") == "no-unconsolidated-evidence"
                         and composite_after.get("totalUnconsolidatedEvidence") == 0
                     )
+                    if scenario.get("expected_tool_evidence"):
+                        checkpoint_count_before_tool = len(
+                            composite_projection.get("checkpoints", [])
+                            if isinstance(composite_projection, dict)
+                            else []
+                        )
+                        hook_call(
+                            project,
+                            "codex",
+                            {
+                                "hook_event_name": "PostToolUse",
+                                "session_id": "ley-eval-crash-thread",
+                                "turn_id": "ley-eval-tool-evidence-turn",
+                                "tool_name": "Bash",
+                                "tool_use_id": tool_raw_call_id,
+                                "tool_input": {
+                                    "command": (
+                                        "cargo test -p ley-core "
+                                        f"api_key={tool_secret_canary}"
+                                    )
+                                },
+                                "tool_response": {
+                                    "output": (
+                                        "command returned with non-zero-like output\n"
+                                        f"api_key={tool_secret_canary}"
+                                    ),
+                                    "metadata": {"exit_code": 1},
+                                },
+                            },
+                        )
+                        tool_compiled = mcp_call(
+                            project,
+                            "ley_session_memory_compile",
+                            {
+                                "sessionId": session_id,
+                                "maxResults": 20,
+                                "maxCharacters": 8_000,
+                            },
+                        )
+                        tool_history = mcp_call(
+                            project,
+                            "ley_session_turns_get",
+                            {
+                                "sessionId": session_id,
+                                "maxResults": 100,
+                                "maxCharacters": 64_000,
+                            },
+                        )
+                        tool_rows = tool_compiled.get("supportingToolEvidence", [])
+                        tool_row = (
+                            tool_rows[-1]
+                            if isinstance(tool_rows, list)
+                            and tool_rows
+                            and isinstance(tool_rows[-1], dict)
+                            else {}
+                        )
+                        history_rows = tool_history.get("toolObservations", [])
+                        history_row = (
+                            history_rows[-1]
+                            if isinstance(history_rows, list)
+                            and history_rows
+                            and isinstance(history_rows[-1], dict)
+                            else {}
+                        )
+                        tool_project_id = str(tool_history.get("projectId", ""))
+                        tool_projection_path = (
+                            vault
+                            / ".ley"
+                            / "agent-memory"
+                            / "projects"
+                            / tool_project_id
+                            / "sessions"
+                            / session_id
+                            / "session-v14.json"
+                        )
+                        if tool_project_id and tool_projection_path.is_file():
+                            loaded_tool_projection = json.loads(
+                                tool_projection_path.read_text(encoding="utf-8")
+                            )
+                            if isinstance(loaded_tool_projection, dict):
+                                tool_projection = loaded_tool_projection
+                        durable_tool_rows = (
+                            tool_projection.get("toolObservations", [])
+                            if isinstance(tool_projection, dict)
+                            else []
+                        )
+                        durable_tool_row = (
+                            durable_tool_rows[-1]
+                            if isinstance(durable_tool_rows, list)
+                            and durable_tool_rows
+                            and isinstance(durable_tool_rows[-1], dict)
+                            else {}
+                        )
+                        tool_record_id = str(tool_row.get("recordId", ""))
+                        durable_checkpoint_count = len(
+                            tool_projection.get("checkpoints", [])
+                            if isinstance(tool_projection, dict)
+                            else []
+                        )
+                        tool_payload_text = serialized(
+                            [tool_compiled, tool_history, tool_projection or {}]
+                        )
+                        tool_checks = {
+                            "compiler-state": tool_compiled.get("state")
+                            == "no-unconsolidated-evidence",
+                            "compiler-old-count": tool_compiled.get("totalUnconsolidatedEvidence")
+                            == 0,
+                            "compiler-tool-count": tool_compiled.get("totalSupportingToolEvidence")
+                            == 1,
+                            "compiler-returned-tool-count": tool_compiled.get(
+                                "returnedSupportingToolEvidence"
+                            )
+                            == 1,
+                            "compiler-binding-disabled": tool_compiled.get(
+                                "toolEvidenceCandidateBindingAllowed"
+                            )
+                            is False,
+                            "compiler-one-row": isinstance(tool_rows, list)
+                            and len(tool_rows) == 1,
+                            "opaque-record-id": tool_record_id.startswith("toe_"),
+                            "opaque-tool-call-id": str(
+                                tool_row.get("toolCallReference", "")
+                            ).startswith("tol_"),
+                            "tool-name": tool_row.get("toolName") == "Bash",
+                            "returned-not-success": tool_row.get("observationKind") == "returned",
+                            "row-binding-disabled": tool_row.get("candidateBindingAllowed") is False,
+                            "command-redacted": "[REDACTED:"
+                            in str(tool_row.get("command", "")),
+                            "result-redacted": "[REDACTED:"
+                            in str(tool_row.get("result", "")),
+                            "history-schema-v14": tool_history.get("schemaVersion") == 14,
+                            "history-count": tool_history.get("toolObservationCount", 0) >= 1,
+                            "history-record": history_row.get("recordId") == tool_record_id,
+                            "history-kind": history_row.get("observationKind") == "returned",
+                            "durable-record": durable_tool_row.get("recordId") == tool_record_id,
+                            "durable-kind": durable_tool_row.get("observationKind") == "returned",
+                            "no-checkpoint-authority": durable_checkpoint_count
+                            == checkpoint_count_before_tool,
+                            "secret-absent": tool_secret_canary not in tool_payload_text,
+                            "raw-id-absent": tool_raw_call_id not in tool_payload_text,
+                        }
+                        tool_evidence_ok = all(tool_checks.values())
+                        if not tool_evidence_ok:
+                            failed_tool_checks = [
+                                label for label, passed in tool_checks.items() if not passed
+                            ]
+                            failures.append(
+                                "host Bash tool evidence did not preserve supporting-only schema-v14 provenance/privacy semantics: "
+                                + ", ".join(failed_tool_checks)
+                            )
                     scores["memory_binding"] = (
                         binding_ok
                         and typed_binding_ok
@@ -8238,6 +8394,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                         and batch_binding_ok
                         and rich_problem_binding_ok
                         and composite_binding_ok
+                        and tool_evidence_ok
                     )
                     if scenario.get("expected_origin_lineage"):
                         scores["origin_lineage"] = (
@@ -8274,6 +8431,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and composite_binding_ok
                     and composite_lineage_ok
                     and composite_after_ok
+                    and tool_evidence_ok
                 )
             scores["memory_recovery"] = recovery_ok
             privacy_payloads = [compiled]
@@ -8299,6 +8457,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 privacy_payloads.append(composite_compiled)
             if composite_projection is not None:
                 privacy_payloads.append(composite_projection)
+            if tool_compiled is not None:
+                privacy_payloads.append(tool_compiled)
+            if tool_history is not None:
+                privacy_payloads.append(tool_history)
+            if tool_projection is not None:
+                privacy_payloads.append(tool_projection)
             privacy_canaries = [str(project), str(vault)]
             if task_secret_canary:
                 privacy_canaries.append(task_secret_canary)
@@ -8310,9 +8474,35 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 privacy_canaries.append(rich_problem_secret_canary)
             if composite_secret_canary:
                 privacy_canaries.append(composite_secret_canary)
+            if tool_secret_canary:
+                privacy_canaries.append(tool_secret_canary)
+            if tool_raw_call_id:
+                privacy_canaries.append(tool_raw_call_id)
             scores["privacy_violation_rate"] = privacy_violation_rate(
                 privacy_canaries, privacy_payloads
             )
+            if scenario.get("expected_tool_evidence"):
+                privacy_text = serialized(privacy_payloads)
+                privacy_labels = [
+                    "project-path",
+                    "vault-path",
+                    "task-secret",
+                    "plan-secret",
+                    "batch-secret",
+                    "rich-problem-secret",
+                    "composite-secret",
+                    "tool-secret",
+                    "tool-raw-call-id",
+                ]
+                leaked_labels = [
+                    label
+                    for label, canary in zip(privacy_labels, privacy_canaries, strict=True)
+                    if canary and canary in privacy_text
+                ]
+                if leaked_labels:
+                    failures.append(
+                        "privacy canary leakage labels: " + ", ".join(leaked_labels)
+                    )
             if not recovery_ok:
                 failures.append(
                     f"memory recovery failed: expected {expected_state}, got {compiled.get('state')}"

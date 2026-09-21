@@ -4,7 +4,7 @@ Ley turns retained session evidence into project-level lessons without treating 
 
 ## Propose a cited lesson
 
-Use a session ID plus an eligible structured record ID from `ley session show --json`, or an exact captured `tev_` user-prompt/assistant-response record surfaced by an explicit evidence workflow such as the local Consolidation Inbox. Body-free turn observations are not valid learning evidence. Actor and provenance are required so a script cannot silently impersonate a user:
+Use a session ID plus an eligible structured record ID from `ley session show --json`, or an exact captured `tev_` user-prompt/assistant-response record surfaced by an explicit evidence workflow such as the local Consolidation Inbox. Body-free turn observations are not valid learning evidence. Schema-v14 `toe_` host-tool observations are supporting provenance only in this slice and are likewise not accepted as direct learning evidence. Actor and provenance are required so a script cannot silently impersonate a user:
 
 ```bash
 ley learning propose /path/to/project \

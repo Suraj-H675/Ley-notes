@@ -37,12 +37,18 @@ pub const SESSION_PLAN_RECOVERY_SCHEMA_VERSION: u32 = 10;
 pub const SESSION_BATCH_RECOVERY_SCHEMA_VERSION: u32 = 11;
 pub const SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION: u32 = 12;
 pub const SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION: u32 = 13;
+pub const SESSION_TOOL_EVIDENCE_SCHEMA_VERSION: u32 = 14;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
-pub const SESSION_TURN_EVIDENCE_LIMIT_BYTES: usize = 1_048_576;
+pub const SESSION_AUTOMATIC_EVIDENCE_LIMIT_BYTES: usize = 1_048_576;
+/// Backward-compatible name for the automatic-evidence capacity. Tool
+/// observations now share this same budget with prompt/response evidence.
+pub const SESSION_TURN_EVIDENCE_LIMIT_BYTES: usize = SESSION_AUTOMATIC_EVIDENCE_LIMIT_BYTES;
 pub const SESSION_PROMPT_EVIDENCE_LIMIT_CHARACTERS: usize = 4_000;
 pub const SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS: usize = 8_000;
+pub const SESSION_TOOL_COMMAND_LIMIT_CHARACTERS: usize = 8_000;
+pub const SESSION_TOOL_RESULT_LIMIT_CHARACTERS: usize = 16_000;
 const SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT: usize = 1_000;
 pub const SESSION_CONTEXT_UTILITY_OUTCOME_LIMIT: usize = 20;
 pub const SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT: usize = 64;
@@ -66,6 +72,7 @@ const SESSION_V10_FILE: &str = "session-v10.json";
 const SESSION_V11_FILE: &str = "session-v11.json";
 const SESSION_V12_FILE: &str = "session-v12.json";
 const SESSION_V13_FILE: &str = "session-v13.json";
+const SESSION_V14_FILE: &str = "session-v14.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,6 +326,55 @@ pub struct TurnEvidenceInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub correlation_material: Option<String>,
     pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ToolObservationKind {
+    Returned,
+    ExplicitFailure,
+}
+
+/// Input for one host-observed shell tool lifecycle event.
+///
+/// Correlation material is transient. Ley persists only opaque derived
+/// references, never the host's raw turn/tool-call identifiers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ToolObservationInput {
+    pub request_id: String,
+    pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_correlation_material: Option<String>,
+    pub tool_call_correlation_material: String,
+    pub tool_name: String,
+    pub observation_kind: ToolObservationKind,
+    pub command: String,
+    #[serde(default)]
+    pub result: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionToolObservation {
+    pub record_id: String,
+    pub event_id: String,
+    pub sequence: u64,
+    pub recorded_at_unix_ms: u64,
+    pub host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_reference: Option<String>,
+    pub tool_call_reference: String,
+    pub capture_mode: crate::CaptureMode,
+    pub retention: TurnEvidenceRetention,
+    pub tool_name: String,
+    pub observation_kind: ToolObservationKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    pub command_truncated: bool,
+    pub result_truncated: bool,
 }
 
 /// An observed, append-only prompt or response record reconstructed from an
@@ -643,6 +699,8 @@ pub struct AgentSession {
     #[serde(default)]
     pub responses: Vec<SessionTurnEvidence>,
     #[serde(default)]
+    pub tool_observations: Vec<SessionToolObservation>,
+    #[serde(default)]
     pub context_utility_bindings: Vec<ContextUtilityBinding>,
     #[serde(default)]
     pub context_utility_observations: Vec<ContextUtilityObservation>,
@@ -741,6 +799,7 @@ enum SessionEventPayload {
     SessionRenamed(SessionRename),
     UserPromptObserved(SessionTurnEvidence),
     AssistantResponseObserved(SessionTurnEvidence),
+    ToolObserved(SessionToolObservation),
 }
 
 pub fn generate_request_id() -> String {
@@ -776,6 +835,41 @@ pub fn record_session_response(
     input: TurnEvidenceInput,
 ) -> Result<SessionMutation, LeyCoreError> {
     record_session_turn(project_start, vault, session_id, input, None, false)
+}
+
+/// Records one supported host-observed shell tool lifecycle event.
+pub fn record_session_tool_observation(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: ToolObservationInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    let diagnostic = diagnose_project(&project_start)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
+    let event_id = deterministic_id(
+        "evt",
+        &format!("{session_id}:{}:tool-observed", input.request_id),
+        64,
+    );
+    let request_id = input.request_id.clone();
+    let (observation, redactions) =
+        normalize_tool_observation(input, &event_id, diagnostic.capture.mode)?;
+    mutate_session(
+        &diagnostic.identity.project_id,
+        session_id,
+        PendingEvent {
+            event_id,
+            request_id,
+            redactions,
+            payload: SessionEventPayload::ToolObserved(observation),
+            schema_version: SESSION_TOOL_EVIDENCE_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: None,
+        },
+        vault,
+    )
 }
 
 pub(crate) fn record_imported_session_prompt(
@@ -3429,6 +3523,89 @@ fn normalize_turn_evidence(
     ))
 }
 
+fn normalize_tool_observation(
+    input: ToolObservationInput,
+    event_id: &str,
+    capture_mode: crate::CaptureMode,
+) -> Result<(SessionToolObservation, Vec<MemoryRedaction>), LeyCoreError> {
+    let host = sanitize_turn_host(input.host)?;
+    let turn_reference = input
+        .turn_correlation_material
+        .as_deref()
+        .map(derive_validated_turn_reference)
+        .transpose()?;
+    let tool_call_reference =
+        derive_validated_tool_call_reference(&input.tool_call_correlation_material)?;
+    let tool_name = input.tool_name.trim();
+    if tool_name != "Bash" {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "tool observation currently supports only Bash".to_owned(),
+        ));
+    }
+    let recorded_at_unix_ms = unix_time_ms();
+    let record_id = child_id("toe", event_id, 0);
+    if capture_mode == crate::CaptureMode::Minimal {
+        return Ok((
+            SessionToolObservation {
+                record_id,
+                event_id: event_id.to_owned(),
+                sequence: 0,
+                recorded_at_unix_ms,
+                host,
+                turn_reference,
+                tool_call_reference,
+                capture_mode,
+                retention: TurnEvidenceRetention::OmittedMinimal,
+                tool_name: tool_name.to_owned(),
+                observation_kind: input.observation_kind,
+                command: None,
+                result: None,
+                command_truncated: false,
+                result_truncated: false,
+            },
+            Vec::new(),
+        ));
+    }
+
+    let mut redactions = Vec::new();
+    let (command, command_truncated) = sanitize_bounded_turn_text(
+        "toolObservation.command",
+        &input.command,
+        SESSION_TOOL_COMMAND_LIMIT_CHARACTERS,
+        &mut redactions,
+    )?;
+    let (result, result_truncated) = if input.result.trim().is_empty() {
+        (None, false)
+    } else {
+        sanitize_bounded_turn_text(
+            "toolObservation.result",
+            &input.result,
+            SESSION_TOOL_RESULT_LIMIT_CHARACTERS,
+            &mut redactions,
+        )?
+    };
+    Ok((
+        SessionToolObservation {
+            record_id,
+            event_id: event_id.to_owned(),
+            sequence: 0,
+            recorded_at_unix_ms,
+            host,
+            turn_reference,
+            tool_call_reference,
+            capture_mode,
+            retention: TurnEvidenceRetention::Captured,
+            tool_name: tool_name.to_owned(),
+            observation_kind: input.observation_kind,
+            command,
+            result,
+            command_truncated,
+            result_truncated,
+        },
+        redactions,
+    ))
+}
+
 fn sanitize_turn_host(value: String) -> Result<String, LeyCoreError> {
     let value = value.trim();
     if is_valid_turn_host(value) {
@@ -3457,6 +3634,27 @@ fn derive_validated_turn_reference(correlation_material: &str) -> Result<String,
         ));
     }
     Ok(derive_turn_reference(correlation_material))
+}
+
+fn derive_validated_tool_call_reference(
+    correlation_material: &str,
+) -> Result<String, LeyCoreError> {
+    if correlation_material.is_empty()
+        || correlation_material.chars().count() > 4_096
+        || correlation_material.chars().any(|character| {
+            character == '\0'
+                || (character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+        })
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "tool-call correlation material must contain at most 4096 safe characters".to_owned(),
+        ));
+    }
+    Ok(deterministic_id(
+        "tol",
+        &format!("ley-tool-call-reference-v1:{correlation_material}"),
+        64,
+    ))
 }
 
 fn sanitize_bounded_turn_text(
@@ -3502,12 +3700,20 @@ fn sanitize_bounded_turn_text(
     Ok((Some(bounded), truncated))
 }
 
-fn retained_turn_evidence_bytes(events: &[SessionEvent]) -> usize {
+fn retained_automatic_evidence_bytes(events: &[SessionEvent]) -> usize {
     events
         .iter()
-        .filter_map(|event| turn_evidence(&event.payload))
-        .filter_map(|evidence| evidence.text.as_deref())
-        .map(str::len)
+        .map(|event| match &event.payload {
+            SessionEventPayload::UserPromptObserved(evidence)
+            | SessionEventPayload::AssistantResponseObserved(evidence) => {
+                evidence.text.as_deref().map_or(0, str::len)
+            }
+            SessionEventPayload::ToolObserved(observation) => {
+                observation.command.as_deref().map_or(0, str::len)
+                    + observation.result.as_deref().map_or(0, str::len)
+            }
+            _ => 0,
+        })
         .sum()
 }
 
@@ -3523,6 +3729,20 @@ fn turn_evidence_mut(payload: &mut SessionEventPayload) -> Option<&mut SessionTu
     match payload {
         SessionEventPayload::UserPromptObserved(evidence)
         | SessionEventPayload::AssistantResponseObserved(evidence) => Some(evidence),
+        _ => None,
+    }
+}
+
+fn tool_observation(payload: &SessionEventPayload) -> Option<&SessionToolObservation> {
+    match payload {
+        SessionEventPayload::ToolObserved(observation) => Some(observation),
+        _ => None,
+    }
+}
+
+fn tool_observation_mut(payload: &mut SessionEventPayload) -> Option<&mut SessionToolObservation> {
+    match payload {
+        SessionEventPayload::ToolObserved(observation) => Some(observation),
         _ => None,
     }
 }
@@ -3562,6 +3782,7 @@ fn replay_pending_event_if_present(
         return Ok(None);
     };
     align_turn_evidence_retry(&mut pending, &event.payload);
+    align_tool_observation_retry(&mut pending, &event.payload);
     let request_fingerprint = request_fingerprint(
         project_id,
         session_id,
@@ -3998,6 +4219,7 @@ fn mutate_session(
         .find(|event| event.event_id == pending.event_id)
     {
         align_turn_evidence_retry(&mut pending, &event.payload);
+        align_tool_observation_retry(&mut pending, &event.payload);
         align_context_utility_retry(&mut pending, &event.payload);
         let request_fingerprint = request_fingerprint(
             project_id,
@@ -4015,7 +4237,7 @@ fn mutate_session(
         store.persist_projection(&session_dir, &session)?;
         return Ok(mutation(session, &pending.event_id, true));
     }
-    apply_turn_evidence_capacity(&mut pending, retained_turn_evidence_bytes(&existing));
+    apply_automatic_evidence_capacity(&mut pending, retained_automatic_evidence_bytes(&existing));
     resolve_pending_context_utility(&mut pending.payload, &existing)?;
     let request_fingerprint = request_fingerprint(
         project_id,
@@ -4082,6 +4304,9 @@ fn mutate_session(
     if let Some(evidence) = turn_evidence_mut(&mut pending.payload) {
         evidence.sequence = sequence;
     }
+    if let Some(observation) = tool_observation_mut(&mut pending.payload) {
+        observation.sequence = sequence;
+    }
     let minimum_recorded_at = existing
         .last()
         .map(|event| event.recorded_at_unix_ms)
@@ -4126,6 +4351,24 @@ fn align_turn_evidence_retry(pending: &mut PendingEvent, stored: &SessionEventPa
     }
 }
 
+fn align_tool_observation_retry(pending: &mut PendingEvent, stored: &SessionEventPayload) {
+    let (Some(pending), Some(stored)) = (
+        tool_observation_mut(&mut pending.payload),
+        tool_observation(stored),
+    ) else {
+        return;
+    };
+    pending.sequence = stored.sequence;
+    if stored.retention != TurnEvidenceRetention::Captured {
+        pending.capture_mode = stored.capture_mode;
+        pending.retention = stored.retention;
+        pending.command = None;
+        pending.result = None;
+        pending.command_truncated = false;
+        pending.result_truncated = false;
+    }
+}
+
 fn align_context_utility_retry(pending: &mut PendingEvent, stored: &SessionEventPayload) {
     match (&mut pending.payload, stored) {
         (
@@ -4146,21 +4389,34 @@ fn align_context_utility_retry(pending: &mut PendingEvent, stored: &SessionEvent
     }
 }
 
-fn apply_turn_evidence_capacity(pending: &mut PendingEvent, retained_bytes: usize) {
-    let Some(evidence) = turn_evidence_mut(&mut pending.payload) else {
+fn apply_automatic_evidence_capacity(pending: &mut PendingEvent, retained_bytes: usize) {
+    let pending_bytes = if let Some(evidence) = turn_evidence(&pending.payload) {
+        evidence.text.as_deref().map_or(0, str::len)
+    } else if let Some(observation) = tool_observation(&pending.payload) {
+        observation.command.as_deref().map_or(0, str::len)
+            + observation.result.as_deref().map_or(0, str::len)
+    } else {
         return;
     };
-    let Some(text) = evidence.text.as_deref() else {
+    if pending_bytes == 0
+        || retained_bytes.saturating_add(pending_bytes) <= SESSION_AUTOMATIC_EVIDENCE_LIMIT_BYTES
+    {
         return;
-    };
-    if retained_bytes.saturating_add(text.len()) > SESSION_TURN_EVIDENCE_LIMIT_BYTES {
+    }
+    if let Some(evidence) = turn_evidence_mut(&mut pending.payload) {
         evidence.retention = TurnEvidenceRetention::OmittedCapacity;
         evidence.text = None;
         evidence.truncated = false;
-        // Redaction metadata for an omitted body would disclose facts about
-        // text that this event intentionally did not retain.
-        pending.redactions.clear();
+    } else if let Some(observation) = tool_observation_mut(&mut pending.payload) {
+        observation.retention = TurnEvidenceRetention::OmittedCapacity;
+        observation.command = None;
+        observation.result = None;
+        observation.command_truncated = false;
+        observation.result_truncated = false;
     }
+    // Redaction metadata for an omitted body would disclose facts about text
+    // that this event intentionally did not retain.
+    pending.redactions.clear();
 }
 
 fn retry_payload_matches(stored: &SessionEventPayload, pending: &SessionEventPayload) -> bool {
@@ -4184,6 +4440,22 @@ fn retry_payload_matches(stored: &SessionEventPayload, pending: &SessionEventPay
                 && stored.retention == pending.retention
                 && stored.text == pending.text
                 && stored.truncated == pending.truncated
+        }
+        (SessionEventPayload::ToolObserved(stored), SessionEventPayload::ToolObserved(pending)) => {
+            stored.record_id == pending.record_id
+                && stored.event_id == pending.event_id
+                && stored.sequence == pending.sequence
+                && stored.host == pending.host
+                && stored.turn_reference == pending.turn_reference
+                && stored.tool_call_reference == pending.tool_call_reference
+                && stored.capture_mode == pending.capture_mode
+                && stored.retention == pending.retention
+                && stored.tool_name == pending.tool_name
+                && stored.observation_kind == pending.observation_kind
+                && stored.command == pending.command
+                && stored.result == pending.result
+                && stored.command_truncated == pending.command_truncated
+                && stored.result_truncated == pending.result_truncated
         }
         _ => true,
     }
@@ -4237,11 +4509,17 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
             evidence.recorded_at_unix_ms = evidence.recorded_at_unix_ms.max(minimum);
             evidence.recorded_at_unix_ms
         }
+        SessionEventPayload::ToolObserved(observation) => {
+            observation.recorded_at_unix_ms = observation.recorded_at_unix_ms.max(minimum);
+            observation.recorded_at_unix_ms
+        }
     }
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_TOOL_EVIDENCE_SCHEMA_VERSION {
+        SESSION_V14_FILE
+    } else if session.schema_version >= SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION {
         SESSION_V13_FILE
     } else if session.schema_version >= SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION {
         SESSION_V12_FILE
@@ -4585,6 +4863,7 @@ fn replay_events(
         checkpoints: Vec::new(),
         prompts: Vec::new(),
         responses: Vec::new(),
+        tool_observations: Vec::new(),
         context_utility_bindings: Vec::new(),
         context_utility_observations: Vec::new(),
         renames: Vec::new(),
@@ -4648,11 +4927,14 @@ fn replay_events(
                 recovery_window.push(evidence.record_id.clone());
                 session.responses.push(evidence.clone());
             }
+            SessionEventPayload::ToolObserved(observation) => {
+                session.tool_observations.push(observation.clone());
+            }
         }
         session.updated_at_unix_ms = event.recorded_at_unix_ms;
     }
-    if retained_turn_evidence_bytes(events) > SESSION_TURN_EVIDENCE_LIMIT_BYTES {
-        return invalid_session_store("session turn-evidence capacity was exceeded");
+    if retained_automatic_evidence_bytes(events) > SESSION_AUTOMATIC_EVIDENCE_LIMIT_BYTES {
+        return invalid_session_store("session automatic-evidence capacity was exceeded");
     }
     Ok(session)
 }
@@ -4779,6 +5061,7 @@ fn validate_event(
             | SESSION_BATCH_RECOVERY_SCHEMA_VERSION
             | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
             | SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
+            | SESSION_TOOL_EVIDENCE_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -4810,6 +5093,7 @@ fn validate_event(
         SessionEventPayload::SessionRenamed(_) => "session-renamed",
         SessionEventPayload::UserPromptObserved(_) => "user-prompt-observed",
         SessionEventPayload::AssistantResponseObserved(_) => "assistant-response-observed",
+        SessionEventPayload::ToolObserved(_) => "tool-observed",
     };
     let expected_event = deterministic_id(
         "evt",
@@ -4923,12 +5207,16 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
         SessionEventPayload::AssistantResponseObserved(evidence) => {
             validate_turn_evidence(event, evidence, SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS)?;
         }
+        SessionEventPayload::ToolObserved(observation) => {
+            validate_tool_observation(event, observation)?;
+        }
     }
     let is_turn_event = matches!(
         event.payload,
         SessionEventPayload::UserPromptObserved(_)
             | SessionEventPayload::AssistantResponseObserved(_)
     );
+    let is_tool_observation = matches!(event.payload, SessionEventPayload::ToolObserved(_));
     let is_imported_turn_event = matches!(
         &event.payload,
         SessionEventPayload::UserPromptObserved(evidence)
@@ -5019,6 +5307,16 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
     {
         return invalid_session_store(
             "schema version 13 is reserved for composite bound recovery checkpoints",
+        );
+    }
+    if event.schema_version == SESSION_TOOL_EVIDENCE_SCHEMA_VERSION && !is_tool_observation {
+        return invalid_session_store(
+            "schema version 14 is reserved for observed host tool evidence",
+        );
+    }
+    if is_tool_observation && event.schema_version != SESSION_TOOL_EVIDENCE_SCHEMA_VERSION {
+        return invalid_session_store(
+            "observed host tool evidence requires session event schema version 14",
         );
     }
     if event.schema_version == SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
@@ -5512,6 +5810,83 @@ fn validate_turn_evidence(
                 || evidence.truncated
             {
                 return invalid_session_store("capacity turn evidence disclosure is invalid");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_tool_observation(
+    event: &SessionEvent,
+    observation: &SessionToolObservation,
+) -> Result<(), LeyCoreError> {
+    if observation.record_id != child_id("toe", &event.event_id, 0)
+        || observation.event_id != event.event_id
+        || observation.sequence != event.sequence
+        || observation.recorded_at_unix_ms != event.recorded_at_unix_ms
+        || observation.recorded_at_unix_ms == 0
+    {
+        return invalid_session_store("tool observation identity is invalid");
+    }
+    if !is_valid_turn_host(&observation.host) {
+        return invalid_session_store("tool observation host is invalid");
+    }
+    if let Some(turn_reference) = &observation.turn_reference {
+        if !valid_prefixed_hex(turn_reference, "trn_", 64) {
+            return invalid_session_store("tool observation turn reference is invalid");
+        }
+    }
+    if !valid_prefixed_hex(&observation.tool_call_reference, "tol_", 64) {
+        return invalid_session_store("tool observation call reference is invalid");
+    }
+    if observation.tool_name != "Bash" {
+        return invalid_session_store("tool observation currently supports only Bash");
+    }
+    match observation.retention {
+        TurnEvidenceRetention::Captured => {
+            if observation.capture_mode == crate::CaptureMode::Minimal {
+                return invalid_session_store(
+                    "minimal capture cannot retain tool observation bodies",
+                );
+            }
+            let command = observation.command.as_ref().ok_or_else(|| {
+                LeyCoreError::InvalidSessionStore(
+                    "captured tool observation must retain its command".to_owned(),
+                )
+            })?;
+            validate_stored_text(
+                "toolObservation.command",
+                command,
+                1,
+                SESSION_TOOL_COMMAND_LIMIT_CHARACTERS,
+            )?;
+            if let Some(result) = &observation.result {
+                validate_stored_text(
+                    "toolObservation.result",
+                    result,
+                    1,
+                    SESSION_TOOL_RESULT_LIMIT_CHARACTERS,
+                )?;
+            }
+        }
+        TurnEvidenceRetention::OmittedMinimal => {
+            if observation.capture_mode != crate::CaptureMode::Minimal
+                || observation.command.is_some()
+                || observation.result.is_some()
+                || observation.command_truncated
+                || observation.result_truncated
+            {
+                return invalid_session_store("minimal tool observation disclosure is invalid");
+            }
+        }
+        TurnEvidenceRetention::OmittedCapacity => {
+            if observation.capture_mode == crate::CaptureMode::Minimal
+                || observation.command.is_some()
+                || observation.result.is_some()
+                || observation.command_truncated
+                || observation.result_truncated
+            {
+                return invalid_session_store("capacity tool observation disclosure is invalid");
             }
         }
     }
@@ -7022,6 +7397,17 @@ fn request_fingerprint(
             evidence.text = None;
             SessionEventPayload::AssistantResponseObserved(evidence)
         }
+        SessionEventPayload::ToolObserved(observation) => {
+            let mut observation = observation.clone();
+            observation.recorded_at_unix_ms = 0;
+            observation.sequence = 0;
+            // As with turn evidence, request fingerprints deliberately omit
+            // retained body text. Exact retries compare immutable bodies
+            // directly instead of leaving a durable secret-derived hash.
+            observation.command = None;
+            observation.result = None;
+            SessionEventPayload::ToolObserved(observation)
+        }
     };
     let bytes = serde_json::to_vec(&(project_id, session_id, request_id, stable_payload))
         .map_err(|error| LeyCoreError::InvalidSessionStore(error.to_string()))?;
@@ -7096,6 +7482,15 @@ fn render_session_markdown(session: &AgentSession) -> String {
         }
         for evidence in &session.responses {
             render_turn_evidence_markdown(&mut output, "Assistant response", evidence);
+        }
+    }
+    if !session.tool_observations.is_empty() {
+        output.push_str("\n## Observed host tools\n");
+        output.push_str(
+            "\n> Historical host-tool evidence only. A returned tool event does not by itself prove command or verification success.\n",
+        );
+        for observation in &session.tool_observations {
+            render_tool_observation_markdown(&mut output, observation);
         }
     }
     for (index, checkpoint) in session.checkpoints.iter().enumerate() {
@@ -7323,6 +7718,51 @@ fn render_turn_evidence_markdown(output: &mut String, label: &str, evidence: &Se
     }
 }
 
+fn render_tool_observation_markdown(output: &mut String, observation: &SessionToolObservation) {
+    output.push_str(&format!(
+        "\n### {} · {}\n\n",
+        markdown_inline(&observation.tool_name),
+        observation.recorded_at_unix_ms
+    ));
+    output.push_str(&format!(
+        "- Host: `{}`\n- Observation: `{}`\n- Capture mode: `{}`\n- Retention: `{}`\n- Tool call reference: `{}`\n",
+        markdown_inline(&observation.host),
+        enum_label(observation.observation_kind),
+        observation.capture_mode,
+        enum_label(observation.retention),
+        observation.tool_call_reference,
+    ));
+    if let Some(turn_reference) = &observation.turn_reference {
+        output.push_str(&format!("- Turn reference: `{turn_reference}`\n"));
+    }
+    match observation.retention {
+        TurnEvidenceRetention::OmittedMinimal => {
+            output.push_str("- Bodies: omitted by Minimal capture mode\n");
+        }
+        TurnEvidenceRetention::OmittedCapacity => {
+            output.push_str(
+                "- Bodies: omitted because the session automatic-evidence capacity was reached\n",
+            );
+        }
+        TurnEvidenceRetention::Captured => {
+            if observation.command_truncated {
+                output.push_str("- Command: truncated to the capture limit\n");
+            }
+            if observation.result_truncated {
+                output.push_str("- Result: truncated to the capture limit\n");
+            }
+            if let Some(command) = &observation.command {
+                output.push_str("\n**Observed command**\n\n");
+                push_quote(output, command);
+            }
+            if let Some(result) = &observation.result {
+                output.push_str("\n**Observed host result/error**\n\n");
+                push_quote(output, result);
+            }
+        }
+    }
+}
+
 fn push_quote(output: &mut String, value: &str) {
     for line in value.lines() {
         output.push_str("> ");
@@ -7385,6 +7825,10 @@ enum_labels!(TurnEvidenceRetention, {
     Captured => "captured",
     OmittedMinimal => "omitted-minimal",
     OmittedCapacity => "omitted-capacity",
+});
+enum_labels!(ToolObservationKind, {
+    Returned => "returned",
+    ExplicitFailure => "explicit-failure",
 });
 enum_labels!(PlanStatus, {
     Pending => "pending",
@@ -7987,6 +8431,136 @@ mod tests {
     }
 
     #[test]
+    fn host_tool_observation_is_redacted_idempotent_opaque_and_schema_v14() {
+        let (_base, project, vault) = setup_memory_with_mode(CaptureMode::Structured);
+        let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
+        let session_id = started.session.session_id.clone();
+        let raw_tool_call_id = "toolu_raw_host_identifier_123";
+        let input = ToolObservationInput {
+            request_id: request_id('2'),
+            host: "codex".to_owned(),
+            turn_correlation_material: Some("codex-turn-1".to_owned()),
+            tool_call_correlation_material: raw_tool_call_id.to_owned(),
+            tool_name: "Bash".to_owned(),
+            observation_kind: ToolObservationKind::Returned,
+            command: "printf ok; export api_key=super-secret-tool-command".to_owned(),
+            result: "stdout=ok\napi_key=super-secret-tool-result".to_owned(),
+        };
+
+        let mutation =
+            record_session_tool_observation(&project, &vault, &session_id, input.clone()).unwrap();
+        assert_eq!(
+            mutation.session.schema_version,
+            SESSION_TOOL_EVIDENCE_SCHEMA_VERSION
+        );
+        assert!(mutation.session_path.ends_with(SESSION_V14_FILE));
+        assert_eq!(mutation.session.tool_observations.len(), 1);
+        let observation = &mutation.session.tool_observations[0];
+        assert_eq!(
+            observation.record_id,
+            child_id("toe", &mutation.event_id, 0)
+        );
+        assert_eq!(observation.tool_name, "Bash");
+        assert_eq!(observation.observation_kind, ToolObservationKind::Returned);
+        assert_eq!(observation.retention, TurnEvidenceRetention::Captured);
+        assert!(observation.tool_call_reference.starts_with("tol_"));
+        assert!(observation
+            .turn_reference
+            .as_deref()
+            .is_some_and(|value| value.starts_with("trn_")));
+        let command = observation.command.as_deref().unwrap();
+        let result = observation.result.as_deref().unwrap();
+        assert!(command.contains("[REDACTED:"));
+        assert!(result.contains("[REDACTED:"));
+        assert!(!command.contains("super-secret-tool-command"));
+        assert!(!result.contains("super-secret-tool-result"));
+
+        let directory = session_directory(&project, &vault, &session_id);
+        let projection = std::fs::read_to_string(directory.join(SESSION_V14_FILE)).unwrap();
+        assert!(!projection.contains(raw_tool_call_id));
+        assert!(!projection.contains("super-secret-tool-command"));
+        assert!(!projection.contains("super-secret-tool-result"));
+        let markdown = std::fs::read_to_string(directory.join(SESSION_MARKDOWN_FILE)).unwrap();
+        assert!(markdown.contains("## Observed host tools"));
+        assert!(markdown.contains("Historical host-tool evidence only"));
+        assert!(markdown.contains("**Observed command**"));
+        assert!(markdown.contains("**Observed host result/error**"));
+        assert!(!markdown.contains(raw_tool_call_id));
+        assert!(!markdown.contains("super-secret-tool-command"));
+        assert!(!markdown.contains("super-secret-tool-result"));
+
+        let retry =
+            record_session_tool_observation(&project, &vault, &session_id, input.clone()).unwrap();
+        assert!(retry.replayed);
+        assert_eq!(retry.event_id, mutation.event_id);
+        assert_eq!(retry.session.event_count, 2);
+
+        let mut changed = input;
+        changed.result = "different host result".to_owned();
+        assert!(matches!(
+            record_session_tool_observation(&project, &vault, &session_id, changed),
+            Err(LeyCoreError::SessionIdempotencyConflict(_))
+        ));
+
+        let rebuilt = read_session(&project, &vault, &session_id).unwrap();
+        assert_eq!(
+            rebuilt.tool_observations,
+            mutation.session.tool_observations
+        );
+        let finished =
+            finish_session(&project, &vault, &session_id, finish_input(request_id('3'))).unwrap();
+        assert_eq!(finished.session.status, SessionStatus::Completed);
+        assert!(matches!(
+            record_session_tool_observation(
+                &project,
+                &vault,
+                &session_id,
+                ToolObservationInput {
+                    request_id: request_id('4'),
+                    host: "codex".to_owned(),
+                    turn_correlation_material: Some("codex-turn-2".to_owned()),
+                    tool_call_correlation_material: "toolu_after_finish".to_owned(),
+                    tool_name: "Bash".to_owned(),
+                    observation_kind: ToolObservationKind::Returned,
+                    command: "echo after".to_owned(),
+                    result: "after".to_owned(),
+                },
+            ),
+            Err(LeyCoreError::InvalidSessionRequest(message)) if message.contains("already completed")
+        ));
+    }
+
+    #[test]
+    fn minimal_tool_observation_is_metadata_only() {
+        let (_base, project, vault) = setup_memory_with_mode(CaptureMode::Minimal);
+        let started = start_session(&project, &vault, start_input(request_id('5'))).unwrap();
+        let mutation = record_session_tool_observation(
+            &project,
+            &vault,
+            &started.session.session_id,
+            ToolObservationInput {
+                request_id: request_id('6'),
+                host: "claude-code".to_owned(),
+                turn_correlation_material: None,
+                tool_call_correlation_material: "claude-tool-1".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::ExplicitFailure,
+                command: "false".to_owned(),
+                result: "tool failed".to_owned(),
+            },
+        )
+        .unwrap();
+        let observation = &mutation.session.tool_observations[0];
+        assert_eq!(observation.retention, TurnEvidenceRetention::OmittedMinimal);
+        assert!(observation.command.is_none());
+        assert!(observation.result.is_none());
+        assert_eq!(
+            observation.observation_kind,
+            ToolObservationKind::ExplicitFailure
+        );
+    }
+
+    #[test]
     fn context_utility_binds_exact_pack_to_checkpoint_and_terminal_outcomes() {
         let (base, project, vault) = setup_memory();
         let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
@@ -8362,6 +8936,67 @@ mod tests {
         assert!(event["data"].get("text").is_none());
         assert!(event["data"].get("originalLength").is_none());
         assert!(event["data"].get("bodyHash").is_none());
+    }
+
+    #[test]
+    fn tool_observation_shares_automatic_evidence_capacity_with_turns() {
+        let (_base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(numbered_request_id(1))).unwrap();
+        let response = "r".repeat(SESSION_RESPONSE_EVIDENCE_LIMIT_CHARACTERS);
+        // 131 * 8,000 = 1,048,000 retained bytes, leaving less than one
+        // ordinary tool command/result body under the shared 1 MiB cap.
+        for index in 2..=132 {
+            record_session_response(
+                &project,
+                &vault,
+                &started.session.session_id,
+                turn_input(numbered_request_id(index), response.clone()),
+            )
+            .unwrap();
+        }
+        let request_id = numbered_request_id(133);
+        let input = ToolObservationInput {
+            request_id: request_id.clone(),
+            host: "codex".to_owned(),
+            turn_correlation_material: Some("capacity-turn".to_owned()),
+            tool_call_correlation_material: "capacity-tool".to_owned(),
+            tool_name: "Bash".to_owned(),
+            observation_kind: ToolObservationKind::Returned,
+            command: "c".repeat(1_000),
+            result: "o".repeat(1_000),
+        };
+        let omitted = record_session_tool_observation(
+            &project,
+            &vault,
+            &started.session.session_id,
+            input.clone(),
+        )
+        .unwrap();
+        let observation = omitted.session.tool_observations.last().unwrap();
+        assert_eq!(
+            observation.retention,
+            TurnEvidenceRetention::OmittedCapacity
+        );
+        assert!(observation.command.is_none());
+        assert!(observation.result.is_none());
+        assert!(!observation.command_truncated);
+        assert!(!observation.result_truncated);
+
+        let replayed =
+            record_session_tool_observation(&project, &vault, &started.session.session_id, input)
+                .unwrap();
+        assert!(replayed.replayed);
+        assert_eq!(replayed.event_id, omitted.event_id);
+        assert_eq!(replayed.session.event_count, omitted.session.event_count);
+
+        let event_path = session_directory(&project, &vault, &started.session.session_id)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", omitted.event_id));
+        let event: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(event_path).unwrap()).unwrap();
+        assert!(event["data"].get("command").is_none());
+        assert!(event["data"].get("result").is_none());
+        assert!(event["redactions"].as_array().unwrap().is_empty());
     }
 
     #[test]
@@ -10165,7 +10800,7 @@ mod tests {
     }
 
     #[test]
-    fn recovery_ledger_replays_schema_v3_v8_v9_v10_v11_v12_and_v13_events_together() {
+    fn recovery_ledger_replays_schema_v3_v8_v9_v10_v11_v12_v13_and_v14_events_together() {
         let (_base, project, vault) = setup_memory();
         let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
         let session_id = started.session.session_id.clone();
@@ -10656,13 +11291,40 @@ mod tests {
         );
         assert!(composite.session_path.ends_with(SESSION_V13_FILE));
 
+        let tool = record_session_tool_observation(
+            &project,
+            &vault,
+            &session_id,
+            ToolObservationInput {
+                request_id: format!("req_{}", "be".repeat(16)),
+                host: "codex".to_owned(),
+                turn_correlation_material: Some("mixed-schema-v14-turn".to_owned()),
+                tool_call_correlation_material: "mixed-schema-v14-tool".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test -p ley-core".to_owned(),
+                result: "test process returned".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            tool.session.schema_version,
+            SESSION_TOOL_EVIDENCE_SCHEMA_VERSION
+        );
+        assert!(tool.session_path.ends_with(SESSION_V14_FILE));
+
         let replayed = read_session(&project, &vault, &session_id).unwrap();
         assert_eq!(
             replayed.schema_version,
-            SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
+            SESSION_TOOL_EVIDENCE_SCHEMA_VERSION
         );
-        assert_eq!(replayed.event_count, 24);
+        assert_eq!(replayed.event_count, 25);
         assert_eq!(replayed.checkpoints.len(), 7);
+        assert_eq!(replayed.tool_observations.len(), 1);
+        assert_eq!(
+            replayed.tool_observations[0].command.as_deref(),
+            Some("cargo test -p ley-core")
+        );
         assert_eq!(
             replayed.checkpoints[0].unresolved,
             vec!["The retry investigation remains open"]

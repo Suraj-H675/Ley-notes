@@ -37,6 +37,44 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ley",
+            "args": [
+              "hook",
+              "--host",
+              "claude",
+              "${CLAUDE_PROJECT_DIR}"
+            ],
+            "timeout": 20,
+            "statusMessage": "Saving bounded Ley Bash evidence"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ley",
+            "args": [
+              "hook",
+              "--host",
+              "claude",
+              "${CLAUDE_PROJECT_DIR}"
+            ],
+            "timeout": 20,
+            "statusMessage": "Saving bounded Ley Bash failure evidence"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [

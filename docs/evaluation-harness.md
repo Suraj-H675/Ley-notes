@@ -77,10 +77,18 @@ need to survive together. `ley_session_memory_verify_composite` plus
 than allowing either the rich episode or siblings to strand the other side of the window. The eval
 requires `session-v13.json`, exact retry, closed-window state, full-union checkpoint lineage, and
 component-specific Attempt/Decision lineage.
+After all v3-v13 recovery windows are closed, the same scenario sends one real Codex Bash
+`PostToolUse` payload through `ley hook`. The resulting schema-v14 observation must appear separately
+as supporting Memory Compiler provenance and bounded explicit session history, keep
+`totalUnconsolidatedEvidence == 0`, remain ineligible for candidate binding, preserve the existing
+checkpoint count, and label the normal post-tool event only as `returned` even when the synthetic
+response carries non-zero-looking metadata.
 Task-, Plan-, batch-, rich-Problem-, and composite-specific secret canaries are injected into captured
 host prompts and must be redacted from recovery packs and absent from durable `session-v9.json`,
-`session-v10.json`, `session-v11.json`, `session-v12.json`, and `session-v13.json`. The representative
-therefore requires zero privacy leakage and keeps rich/composite recovery inside the existing Reliable
+`session-v10.json`, `session-v11.json`, `session-v12.json`, and `session-v13.json`. A separate Bash
+secret canary and raw host tool-call ID are injected into the schema-v14 phase; both must be absent
+from compiler/history output and `session-v14.json`. The representative therefore requires zero
+privacy leakage and keeps rich/composite/tool-evidence behavior inside the existing Reliable
 Memory Compiler, memory-binding, and origin-lineage gates rather than introducing weaker standalone
 metrics.
 
