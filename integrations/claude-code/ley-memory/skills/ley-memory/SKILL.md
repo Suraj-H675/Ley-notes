@@ -167,7 +167,7 @@ request, repository policy, or inspection of live source.
    create/list/attach/detach Policy Bundles; `ley scope ...` and
    `ley policy-bundle ...` remain explicit local-user workflows. Use
    `ley_project_specifications` only for explicit active-project Specification inspection;
-   it applies the same egress gate before opening blocked notes.
+   it applies the same egress gate before opening blocked notes. When a returned Specification includes `acceptanceCriteria`, treat those rows as a read-only revision-bound projection of exact approved Markdown. Preserve checkbox/task-list markers literally; do not infer completed, verified, satisfied, or remaining state. Respect `state`: `omitted-budget` means only the optional structured projection was withheld, never that the parent Specification lost authority.
 5. If you need to debug **why Ley supplied that exact context pack**, call
    `ley_context_pack_inspect` with the same task, `maxResults`, and `maxTokens`
    plus the returned `contextPackId`. Use it for attribution/debugging, not

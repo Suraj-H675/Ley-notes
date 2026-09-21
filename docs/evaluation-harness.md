@@ -13,7 +13,7 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 - selective abstention when no useful memory exists;
 - crash recovery, transition binding, idempotency, and origin-lineage preservation;
 - meaningful-boundary local consolidation review, direct turn-evidence lineage, and terminal-session non-mutation;
-- human-intent Specification admission, Context Mount isolation, premise resistance, and revision applicability;
+- human-intent Specification admission plus revision-bound structured acceptance criteria, Context Mount isolation, premise resistance, and revision applicability;
 - explicit external GitHub connector scope/egress, read-only MCP exposure, stable remove/re-add identity, and non-laundering;
 - reusable team/organization Knowledge Scope authority, bounded multi-source retrieval, source-egress inheritance, detach ancestry, and non-laundering;
 - parallel-session separation and cross-host durability;
@@ -26,6 +26,8 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 `privacy_violation_rate` and `forgetting_residue_rate` are lower-is-better metrics. A zero result means
 the fixture's canaries were not extractable from the probed Ley-managed surfaces; it is not a claim
 that arbitrary undiscovered channels or user-owned external copies do not exist.
+
+ADR 0068 extends the existing Specification representatives rather than adding a weaker standalone score. `specification-authority-context` now requires one exact revision-bound `acr_` row with raw criterion text, source line range, `statusInterpreted: false`, and `persisted: false`; the egress canary places its private marker inside an Acceptance criteria item so a blocked Specification must withhold both whole-source and derived fields. The empty-workspace bootstrap representative requires the same shared projection before target initialization. Core regressions additionally prove parser/container false-positive resistance and that criteria are fitted only after existing mounted/shared/bootstrap reference admission, so a tight token/character budget may yield `omitted-budget` without evicting the parent Specification or previously admitted context. MCP regression coverage uses heavily escaped approved criterion text to prove the 256 KiB transport guard preserves the parent by dropping only the optional projection before falling back to the normal oversized-result error.
 
 ## Downstream task contract and baseline
 

@@ -7,6 +7,8 @@ use crate::policy_bundle::{
 };
 use crate::revision::{estimate_revision_applicability_tokens, estimate_revision_freshness_tokens};
 use crate::specification::{
+    acceptance_criteria_projection_tokens, derive_specification_acceptance_criteria,
+    omit_acceptance_criteria_for_budget, SpecificationAcceptanceCriteria,
     TaskSpecificationCandidate, TaskSpecificationExclusionReason, TaskSpecificationScan,
 };
 use crate::{
@@ -233,6 +235,8 @@ pub struct CompiledSpecificationItem {
     pub content_hash: String,
     pub approved_at_unix_ms: u64,
     pub source: String,
+    pub acceptance_criteria_tokens: usize,
+    pub acceptance_criteria: SpecificationAcceptanceCriteria,
     pub relevance_score: u32,
     pub exact_match: bool,
     pub authority: &'static str,
@@ -302,6 +306,8 @@ pub struct CompiledPolicyBundleItem {
     pub content_hash: String,
     pub approved_at_unix_ms: u64,
     pub source: String,
+    pub acceptance_criteria_tokens: usize,
+    pub acceptance_criteria: SpecificationAcceptanceCriteria,
     pub relevance_score: u32,
     pub exact_match: bool,
     pub authority: &'static str,
@@ -829,9 +835,14 @@ pub fn compile_project_context_with_registries(
                     .to_owned(),
             ));
         }
-        let pack = compile_search_result_with_specifications(search, specification_scan, limits);
+        let pack = compile_search_result_with_specifications_unfinalized(
+            search,
+            specification_scan,
+            limits,
+        );
         mount_registry.with_resolved_project_mounts_locked(project_start, |mounts| {
-            append_mounted_references(pack, mounts, task, limits).map(finalize_context_pack)
+            append_mounted_references(pack, mounts, task, limits)
+                .map(finalize_context_pack_with_acceptance_criteria)
         })
     })
 }
@@ -1085,7 +1096,7 @@ pub fn compile_project_context_for_agent_with_registries(
                         omitted_exclusions: omitted_egress,
                     });
                     pack.egress_exclusions = fitted_egress;
-                    Ok(finalize_context_pack(pack))
+                    Ok(finalize_context_pack_with_acceptance_criteria(pack))
                         },
                     )
                         },
@@ -1158,6 +1169,16 @@ fn compile_search_result(
 }
 
 fn compile_search_result_with_specifications(
+    search: ProjectMemorySearch,
+    specification_scan: TaskSpecificationScan,
+    limits: ContextCompileLimits,
+) -> CompiledContextPack {
+    finalize_context_pack_with_acceptance_criteria(
+        compile_search_result_with_specifications_unfinalized(search, specification_scan, limits),
+    )
+}
+
+fn compile_search_result_with_specifications_unfinalized(
     search: ProjectMemorySearch,
     specification_scan: TaskSpecificationScan,
     limits: ContextCompileLimits,
@@ -1279,6 +1300,11 @@ fn compile_search_result_with_authorities(
             ));
             continue;
         }
+        let acceptance_criteria = derive_specification_acceptance_criteria(
+            &candidate.source.specification_id,
+            &candidate.source.content_hash,
+            &candidate.source.source,
+        );
         item_tokens = item_tokens.saturating_add(estimated_tokens);
         specifications.push(CompiledSpecificationItem {
             specification_id: candidate.source.specification_id,
@@ -1286,6 +1312,8 @@ fn compile_search_result_with_authorities(
             content_hash: candidate.source.content_hash,
             approved_at_unix_ms: candidate.source.approved_at_unix_ms,
             source: candidate.source.source,
+            acceptance_criteria_tokens: 0,
+            acceptance_criteria,
             relevance_score: candidate.lexical_score,
             exact_match: candidate.exact_match,
             authority: candidate.source.authority,
@@ -1328,6 +1356,11 @@ fn compile_search_result_with_authorities(
             ));
             continue;
         }
+        let acceptance_criteria = derive_specification_acceptance_criteria(
+            &candidate.source.specification_id,
+            &candidate.source.content_hash,
+            &candidate.source.source,
+        );
         item_tokens = item_tokens.saturating_add(estimated_tokens);
         policy_bundle_policies.push(CompiledPolicyBundleItem {
             bundle_id: candidate.bundle_id,
@@ -1340,6 +1373,8 @@ fn compile_search_result_with_authorities(
             content_hash: candidate.source.content_hash,
             approved_at_unix_ms: candidate.source.approved_at_unix_ms,
             source: candidate.source.source,
+            acceptance_criteria_tokens: 0,
+            acceptance_criteria,
             relevance_score: candidate.lexical_score,
             exact_match: candidate.exact_match,
             authority: POLICY_BUNDLE_AUTHORITY,
@@ -1503,7 +1538,7 @@ fn compile_search_result_with_authorities(
             .filter(|item| item.reason == PolicyBundleCompileExclusionReason::TokenBudget)
             .count(),
     };
-    finalize_context_pack(CompiledContextPack {
+    CompiledContextPack {
         context_pack_id: String::new(),
         created_at_unix_ms: 0,
         project_id: search.project_id,
@@ -1556,7 +1591,22 @@ fn compile_search_result_with_authorities(
         source_boundary: SOURCE_BOUNDARY,
         instruction_warning: INSTRUCTION_WARNING,
         privacy_notice: PRIVACY_NOTICE,
-    })
+    }
+}
+
+fn finalize_context_pack_with_acceptance_criteria(
+    mut pack: CompiledContextPack,
+) -> CompiledContextPack {
+    let acceptance_criteria_tokens = fit_compiled_acceptance_criteria_tokens(
+        &mut pack.specifications,
+        &mut pack.policy_bundle_policies,
+        pack.max_tokens.saturating_sub(pack.estimated_tokens),
+    );
+    pack.estimated_tokens = pack
+        .estimated_tokens
+        .saturating_add(acceptance_criteria_tokens)
+        .min(pack.max_tokens);
+    finalize_context_pack(pack)
 }
 
 fn finalize_context_pack(mut pack: CompiledContextPack) -> CompiledContextPack {
@@ -2651,6 +2701,49 @@ fn estimate_specification_tokens(candidate: &TaskSpecificationCandidate) -> usiz
             .saturating_add(candidate.source.source.chars().count())
             .div_ceil(4),
     )
+}
+
+fn fit_compiled_acceptance_criteria_tokens(
+    specifications: &mut [CompiledSpecificationItem],
+    policy_bundle_policies: &mut [CompiledPolicyBundleItem],
+    mut remaining_tokens: usize,
+) -> usize {
+    let mut used = 0usize;
+    for specification in specifications {
+        let required = acceptance_criteria_projection_tokens(&specification.acceptance_criteria);
+        if required == 0 {
+            specification.acceptance_criteria_tokens = 0;
+            continue;
+        }
+        if required <= remaining_tokens {
+            specification.acceptance_criteria_tokens = required;
+            specification.estimated_tokens =
+                specification.estimated_tokens.saturating_add(required);
+            remaining_tokens -= required;
+            used = used.saturating_add(required);
+        } else {
+            omit_acceptance_criteria_for_budget(&mut specification.acceptance_criteria);
+            specification.acceptance_criteria_tokens = 0;
+        }
+    }
+    for specification in policy_bundle_policies {
+        let required = acceptance_criteria_projection_tokens(&specification.acceptance_criteria);
+        if required == 0 {
+            specification.acceptance_criteria_tokens = 0;
+            continue;
+        }
+        if required <= remaining_tokens {
+            specification.acceptance_criteria_tokens = required;
+            specification.estimated_tokens =
+                specification.estimated_tokens.saturating_add(required);
+            remaining_tokens -= required;
+            used = used.saturating_add(required);
+        } else {
+            omit_acceptance_criteria_for_budget(&mut specification.acceptance_criteria);
+            specification.acceptance_criteria_tokens = 0;
+        }
+    }
+    used
 }
 
 fn specification_assembly_exclusion(
@@ -4381,10 +4474,76 @@ mod tests {
         assert!(pack.specifications[0]
             .source
             .contains("Acceptance criteria"));
+        assert_eq!(
+            pack.specifications[0].acceptance_criteria.state,
+            crate::SpecificationAcceptanceCriteriaState::Available
+        );
+        assert_eq!(pack.specifications[0].acceptance_criteria.criteria.len(), 1);
+        assert_eq!(
+            pack.specifications[0].acceptance_criteria.criteria[0].text,
+            "- Offline mode works without network access."
+        );
+        assert!(pack.specifications[0].acceptance_criteria_tokens > 0);
         assert_eq!(pack.specification_coverage.total_approved, 2);
         assert_eq!(pack.specification_coverage.low_relevance_approved, 1);
         assert_eq!(pack.source_boundary, "mixed-authority-context");
         assert!(pack.estimated_tokens <= pack.max_tokens);
+    }
+
+    #[test]
+    fn acceptance_criteria_projection_uses_only_spare_context_budget() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(vault.join("Specs")).unwrap();
+        initialize_project(
+            &project,
+            Some("Specification criteria budget"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        fs::write(project.join("README.md"), "unrelated captured source\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let criterion = format!(
+            "- criteria_budget_marker {}\n",
+            "must remain exact ".repeat(30)
+        );
+        let source = format!(
+            "# Criteria budget\n\ncriteria_budget_marker is required.\n\n## Acceptance criteria\n\n{criterion}"
+        );
+        fs::write(vault.join("Specs/Budget.md"), &source).unwrap();
+        let registry = SpecificationRegistry::at(root.path().join("specifications.json"));
+        let specification_id = crate::generate_specification_id();
+        registry
+            .approve(&project, &vault, &specification_id, "Specs/Budget.md")
+            .unwrap();
+
+        let pack = compile_project_context_with_registry(
+            &project,
+            &vault,
+            "criteria_budget_marker",
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 500,
+            },
+            &registry,
+        )
+        .unwrap();
+        assert_eq!(pack.specifications.len(), 1);
+        assert_eq!(pack.specifications[0].specification_id, specification_id);
+        assert!(pack.specifications[0].source.contains(&criterion));
+        assert_eq!(
+            pack.specifications[0].acceptance_criteria.state,
+            crate::SpecificationAcceptanceCriteriaState::OmittedBudget
+        );
+        assert_eq!(pack.specifications[0].acceptance_criteria.total_criteria, 1);
+        assert!(pack.specifications[0]
+            .acceptance_criteria
+            .criteria
+            .is_empty());
+        assert_eq!(pack.specifications[0].acceptance_criteria_tokens, 0);
+        assert!(pack.estimated_tokens <= 500);
     }
 
     #[test]
@@ -5746,6 +5905,100 @@ mod tests {
     }
 
     #[test]
+    fn shared_knowledge_keeps_budget_precedence_over_acceptance_projection() {
+        let root = tempdir().unwrap();
+        let config = root.path().join("config");
+        let active = root.path().join("active");
+        let active_vault = root.path().join("active-vault");
+        let reference = root.path().join("reference");
+        let reference_vault = root.path().join("reference-vault");
+        for path in [
+            &active,
+            &active_vault,
+            &reference,
+            &reference_vault,
+            &config,
+        ] {
+            fs::create_dir_all(path).unwrap();
+        }
+        initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
+        initialize_project(&reference, Some("Reference"), CaptureMode::Structured).unwrap();
+        fs::write(active.join("README.md"), "unrelated active source\n").unwrap();
+        fs::write(
+            reference.join("REFERENCE.md"),
+            "criteria_shared_budget_marker reusable shared evidence\n",
+        )
+        .unwrap();
+
+        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
+        bindings.bind(&active, &active_vault).unwrap();
+        bindings.bind(&reference, &reference_vault).unwrap();
+        ingest_project(&active, &active_vault).unwrap();
+        ingest_project(&reference, &reference_vault).unwrap();
+
+        fs::create_dir_all(active_vault.join("Specs")).unwrap();
+        let criterion = format!(
+            "- criteria_shared_budget_marker {}\n",
+            "must remain exact ".repeat(40)
+        );
+        fs::write(
+            active_vault.join("Specs/Budget.md"),
+            format!(
+                "# Shared reference budget\n\ncriteria_shared_budget_marker is required.\n\n## Acceptance criteria\n\n{criterion}"
+            ),
+        )
+        .unwrap();
+        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let specification_id = crate::generate_specification_id();
+        specifications
+            .approve(&active, &active_vault, &specification_id, "Specs/Budget.md")
+            .unwrap();
+        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
+        let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
+        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let scope = scopes
+            .create(
+                KnowledgeScopeKind::Team,
+                "Shared budget team",
+                std::slice::from_ref(&reference),
+            )
+            .unwrap();
+        scopes.attach(&active, &scope.scope.scope_id).unwrap();
+
+        let pack = compile_project_context_for_agent_with_registries(
+            &active,
+            &active_vault,
+            "criteria_shared_budget_marker",
+            ContextCompileLimits {
+                max_results: 2,
+                max_tokens: 900,
+            },
+            AgentContextAuthorities {
+                specifications: &specifications,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
+                egress: &egress,
+            },
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+
+        assert_eq!(pack.specifications.len(), 1);
+        assert!(pack
+            .shared_knowledge_references
+            .iter()
+            .any(|item| { item.excerpt.contains("criteria_shared_budget_marker") }));
+        assert_eq!(
+            pack.specifications[0].acceptance_criteria.state,
+            crate::SpecificationAcceptanceCriteriaState::OmittedBudget
+        );
+        assert_eq!(pack.specifications[0].acceptance_criteria_tokens, 0);
+        assert!(pack.estimated_tokens <= pack.max_tokens);
+    }
+
+    #[test]
     fn active_project_context_has_budget_precedence_over_mounted_reference() {
         let root = tempdir().unwrap();
         let config = root.path().join("config");
@@ -5803,6 +6056,84 @@ mod tests {
                 && item.stage == ContextExclusionStage::Assembly
         }));
         assert_eq!(pack.reference_precedence, REFERENCE_PRECEDENCE);
+        assert!(pack.estimated_tokens <= pack.max_tokens);
+    }
+
+    #[test]
+    fn mounted_reference_keeps_budget_precedence_over_acceptance_projection() {
+        let root = tempdir().unwrap();
+        let config = root.path().join("config");
+        let active = root.path().join("active");
+        let active_vault = root.path().join("active-vault");
+        let reference = root.path().join("reference");
+        let reference_vault = root.path().join("reference-vault");
+        for path in [
+            &active,
+            &active_vault,
+            &reference,
+            &reference_vault,
+            &config,
+        ] {
+            fs::create_dir_all(path).unwrap();
+        }
+        initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
+        initialize_project(&reference, Some("Reference"), CaptureMode::Structured).unwrap();
+        fs::write(active.join("README.md"), "unrelated active source\n").unwrap();
+        fs::write(
+            reference.join("REFERENCE.md"),
+            "criteria_mount_budget_marker reusable reference evidence\n",
+        )
+        .unwrap();
+        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
+        bindings.bind(&active, &active_vault).unwrap();
+        bindings.bind(&reference, &reference_vault).unwrap();
+        ingest_project(&active, &active_vault).unwrap();
+        ingest_project(&reference, &reference_vault).unwrap();
+
+        fs::create_dir_all(active_vault.join("Specs")).unwrap();
+        let criterion = format!(
+            "- criteria_mount_budget_marker {}\n",
+            "must remain exact ".repeat(40)
+        );
+        fs::write(
+            active_vault.join("Specs/Budget.md"),
+            format!(
+                "# Mounted reference budget\n\ncriteria_mount_budget_marker is required.\n\n## Acceptance criteria\n\n{criterion}"
+            ),
+        )
+        .unwrap();
+        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let specification_id = crate::generate_specification_id();
+        specifications
+            .approve(&active, &active_vault, &specification_id, "Specs/Budget.md")
+            .unwrap();
+        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
+        mounts.mount_project(&active, &reference).unwrap();
+
+        let pack = compile_project_context_with_registries(
+            &active,
+            &active_vault,
+            "criteria_mount_budget_marker",
+            ContextCompileLimits {
+                max_results: 2,
+                max_tokens: 700,
+            },
+            &specifications,
+            &mounts,
+        )
+        .unwrap();
+
+        assert_eq!(pack.specifications.len(), 1);
+        assert_eq!(pack.specifications[0].specification_id, specification_id);
+        assert!(pack
+            .mounted_references
+            .iter()
+            .any(|item| { item.excerpt.contains("criteria_mount_budget_marker") }));
+        assert_eq!(
+            pack.specifications[0].acceptance_criteria.state,
+            crate::SpecificationAcceptanceCriteriaState::OmittedBudget
+        );
+        assert_eq!(pack.specifications[0].acceptance_criteria_tokens, 0);
         assert!(pack.estimated_tokens <= pack.max_tokens);
     }
 
@@ -6145,9 +6476,12 @@ mod tests {
 
         fs::create_dir_all(source_vault.join("Specs")).unwrap();
         let private_marker = "private_bundle_marker signed release process";
+        let acceptance_marker = "private_bundle_acceptance_marker";
         fs::write(
             source_vault.join("Specs/Release.md"),
-            format!("# Release policy\n\n{private_marker}\n"),
+            format!(
+                "# Release policy\n\n{private_marker}\n\n## Acceptance criteria\n\n- {acceptance_marker} must remain private to allowed agents.\n"
+            ),
         )
         .unwrap();
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
@@ -6256,6 +6590,20 @@ mod tests {
                 && item.authority == POLICY_BUNDLE_AUTHORITY
                 && item.source_boundary == POLICY_BUNDLE_SOURCE_BOUNDARY
         }));
+        let local_policy = local
+            .policy_bundle_policies
+            .iter()
+            .find(|item| item.specification_id == source_specification_id)
+            .unwrap();
+        assert_eq!(
+            local_policy.acceptance_criteria.state,
+            crate::SpecificationAcceptanceCriteriaState::Available
+        );
+        assert_eq!(local_policy.acceptance_criteria.criteria.len(), 1);
+        assert!(local_policy.acceptance_criteria.criteria[0]
+            .text
+            .contains(acceptance_marker));
+        assert!(local_policy.acceptance_criteria_tokens > 0);
         assert!(local.egress_exclusions.is_empty());
 
         fs::remove_dir_all(&source_vault).unwrap();
@@ -6290,6 +6638,9 @@ mod tests {
         assert!(!serde_json::to_string(&project_blocked)
             .unwrap()
             .contains(private_marker));
+        assert!(!serde_json::to_string(&project_blocked)
+            .unwrap()
+            .contains(acceptance_marker));
 
         egress
             .set_project_policy(&source, AgentEgressPolicy::AgentOk)
@@ -6328,6 +6679,9 @@ mod tests {
         assert!(!serde_json::to_string(&specification_blocked)
             .unwrap()
             .contains(private_marker));
+        assert!(!serde_json::to_string(&specification_blocked)
+            .unwrap()
+            .contains(acceptance_marker));
 
         policy_bundles
             .detach(&active, &bundle.bundle.bundle_id)

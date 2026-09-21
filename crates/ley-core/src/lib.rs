@@ -341,17 +341,19 @@ pub use session_context::{
     MIN_SESSION_TURN_CHARACTERS,
 };
 pub use specification::{
-    generate_specification_id, project_specifications_context, specification_content_hash,
-    ApprovedSpecificationSource, ProjectSpecificationsContext, SpecificationApproval,
+    derive_specification_acceptance_criteria, generate_specification_id,
+    project_specifications_context, specification_content_hash, ApprovedSpecificationSource,
+    ProjectSpecificationsContext, SpecificationAcceptanceCriteria,
+    SpecificationAcceptanceCriteriaState, SpecificationAcceptanceCriterion, SpecificationApproval,
     SpecificationApprovalState, SpecificationAuthority, SpecificationAuthorityList,
     SpecificationContextExclusion, SpecificationContextExclusionReason, SpecificationContextItem,
     SpecificationContextLimits, SpecificationEgressCoverage, SpecificationEgressExclusion,
     SpecificationRegistry, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
-    DEFAULT_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_APPROVALS_PER_PROJECT,
-    MAX_SPECIFICATION_BYTES, MAX_SPECIFICATION_CONTEXT_CHARACTERS,
-    MAX_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_PATH_CHARACTERS,
-    MIN_SPECIFICATION_CONTEXT_CHARACTERS, SPECIFICATION_REGISTRY_FILE,
-    SPECIFICATION_REGISTRY_SCHEMA_VERSION,
+    DEFAULT_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_ACCEPTANCE_CRITERIA,
+    MAX_SPECIFICATION_APPROVALS_PER_PROJECT, MAX_SPECIFICATION_BYTES,
+    MAX_SPECIFICATION_CONTEXT_CHARACTERS, MAX_SPECIFICATION_CONTEXT_RESULTS,
+    MAX_SPECIFICATION_PATH_CHARACTERS, MIN_SPECIFICATION_CONTEXT_CHARACTERS,
+    SPECIFICATION_REGISTRY_FILE, SPECIFICATION_REGISTRY_SCHEMA_VERSION,
 };
 pub use topic_dossier::{
     compile_topic_dossier, TopicDossier, TopicDossierArtifact, TopicDossierCoverage,

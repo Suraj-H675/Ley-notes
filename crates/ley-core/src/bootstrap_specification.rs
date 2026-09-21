@@ -3,7 +3,11 @@ use crate::context_compiler::{
 };
 use crate::project_memory_search::{lexical_score, search_project_memory_for_expected_project};
 use crate::revision::estimate_revision_freshness_tokens;
-use crate::specification::{specification_task_terms, validate_specification_id};
+use crate::specification::{
+    acceptance_criteria_projection_tokens, derive_specification_acceptance_criteria,
+    omit_acceptance_criteria_for_budget, specification_task_terms, validate_specification_id,
+    SpecificationAcceptanceCriteria,
+};
 use crate::{
     canonical_directory, default_binding_registry_path, diagnose_project, evaluate_agent_egress,
     initialize_project_uncoordinated, validate_project_id, AgentEgressBlockReason,
@@ -288,6 +292,8 @@ pub struct BootstrapCompiledSpecification {
     pub content_hash: String,
     pub approved_at_unix_ms: u64,
     pub source: String,
+    pub acceptance_criteria_tokens: usize,
+    pub acceptance_criteria: SpecificationAcceptanceCriteria,
     pub relevance_score: u32,
     pub exact_match: bool,
     pub authority: &'static str,
@@ -1304,6 +1310,7 @@ pub fn compile_bootstrap_specifications_with_registries(
             compile_bootstrap_specifications_locked(
                 workspace, entry, task, limits, target, registry, policies,
             )
+            .map(finalize_bootstrap_specification_acceptance_criteria)
         })
     })
 }
@@ -1523,6 +1530,11 @@ fn compile_bootstrap_specifications_locked(
             ));
             continue;
         }
+        let acceptance_criteria = derive_specification_acceptance_criteria(
+            &candidate.specification_id,
+            &candidate.content_hash,
+            &candidate.source,
+        );
         estimated_tokens += candidate.estimated_tokens;
         specifications.push(BootstrapCompiledSpecification {
             grant_id: candidate.grant_id,
@@ -1533,6 +1545,8 @@ fn compile_bootstrap_specifications_locked(
             content_hash: candidate.content_hash,
             approved_at_unix_ms: candidate.approved_at_unix_ms,
             source: candidate.source,
+            acceptance_criteria_tokens: 0,
+            acceptance_criteria,
             relevance_score: candidate.relevance_score,
             exact_match: candidate.exact_match,
             authority: "human-intent",
@@ -1561,6 +1575,20 @@ fn compile_bootstrap_specifications_locked(
         instruction_warning: INSTRUCTION_WARNING,
         privacy_notice: PRIVACY_NOTICE,
     })
+}
+
+fn finalize_bootstrap_specification_acceptance_criteria(
+    mut context: BootstrapSpecificationContext,
+) -> BootstrapSpecificationContext {
+    let acceptance_criteria_tokens = fit_bootstrap_acceptance_criteria_tokens(
+        &mut context.specifications,
+        context.max_tokens.saturating_sub(context.estimated_tokens),
+    );
+    context.estimated_tokens = context
+        .estimated_tokens
+        .saturating_add(acceptance_criteria_tokens)
+        .min(context.max_tokens);
+    context
 }
 
 pub fn compile_bootstrap_context(
@@ -1592,7 +1620,7 @@ pub fn compile_bootstrap_context_with_registries(
     validate_compile_limits(task, limits)?;
     registry.with_current_workspace_locked(workspace, |workspace, entry| {
         egress.with_snapshot_locked(|policies| {
-            let specifications = compile_bootstrap_specifications_locked(
+            let mut specifications = compile_bootstrap_specifications_locked(
                 workspace, entry, task, limits, target, registry, policies,
             )?;
             let (
@@ -1600,7 +1628,7 @@ pub fn compile_bootstrap_context_with_registries(
                 references,
                 reference_exclusions,
                 reference_coverage,
-                estimated_tokens,
+                mut estimated_tokens,
             ) = compile_bootstrap_references_locked(
                 entry,
                 task,
@@ -1612,6 +1640,13 @@ pub fn compile_bootstrap_context_with_registries(
                 specifications.estimated_tokens,
                 specifications.specifications.len(),
             )?;
+            let acceptance_criteria_tokens = fit_bootstrap_acceptance_criteria_tokens(
+                &mut specifications.specifications,
+                limits.max_tokens.saturating_sub(estimated_tokens),
+            );
+            estimated_tokens = estimated_tokens
+                .saturating_add(acceptance_criteria_tokens)
+                .min(limits.max_tokens);
             Ok(BootstrapContext {
                 schema_version: BOOTSTRAP_CONTEXT_SCHEMA_VERSION,
                 workspace_id: workspace.workspace_id.clone(),
@@ -2201,6 +2236,31 @@ fn estimate_specification_tokens(relative_path: &str, source: &str) -> usize {
     )
 }
 
+fn fit_bootstrap_acceptance_criteria_tokens(
+    specifications: &mut [BootstrapCompiledSpecification],
+    mut remaining_tokens: usize,
+) -> usize {
+    let mut used = 0usize;
+    for specification in specifications {
+        let required = acceptance_criteria_projection_tokens(&specification.acceptance_criteria);
+        if required == 0 {
+            specification.acceptance_criteria_tokens = 0;
+            continue;
+        }
+        if required <= remaining_tokens {
+            specification.acceptance_criteria_tokens = required;
+            specification.estimated_tokens =
+                specification.estimated_tokens.saturating_add(required);
+            remaining_tokens -= required;
+            used = used.saturating_add(required);
+        } else {
+            omit_acceptance_criteria_for_budget(&mut specification.acceptance_criteria);
+            specification.acceptance_criteria_tokens = 0;
+        }
+    }
+    used
+}
+
 fn validate_compile_limits(task: &str, limits: ContextCompileLimits) -> Result<(), LeyCoreError> {
     if task.trim().is_empty() {
         return Err(LeyCoreError::InvalidBootstrapSpecificationRequest(
@@ -2428,7 +2488,7 @@ mod tests {
     #[test]
     fn explicit_bootstrap_grant_is_non_mutating_and_compiles_exact_approved_specification() {
         let fixture = fixture(
-            "# Offline product\n\nThe bootstrap_offline_marker app must work fully offline.\n",
+            "# Offline product\n\nThe bootstrap_offline_marker app must work fully offline.\n\n## Acceptance criteria\n\n- bootstrap_acceptance_marker remains explicit human intent.\n",
         );
         let before = fs::read_dir(&fixture.target).unwrap().count();
 
@@ -2442,10 +2502,21 @@ mod tests {
 
         let context = compile(&fixture, "implement bootstrap_offline_marker", 1_500);
         assert_eq!(context.specifications.len(), 1);
+        assert!(context.specifications[0]
+            .source
+            .contains("The bootstrap_offline_marker app must work fully offline."));
         assert_eq!(
-            context.specifications[0].source,
-            "# Offline product\n\nThe bootstrap_offline_marker app must work fully offline.\n"
+            context.specifications[0].acceptance_criteria.state,
+            crate::SpecificationAcceptanceCriteriaState::Available
         );
+        assert_eq!(
+            context.specifications[0].acceptance_criteria.criteria.len(),
+            1
+        );
+        assert!(context.specifications[0].acceptance_criteria.criteria[0]
+            .text
+            .contains("bootstrap_acceptance_marker"));
+        assert!(context.specifications[0].acceptance_criteria_tokens > 0);
         assert_eq!(context.specifications[0].authority, "human-intent");
         assert_eq!(
             context.specifications[0].source_boundary,
@@ -2748,6 +2819,56 @@ mod tests {
             item.stage == ContextExclusionStage::Assembly
                 && item.reason == ContextExclusionReason::ResultLimit
         }));
+        assert!(context.estimated_tokens <= context.max_tokens);
+    }
+
+    #[test]
+    fn bootstrap_reference_keeps_budget_precedence_over_acceptance_projection() {
+        let criterion = format!(
+            "- bootstrap_criteria_budget_marker {}\n",
+            "must remain exact ".repeat(40)
+        );
+        let fixture = fixture(&format!(
+            "# Product\n\nbootstrap_criteria_budget_marker is required.\n\n## Acceptance criteria\n\n{criterion}"
+        ));
+        fs::write(
+            fixture.source.join("REFERENCE.md"),
+            "bootstrap_criteria_budget_marker reusable captured reference evidence\n",
+        )
+        .unwrap();
+        ingest_project(&fixture.source, &fixture.vault).unwrap();
+        fixture
+            .bootstrap
+            .attach(&fixture.target, &fixture.source, &fixture.specification_id)
+            .unwrap();
+        fixture
+            .bootstrap
+            .attach_reference(&fixture.target, &fixture.source)
+            .unwrap();
+
+        let context = compile_bootstrap_context_with_registries(
+            &fixture.target,
+            "bootstrap_criteria_budget_marker",
+            ContextCompileLimits {
+                max_results: 2,
+                max_tokens: 500,
+            },
+            AgentEgressTarget::Cloud,
+            &fixture.bootstrap,
+            &fixture.egress,
+        )
+        .unwrap();
+
+        assert_eq!(context.specifications.len(), 1);
+        assert!(context
+            .references
+            .iter()
+            .any(|item| item.excerpt.contains("bootstrap_criteria_budget_marker")));
+        assert_eq!(
+            context.specifications[0].acceptance_criteria.state,
+            crate::SpecificationAcceptanceCriteriaState::OmittedBudget
+        );
+        assert_eq!(context.specifications[0].acceptance_criteria_tokens, 0);
         assert!(context.estimated_tokens <= context.max_tokens);
     }
 

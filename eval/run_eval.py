@@ -1449,6 +1449,52 @@ def evaluate_bootstrap_specification_scenario(
         and isinstance(initial_specifications[0], dict)
         else {}
     )
+    expected_acceptance = expectation.get("acceptance_criteria", [])
+    acceptance_projection = initial_spec.get("acceptanceCriteria", {})
+    acceptance_rows = (
+        acceptance_projection.get("criteria", [])
+        if isinstance(acceptance_projection, dict)
+        else []
+    )
+    acceptance_ok = True
+    if isinstance(expected_acceptance, list) and expected_acceptance:
+        acceptance_ok = (
+            isinstance(acceptance_projection, dict)
+            and acceptance_projection.get("state") == "available"
+            and acceptance_projection.get("totalCriteria") == len(expected_acceptance)
+            and acceptance_projection.get("returnedCriteria") == len(expected_acceptance)
+            and acceptance_projection.get("omittedCriteria") == 0
+            and acceptance_projection.get("sourceRevisionBound") is True
+            and acceptance_projection.get("statusInterpreted") is False
+            and acceptance_projection.get("persisted") is False
+            and isinstance(acceptance_rows, list)
+            and len(acceptance_rows) == len(expected_acceptance)
+            and int(initial_spec.get("acceptanceCriteriaTokens", 0)) > 0
+        )
+        if acceptance_ok:
+            for expected, actual in zip(expected_acceptance, acceptance_rows):
+                if not isinstance(expected, dict) or not isinstance(actual, dict):
+                    acceptance_ok = False
+                    break
+                if not (
+                    actual.get("text") == expected.get("text")
+                    and actual.get("startLine") == expected.get("start_line")
+                    and actual.get("endLine") == expected.get("end_line")
+                    and str(actual.get("criterionId", "")).startswith("acr_")
+                    and all(
+                        field not in actual
+                        for field in (
+                            "checked",
+                            "completed",
+                            "verified",
+                            "satisfied",
+                            "remaining",
+                            "status",
+                        )
+                    )
+                ):
+                    acceptance_ok = False
+                    break
     initial_ok = (
         isinstance(attached, dict)
         and attached.get("created") is True
@@ -1461,6 +1507,7 @@ def evaluate_bootstrap_specification_scenario(
         and compiled.get("targetInitialized") is False
         and initial_spec.get("source") == source_text
         and initial_spec.get("specificationId") == specification_id
+        and acceptance_ok
         and codex_start == {}
         and claude_start == {}
         and codex_context.startswith("# Ley bootstrap task context (automatic)")
@@ -2393,6 +2440,15 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             for item in compiled.get("specifications", [])
             if isinstance(item, dict)
         }
+        relevant_specification = next(
+            (
+                item
+                for item in compiled.get("specifications", [])
+                if isinstance(item, dict)
+                and str(item.get("specificationId")) == relevant_id
+            ),
+            {},
+        )
         specification_exclusions = [
             item
             for item in compiled.get("specificationExclusions", [])
@@ -2418,12 +2474,63 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and item.get("reason") == "low-relevance"
             for item in specification_exclusions
         )
+        expected_criterion = str(
+            specification_expectation.get("acceptance_criterion", "")
+        )
+        acceptance_projection = relevant_specification.get("acceptanceCriteria", {})
+        acceptance_rows = (
+            acceptance_projection.get("criteria", [])
+            if isinstance(acceptance_projection, dict)
+            else []
+        )
+        acceptance_row = (
+            acceptance_rows[0]
+            if isinstance(acceptance_rows, list)
+            and acceptance_rows
+            and isinstance(acceptance_rows[0], dict)
+            else {}
+        )
+        acceptance_criteria_ok = (
+            not expected_criterion
+            or (
+                isinstance(acceptance_projection, dict)
+                and acceptance_projection.get("state") == "available"
+                and acceptance_projection.get("totalCriteria") == 1
+                and acceptance_projection.get("returnedCriteria") == 1
+                and acceptance_projection.get("omittedCriteria") == 0
+                and acceptance_projection.get("sourceRevisionBound") is True
+                and acceptance_projection.get("statusInterpreted") is False
+                and acceptance_projection.get("persisted") is False
+                and acceptance_projection.get("authority") == "human-intent"
+                and acceptance_projection.get("sourceBoundary")
+                == "derived-from-approved-specification"
+                and acceptance_row.get("text") == expected_criterion
+                and acceptance_row.get("startLine")
+                == specification_expectation.get("acceptance_start_line")
+                and acceptance_row.get("endLine")
+                == specification_expectation.get("acceptance_end_line")
+                and str(acceptance_row.get("criterionId", "")).startswith("acr_")
+                and all(
+                    field not in acceptance_row
+                    for field in (
+                        "checked",
+                        "completed",
+                        "verified",
+                        "satisfied",
+                        "remaining",
+                        "status",
+                    )
+                )
+                and int(relevant_specification.get("acceptanceCriteriaTokens", 0)) > 0
+            )
+        )
         specification_ok = (
             relevant_id in admitted_ids
             and unrelated_id not in admitted_ids
             and unrelated_omitted
             and historical_withheld
             and direct_evidence_preserved
+            and acceptance_criteria_ok
             and compiled.get("authorityPrecedence") == "human-intent-over-historical-memory"
             and compiled.get("sourceBoundary") == "mixed-authority-context"
         )
