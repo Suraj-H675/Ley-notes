@@ -2524,6 +2524,116 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 and int(relevant_specification.get("acceptanceCriteriaTokens", 0)) > 0
             )
         )
+        expected_verification_summary = str(
+            specification_expectation.get("acceptance_verification_summary", "")
+        )
+        acceptance_verification_ok = True
+        if expected_verification_summary:
+            acceptance_verification_ok = False
+            criterion_id = str(acceptance_row.get("criterionId", ""))
+            if session_id and criterion_id:
+                verification_session = mcp_call(
+                    project,
+                    "ley_session_get",
+                    {
+                        "sessionId": session_id,
+                        "maxCheckpoints": 5,
+                        "maxCharacters": 8_000,
+                    },
+                )
+                verification_row = next(
+                    (
+                        verification
+                        for checkpoint in verification_session.get("checkpoints", [])
+                        if isinstance(checkpoint, dict)
+                        for verification in checkpoint.get("verification", [])
+                        if isinstance(verification, dict)
+                        and verification.get("summary") == expected_verification_summary
+                    ),
+                    {},
+                )
+                verification_record_id = str(verification_row.get("id", ""))
+                if verification_record_id:
+                    acceptance_verification_review = mcp_call(
+                        project,
+                        "ley_acceptance_criterion_verification_review",
+                        {
+                            "specificationId": relevant_id,
+                            "criterionId": criterion_id,
+                            "sessionId": session_id,
+                            "verificationRecordId": verification_record_id,
+                        },
+                    )
+                    acceptance_verification_ok = (
+                        acceptance_verification_review.get("specificationId")
+                        == relevant_id
+                        and acceptance_verification_review.get("criterion", {}).get(
+                            "criterionId"
+                        )
+                        == criterion_id
+                        and acceptance_verification_review.get("sessionId") == session_id
+                        and acceptance_verification_review.get("verification", {}).get(
+                            "id"
+                        )
+                        == verification_record_id
+                        and acceptance_verification_review.get("verification", {}).get(
+                            "status"
+                        )
+                        == "passed"
+                        and acceptance_verification_review.get("verification", {}).get(
+                            "summary"
+                        )
+                        == expected_verification_summary
+                        and str(
+                            acceptance_verification_review.get("linkFingerprint", "")
+                        ).startswith("sha256:")
+                        and acceptance_verification_review.get(
+                            "specificationSourceRevisionChecked"
+                        )
+                        is True
+                        and acceptance_verification_review.get(
+                            "verificationRecordChecked"
+                        )
+                        is True
+                        and acceptance_verification_review.get(
+                            "relationshipSuppliedByCaller"
+                        )
+                        is True
+                        and acceptance_verification_review.get(
+                            "verificationStatusInterpretedAsSatisfaction"
+                        )
+                        is False
+                        and acceptance_verification_review.get(
+                            "criterionSatisfactionProven"
+                        )
+                        is False
+                        and acceptance_verification_review.get(
+                            "semanticCoverageProven"
+                        )
+                        is False
+                        and acceptance_verification_review.get(
+                            "currentImplementationProven"
+                        )
+                        is False
+                        and acceptance_verification_review.get("persisted") is False
+                        and acceptance_verification_review.get(
+                            "automaticWriteAllowed"
+                        )
+                        is False
+                        and acceptance_verification_review.get("liveSourceChecked")
+                        is False
+                        and acceptance_verification_review.get("criterionAuthority")
+                        == "human-intent"
+                        and acceptance_verification_review.get(
+                            "verificationSourceBoundary"
+                        )
+                        == "untrusted-historical-verification"
+                        and acceptance_verification_review.get("relationshipBoundary")
+                        == "caller-supplied-criterion-verification-review-link"
+                    )
+                    evidence_text.extend(
+                        [verification_session, acceptance_verification_review]
+                    )
         specification_ok = (
             relevant_id in admitted_ids
             and unrelated_id not in admitted_ids
@@ -2531,6 +2641,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and historical_withheld
             and direct_evidence_preserved
             and acceptance_criteria_ok
+            and acceptance_verification_ok
             and compiled.get("authorityPrecedence") == "human-intent-over-historical-memory"
             and compiled.get("sourceBoundary") == "mixed-authority-context"
         )
@@ -2539,6 +2650,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not specification_ok:
             failures.append(
                 "task-conditioned Specification admission did not preserve authority/budget/conflict semantics"
+            )
+        if not acceptance_verification_ok:
+            failures.append(
+                "acceptance-criterion Verification review did not preserve exact provenance/non-satisfaction semantics"
             )
 
     egress_expectation = scenario.get("expected_egress_policy")

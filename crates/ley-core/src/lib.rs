@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use uuid::Uuid;
 
+mod acceptance_verification;
 mod agent_legibility;
 mod binding;
 mod bootstrap_specification;
@@ -44,6 +45,9 @@ mod session_context;
 mod specification;
 mod topic_dossier;
 
+pub use acceptance_verification::{
+    review_acceptance_criterion_verification, AcceptanceCriterionVerificationReview,
+};
 pub use agent_legibility::{
     compile_agent_legibility_map, AgentLegibilityCoverage, AgentLegibilityLimits,
     AgentLegibilityMap, LegibilityApiCandidate, LegibilityArtifactRef, LegibilityCommand,
