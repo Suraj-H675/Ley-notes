@@ -1,0 +1,625 @@
+#!/usr/bin/env python3
+
+import copy
+import json
+import stat
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import run_agent_task_eval as agent_eval
+from run_eval import write_project_files
+
+
+class AgentTaskEvalTests(unittest.TestCase):
+    def fixture(self, fixture_id: str) -> dict[str, object]:
+        return next(
+            fixture
+            for fixture in agent_eval.load_fixtures()
+            if fixture["id"] == fixture_id
+        )
+
+    def test_secret_retry_fixture_materializes_without_checked_in_answer(self) -> None:
+        raw = self.fixture("prior-retry-delay-contract")
+        raw_text = str(raw)
+        self.assertIn("{retry_schedule}", raw_text)
+        self.assertNotIn("_oracle_expected", raw_text)
+        self.assertNotIn("oracle_expected", raw_text)
+
+        first = agent_eval.materialize_fixture(raw, bytes.fromhex("11" * 32))
+        second = agent_eval.materialize_fixture(raw, bytes.fromhex("22" * 32))
+
+        self.assertNotIn("{retry_schedule}", str(first["prior_memory"]))
+        self.assertNotEqual(
+            first["_oracle_expected"],
+            second["_oracle_expected"],
+        )
+        expected = first["_oracle_expected"]
+        self.assertIsInstance(expected, list)
+        schedule = expected[2]
+        self.assertEqual(schedule, sorted(schedule))
+        self.assertEqual(len(schedule), 4)
+        self.assertEqual(expected[3], schedule + [schedule[-1], schedule[-1]])
+
+    def test_context_marker_leakage_in_task_is_rejected(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-retry-delay-contract"),
+            bytes.fromhex("33" * 32),
+        )
+        marker = str(fixture["context_markers"][0])
+        fixture["task"] = str(fixture["task"]) + " " + marker
+        with self.assertRaisesRegex(RuntimeError, "historical context"):
+            agent_eval.validate_fixture_does_not_leak_context(fixture)
+
+    def test_context_marker_leakage_in_filename_is_rejected(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-retry-delay-contract"),
+            bytes.fromhex("34" * 32),
+        )
+        marker = str(fixture["context_markers"][0])
+        fixture["project_files"][marker] = "visible\n"
+        with self.assertRaisesRegex(RuntimeError, "historical context"):
+            agent_eval.validate_fixture_does_not_leak_context(fixture)
+
+    def test_fixture_schema_rejects_unknown_allowed_file(self) -> None:
+        fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
+        agent_eval.validate_fixture_schema(fixture, 1)
+        fixture["allowed_changed_files"] = ["missing.py"]
+        with self.assertRaisesRegex(RuntimeError, "not initial project files"):
+            agent_eval.validate_fixture_schema(fixture, 1)
+
+    def test_duplicate_fixture_ids_are_rejected(self) -> None:
+        fixture = self.fixture("prior-label-normalization-contract")
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "fixtures.jsonl"
+            line = json.dumps(fixture, separators=(",", ":"))
+            path.write_text(line + "\n" + line + "\n", encoding="utf-8")
+            original = agent_eval.FIXTURES
+            agent_eval.FIXTURES = path
+            try:
+                with self.assertRaisesRegex(RuntimeError, "duplicates fixture id"):
+                    agent_eval.load_fixtures()
+            finally:
+                agent_eval.FIXTURES = original
+
+    def test_snapshot_diff_detects_unauthorized_file_even_after_git_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            write_project_files(project, {"tracked.txt": "base\n"})
+            agent_eval.git_run(project, ["init", "-b", "main"])
+            agent_eval.git_commit_all(project, "base")
+            before = agent_eval.snapshot_project_tree(project)
+            (project / "extra.txt").write_text("first\n", encoding="utf-8")
+            agent_eval.git_run(project, ["add", "extra.txt"])
+            agent_eval.git_run(
+                project,
+                [
+                    "-c",
+                    "user.name=Ley Eval",
+                    "-c",
+                    "user.email=ley-eval@example.invalid",
+                    "commit",
+                    "-m",
+                    "hide unauthorized file",
+                ],
+            )
+            after = agent_eval.snapshot_project_tree(project)
+            files, material = agent_eval.compare_project_snapshots(before, after)
+            self.assertEqual(files, ["extra.txt"])
+            self.assertIn(b"first\n", material)
+
+    def test_task_constraints_reject_non_target_changes(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-retry-delay-contract"),
+            bytes.fromhex("44" * 32),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            write_project_files(
+                project,
+                {
+                    str(path): str(body)
+                    for path, body in fixture["project_files"].items()
+                },
+            )
+            before = agent_eval.snapshot_project_tree(project)
+            (project / "test_retry.py").write_text("# altered\n", encoding="utf-8")
+            after = agent_eval.snapshot_project_tree(project)
+            changed, _ = agent_eval.compare_project_snapshots(before, after)
+            result = agent_eval.evaluate_task_constraints(
+                fixture,
+                project,
+                before,
+                after,
+                changed,
+                10,
+            )
+            self.assertFalse(result["passed"])
+            self.assertEqual(result["unexpectedChangedFiles"], ["test_retry.py"])
+            self.assertEqual(result["unchangedFileMismatches"], ["test_retry.py"])
+
+    def test_allowed_symlink_is_rejected_before_visible_tests(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-retry-delay-contract"),
+            bytes.fromhex("45" * 32),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            project.mkdir()
+            write_project_files(
+                project,
+                {
+                    str(path): str(body)
+                    for path, body in fixture["project_files"].items()
+                },
+            )
+            before = agent_eval.snapshot_project_tree(project)
+            outside = root / "outside.py"
+            outside.write_text("def retry_delays(attempts): return []\n", encoding="utf-8")
+            (project / "retry.py").unlink()
+            (project / "retry.py").symlink_to(outside)
+            after = agent_eval.snapshot_project_tree(project)
+            changed, _ = agent_eval.compare_project_snapshots(before, after)
+            result = agent_eval.evaluate_task_constraints(
+                fixture,
+                project,
+                before,
+                after,
+                changed,
+                10,
+            )
+            self.assertFalse(result["passed"])
+            self.assertEqual(result["symlinkPaths"], ["retry.py"])
+            self.assertTrue(result["visibleTestsSkipped"])
+
+    def test_oracle_probe_runs_in_project_only_sandbox(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-retry-delay-contract"),
+            bytes.fromhex("46" * 32),
+        )
+        schedule = fixture["_oracle_expected"][2]
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            write_project_files(
+                project,
+                {
+                    "retry.py": (
+                        "def retry_delays(attempts: int) -> list[int]:\n"
+                        f"    schedule = {schedule!r}\n"
+                        "    return schedule[:attempts] if attempts <= 4 "
+                        "else schedule + [schedule[-1]] * (attempts - 4)\n"
+                    )
+                },
+            )
+            result = agent_eval.run_oracle_probe(
+                fixture,
+                project,
+                10,
+                False,
+            )
+            self.assertTrue(result["passed"])
+
+            (project / "retry.py").write_text(
+                "from pathlib import Path\n"
+                "def retry_delays(attempts: int) -> list[int]:\n"
+                "    leaked = Path('/etc/passwd').exists()\n"
+                "    return [1] if leaked else []\n",
+                encoding="utf-8",
+            )
+            result = agent_eval.run_oracle_probe(
+                fixture,
+                project,
+                10,
+                False,
+            )
+            self.assertFalse(result["passed"])
+
+    def test_nonzero_runner_exit_is_a_failed_attempt_not_an_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            result = agent_eval.run_external_agent(
+                [sys.executable, "-c", "raise SystemExit(7)"],
+                project,
+                "task",
+                10,
+                "baseline",
+                [],
+                [],
+                False,
+            )
+            self.assertFalse(result["completed"])
+            self.assertFalse(result["timedOut"])
+            self.assertEqual(result["exitCode"], 7)
+
+    def test_runner_environment_does_not_inherit_home_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            result = agent_eval.run_external_agent(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import os; "
+                        "print(os.environ.get('HOME', '<missing>')); "
+                        "print(os.environ.get('PWD', ''))"
+                    ),
+                ],
+                project,
+                "task",
+                10,
+                "baseline",
+                [],
+                [],
+                True,
+            )
+            lines = bytes(result["_stdout"]).decode("utf-8").splitlines()
+            self.assertEqual(lines[0], "/home/runner")
+            self.assertEqual(lines[1], "/workspace")
+
+    def test_runner_timeout_is_counted_as_failed_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            result = agent_eval.run_external_agent(
+                [sys.executable, "-c", "import time; time.sleep(2)"],
+                project,
+                "task",
+                1,
+                "baseline",
+                [],
+                [],
+                False,
+            )
+            self.assertFalse(result["completed"])
+            self.assertTrue(result["timedOut"])
+
+    def test_runner_pid_namespace_kills_setsid_descendant_on_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            code = (
+                "import os,pathlib,time\n"
+                "pid=os.fork()\n"
+                "if pid==0:\n"
+                "    pid2=os.fork()\n"
+                "    if pid2>0: os._exit(0)\n"
+                "    os.setsid()\n"
+                "    time.sleep(1.5)\n"
+                "    pathlib.Path('escaped.txt').write_text('escaped', encoding='utf-8')\n"
+                "    os._exit(0)\n"
+                "time.sleep(5)\n"
+            )
+            result = agent_eval.run_external_agent(
+                [sys.executable, "-c", code],
+                project,
+                "task",
+                1,
+                "baseline",
+                [],
+                [],
+                False,
+            )
+            self.assertTrue(result["timedOut"])
+            import time
+            time.sleep(2)
+            self.assertFalse((project / "escaped.txt").exists())
+
+    def test_runner_cannot_see_host_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            host_repo = str(agent_eval.REPO_ROOT)
+            code = (
+                "import pathlib,sys; "
+                "pathlib.Path('visibility.txt').write_text("
+                "'visible' if pathlib.Path(sys.argv[1]).exists() else 'hidden', "
+                "encoding='utf-8')"
+            )
+            result = agent_eval.run_external_agent(
+                [sys.executable, "-c", code, host_repo],
+                project,
+                "task",
+                10,
+                "baseline",
+                [],
+                [],
+                False,
+            )
+            self.assertTrue(result["completed"])
+            self.assertEqual(
+                (project / "visibility.txt").read_text(encoding="utf-8"),
+                "hidden",
+            )
+
+    def test_sandbox_output_limit_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            result = agent_eval.run_sandboxed_project_command(
+                [
+                    "python3",
+                    "-c",
+                    f"import sys; sys.stdout.write('x'*{agent_eval.MAX_SANDBOX_OUTPUT_BYTES + 65536})",
+                ],
+                project,
+                10,
+                False,
+            )
+            self.assertFalse(result["completed"])
+            self.assertTrue(result["outputLimitExceeded"])
+
+    def test_snapshot_does_not_follow_directory_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            outside = root / "outside"
+            project.mkdir()
+            outside.mkdir()
+            (outside / "secret.txt").write_text("secret", encoding="utf-8")
+            (project / "linked").symlink_to(outside, target_is_directory=True)
+            snapshot = agent_eval.snapshot_project_tree(project)
+            self.assertEqual(snapshot["linked"][0], "symlink")
+            self.assertNotIn("linked/secret.txt", snapshot)
+
+    def test_normal_result_redacts_secret_bearing_changed_path(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-label-normalization-contract"),
+            bytes.fromhex("49" * 32),
+        )
+        secret = "runtime-secret-91-37"
+
+        def fake_runner(
+            command,
+            project,
+            prompt,
+            timeout_seconds,
+            variant,
+            inherited_env_names,
+            read_only_mounts,
+            capture_raw,
+        ):
+            (project / f"{secret}.txt").write_text("leak", encoding="utf-8")
+            return {
+                "completed": False,
+                "timedOut": False,
+                "outputLimitExceeded": False,
+                "exitCode": 1,
+                "seconds": 0.0,
+                "stdoutBytes": 0,
+                "stderrBytes": 0,
+                "stdoutSha256": agent_eval.sha256_bytes(b""),
+                "stderrSha256": agent_eval.sha256_bytes(b""),
+            }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch.object(
+                agent_eval,
+                "run_external_agent",
+                side_effect=fake_runner,
+            ):
+                result = agent_eval.execute_variant(
+                    fixture,
+                    Path(temporary),
+                    ["ignored"],
+                    [],
+                    [],
+                    "baseline",
+                    10,
+                    8,
+                    500,
+                    False,
+                )
+        rendered = json.dumps(result, sort_keys=True)
+        self.assertNotIn(secret, rendered)
+        self.assertNotIn("changedFiles", result)
+        self.assertGreaterEqual(result["changedFileCount"], 1)
+
+    def test_variant_order_alternates(self) -> None:
+        self.assertEqual(
+            agent_eval.variants_for_repetition("both", "baseline", 1),
+            ("baseline", "ley"),
+        )
+        self.assertEqual(
+            agent_eval.variants_for_repetition("both", "baseline", 2),
+            ("ley", "baseline"),
+        )
+        self.assertEqual(
+            agent_eval.variants_for_repetition("both", "ley", 1),
+            ("ley", "baseline"),
+        )
+        self.assertEqual(
+            agent_eval.variants_for_repetition("ley", "baseline", 3),
+            ("ley",),
+        )
+
+    def test_task_pass_requires_all_gates(self) -> None:
+        good_runner = {"completed": True}
+        good_constraints = {"passed": True}
+        good_oracle = {"passed": True}
+        self.assertTrue(
+            agent_eval.task_attempt_passed(
+                good_runner,
+                good_constraints,
+                good_oracle,
+                True,
+            )
+        )
+        for runner, constraints, oracle, stable in (
+            ({"completed": False}, good_constraints, good_oracle, True),
+            (good_runner, {"passed": False}, good_oracle, True),
+            (good_runner, good_constraints, {"passed": False}, True),
+            (good_runner, good_constraints, good_oracle, False),
+        ):
+            self.assertFalse(
+                agent_eval.task_attempt_passed(
+                    runner,
+                    constraints,
+                    oracle,
+                    stable,
+                )
+            )
+
+    def test_oracle_pass_and_overall_task_failure_are_recorded_separately(self) -> None:
+        fields = agent_eval.evaluation_outcome_fields(
+            task_passed=False,
+            hidden_oracle_status="passed",
+        )
+        self.assertEqual(fields["taskStatus"], "blocked")
+        self.assertEqual(fields["sessionStatus"], "paused")
+        verifications = {
+            item["kind"]: item
+            for item in fields["verifications"]
+        }
+        self.assertEqual(verifications["agent-task-eval"]["status"], "failed")
+        self.assertEqual(verifications["hidden-oracle"]["status"], "passed")
+        self.assertIn(
+            "hidden oracle passed",
+            verifications["hidden-oracle"]["summary"].lower(),
+        )
+        self.assertNotIn(
+            "oracle failed",
+            verifications["agent-task-eval"]["summary"].lower(),
+        )
+
+    def test_skipped_oracle_is_not_recorded_as_failed(self) -> None:
+        fields = agent_eval.evaluation_outcome_fields(
+            task_passed=False,
+            hidden_oracle_status="skipped",
+        )
+        verifications = {
+            item["kind"]: item
+            for item in fields["verifications"]
+        }
+        self.assertEqual(verifications["agent-task-eval"]["status"], "failed")
+        self.assertEqual(verifications["hidden-oracle"]["status"], "skipped")
+        self.assertIn(
+            "skipped",
+            verifications["hidden-oracle"]["summary"].lower(),
+        )
+        self.assertNotIn(
+            "failed",
+            verifications["hidden-oracle"]["summary"].lower(),
+        )
+
+    def test_hidden_oracle_aggregate_separates_skipped_from_failed(self) -> None:
+        summary = agent_eval.summarize_hidden_oracles(
+            [
+                {"hiddenOracleStatus": "passed"},
+                {"hiddenOracleStatus": "failed"},
+                {"hiddenOracleStatus": "skipped"},
+            ]
+        )
+        self.assertEqual(summary["attemptedCount"], 2)
+        self.assertEqual(summary["passedCount"], 1)
+        self.assertEqual(summary["failedCount"], 1)
+        self.assertEqual(summary["skippedCount"], 1)
+        self.assertEqual(summary["passRateAmongAttempted"], 0.5)
+
+    def test_audit_bundle_contains_expected_review_artifacts(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-retry-delay-contract"),
+            bytes.fromhex("47" * 32),
+        )
+        report = {"schemaVersion": 1, "taskId": fixture["id"]}
+        payload = {
+            "prompt": "prompt\n",
+            "context": "context\n",
+            "runnerStdout": b"runner-out\n",
+            "runnerStderr": b"",
+            "oracleStdout": "oracle-out\n",
+            "oracleStderr": "",
+            "diffMaterial": b"diff",
+            "projectSnapshot": b"snapshot",
+            "changedFiles": ["retry.py"],
+            "constraintDetails": {"passed": True},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "audit"
+            agent_eval.write_audit_bundle(
+                destination,
+                fixture,
+                ["runner", "--flag"],
+                report,
+                [{"repetition": 1, "variant": "ley", "payload": payload}],
+            )
+            self.assertTrue((destination / "materialized-fixture.json").is_file())
+            self.assertTrue((destination / "runner-command.json").is_file())
+            self.assertTrue((destination / "report.json").is_file())
+            run_dir = destination / "repetition-001-ley"
+            for name in (
+                "prompt.txt",
+                "context.txt",
+                "runner.stdout",
+                "runner.stderr",
+                "oracle.stdout",
+                "oracle.stderr",
+                "diff-material.bin",
+                "project-after.tar.gz",
+                "changed-files.json",
+                "constraint-details.json",
+            ):
+                self.assertTrue((run_dir / name).is_file(), name)
+
+    def test_private_ley_state_is_removed_before_external_runner(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-retry-delay-contract"),
+            bytes.fromhex("48" * 32),
+        )
+
+        def fake_runner(
+            command,
+            project,
+            prompt,
+            timeout_seconds,
+            variant,
+            inherited_env_names,
+            read_only_mounts,
+            capture_raw,
+        ):
+            self.assertEqual(variant, "ley")
+            self.assertFalse((project / ".ley").exists())
+            config = Path(agent_eval.EVAL_ENV["XDG_CONFIG_HOME"])
+            self.assertFalse(config.exists())
+            return {
+                "completed": False,
+                "timedOut": False,
+                "exitCode": 1,
+                "seconds": 0.0,
+                "stdoutBytes": 0,
+                "stderrBytes": 0,
+                "stdoutSha256": agent_eval.sha256_bytes(b""),
+                "stderrSha256": agent_eval.sha256_bytes(b""),
+            }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch.object(agent_eval, "run_external_agent", side_effect=fake_runner):
+                result = agent_eval.execute_variant(
+                    fixture,
+                    Path(temporary),
+                    ["ignored"],
+                    [],
+                    [],
+                    "ley",
+                    10,
+                    8,
+                    500,
+                    False,
+                )
+        self.assertFalse(result["taskPassed"])
+
+    def test_seed_export_is_private_and_exclusive(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "seed.hex"
+            seed = bytes.fromhex("55" * 32)
+            agent_eval.write_master_seed(path, seed)
+            self.assertEqual(agent_eval.load_master_seed(path), seed)
+            mode = stat.S_IMODE(path.stat().st_mode)
+            self.assertEqual(mode, 0o600)
+            with self.assertRaisesRegex(RuntimeError, "could not create"):
+                agent_eval.write_master_seed(path, seed)
+
+
+if __name__ == "__main__":
+    unittest.main()
