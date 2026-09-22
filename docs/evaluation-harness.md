@@ -169,7 +169,7 @@ All returned agent/search outputs are checked for project/vault/index-path leaka
 
 ## Retrieval relation and progressive-disclosure scenarios
 
-The deterministic graph/retrieval corpus now includes three distinct relation shapes rather than
+The deterministic graph/retrieval corpus now includes five distinct relation shapes rather than
 counting one direct import edge as evidence for every retrieval task:
 
 - `graph-relative-import-test-impact` is the one-hop code→test baseline. Direct context search for an
@@ -188,6 +188,11 @@ counting one direct import edge as evidence for every retrieval task:
   importing service, importing API, and importing API test. Direct search and depth-1 graph traversal
   must miss the transitive test, while depth-3 incoming traversal and the exact outgoing path recover
   the full test→API→service→core chain and still exclude an unrelated test.
+- `graph-barrel-reexport-ripple` keeps the same transitive contract but makes the middle relation a
+  source-bearing TypeScript barrel re-export. The graph must recover the exact
+  test→consumer→barrel→implementation chain; an implementation-only direct-search baseline must miss
+  the test. Core regressions separately prove that exported string values do not become dependency
+  edges, package re-exports stay external, and ambiguous local re-exports are not guessed.
 
 All four use captured snapshot relations only, preserve `liveSourceChecked: false`, require
 deterministic provenance, and reject local-path leakage. The P1 Richer Graph Relations downstream cell

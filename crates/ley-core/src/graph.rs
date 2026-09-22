@@ -617,7 +617,10 @@ fn add_import_facts(
         let is_import = matches!(
             (source.artifact.language.as_deref(), node.kind()),
             (Some("rust"), "use_declaration")
-                | (Some("javascript" | "typescript"), "import_statement")
+                | (
+                    Some("javascript" | "typescript"),
+                    "import_statement" | "export_statement"
+                )
                 | (
                     Some("python"),
                     "import_statement" | "import_from_statement" | "future_import_statement"
@@ -630,10 +633,14 @@ fn add_import_facts(
             .utf8_text(source.text.as_bytes())
             .unwrap_or_default()
             .trim();
-        for target in import_targets(
-            source.artifact.language.as_deref().unwrap_or_default(),
-            statement,
-        ) {
+        let language = source.artifact.language.as_deref().unwrap_or_default();
+        let targets = match language {
+            "javascript" | "typescript" => module_source_target(node, source)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            _ => import_targets(language, statement),
+        };
+        for target in targets {
             let target_id = resolve_captured_relative_import(
                 &source.artifact.path,
                 source.artifact.language.as_deref().unwrap_or_default(),
@@ -661,6 +668,22 @@ fn add_import_facts(
             ));
         }
     });
+}
+
+fn module_source_target(node: Node<'_>, source: &GraphSource) -> Option<String> {
+    let source_node = node.child_by_field_name("source")?;
+    let raw = source_node.utf8_text(source.text.as_bytes()).ok()?.trim();
+    if raw.len() < 2 {
+        return None;
+    }
+    let quote = raw.as_bytes()[0];
+    if !matches!(quote, b'\'' | b'"') || raw.as_bytes()[raw.len() - 1] != quote {
+        return None;
+    }
+    raw.get(1..raw.len() - 1)
+        .map(str::trim)
+        .filter(|target| !target.is_empty())
+        .map(str::to_owned)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2101,6 +2124,121 @@ mod tests {
             normalize_relative_project_path("tests", "../../outside"),
             None
         );
+    }
+
+    #[test]
+    fn relative_js_ts_reexports_resolve_only_source_bearing_statements() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = vec![
+            source(
+                "src/core.ts",
+                "typescript",
+                "export function computeCore() { return 1; }\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "src/index.ts",
+                "typescript",
+                "export { computeCore } from './core';\nexport const label = './not-a-module';\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "src/external.ts",
+                "typescript",
+                "export * from '@ley/core';\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "src/ambiguous.ts",
+                "typescript",
+                "export const value = 1;\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "src/ambiguous.tsx",
+                "typescript",
+                "export const value = <div />;\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "src/ambiguous-index.ts",
+                "typescript",
+                "export { value } from './ambiguous';\n",
+                ArtifactKind::Source,
+            ),
+        ];
+        let graph = build_project_graph(
+            root.path(),
+            "prj_0123456789abcdef0123456789abcdef",
+            "Re-export graph",
+            &format!("snp_{}", "e".repeat(64)),
+            &sources,
+            1,
+        )
+        .unwrap();
+
+        let file_id = |path: &str| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.kind == GraphNodeKind::File && node.path.as_deref() == Some(path))
+                .unwrap()
+                .id
+                .clone()
+        };
+        let barrel_id = file_id("src/index.ts");
+        let core_id = file_id("src/core.ts");
+        let resolved = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == barrel_id
+                    && edge.label.as_deref() == Some("./core")
+            })
+            .unwrap();
+        assert_eq!(resolved.target, core_id);
+        assert_eq!(resolved.provenance, FactProvenance::Deterministic);
+        assert_eq!(resolved.confidence, 1.0);
+        assert_eq!(
+            resolved.citation.as_ref().unwrap().artifact_path,
+            "src/index.ts"
+        );
+        assert!(!graph.edges.iter().any(|edge| {
+            edge.source == barrel_id && edge.label.as_deref() == Some("./not-a-module")
+        }));
+
+        let external_id = file_id("src/external.ts");
+        let external = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == external_id
+                    && edge.label.as_deref() == Some("@ley/core")
+            })
+            .unwrap();
+        assert!(graph.nodes.iter().any(|node| {
+            node.id == external.target
+                && node.kind == GraphNodeKind::ExternalModule
+                && node.name == "@ley/core"
+        }));
+
+        let ambiguous_id = file_id("src/ambiguous-index.ts");
+        let ambiguous = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == ambiguous_id
+                    && edge.label.as_deref() == Some("./ambiguous")
+            })
+            .unwrap();
+        assert!(graph.nodes.iter().any(|node| {
+            node.id == ambiguous.target
+                && node.kind == GraphNodeKind::ExternalModule
+                && node.name == "./ambiguous"
+        }));
     }
 
     #[test]

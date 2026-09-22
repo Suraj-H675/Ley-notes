@@ -5,6 +5,10 @@ Status: Accepted
 Later extension: ADR 0078 applies the same captured-path-only rule to explicit Python relative import
 targets while leaving absolute Python imports and ambiguous module/package matches external.
 
+Later extension: ADR 0079 treats source-bearing JavaScript/TypeScript re-export statements as the
+same deterministic module-dependency relation while ignoring exports that do not name a module
+source.
+
 ## Context
 
 Ley's project graph already extracts deterministic `imports` edges from captured JavaScript and TypeScript syntax, but every import target is represented as an external-module node. That preserves safety, yet it throws away a relationship Ley can sometimes prove exactly: a relative module specifier such as `../src/renderer` can identify one and only one file already present in the same approved captured artifact set.
