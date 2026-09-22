@@ -44,6 +44,12 @@ The packaged integrations enable session writes and tentative learning proposals
 
 For structural impact questions, hosts may use `ley_graph_neighbors` / `ley_graph_path` progressively rather than preloading the whole graph. A captured unambiguous relative JavaScript/TypeScript static import, source-bearing re-export, quoted literal dynamic `import()` (including the optional second import-options argument), or explicit Python relative import can connect a dependent test/module to the captured implementation file, including through a barrel module or lazy-loaded edge. Computed/template dynamic imports and generic `require()` calls are not promoted in this deterministic slice; absolute Python/package imports and ambiguous matches remain external. If a filename/path fragment is ambiguous and the exact captured project-relative path is known, use that exact case-sensitive path (or the stable node ID); exact spelling resolves before broader case-insensitive/suffix matching. These are deterministic captured relations with citations, not a live-source check or permission to skip inspecting the current workspace.
 
+When a host deliberately uses the explicit context-utility workflow, it should observe the bound pack
+after eligible typed checkpoint/finish outcomes exist. `ley_session_get` exposes unobserved binding
+coverage and at most five recent body-free unobserved binding metadata rows. A terminal
+`unobserved-context-utility-binding` Memory Health signal is a measurement-gap reminder only; it is not
+evidence that the model used or ignored the context and must not alter trust/ranking automatically.
+
 ## Codex
 
 Install directly from GitHub with a sparse checkout of only the marketplace and plugin bundle:

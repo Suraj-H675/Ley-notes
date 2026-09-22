@@ -8,6 +8,7 @@ use crate::{
     VerificationStatus,
 };
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 pub const DEFAULT_SESSION_LIST_RESULTS: usize = 20;
@@ -20,6 +21,7 @@ pub const MIN_SESSION_CONTEXT_CHARACTERS: usize = 1_000;
 pub const MAX_SESSION_CONTEXT_CHARACTERS: usize = 32_000;
 pub const MAX_SESSION_CONTEXT_VERIFICATION_EVIDENCE_ARTIFACTS: usize = 64;
 pub const MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS: usize = 5;
+pub const MAX_SESSION_CONTEXT_UNOBSERVED_UTILITY_BINDINGS: usize = 5;
 pub const MAX_SESSION_CONTEXT_UTILITY_INCLUDED_RECORDS_PER_OBSERVATION: usize = 24;
 pub const DEFAULT_SESSION_TURN_RESULTS: usize = 20;
 pub const MAX_SESSION_TURN_RESULTS: usize = 100;
@@ -56,6 +58,26 @@ pub struct SessionContextRename {
     pub recorded_at_unix_ms: u64,
     pub name: String,
     pub note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionContextUnobservedUtilityBinding {
+    pub binding_id: String,
+    pub event_id: String,
+    pub recorded_at_unix_ms: u64,
+    pub context_pack_id: String,
+    pub artifact_snapshot_id: String,
+    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub egress_target: Option<AgentEgressTarget>,
+    pub max_results: usize,
+    pub max_tokens: usize,
+    pub estimated_tokens: usize,
+    pub included_record_count: usize,
+    pub omitted_included_records: usize,
+    pub context_pack_revalidated: bool,
+    pub context_usage_proven: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -123,6 +145,9 @@ pub struct SessionContextPack {
     pub omitted_renames: usize,
     pub context_utility_binding_count: usize,
     pub context_utility_observation_count: usize,
+    pub unobserved_context_utility_binding_count: usize,
+    pub unobserved_context_utility_bindings: Vec<SessionContextUnobservedUtilityBinding>,
+    pub omitted_unobserved_context_utility_bindings: usize,
     pub context_utility_observations: Vec<SessionContextUtilityObservation>,
     pub omitted_context_utility_observations: usize,
     pub checkpoints: Vec<SessionContextCheckpoint>,
@@ -481,6 +506,48 @@ fn context_from_session(
     let omitted_turn_count = prompt_count + response_count - retained_turn_count;
     let context_utility_binding_count = session.context_utility_bindings.len();
     let context_utility_observation_count = session.context_utility_observations.len();
+    let observed_context_utility_binding_ids = session
+        .context_utility_observations
+        .iter()
+        .map(|observation| observation.binding_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let unobserved_context_utility_binding_count = session
+        .context_utility_bindings
+        .iter()
+        .filter(|binding| !observed_context_utility_binding_ids.contains(binding.id.as_str()))
+        .count();
+    let unobserved_bindings = session
+        .context_utility_bindings
+        .iter()
+        .filter(|binding| !observed_context_utility_binding_ids.contains(binding.id.as_str()))
+        .collect::<Vec<_>>();
+    let first_unobserved_binding = unobserved_bindings
+        .len()
+        .saturating_sub(MAX_SESSION_CONTEXT_UNOBSERVED_UTILITY_BINDINGS);
+    let unobserved_context_utility_bindings = unobserved_bindings[first_unobserved_binding..]
+        .iter()
+        .map(|binding| SessionContextUnobservedUtilityBinding {
+            binding_id: binding.id.clone(),
+            event_id: binding.event_id.clone(),
+            recorded_at_unix_ms: binding.recorded_at_unix_ms,
+            context_pack_id: binding.context_pack_id.clone(),
+            artifact_snapshot_id: binding.artifact_snapshot_id.clone(),
+            graph_snapshot_id: binding.graph_snapshot_id.clone(),
+            egress_target: binding.egress_target,
+            max_results: binding.max_results,
+            max_tokens: binding.max_tokens,
+            estimated_tokens: binding.estimated_tokens,
+            included_record_count: binding.included_records.len(),
+            omitted_included_records: binding.omitted_included_records,
+            context_pack_revalidated: binding.context_pack_revalidated,
+            context_usage_proven: binding.context_usage_proven,
+        })
+        .collect::<Vec<_>>();
+    let omitted_unobserved_context_utility_bindings = unobserved_context_utility_binding_count
+        .saturating_sub(unobserved_context_utility_bindings.len());
+    if omitted_unobserved_context_utility_bindings > 0 {
+        budget.truncated = true;
+    }
     let first_utility_observation =
         context_utility_observation_count.saturating_sub(MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS);
     let mut context_utility_observations = Vec::new();
@@ -772,6 +839,9 @@ fn context_from_session(
         omitted_renames,
         context_utility_binding_count,
         context_utility_observation_count,
+        unobserved_context_utility_binding_count,
+        unobserved_context_utility_bindings,
+        omitted_unobserved_context_utility_bindings,
         context_utility_observations,
         omitted_context_utility_observations,
         checkpoints,
@@ -1558,6 +1628,9 @@ mod tests {
             context.context_utility_observation_count,
             MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS + 1
         );
+        assert_eq!(context.unobserved_context_utility_binding_count, 0);
+        assert!(context.unobserved_context_utility_bindings.is_empty());
+        assert_eq!(context.omitted_unobserved_context_utility_bindings, 0);
         assert_eq!(
             context.context_utility_observations.len(),
             MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS
@@ -1573,6 +1646,118 @@ mod tests {
                 .completed_tasks,
             1
         );
+    }
+
+    #[test]
+    fn session_context_bounds_recent_unobserved_context_utility_bindings() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        initialize_project(
+            &project,
+            Some("Unobserved utility bindings"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("README.md"),
+            "# Utility\n\nBound unobserved utility projection evidence.\n",
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "d".repeat(32)),
+                name: "Unobserved utility bindings".to_owned(),
+                goal: "Keep unobserved binding inspection bounded".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let specifications =
+            SpecificationRegistry::at(base.path().join("unobserved-specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(base.path().join("unobserved-mounts-v1.json"));
+        let mut event_count = started.session.event_count;
+        let mut binding_ids = Vec::new();
+
+        for index in 0..(MAX_SESSION_CONTEXT_UNOBSERVED_UTILITY_BINDINGS + 1) {
+            let pack = compile_project_context_with_registries(
+                &project,
+                &vault,
+                &format!("unobserved utility projection {index}"),
+                ContextCompileLimits {
+                    max_results: 8,
+                    max_tokens: 1_500,
+                },
+                &specifications,
+                &mounts,
+            )
+            .unwrap();
+            let bound = bind_context_utility_pack(
+                &project,
+                &vault,
+                &started.session.session_id,
+                ContextUtilityBindingInput {
+                    request_id: format!("req_{:032x}", 500 + index),
+                    expected_event_count: event_count,
+                    expected_context_pack_id: pack.context_pack_id.clone(),
+                    task: pack.task.clone(),
+                    max_results: 8,
+                    max_tokens: 1_500,
+                },
+                &pack,
+            )
+            .unwrap();
+            event_count = bound.session.event_count;
+            binding_ids.push(
+                bound
+                    .session
+                    .context_utility_bindings
+                    .last()
+                    .unwrap()
+                    .id
+                    .clone(),
+            );
+        }
+
+        let context = read_session_context(
+            &project,
+            &vault,
+            &started.session.session_id,
+            MAX_SESSION_CONTEXT_CHECKPOINTS,
+            MAX_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(
+            context.unobserved_context_utility_binding_count,
+            MAX_SESSION_CONTEXT_UNOBSERVED_UTILITY_BINDINGS + 1
+        );
+        assert_eq!(
+            context.unobserved_context_utility_bindings.len(),
+            MAX_SESSION_CONTEXT_UNOBSERVED_UTILITY_BINDINGS
+        );
+        assert_eq!(context.omitted_unobserved_context_utility_bindings, 1);
+        assert_eq!(
+            context
+                .unobserved_context_utility_bindings
+                .first()
+                .unwrap()
+                .binding_id,
+            binding_ids[1]
+        );
+        assert_eq!(
+            context
+                .unobserved_context_utility_bindings
+                .last()
+                .unwrap()
+                .binding_id,
+            *binding_ids.last().unwrap()
+        );
+        assert!(context.truncated);
     }
 
     #[test]

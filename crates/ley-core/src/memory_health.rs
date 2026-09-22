@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const MEMORY_HEALTH_SCHEMA_VERSION: u32 = 2;
+pub const MEMORY_HEALTH_SCHEMA_VERSION: u32 = 3;
 pub const DEFAULT_MEMORY_HEALTH_SIGNALS: usize = 100;
 pub const MAX_MEMORY_HEALTH_SIGNALS: usize = 200;
 pub const DEFAULT_MEMORY_HEALTH_SESSIONS: usize = 20;
@@ -66,6 +66,7 @@ pub enum MemoryHealthSignalKind {
     UnresolvedWorkingState,
     DivergentSessionMemory,
     ProcedureApplicationOutcomeAttention,
+    UnobservedContextUtilityBinding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -197,6 +198,7 @@ pub fn memory_health_report(
             &session,
             &current_procedure_versions,
         ));
+        drafts.extend(unobserved_context_utility_binding_health_signals(&session));
         if matches!(
             session.status,
             SessionStatus::Active | SessionStatus::Paused
@@ -642,6 +644,44 @@ fn procedure_application_health_signals(
     drafts
 }
 
+fn unobserved_context_utility_binding_health_signals(session: &AgentSession) -> Vec<SignalDraft> {
+    if !matches!(
+        session.status,
+        SessionStatus::Completed | SessionStatus::Abandoned
+    ) {
+        return Vec::new();
+    }
+
+    let observed_binding_ids = session
+        .context_utility_observations
+        .iter()
+        .map(|observation| observation.binding_id.as_str())
+        .collect::<BTreeSet<_>>();
+    session
+        .context_utility_bindings
+        .iter()
+        .filter(|binding| {
+            !observed_binding_ids.contains(binding.id.as_str())
+                && (!binding.included_records.is_empty() || binding.omitted_included_records > 0)
+        })
+        .map(|binding| SignalDraft {
+            kind: MemoryHealthSignalKind::UnobservedContextUtilityBinding,
+            severity: MemoryHealthSeverity::Review,
+            title: "Terminal context utility binding has no observation".to_owned(),
+            detail: format!(
+                "A pre-work context binding retained {} included-record handle(s) with {} additional omitted handle(s), but this terminal session has no context utility observation for that binding. This is an incomplete measurement record; it does not prove the context was used, helpful, harmful, or causally related to the outcome.",
+                binding.included_records.len(),
+                binding.omitted_included_records,
+            ),
+            learning_ids: Vec::new(),
+            session_ids: vec![session.session_id.clone()],
+            record_ids: vec![binding.id.clone()],
+            updated_at_unix_ms: session.updated_at_unix_ms,
+            recommended_action: "If retained downstream checkpoint/finish events are intentionally part of this measurement, attach them through the explicit context-utility observation flow; otherwise leave the gap explicit. Do not infer context quality from the missing observation.",
+        })
+        .collect()
+}
+
 fn unsupported_signals() -> Vec<UnsupportedMemoryHealthSignal> {
     vec![
         UnsupportedMemoryHealthSignal {
@@ -845,15 +885,15 @@ mod tests {
     use super::*;
     use crate::{
         bind_context_utility_pack, checkpoint_session, compile_project_context_with_registries,
-        ingest_project, initialize_project, propose_learning, read_learning, read_session,
-        record_context_utility_observation, record_session_prompt, record_session_response,
-        review_learning, start_session, AttemptInput, CaptureMode, CheckpointInput,
-        ContextCompileLimits, ContextMountRegistry, ContextUtilityBindingInput,
-        ContextUtilityObservationInput, DecisionInput, LearningActor, LearningEvidenceInput,
-        LearningFeedbackAction, LearningKind, LearningProvenance, PlanItemInput, ProblemInput,
-        ProposeLearningInput, ReviewLearningInput, SessionSource, SpecificationRegistry,
-        StartSessionInput, TaskInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
-        VerificationStatus,
+        finish_session, ingest_project, initialize_project, propose_learning, read_learning,
+        read_session, record_context_utility_observation, record_session_prompt,
+        record_session_response, review_learning, start_session, AttemptInput, CaptureMode,
+        CheckpointInput, ContextCompileLimits, ContextMountRegistry, ContextUtilityBindingInput,
+        ContextUtilityObservationInput, DecisionInput, FinishSessionInput, LearningActor,
+        LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance,
+        PlanItemInput, ProblemInput, ProposeLearningInput, ReviewLearningInput, SessionSource,
+        SpecificationRegistry, StartSessionInput, TaskInput, TurnEvidenceInput, TurnEvidenceOrigin,
+        VerificationInput, VerificationStatus,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -1103,7 +1143,7 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(report.schema_version, 2);
+        assert_eq!(report.schema_version, 3);
         assert_eq!(signal.severity, MemoryHealthSeverity::Review);
         assert_eq!(
             serde_json::to_string(&signal.kind).unwrap(),
@@ -1140,6 +1180,97 @@ mod tests {
             .iter()
             .any(|signal| signal.kind
                 == MemoryHealthSignalKind::ProcedureApplicationOutcomeAttention));
+    }
+
+    #[test]
+    fn terminal_unobserved_context_binding_creates_review_attention_until_observed() {
+        let (temporary, project, vault, session_id, _checkpoint_id) = base_fixture();
+        let specifications =
+            SpecificationRegistry::at(temporary.path().join("unobserved-specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(temporary.path().join("unobserved-mounts-v1.json"));
+        let pack = compile_project_context_with_registries(
+            &project,
+            &vault,
+            "Storage migration SQLite WAL",
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 1_500,
+            },
+            &specifications,
+            &mounts,
+        )
+        .unwrap();
+        let before_binding = read_session(&project, &vault, &session_id).unwrap();
+        let bound = bind_context_utility_pack(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityBindingInput {
+                request_id: request_id('8'),
+                expected_event_count: before_binding.event_count,
+                expected_context_pack_id: pack.context_pack_id.clone(),
+                task: pack.task.clone(),
+                max_results: 8,
+                max_tokens: 1_500,
+            },
+            &pack,
+        )
+        .unwrap();
+        let binding = bound.session.context_utility_bindings.last().unwrap();
+        assert!(!binding.included_records.is_empty());
+        let binding_id = binding.id.clone();
+
+        let active_report =
+            memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+        assert!(!active_report.signals.iter().any(|signal| {
+            signal.kind == MemoryHealthSignalKind::UnobservedContextUtilityBinding
+        }));
+
+        let finished = finish_session(
+            &project,
+            &vault,
+            &session_id,
+            FinishSessionInput {
+                request_id: request_id('9'),
+                status: SessionStatus::Completed,
+                summary: "Finished without attaching context utility outcome evidence.".to_owned(),
+                final_response: "Terminal fixture complete.".to_owned(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let report = memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+        let signal = report
+            .signals
+            .iter()
+            .find(|signal| signal.kind == MemoryHealthSignalKind::UnobservedContextUtilityBinding)
+            .expect("terminal unobserved binding should create review attention");
+        assert_eq!(signal.severity, MemoryHealthSeverity::Review);
+        assert_eq!(signal.related_learning_ids, Vec::<String>::new());
+        assert_eq!(signal.related_session_ids, vec![session_id.clone()]);
+        assert_eq!(signal.related_record_ids, vec![binding_id.clone()]);
+        assert!(signal.detail.contains("does not prove"));
+        assert!(!signal.detail.contains("Storage migration SQLite WAL"));
+
+        record_context_utility_observation(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityObservationInput {
+                request_id: request_id('a'),
+                expected_event_count: finished.session.event_count,
+                binding_id,
+                downstream_event_ids: vec![finished.event_id],
+                claimed_applied_learning_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        let observed_report =
+            memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+        assert!(!observed_report.signals.iter().any(|signal| {
+            signal.kind == MemoryHealthSignalKind::UnobservedContextUtilityBinding
+        }));
     }
 
     #[test]

@@ -8,6 +8,11 @@ Later extension: ADR 0073 adds optional exact-version Procedure application clai
 correlation protocol. Ordinary utility events remain schema v5; claim-bearing observations use schema
 v15 and keep the original non-causation/non-authority boundary.
 
+Later extension: ADR 0082 adds read-time coverage for bindings that still have no observation.
+Terminal non-empty bindings may appear as Memory Health v3 measurement-gap attention, while
+`ley_session_get` returns only bounded body-free metadata for recent unobserved bindings. This does
+not change durable binding/observation schemas or infer utility.
+
 ## Context
 
 The final P1 roadmap item asks for context/memory utility feedback based on downstream outcomes. `LEY.md` is explicit that Ley should measure final task benefit rather than retrieval theater, but the current product has no durable way to say which exact compiled context pack preceded a later structured checkpoint or session result.
@@ -121,6 +126,9 @@ Tradeoffs:
 - only Ley-structured checkpoint/session-finish outcomes can be linked;
 - no aggregate “memory utility score” or automatic optimizer is shipped yet;
 - unobserved bindings may remain in session history as evidence that a pack was registered but no eligible downstream outcome was later attached.
+
+That final tradeoff is now explicitly inspectable through ADR 0082. The measurement gap is advisory;
+it is not converted into a negative utility label.
 
 ## Evaluation
 

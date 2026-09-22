@@ -224,9 +224,17 @@ an exact retry replays the same review event, and a same-request/different-note 
 final learning must remain exactly two durable events (proposal + review), with verified/trusted state.
 This is idempotency evidence only. Version-bound Procedure application/outcome history is exercised
 separately by `procedure-application-outcome-history` and does not change the replay contract here. That
-same pass → fail → pass journey also probes Memory Health schema v2: only the failed exact-current
+same pass → fail → pass journey also probes Memory Health schema v3: only the failed exact-current
 Procedure application may produce `procedure-application-outcome-attention`, and the signal must retain
 the same non-causality/authority boundaries as the underlying observation.
+
+`context-utility-unobserved-binding-health` covers the complementary measurement-gap path. It binds a
+real non-empty context pack, finishes the session without observing it, then requires body-free
+unobserved-binding coverage from `ley_session_get` and exactly one Memory Health v3
+`unobserved-context-utility-binding` review signal. Context-body and absolute-path canaries must remain
+absent. Core regressions additionally prove that active sessions are not signaled, a later valid
+observation removes the signal, and more than five recent unobserved binding rows are bounded with
+omission/truncation disclosure.
 
 ## Immediate and delayed memory-poisoning resistance
 

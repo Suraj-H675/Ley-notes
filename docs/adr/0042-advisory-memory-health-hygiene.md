@@ -14,6 +14,12 @@ Later extension: ADR 0077 upgrades Memory Health to schema v2 with a narrower
 only when the caller-declared application is bound to the exact current trusted Procedure version. It
 does **not** classify the Procedure as failed or successfully/unsuccessfully reverified.
 
+Later extension: ADR 0082 upgrades Memory Health to schema v3 with
+`unobserved-context-utility-binding`. A terminal session whose non-empty bound context pack has no
+utility observation is surfaced as an incomplete measurement record, not as evidence that the context
+was helpful or unhelpful. Recent body-free unobserved binding metadata is inspectable through
+`ley_session_get`.
+
 ## Context
 
 Ley's fourth P1 roadmap item is Memory Health / Hygiene. The North Star calls for maintenance signals such as stale or redundant knowledge, uncited claims, conflicting memories, incomplete sessions, unconsolidated evidence, and other signs that retained memory may need review. It also requires hygiene to remain non-destructive: Ley should surface problems and support deliberate maintenance rather than silently deleting or rewriting history.
@@ -53,6 +59,11 @@ failed verification. The signal remains `review` severity and cites only the lea
 IDs plus bounded outcome counts. Pass-only observations do not create this signal, and an observation
 bound to an older Procedure event version stops qualifying once the current learning version changes.
 
+Schema v3 additionally reports `unobserved-context-utility-binding` only for terminal sessions when a
+non-empty retained context binding has no observation. The signal cites only the stable session/binding
+IDs and bounded included-record counts, copies no task/context body, and disappears after a later valid
+observation. Active sessions are not flagged because downstream work may still be in progress.
+
 The projection explicitly lists unsupported health ideas rather than inferring them from weak proxies:
 
 - `old-procedure-never-successfully-reverified` remains unsupported because a caller-declared application
@@ -75,6 +86,9 @@ Ley does not infer that the Procedure itself failed, that a pass reverified it, 
 contest/stale/reject it. `procedureFollowedProven`, condition applicability, context usage, and causal
 utility remain unproven under ADR 0073, and Memory Health applies no trust or ranking change.
 
+`unobserved-context-utility-binding` is measurement hygiene only. It does not imply the context was
+used, useful, harmful, causally relevant, or that a missing observation should change trust/ranking.
+
 ## Privacy, egress, and persistence
 
 The report is rebuilt on demand from the fixed project's learning index, structured sessions, Memory Compiler metadata, captured snapshot identity, and bounded local Git freshness metadata. It persists no health cache and keeps `liveSourceChecked: false`.
@@ -86,6 +100,9 @@ bodies. Procedure outcome attention copies no task excerpt, Procedure guidance, 
 path, or vault path; it uses stable IDs and typed outcome counts already retained in the selected
 session ledger. Real evaluation fixtures require those bodies/paths to remain absent from
 `ley_memory_health` output.
+
+Terminal unobserved-binding attention likewise copies no task excerpt or included context. The
+separate session reader exposes only bounded body-free binding metadata and count/omission coverage.
 
 Because the report is non-persistent, session/project erasure requires no separate health-cache purge transaction. Deletion-fidelity evaluation rebuilds Memory Health after erasure and requires erased canaries to remain absent.
 

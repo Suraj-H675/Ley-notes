@@ -7024,6 +7024,137 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "context/memory utility feedback did not preserve exact pre-work pack binding, downstream-only outcome attribution, metadata-only privacy, retry safety, and non-authority semantics"
             )
 
+    unobserved_utility_expectation = scenario.get(
+        "expected_unobserved_context_utility_health"
+    )
+    if isinstance(unobserved_utility_expectation, dict):
+        task = str(unobserved_utility_expectation.get("task", ""))
+        hidden_marker = str(unobserved_utility_expectation.get("hidden_marker", ""))
+        max_results = int(unobserved_utility_expectation.get("max_results", 8))
+        max_tokens = int(unobserved_utility_expectation.get("max_tokens", 1_500))
+        started = mcp_call(
+            project,
+            "ley_session_start",
+            {
+                "requestId": request_id(f"{scenario['id']}:unobserved:start"),
+                "name": "Unobserved context utility evaluation",
+                "goal": str(scenario["goal"]),
+                "host": "codex",
+            },
+            WRITE_FLAGS,
+        )
+        utility_session_id = str(started.get("sessionId", ""))
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": task, "maxResults": max_results, "maxTokens": max_tokens},
+        )
+        compiled_text = json.dumps(compiled, sort_keys=True)
+        context_pack_id = str(compiled.get("contextPackId", ""))
+        bound = mcp_call(
+            project,
+            "ley_context_utility_bind",
+            {
+                "sessionId": utility_session_id,
+                "requestId": request_id(f"{scenario['id']}:unobserved:bind"),
+                "expectedEventCount": 1,
+                "contextPackId": context_pack_id,
+                "task": task,
+                "maxResults": max_results,
+                "maxTokens": max_tokens,
+            },
+            WRITE_FLAGS,
+        )
+        binding_id = str(bound.get("bindingId", ""))
+        finished = mcp_call(
+            project,
+            "ley_session_finish",
+            {
+                "sessionId": utility_session_id,
+                "requestId": request_id(f"{scenario['id']}:unobserved:finish"),
+                "status": "completed",
+                "summary": "The work ended without attaching a context utility observation.",
+                "finalResponse": "Terminal context utility measurement fixture.",
+                "handoff": "",
+                "unresolved": [],
+            },
+            WRITE_FLAGS,
+        )
+        session_context = mcp_call(
+            project,
+            "ley_session_get",
+            {
+                "sessionId": utility_session_id,
+                "maxCheckpoints": 5,
+                "maxCharacters": 12_000,
+            },
+        )
+        health = mcp_call(
+            project,
+            "ley_memory_health",
+            {
+                "maxSignals": int(unobserved_utility_expectation.get("max_signals", 100)),
+                "maxSessions": int(unobserved_utility_expectation.get("max_sessions", 20)),
+                "maxCharacters": int(
+                    unobserved_utility_expectation.get("max_characters", 16_000)
+                ),
+            },
+        )
+        health_text = json.dumps(health, sort_keys=True)
+        signals = [
+            item
+            for item in health.get("signals", [])
+            if isinstance(item, dict)
+            and item.get("kind") == "unobserved-context-utility-binding"
+        ]
+        signal = signals[0] if len(signals) == 1 else {}
+        unobserved_binding_rows = [
+            item
+            for item in session_context.get("unobservedContextUtilityBindings", [])
+            if isinstance(item, dict)
+        ]
+        unobserved_binding = (
+            unobserved_binding_rows[0] if len(unobserved_binding_rows) == 1 else {}
+        )
+        unobserved_ok = (
+            context_pack_id.startswith("cpk_")
+            and binding_id.startswith("cub_")
+            and bool(compiled.get("items"))
+            and finished.get("eventCount") == 3
+            and session_context.get("contextUtilityBindingCount") == 1
+            and session_context.get("contextUtilityObservationCount") == 0
+            and session_context.get("unobservedContextUtilityBindingCount") == 1
+            and len(unobserved_binding_rows) == 1
+            and unobserved_binding.get("bindingId") == binding_id
+            and unobserved_binding.get("contextPackId") == context_pack_id
+            and unobserved_binding.get("contextPackRevalidated") is True
+            and unobserved_binding.get("contextUsageProven") is False
+            and int(unobserved_binding.get("includedRecordCount", 0)) > 0
+            and health.get("persisted") is False
+            and health.get("destructiveActionsTaken") is False
+            and health.get("liveSourceChecked") is False
+            and len(signals) == 1
+            and signal.get("severity") == "review"
+            and signal.get("relatedLearningIds") == []
+            and signal.get("relatedSessionIds") == [utility_session_id]
+            and signal.get("relatedRecordIds") == [binding_id]
+            and "does not prove" in str(signal.get("detail", ""))
+            and (not hidden_marker or hidden_marker in compiled_text)
+            and (not hidden_marker or hidden_marker not in health_text)
+            and str(project) not in health_text
+            and str(vault) not in health_text
+        )
+        scores["unobserved_context_utility_health"] = unobserved_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault), hidden_marker],
+            [session_context, health],
+        )
+        evidence_text.extend([compiled, bound, finished, session_context, health])
+        if not unobserved_ok:
+            failures.append(
+                "terminal unobserved context utility binding was not surfaced as body-free measurement coverage and advisory Memory Health attention"
+            )
+
     procedure_history_expectation = scenario.get("expected_procedure_application_history")
     if isinstance(procedure_history_expectation, dict):
         title = str(
@@ -7471,7 +7602,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     for passed_run in passed_runs
                 )
                 and procedure_health.get("schemaVersion")
-                == int(procedure_health_expectation.get("schema_version", 2))
+                == int(procedure_health_expectation.get("schema_version", 3))
                 and procedure_health.get("persisted") is False
                 and procedure_health.get("destructiveActionsTaken") is False
                 and procedure_health.get("liveSourceChecked") is False
@@ -7637,7 +7768,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "chronically-retrieved-but-unhelpful-memory",
         }
         health_ok = (
-            health.get("schemaVersion") == 2
+            health.get("schemaVersion") == 3
             and health.get("projection") == "on-demand-memory-health"
             and health.get("persisted") is False
             and health.get("destructiveActionsTaken") is False
