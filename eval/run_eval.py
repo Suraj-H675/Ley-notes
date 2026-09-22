@@ -6118,8 +6118,17 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             graph_relation_expectation.get("unrelated_test_path", "")
         )
         baseline_query = str(graph_relation_expectation.get("baseline_query", ""))
+        edge_label = str(
+            graph_relation_expectation.get("edge_label", "../src/renderer")
+        )
         if not all(
-            [implementation_path, relevant_test_path, unrelated_test_path, baseline_query]
+            [
+                implementation_path,
+                relevant_test_path,
+                unrelated_test_path,
+                baseline_query,
+                edge_label,
+            ]
         ):
             raise RuntimeError(
                 "graph relation fixture requires implementation/test paths and baseline query"
@@ -6170,7 +6179,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 item
                 for item in neighbor_edges
                 if item.get("kind") == "imports"
-                and item.get("label") == "../src/renderer"
+                and item.get("label") == edge_label
             ),
             None,
         )

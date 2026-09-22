@@ -42,7 +42,7 @@ project path, token, or other machine-specific configuration.
 
 The packaged integrations enable session writes and tentative learning proposals in their local MCP process. Host permission controls still apply. Remove `--allow-learning-proposals` from the package's MCP arguments if proposals are not wanted.
 
-For structural impact questions, hosts may use `ley_graph_neighbors` / `ley_graph_path` progressively rather than preloading the whole graph. A captured unambiguous relative JavaScript/TypeScript import can connect the importing test/module to the captured implementation file; ambiguous or package imports remain external. These are deterministic captured relations with citations, not a live-source check or permission to skip inspecting the current workspace.
+For structural impact questions, hosts may use `ley_graph_neighbors` / `ley_graph_path` progressively rather than preloading the whole graph. A captured unambiguous relative JavaScript/TypeScript import or explicit Python relative import can connect the importing test/module to the captured implementation file; absolute Python/package imports and ambiguous matches remain external. These are deterministic captured relations with citations, not a live-source check or permission to skip inspecting the current workspace.
 
 ## Codex
 

@@ -893,9 +893,27 @@ fn resolve_captured_relative_import(
     target: &str,
     captured_file_paths: &BTreeSet<String>,
 ) -> Option<String> {
-    if !matches!(language, "javascript" | "typescript")
-        || !(target.starts_with("./") || target.starts_with("../"))
-        || target.contains(['\\', '?', '#'])
+    match language {
+        "javascript" | "typescript" => resolve_captured_js_ts_relative_import(
+            source_path,
+            language,
+            target,
+            captured_file_paths,
+        ),
+        "python" => {
+            resolve_captured_python_relative_import(source_path, target, captured_file_paths)
+        }
+        _ => None,
+    }
+}
+
+fn resolve_captured_js_ts_relative_import(
+    source_path: &str,
+    language: &str,
+    target: &str,
+    captured_file_paths: &BTreeSet<String>,
+) -> Option<String> {
+    if !(target.starts_with("./") || target.starts_with("../")) || target.contains(['\\', '?', '#'])
     {
         return None;
     }
@@ -928,6 +946,51 @@ fn resolve_captured_relative_import(
         }
     }
 
+    candidates.sort();
+    candidates.dedup();
+    (candidates.len() == 1).then(|| candidates.remove(0))
+}
+
+fn resolve_captured_python_relative_import(
+    source_path: &str,
+    target: &str,
+    captured_file_paths: &BTreeSet<String>,
+) -> Option<String> {
+    if !target.starts_with('.') || target.contains(['/', '\\', '?', '#']) {
+        return None;
+    }
+
+    let leading_dots = target
+        .chars()
+        .take_while(|character| *character == '.')
+        .count();
+    let module = target.get(leading_dots..)?;
+    if module.is_empty() || module.split('.').any(|component| component.is_empty()) {
+        return None;
+    }
+
+    let source_dir = source_path.rsplit_once('/').map_or("", |(dir, _)| dir);
+    let mut components = source_dir
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if components.is_empty() || leading_dots > components.len() {
+        return None;
+    }
+    for _ in 1..leading_dots {
+        components.pop()?;
+    }
+    components.extend(module.split('.').map(str::to_owned));
+    let normalized = components.join("/");
+
+    let mut candidates = [
+        format!("{normalized}.py"),
+        format!("{normalized}/__init__.py"),
+    ]
+    .into_iter()
+    .filter(|path| captured_file_paths.contains(path))
+    .collect::<Vec<_>>();
     candidates.sort();
     candidates.dedup();
     (candidates.len() == 1).then(|| candidates.remove(0))
@@ -2038,6 +2101,118 @@ mod tests {
             normalize_relative_project_path("tests", "../../outside"),
             None
         );
+    }
+
+    #[test]
+    fn relative_python_imports_resolve_only_to_one_captured_project_file() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = vec![
+            source(
+                "app/renderer.py",
+                "python",
+                "def render_frame():\n    return 'ok'\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "app/tests/test_renderer.py",
+                "python",
+                "from ..renderer import render_frame\nrender_frame()\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "app/ambiguous.py",
+                "python",
+                "VALUE = 1\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "app/ambiguous/__init__.py",
+                "python",
+                "VALUE = 2\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "app/tests/test_ambiguous.py",
+                "python",
+                "from ..ambiguous import VALUE\nprint(VALUE)\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "app/tests/test_absolute.py",
+                "python",
+                "from app.renderer import render_frame\nrender_frame()\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "root_test.py",
+                "python",
+                "from .renderer import render_frame\nrender_frame()\n",
+                ArtifactKind::Source,
+            ),
+        ];
+        let graph = build_project_graph(
+            root.path(),
+            "prj_0123456789abcdef0123456789abcdef",
+            "Python local import graph",
+            &format!("snp_{}", "d".repeat(64)),
+            &sources,
+            1,
+        )
+        .unwrap();
+
+        let file_id = |path: &str| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.kind == GraphNodeKind::File && node.path.as_deref() == Some(path))
+                .unwrap()
+                .id
+                .clone()
+        };
+        let test_id = file_id("app/tests/test_renderer.py");
+        let implementation_id = file_id("app/renderer.py");
+        let resolved = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == test_id
+                    && edge.label.as_deref() == Some("..renderer")
+            })
+            .unwrap();
+        assert_eq!(resolved.target, implementation_id);
+        assert_eq!(resolved.provenance, FactProvenance::Deterministic);
+        assert_eq!(resolved.confidence, 1.0);
+        assert_eq!(
+            resolved.citation.as_ref().unwrap().artifact_path,
+            "app/tests/test_renderer.py"
+        );
+        assert!(!graph.nodes.iter().any(|node| {
+            node.kind == GraphNodeKind::ExternalModule && node.name == "..renderer"
+        }));
+
+        let ambiguous_test_id = file_id("app/tests/test_ambiguous.py");
+        let ambiguous = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == ambiguous_test_id
+                    && edge.label.as_deref() == Some("..ambiguous")
+            })
+            .unwrap();
+        assert!(graph.nodes.iter().any(|node| {
+            node.id == ambiguous.target
+                && node.kind == GraphNodeKind::ExternalModule
+                && node.name == "..ambiguous"
+        }));
+
+        assert!(graph.nodes.iter().any(|node| {
+            node.kind == GraphNodeKind::ExternalModule && node.name == "app.renderer"
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.kind == GraphNodeKind::ExternalModule && node.name == ".renderer"
+        }));
     }
 
     #[test]

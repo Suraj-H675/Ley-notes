@@ -175,6 +175,9 @@ counting one direct import edge as evidence for every retrieval task:
 - `graph-relative-import-test-impact` is the one-hop code→test baseline. Direct context search for an
   implementation-only marker must miss the importing test; one incoming deterministic `imports` edge
   and the exact reverse path must recover it while excluding an unrelated test.
+- `graph-python-relative-import-test-impact` applies the same one-hop contract to an explicit Python
+  relative import (`from ..renderer import render_frame`). Absolute Python imports are not promoted by
+  this slice; the captured-path resolver must recover only the exact relative target.
 - `trace-to-code-progressive-disclosure` keeps a runtime trace as ordinary captured evidence rather
   than inventing trace graph nodes. Direct search returns only the trace artifact, bounded
   `ley_read_evidence` exposes the stable `parseSession` symbol cue, and incoming deterministic
@@ -186,7 +189,7 @@ counting one direct import edge as evidence for every retrieval task:
   must miss the transitive test, while depth-3 incoming traversal and the exact outgoing path recover
   the full test→API→service→core chain and still exclude an unrelated test.
 
-All three use captured snapshot relations only, preserve `liveSourceChecked: false`, require
+All four use captured snapshot relations only, preserve `liveSourceChecked: false`, require
 deterministic provenance, and reject local-path leakage. The P1 Richer Graph Relations downstream cell
 continues to use the independent one-hop task contract, while its regression cell now uses the deeper
 ripple-effect representative.
