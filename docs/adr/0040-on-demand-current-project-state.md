@@ -4,6 +4,10 @@
 
 Accepted.
 
+Later extension: ADR 0076 upgrades the projection to schema v2 with compact exact-revision
+active-project Specification authority handles plus changed/missing Specification attention. It does
+not copy Specification bodies or reinterpret human intent into a second state store.
+
 ## Context
 
 Ley's second P1 roadmap item is an explicit Current Project State projection. The existing project resume pack is intentionally a bounded continuity view: it helps an agent resume recent sessions and trusted learnings, but it does not claim to adjudicate a single canonical current state for every historical decision, task, or problem.

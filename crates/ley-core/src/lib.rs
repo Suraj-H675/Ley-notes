@@ -120,12 +120,15 @@ pub use cross_project_search::{
     MAX_CROSS_PROJECT_SEARCH_RESULTS,
 };
 pub use current_project_state::{
-    current_project_state, CurrentKnowledgeAttention, CurrentKnowledgeAttentionReason,
+    current_project_state, current_project_state_with_specification_authority,
+    CurrentAuthoritativeSpecification, CurrentKnowledgeAttention, CurrentKnowledgeAttentionReason,
     CurrentOpenWork, CurrentOpenWorkKind, CurrentProjectState, CurrentProjectStateCoverage,
-    CurrentProjectStateLimits, CurrentRecentDecision, CurrentTrustedKnowledge, CurrentVerification,
-    CurrentWorkingSession, CURRENT_PROJECT_STATE_SCHEMA_VERSION, DEFAULT_CURRENT_STATE_CHARACTERS,
+    CurrentProjectStateLimits, CurrentRecentDecision, CurrentSpecificationAttention,
+    CurrentTrustedKnowledge, CurrentVerification, CurrentWorkingSession,
+    CURRENT_PROJECT_STATE_SCHEMA_VERSION, DEFAULT_CURRENT_STATE_CHARACTERS,
     DEFAULT_CURRENT_STATE_KNOWLEDGE, DEFAULT_CURRENT_STATE_SESSIONS, MAX_CURRENT_STATE_CHARACTERS,
-    MAX_CURRENT_STATE_KNOWLEDGE, MAX_CURRENT_STATE_SESSIONS, MIN_CURRENT_STATE_CHARACTERS,
+    MAX_CURRENT_STATE_KNOWLEDGE, MAX_CURRENT_STATE_SESSIONS, MAX_CURRENT_STATE_SPECIFICATIONS,
+    MIN_CURRENT_STATE_CHARACTERS,
 };
 pub use egress_policy::{
     evaluate_agent_egress, AgentEgressBlockReason, AgentEgressDecision, AgentEgressPolicy,

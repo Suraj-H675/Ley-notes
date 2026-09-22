@@ -6,12 +6,12 @@ use ley_core::{
     commit_structured_memory_transition, commit_task_memory_transition,
     commit_unresolved_memory_transition, compile_agent_legibility_map,
     compile_bootstrap_context_with_registries, compile_project_context_for_agent_with_registries,
-    compile_session_memory, compile_topic_dossier, consolidation_inbox, current_project_state,
-    diagnose_project, evaluate_agent_egress, find_project_context, find_project_graph_path,
-    finish_session, inspect_context_pack, list_learning_contexts, memory_health_report,
-    project_activity_view, project_memory_overview, project_resume_context, propose_learning,
-    read_external_connector_snapshot_with_registry, read_learning_context,
-    read_project_cited_media, read_project_evidence, read_session_context,
+    compile_session_memory, compile_topic_dossier, consolidation_inbox,
+    current_project_state_with_specification_authority, diagnose_project, evaluate_agent_egress,
+    find_project_context, find_project_graph_path, finish_session, inspect_context_pack,
+    list_learning_contexts, memory_health_report, project_activity_view, project_memory_overview,
+    project_resume_context, propose_learning, read_external_connector_snapshot_with_registry,
+    read_learning_context, read_project_cited_media, read_project_evidence, read_session_context,
     read_session_turns_context, record_context_utility_observation,
     replay_context_utility_binding_if_present,
     review_acceptance_criterion_verification_with_method, search_project_memory, start_session,
@@ -113,8 +113,11 @@ same task/result/token limits plus that pack's `contextPackId`, and treat a mism
 the older pack cannot be reconstructed exactly. The Inspector omits included context bodies, including \
 Policy Bundle bodies, and grants \
 no authority. Use \
-`ley_project_state` for explicit project-status questions: only active/paused latest checkpoints are \
-working state, and `recentDecisions` remain historical with `currentStateProven: false`. Use \
+`ley_project_state` for explicit project-status questions: schema v2 exposes body-free exact current \
+active-project Specification handles in `authoritativeSpecifications`, routes changed/missing approvals \
+to `specificationAttention`, and points to `ley_project_specifications` for authoritative text. Only \
+active/paused latest checkpoints are working state, and `recentDecisions` remain historical with \
+`currentStateProven: false`. Use \
 `ley_memory_health` only for deliberate maintenance review: its signals are advisory triage, \
 `destructiveActionsTaken` remains false, and `unsupportedSignals` are evidence gaps rather than \
 permission to guess or auto-clean memory. Use `ley_consolidation_inbox` only for deliberate local \
@@ -2453,7 +2456,10 @@ impl LeyMcpServer {
         Parameters(params): Parameters<CurrentProjectStateParams>,
     ) -> Result<CallToolResult, McpError> {
         Ok(self.gated_historical_tool_result(|| {
-            current_project_state(
+            let specification_authority = self
+                .specification_registry
+                .list(self.project.as_path(), self.vault.as_path())?;
+            current_project_state_with_specification_authority(
                 self.project.as_path(),
                 self.vault.as_path(),
                 CurrentProjectStateLimits {
@@ -2467,6 +2473,7 @@ impl LeyMcpServer {
                         .max_characters
                         .unwrap_or(DEFAULT_CURRENT_STATE_CHARACTERS),
                 },
+                &specification_authority,
             )
         }))
     }
@@ -4709,6 +4716,9 @@ mod tests {
         assert!(instructions.contains("verificationMethods"));
         assert!(instructions.contains("criterion binding"));
         assert!(instructions.contains("verificationMethodId"));
+        assert!(instructions.contains("authoritativeSpecifications"));
+        assert!(instructions.contains("specificationAttention"));
+        assert!(instructions.contains("ley_project_specifications"));
         let tools = server.tool_router.list_all();
         let names = tools
             .iter()
@@ -6621,7 +6631,21 @@ mod tests {
 
     #[tokio::test]
     async fn project_state_is_rebuildable_working_state_and_respects_historical_egress() {
-        let (_temporary, project, _vault, mut server) = fixture();
+        let (_temporary, project, vault, mut server) = fixture();
+        fs::create_dir_all(vault.join("Specs")).unwrap();
+        let specification_id = generate_specification_id();
+        let private_specification_marker = "mcp_current_state_spec_private_4f2c";
+        fs::write(
+            vault.join("Specs/Current.md"),
+            format!(
+                "# Current requirement\n\n{private_specification_marker}\n\nKeep the fixed-project memory contract explicit.\n"
+            ),
+        )
+        .unwrap();
+        server
+            .specification_registry
+            .approve(&project, &vault, &specification_id, "Specs/Current.md")
+            .unwrap();
         let params = CurrentProjectStateParams {
             max_sessions: Some(5),
             max_knowledge: Some(12),
@@ -6652,13 +6676,38 @@ mod tests {
             .as_array()
             .is_some_and(|sessions| !sessions.is_empty()));
         assert!(allowed.to_string().contains("Remember MCP context"));
+        let authoritative_specifications =
+            allowed["authoritativeSpecifications"].as_array().unwrap();
+        assert_eq!(authoritative_specifications.len(), 1);
+        assert_eq!(
+            authoritative_specifications[0]["specificationId"],
+            specification_id
+        );
+        assert_eq!(
+            authoritative_specifications[0]["relativePath"],
+            "Specs/Current.md"
+        );
+        assert_eq!(authoritative_specifications[0]["state"], "current");
+        assert_eq!(
+            authoritative_specifications[0]["exactApprovedRevisionAvailable"],
+            true
+        );
+        assert_eq!(authoritative_specifications[0]["sourceIncluded"], false);
+        assert_eq!(authoritative_specifications[0]["authority"], "human-intent");
+        assert_eq!(
+            authoritative_specifications[0]["followupTool"],
+            "ley_project_specifications"
+        );
+        assert!(allowed["specificationAttention"]
+            .as_array()
+            .is_some_and(Vec::is_empty));
+        assert!(!allowed.to_string().contains(private_specification_marker));
 
-        let retained_specification_id = ley_core::generate_specification_id();
         server
             .egress_policy_registry
             .set_specification_policy(
                 &project,
-                &retained_specification_id,
+                &specification_id,
                 AgentEgressPolicy::LocalModelOnly,
             )
             .unwrap();
@@ -6681,11 +6730,13 @@ mod tests {
         server.egress_target = AgentEgressTarget::Local;
         let local = server.project_state(Parameters(params)).await.unwrap();
         assert_eq!(local.is_error, Some(false));
-        assert!(local
-            .structured_content
-            .unwrap()
-            .to_string()
-            .contains("Remember MCP context"));
+        let local = local.structured_content.unwrap();
+        assert!(local.to_string().contains("Remember MCP context"));
+        assert_eq!(
+            local["authoritativeSpecifications"][0]["specificationId"],
+            specification_id
+        );
+        assert!(!local.to_string().contains(private_specification_marker));
     }
 
     #[tokio::test]

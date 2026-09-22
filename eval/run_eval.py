@@ -5916,6 +5916,119 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         state = mcp_call(project, "ley_project_state", arguments)
         rebuilt = mcp_call(project, "ley_project_state", arguments)
         state_text = json.dumps(state, sort_keys=True)
+        specification_index = int(
+            current_state_expectation.get("specification_index", -1)
+        )
+        specification_definition = (
+            specification_definitions[specification_index]
+            if 0 <= specification_index < len(specification_definitions)
+            else None
+        )
+        specification_id = (
+            str(specification_definition.get("resolved_specification_id", ""))
+            if isinstance(specification_definition, dict)
+            else ""
+        )
+        specification_path = str(
+            current_state_expectation.get("specification_path", "")
+        )
+        specification_body_marker = str(
+            current_state_expectation.get("specification_body_marker", "")
+        )
+        authoritative_specifications = [
+            item
+            for item in state.get("authoritativeSpecifications", [])
+            if isinstance(item, dict)
+        ]
+        matching_specification = next(
+            (
+                item
+                for item in authoritative_specifications
+                if item.get("specificationId") == specification_id
+            ),
+            None,
+        )
+        specification_authority_ok = (
+            not specification_id
+            or (
+                matching_specification is not None
+                and matching_specification.get("relativePath") == specification_path
+                and matching_specification.get("state") == "current"
+                and matching_specification.get("exactApprovedRevisionAvailable") is True
+                and matching_specification.get("sourceIncluded") is False
+                and matching_specification.get("authority") == "human-intent"
+                and matching_specification.get("sourceBoundary")
+                == "user-approved-specification"
+                and matching_specification.get("followupTool")
+                == "ley_project_specifications"
+                and state.get("specificationAuthorityPrecedence")
+                == "human-intent-over-historical-memory"
+                and (
+                    not specification_body_marker
+                    or specification_body_marker not in state_text
+                )
+            )
+        )
+        changed_specification_ok = True
+        changed_state = None
+        changed_specification_source = current_state_expectation.get(
+            "changed_specification_source"
+        )
+        changed_specification_body_marker = str(
+            current_state_expectation.get("changed_specification_body_marker", "")
+        )
+        if (
+            specification_id
+            and specification_path
+            and isinstance(changed_specification_source, str)
+            and changed_specification_source
+        ):
+            changed_path = vault / specification_path
+            changed_path.write_text(changed_specification_source, encoding="utf-8")
+            changed_state = mcp_call(project, "ley_project_state", arguments)
+            changed_text = json.dumps(changed_state, sort_keys=True)
+            changed_authoritative = [
+                item
+                for item in changed_state.get("authoritativeSpecifications", [])
+                if isinstance(item, dict)
+            ]
+            changed_attention = [
+                item
+                for item in changed_state.get("specificationAttention", [])
+                if isinstance(item, dict)
+            ]
+            matching_attention = next(
+                (
+                    item
+                    for item in changed_attention
+                    if item.get("specificationId") == specification_id
+                ),
+                None,
+            )
+            changed_specification_ok = (
+                not any(
+                    item.get("specificationId") == specification_id
+                    for item in changed_authoritative
+                )
+                and matching_attention is not None
+                and matching_attention.get("relativePath") == specification_path
+                and matching_attention.get("state") == "changed"
+                and matching_attention.get("exactApprovedRevisionAvailable") is False
+                and matching_attention.get("sourceIncluded") is False
+                and matching_attention.get("currentContentHash")
+                and matching_attention.get("followupTool")
+                == "ley_project_specifications"
+                and changed_state.get("stateFingerprint")
+                != state.get("stateFingerprint")
+                and (
+                    not specification_body_marker
+                    or specification_body_marker not in changed_text
+                )
+                and (
+                    not changed_specification_body_marker
+                    or changed_specification_body_marker not in changed_text
+                )
+            )
         working_marker = str(current_state_expectation.get("working_marker", ""))
         open_markers = [
             str(value) for value in current_state_expectation.get("open_markers", [])
@@ -5935,7 +6048,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             None,
         )
         state_ok = (
-            state.get("schemaVersion") == 1
+            state.get("schemaVersion") == 2
             and state.get("persisted") is False
             and state.get("projection") == "on-demand-current-project-state"
             and str(state.get("stateFingerprint", "")).startswith("sha256:")
@@ -5955,6 +6068,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 or verification_marker
                 in json.dumps(state.get("recentVerification", []), sort_keys=True)
             )
+            and specification_authority_ok
+            and changed_specification_ok
             and str(project) not in state_text
             and str(vault) not in state_text
         )
@@ -5979,12 +6094,15 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "Current Project State did not satisfy the independent downstream working-state contract",
             )
         scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)], [state]
+            [str(project), str(vault)],
+            [state, rebuilt] + ([changed_state] if changed_state is not None else []),
         )
-        evidence_text.extend([state, rebuilt])
+        evidence_text.extend(
+            [state, rebuilt] + ([changed_state] if changed_state is not None else [])
+        )
         if not state_ok:
             failures.append(
-                "Current Project State did not preserve working-state boundaries, historical decision semantics, privacy, or source binding"
+                "Current Project State did not preserve working-state boundaries, Specification authority/revision attention, historical decision semantics, privacy, or source binding"
             )
 
     graph_relation_expectation = scenario.get("expected_graph_relation_retrieval")

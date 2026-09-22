@@ -563,7 +563,7 @@ current entries are **Topic Dossiers**, **Current Project State**, **Context Pac
 - downstream/regression success from the real authentication dossier journey;
 - zero privacy-canary leakage from the returned dossier.
 - Current Project State adversarial deletion/forgetting coverage;
-- a real active-session project-state journey proving working/open-state, historical-decision, verification, fingerprint, and privacy semantics;
+- a real active-session project-state journey proving working/open-state, historical-decision, verification, exact current Specification authority handles without Specification-body copying, current→changed Specification attention/fingerprint invalidation, and privacy semantics;
 - zero privacy-canary leakage from the returned project-state projection.
 - Context Pack Inspector exact-ID reproduction, hidden-body omission, forged-ID mismatch honesty, and zero path leakage through the real MCP path.
 - Memory Health advisory/non-destructive semantics, review/uncited/duplicate/session/unresolved/recovery signals, explicit unsupported-metric disclosure, private recovery-body omission, deletion fidelity, and zero path leakage through the real MCP path.
