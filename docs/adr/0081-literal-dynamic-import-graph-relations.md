@@ -21,8 +21,11 @@ hold:
 
 - Tree-sitter exposes its function node as the dedicated `import` syntax;
 - the argument container is the normal argument list;
-- it contains exactly one named argument;
-- that argument is a single- or double-quoted string literal.
+- it contains one or two named arguments;
+- the first argument is a single- or double-quoted string literal.
+
+The optional second argument is import options/attributes metadata and does not change the module
+specifier identity. Ley does not interpret or persist those option fields as graph semantics.
 
 The extracted literal then follows the existing JS/TS module-target rules:
 
@@ -32,8 +35,8 @@ The extracted literal then follows the existing JS/TS module-target rules:
 - the edge remains `GraphEdgeKind::Imports`, deterministic confidence `1.0`, with a citation to the
   captured dynamic-import expression.
 
-Computed identifier imports, template-string imports, multi-argument/malformed forms, and generic
-`require(...)` calls produce no module relation in this slice.
+Computed identifier imports, template-string imports, calls with more than two named arguments,
+malformed forms, and generic `require(...)` calls produce no module relation in this slice.
 
 ## Evaluation
 
@@ -42,9 +45,14 @@ implementation marker must not make lexical search discover the dependent test, 
 neighbors/path must recover the test through a literal `import('../src/renderer')` relation and
 exclude an unrelated test.
 
+`graph-dynamic-import-options-impact` repeats the contract for
+`import('../data/config.json', { with: { type: 'json' } })`: the second argument may affect import
+attributes but must not hide the exact first-argument module relation.
+
 Core regressions additionally require computed and template-string dynamic imports to remain absent
-from module relations, while a literal package dynamic import stays external rather than being
-promoted to a captured project file.
+from module relations, a literal package dynamic import to stay external rather than being promoted
+to a captured project file, and an options-bearing literal import to resolve its exact captured
+target.
 
 ## Derived-state evolution
 

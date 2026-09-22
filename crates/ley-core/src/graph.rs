@@ -689,7 +689,7 @@ fn dynamic_import_target(node: Node<'_>, source: &GraphSource) -> Option<String>
         return None;
     }
     let arguments = node.child_by_field_name("arguments")?;
-    if arguments.kind() != "arguments" || arguments.named_child_count() != 1 {
+    if arguments.kind() != "arguments" || !(1..=2).contains(&arguments.named_child_count()) {
         return None;
     }
     let target = arguments.named_child(0)?;
@@ -2188,6 +2188,18 @@ mod tests {
                 "void import('vitest');\n",
                 ArtifactKind::Source,
             ),
+            source(
+                "data/config.json",
+                "json",
+                "{\"value\":1}\n",
+                ArtifactKind::Text,
+            ),
+            source(
+                "tests/options.test.ts",
+                "typescript",
+                "void import('../data/config.json', { with: { type: 'json' } });\n",
+                ArtifactKind::Source,
+            ),
         ];
         let graph = build_project_graph(
             root.path(),
@@ -2251,6 +2263,19 @@ mod tests {
                 && node.kind == GraphNodeKind::ExternalModule
                 && node.name == "vitest"
         }));
+
+        let options_id = file_id("tests/options.test.ts");
+        let config_id = file_id("data/config.json");
+        let options = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == options_id
+                    && edge.label.as_deref() == Some("../data/config.json")
+            })
+            .unwrap();
+        assert_eq!(options.target, config_id);
     }
 
     #[test]

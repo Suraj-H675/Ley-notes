@@ -1205,15 +1205,10 @@ fn resolve_nodes(nodes: &[GraphNode], query: &str) -> Vec<GraphNode> {
     if let Some(node) = nodes.iter().find(|node| node.id == query) {
         return vec![node.clone()];
     }
-    let query = query.to_lowercase();
     let exact_path = nodes
         .iter()
         .filter(|node| {
-            node.kind == GraphNodeKind::File
-                && node
-                    .path
-                    .as_ref()
-                    .is_some_and(|path| path.to_lowercase() == query)
+            node.kind == GraphNodeKind::File && node.path.as_ref().is_some_and(|path| path == query)
         })
         .take(21)
         .cloned()
@@ -1221,6 +1216,16 @@ fn resolve_nodes(nodes: &[GraphNode], query: &str) -> Vec<GraphNode> {
     if !exact_path.is_empty() {
         return exact_path;
     }
+    let exact_name = nodes
+        .iter()
+        .filter(|node| node.name == query)
+        .take(21)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !exact_name.is_empty() {
+        return exact_name;
+    }
+    let query = query.to_lowercase();
     let exact = nodes
         .iter()
         .filter(|node| node.name.to_lowercase() == query)
@@ -1743,5 +1748,54 @@ mod tests {
             "memory.py",
         );
         assert_eq!(resolved, vec![exact]);
+    }
+
+    #[test]
+    fn graph_node_resolution_prefers_exact_spelling_before_case_insensitive_matches() {
+        let file_upper = GraphNode {
+            id: "fil_upper".to_owned(),
+            kind: GraphNodeKind::File,
+            name: "Renderer.ts".to_owned(),
+            path: Some("src/Renderer.ts".to_owned()),
+            language: Some("typescript".to_owned()),
+            symbol_kind: None,
+            package_manager: None,
+            citation: None,
+            provenance: FactProvenance::Deterministic,
+            confidence: 1.0,
+        };
+        let file_lower = GraphNode {
+            id: "fil_lower".to_owned(),
+            name: "renderer.ts".to_owned(),
+            path: Some("src/renderer.ts".to_owned()),
+            ..file_upper.clone()
+        };
+        let symbol_upper = GraphNode {
+            id: "sym_upper".to_owned(),
+            kind: GraphNodeKind::Symbol,
+            name: "Render".to_owned(),
+            path: Some("src/Renderer.ts".to_owned()),
+            language: Some("typescript".to_owned()),
+            symbol_kind: Some("function".to_owned()),
+            package_manager: None,
+            citation: None,
+            provenance: FactProvenance::Deterministic,
+            confidence: 1.0,
+        };
+        let symbol_lower = GraphNode {
+            id: "sym_lower".to_owned(),
+            name: "render".to_owned(),
+            path: Some("src/renderer.ts".to_owned()),
+            ..symbol_upper.clone()
+        };
+
+        assert_eq!(
+            resolve_nodes(&[file_upper.clone(), file_lower.clone()], "src/Renderer.ts",),
+            vec![file_upper]
+        );
+        assert_eq!(
+            resolve_nodes(&[symbol_upper.clone(), symbol_lower], "Render"),
+            vec![symbol_upper]
+        );
     }
 }
