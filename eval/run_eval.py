@@ -6121,6 +6121,18 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         edge_label = str(
             graph_relation_expectation.get("edge_label", "../src/renderer")
         )
+        implementation_query = str(
+            graph_relation_expectation.get(
+                "implementation_query",
+                Path(implementation_path).name,
+            )
+        )
+        relevant_test_query = str(
+            graph_relation_expectation.get(
+                "relevant_test_query",
+                Path(relevant_test_path).name,
+            )
+        )
         if not all(
             [
                 implementation_path,
@@ -6128,6 +6140,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 unrelated_test_path,
                 baseline_query,
                 edge_label,
+                implementation_query,
+                relevant_test_query,
             ]
         ):
             raise RuntimeError(
@@ -6143,7 +6157,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             project,
             "ley_graph_neighbors",
             {
-                "node": Path(implementation_path).name,
+                "node": implementation_query,
                 "depth": 1,
                 "maxNodes": 20,
                 "direction": "incoming",
@@ -6154,8 +6168,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             project,
             "ley_graph_path",
             {
-                "from": Path(relevant_test_path).name,
-                "to": Path(implementation_path).name,
+                "from": relevant_test_query,
+                "to": implementation_query,
                 "maxDepth": 1,
                 "maxVisitedNodes": 20,
                 "direction": "outgoing",
@@ -6249,6 +6263,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not graph_relation_ok:
             failures.append(
                 "deterministic captured relative-import graph relation did not improve implementation-to-test retrieval over the direct context-search baseline"
+                f" (neighbors.ambiguous={neighbors.get('ambiguous')!r}, "
+                f"neighborPaths={sorted(neighbor_paths)!r}, relationEdge={relation_edge!r}, "
+                f"path.found={path.get('found')!r}, path.ambiguous={path.get('ambiguous')!r}, "
+                f"pathPaths={path_paths!r}, pathEdges={path_edges!r})"
             )
 
     trace_to_code_expectation = scenario.get("expected_trace_to_code_retrieval")

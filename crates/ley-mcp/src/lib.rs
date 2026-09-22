@@ -818,7 +818,8 @@ impl From<McpGraphEdgeKind> for GraphEdgeKind {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GraphNeighborsParams {
-    /// Exact node ID or a unique node name/path fragment from the project graph.
+    /// Exact node ID, exact captured file path, or a unique node name/path fragment from the project graph.
+    /// Exact captured file paths resolve the File node before broader suffix/substring matching.
     pub node: String,
     /// Traversal depth from 1 through 3. Defaults to 1.
     #[serde(default)]
@@ -837,9 +838,10 @@ pub struct GraphNeighborsParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GraphPathParams {
-    /// Exact node ID or unique name/path fragment for the path origin.
+    /// Exact node ID, exact captured file path, or unique name/path fragment for the path origin.
     pub from: String,
-    /// Exact node ID or unique name/path fragment for the path destination.
+    /// Exact node ID, exact captured file path, or unique name/path fragment for the path destination.
+    /// Exact captured file paths resolve File nodes before broader suffix/substring matching.
     pub to: String,
     /// Maximum path depth from 1 through 8. Defaults to 4.
     #[serde(default)]

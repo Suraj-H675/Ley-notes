@@ -1206,6 +1206,21 @@ fn resolve_nodes(nodes: &[GraphNode], query: &str) -> Vec<GraphNode> {
         return vec![node.clone()];
     }
     let query = query.to_lowercase();
+    let exact_path = nodes
+        .iter()
+        .filter(|node| {
+            node.kind == GraphNodeKind::File
+                && node
+                    .path
+                    .as_ref()
+                    .is_some_and(|path| path.to_lowercase() == query)
+        })
+        .take(21)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !exact_path.is_empty() {
+        return exact_path;
+    }
     let exact = nodes
         .iter()
         .filter(|node| node.name.to_lowercase() == query)
@@ -1703,5 +1718,30 @@ mod tests {
         assert_eq!(path.nodes.first().unwrap().id, project_node.id);
         assert_eq!(path.nodes.last().unwrap().id, memory_node.id);
         assert_eq!(path.edges.len() + 1, path.nodes.len());
+    }
+
+    #[test]
+    fn graph_node_resolution_prefers_exact_captured_path_before_suffix_matches() {
+        let (_base, project, vault) = setup_memory(CaptureMode::Structured);
+        let memory = load_project_memory(&project, &vault).unwrap();
+        let exact = memory
+            .graph
+            .nodes
+            .iter()
+            .find(|node| node.path.as_deref() == Some("memory.py"))
+            .unwrap()
+            .clone();
+        let mut suffix_match = exact.clone();
+        suffix_match.id = "fil_suffix_match".to_owned();
+        suffix_match.path = Some("legacy/memory.py".to_owned());
+        let mut same_path_symbol = exact.clone();
+        same_path_symbol.id = "sym_same_path".to_owned();
+        same_path_symbol.kind = GraphNodeKind::Symbol;
+        same_path_symbol.name = "Memory".to_owned();
+        let resolved = resolve_nodes(
+            &[exact.clone(), suffix_match, same_path_symbol],
+            "memory.py",
+        );
+        assert_eq!(resolved, vec![exact]);
     }
 }

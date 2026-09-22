@@ -169,7 +169,7 @@ All returned agent/search outputs are checked for project/vault/index-path leaka
 
 ## Retrieval relation and progressive-disclosure scenarios
 
-The deterministic graph/retrieval corpus now includes five distinct relation shapes rather than
+The deterministic graph/retrieval corpus now includes six distinct relation/query shapes rather than
 counting one direct import edge as evidence for every retrieval task:
 
 - `graph-relative-import-test-impact` is the one-hop code→test baseline. Direct context search for an
@@ -178,6 +178,11 @@ counting one direct import edge as evidence for every retrieval task:
 - `graph-python-relative-import-test-impact` applies the same one-hop contract to an explicit Python
   relative import (`from ..renderer import render_frame`). Absolute Python imports are not promoted by
   this slice; the captured-path resolver must recover only the exact relative target.
+- `graph-exact-path-disambiguation` gives two captured files the shared suffix `src/renderer.ts` and
+  queries the intended file by its exact project-relative path. Exact-path resolution must select the
+  captured `File` node before broader suffix matching, recover its importing test, and exclude the
+  legacy same-suffix file/unrelated test. The unit boundary separately verifies that symbols carrying
+  the same artifact path do not make an exact file-path query ambiguous.
 - `trace-to-code-progressive-disclosure` keeps a runtime trace as ordinary captured evidence rather
   than inventing trace graph nodes. Direct search returns only the trace artifact, bounded
   `ley_read_evidence` exposes the stable `parseSession` symbol cue, and incoming deterministic
