@@ -22,6 +22,7 @@ Ley provides an on-demand, non-persistent reviewed runbook projection over an ex
 - Runbook Markdown contains only the selected reviewed learning title/guidance plus Ley source-binding metadata. Evidence notes, prompt/response bodies, absolute project/vault paths, and unrelated session state are not copied.
 - Runbooks are bounded to 20 source learnings and 32,000 rendered characters in this slice.
 - `runbookId` and `sourceFingerprint` are deterministic over logical source state and exclude generation time. A change to a selected learning or its source state changes the current runbook identity.
+- Source identity follows the same category order as rendered content: Procedure → Pitfall → Convention, while preserving explicit caller order within each category. Reordering only cross-category `--learning` arguments therefore does not manufacture a different logical runbook; reordering entries within one rendered section still changes visible content and identity.
 
 Optional host Skill export is a separate explicit local action:
 
@@ -36,5 +37,10 @@ Optional host Skill export is a separate explicit local action:
 ## Consequences
 
 The first slice is intentionally narrow. Users choose the exact operational learnings rather than asking Ley to infer a runbook cluster, and host installation remains outside Ley. This adds review ceremony, but it preserves the authority boundary and makes stale-source or changed-learning races fail closed through the exact runbook ID.
+
+Runbook identities produced by older builds from a non-canonical cross-category argument order may no
+longer match after this canonicalization bug fix. Because runbooks are non-persistent reviewed
+projections, export should fail closed and require recompiling/reviewing the current canonical ID rather
+than accepting a legacy ambiguous identity.
 
 Future UI may make selection/review/export easier, and future formats may support other portable instruction artifacts. Any future install action must remain separately explicit, reviewable, host-scoped, egress-aware, and unable to grant itself permissions through stored text.

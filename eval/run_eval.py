@@ -2287,7 +2287,16 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         compile_args.append("--json")
         compiled_runbook = cli_json(compile_args)
         rebuilt_runbook = cli_json(compile_args)
-        if not isinstance(compiled_runbook, dict) or not isinstance(rebuilt_runbook, dict):
+        reordered_compile_args = ["runbook", "compile", str(project), "--title", title]
+        for learning_id in reversed(learning_ids):
+            reordered_compile_args.extend(["--learning", learning_id])
+        reordered_compile_args.append("--json")
+        reordered_runbook = cli_json(reordered_compile_args)
+        if (
+            not isinstance(compiled_runbook, dict)
+            or not isinstance(rebuilt_runbook, dict)
+            or not isinstance(reordered_runbook, dict)
+        ):
             raise RuntimeError("runbook compile returned a non-object payload")
         runbook_id = str(compiled_runbook.get("runbookId", ""))
         markers = [str(value) for value in runbook_expectation.get("markers", [])]
@@ -2304,6 +2313,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and compiled_runbook.get("runbookId") == rebuilt_runbook.get("runbookId")
             and compiled_runbook.get("sourceFingerprint")
             == rebuilt_runbook.get("sourceFingerprint")
+            and compiled_runbook.get("runbookId") == reordered_runbook.get("runbookId")
+            and compiled_runbook.get("sourceFingerprint")
+            == reordered_runbook.get("sourceFingerprint")
+            and compiled_runbook.get("sourceLearningIds")
+            == reordered_runbook.get("sourceLearningIds")
+            and compiled_runbook.get("markdown") == reordered_runbook.get("markdown")
             and all(marker in serialized_runbook for marker in markers)
             and (not hidden_marker or hidden_marker not in serialized_runbook)
         )
@@ -2342,6 +2357,36 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and (not hidden_marker or hidden_marker not in skill_content)
         )
 
+        reordered_export_args = [
+            "runbook",
+            "export-skill",
+            str(project),
+            "--title",
+            title,
+        ]
+        for learning_id in reversed(learning_ids):
+            reordered_export_args.extend(["--learning", learning_id])
+        reordered_export_args.extend(
+            [
+                "--expected-runbook",
+                runbook_id,
+                "--host",
+                str(runbook_expectation.get("host", "codex")),
+                "--egress-target",
+                "cloud",
+                "--json",
+            ]
+        )
+        reordered_export = cli_json(reordered_export_args)
+        export_ok = (
+            export_ok
+            and isinstance(reordered_export, dict)
+            and reordered_export.get("runbookId") == runbook_id
+            and reordered_export.get("sourceFingerprint")
+            == compiled_runbook.get("sourceFingerprint")
+            and reordered_export.get("content") == exported_skill.get("content")
+        )
+
         stale_id = "rbk_" + ("0" * 64)
         stale_blocked = False
         try:
@@ -2370,7 +2415,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         path_leakage = privacy_violation_rate(
             [str(project), str(vault), str(config_root)],
-            [compiled_runbook, exported_skill],
+            [compiled_runbook, reordered_runbook, exported_skill, reordered_export],
         )
         scores["reviewed_runbook"] = (
             runbook_ok and export_ok and stale_blocked and cloud_blocked and not installed_skill
@@ -2400,7 +2445,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "reviewed Runbook Skill content did not satisfy the independent downstream reusable-procedure contract",
         )
         scores["privacy_violation_rate"] = path_leakage
-        evidence_text.extend([compiled_runbook, exported_skill])
+        evidence_text.extend(
+            [compiled_runbook, reordered_runbook, exported_skill, reordered_export]
+        )
         if not scores["reviewed_runbook"]:
             failures.append(
                 "reviewed runbook/Skill export did not preserve source binding, explicit export, egress, or non-installation semantics"
@@ -7139,10 +7186,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and unobserved_binding.get("contextPackRevalidated") is True
             and unobserved_binding.get("contextUsageProven") is False
             and int(unobserved_binding.get("includedRecordCount", 0)) > 0
-            and health.get("schemaVersion") == 4
+            and health.get("schemaVersion") == 5
             and health_coverage.get("contextUtilityBindingsInspected") == 1
             and health_coverage.get("observedContextUtilityBindingsInspected") == 0
             and health_coverage.get("unobservedContextUtilityBindingsInspected") == 1
+            and health_coverage.get("procedureApplicationClaimsInspected") == 0
+            and health_coverage.get("exactCurrentProcedureApplicationClaimsInspected") == 0
             and health.get("persisted") is False
             and health.get("destructiveActionsTaken") is False
             and health.get("liveSourceChecked") is False
@@ -7573,6 +7622,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 },
             )
             procedure_health_text = json.dumps(procedure_health, sort_keys=True)
+            procedure_health_coverage = procedure_health.get("coverage", {})
             attention_signals = [
                 item
                 for item in procedure_health.get("signals", [])
@@ -7618,7 +7668,21 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     for passed_run in passed_runs
                 )
                 and procedure_health.get("schemaVersion")
-                == int(procedure_health_expectation.get("schema_version", 4))
+                == int(procedure_health_expectation.get("schema_version", 5))
+                and procedure_health_coverage.get("procedureApplicationClaimsInspected")
+                == int(
+                    procedure_health_expectation.get(
+                        "procedure_application_claims_inspected", 3
+                    )
+                )
+                and procedure_health_coverage.get(
+                    "exactCurrentProcedureApplicationClaimsInspected"
+                )
+                == int(
+                    procedure_health_expectation.get(
+                        "exact_current_procedure_application_claims_inspected", 3
+                    )
+                )
                 and procedure_health.get("persisted") is False
                 and procedure_health.get("destructiveActionsTaken") is False
                 and procedure_health.get("liveSourceChecked") is False
@@ -7784,7 +7848,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "chronically-retrieved-but-unhelpful-memory",
         }
         health_ok = (
-            health.get("schemaVersion") == 4
+            health.get("schemaVersion") == 5
             and health.get("projection") == "on-demand-memory-health"
             and health.get("persisted") is False
             and health.get("destructiveActionsTaken") is False

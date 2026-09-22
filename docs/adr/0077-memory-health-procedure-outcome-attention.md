@@ -103,6 +103,9 @@ checks the MCP health projection. Exactly the failed run must produce the new si
 learning/session/observation IDs, typed outcome counts, non-causality wording, schema v2, and zero
 path/body leakage.
 
+ADR 0084 later advances Memory Health to schema v5 by adding bounded Procedure-application claim
+coverage. It does not change this signal's qualification or non-causality semantics.
+
 ## Rejected alternatives
 
 ### Call the signal Procedure failure or failed reverification

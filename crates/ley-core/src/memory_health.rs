@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const MEMORY_HEALTH_SCHEMA_VERSION: u32 = 4;
+pub const MEMORY_HEALTH_SCHEMA_VERSION: u32 = 5;
 pub const DEFAULT_MEMORY_HEALTH_SIGNALS: usize = 100;
 pub const MAX_MEMORY_HEALTH_SIGNALS: usize = 200;
 pub const DEFAULT_MEMORY_HEALTH_SESSIONS: usize = 20;
@@ -109,6 +109,8 @@ pub struct MemoryHealthCoverage {
     pub context_utility_bindings_inspected: usize,
     pub observed_context_utility_bindings_inspected: usize,
     pub unobserved_context_utility_bindings_inspected: usize,
+    pub procedure_application_claims_inspected: usize,
+    pub exact_current_procedure_application_claims_inspected: usize,
     pub candidate_signals: usize,
     pub signals_returned: usize,
     pub signals_omitted: usize,
@@ -196,6 +198,8 @@ pub fn memory_health_report(
     let mut context_utility_bindings_inspected = 0usize;
     let mut observed_context_utility_bindings_inspected = 0usize;
     let mut unobserved_context_utility_bindings_inspected = 0usize;
+    let mut procedure_application_claims_inspected = 0usize;
+    let mut exact_current_procedure_application_claims_inspected = 0usize;
     let mut revision_resolver = RevisionResolver::new(project_start, overview.git.as_ref())?;
     for summary in selected_sessions {
         let session = read_session(project_start, vault, &summary.session_id)?;
@@ -220,6 +224,13 @@ pub fn memory_health_report(
                     .len()
                     .saturating_sub(observed_bindings),
             );
+        let (procedure_claims, exact_current_procedure_claims) =
+            procedure_application_claim_coverage(&session, &current_procedure_versions);
+        procedure_application_claims_inspected =
+            procedure_application_claims_inspected.saturating_add(procedure_claims);
+        exact_current_procedure_application_claims_inspected =
+            exact_current_procedure_application_claims_inspected
+                .saturating_add(exact_current_procedure_claims);
         let latest = session.checkpoints.last();
         drafts.extend(procedure_application_health_signals(
             &session,
@@ -390,6 +401,8 @@ pub fn memory_health_report(
         context_utility_bindings_inspected,
         observed_context_utility_bindings_inspected,
         unobserved_context_utility_bindings_inspected,
+        procedure_application_claims_inspected,
+        exact_current_procedure_application_claims_inspected,
         candidate_signals,
         signals_returned: signals.len(),
         signals_omitted: candidate_signals.saturating_sub(signals.len()),
@@ -628,14 +641,11 @@ fn procedure_application_health_signals(
             let Some(current_event_count) = current_procedure_versions.get(learning_id) else {
                 continue;
             };
-            let bound_exact_current_procedure = binding.included_records.iter().any(|record| {
-                record.source == ContextUtilityRecordSource::ActiveProjectMemory
-                    && record.kind.as_deref() == Some("learning")
-                    && record.entity_id == *learning_id
-                    && record.learning_id.as_deref() == Some(learning_id.as_str())
-                    && record.learning_kind.as_deref() == Some("procedure")
-                    && record.learning_event_count == Some(*current_event_count)
-            });
+            let bound_exact_current_procedure = binding_contains_exact_current_procedure(
+                binding,
+                learning_id,
+                *current_event_count,
+            );
             if !bound_exact_current_procedure {
                 continue;
             }
@@ -672,6 +682,51 @@ fn procedure_application_health_signals(
     }
 
     drafts
+}
+
+fn procedure_application_claim_coverage(
+    session: &AgentSession,
+    current_procedure_versions: &BTreeMap<String, u64>,
+) -> (usize, usize) {
+    let mut claims = 0usize;
+    let mut exact_current_claims = 0usize;
+
+    for observation in &session.context_utility_observations {
+        let binding = session
+            .context_utility_bindings
+            .iter()
+            .find(|binding| binding.id == observation.binding_id);
+        for learning_id in &observation.claimed_applied_learning_ids {
+            claims = claims.saturating_add(1);
+            let Some(current_event_count) = current_procedure_versions.get(learning_id) else {
+                continue;
+            };
+            let Some(binding) = binding else {
+                continue;
+            };
+            if binding_contains_exact_current_procedure(binding, learning_id, *current_event_count)
+            {
+                exact_current_claims = exact_current_claims.saturating_add(1);
+            }
+        }
+    }
+
+    (claims, exact_current_claims)
+}
+
+fn binding_contains_exact_current_procedure(
+    binding: &crate::ContextUtilityBinding,
+    learning_id: &str,
+    current_event_count: u64,
+) -> bool {
+    binding.included_records.iter().any(|record| {
+        record.source == ContextUtilityRecordSource::ActiveProjectMemory
+            && record.kind.as_deref() == Some("learning")
+            && record.entity_id == learning_id
+            && record.learning_id.as_deref() == Some(learning_id)
+            && record.learning_kind.as_deref() == Some("procedure")
+            && record.learning_event_count == Some(current_event_count)
+    })
 }
 
 fn unobserved_context_utility_binding_health_signals(session: &AgentSession) -> Vec<SignalDraft> {
@@ -1173,7 +1228,14 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(report.schema_version, 4);
+        assert_eq!(report.schema_version, 5);
+        assert_eq!(report.coverage.procedure_application_claims_inspected, 1);
+        assert_eq!(
+            report
+                .coverage
+                .exact_current_procedure_application_claims_inspected,
+            1
+        );
         assert_eq!(signal.severity, MemoryHealthSeverity::Review);
         assert_eq!(
             serde_json::to_string(&signal.kind).unwrap(),
@@ -1205,6 +1267,13 @@ mod tests {
             procedure_application_fixture(VerificationStatus::Passed);
 
         let report = memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+        assert_eq!(report.coverage.procedure_application_claims_inspected, 1);
+        assert_eq!(
+            report
+                .coverage
+                .exact_current_procedure_application_claims_inspected,
+            1
+        );
         assert!(!report
             .signals
             .iter()
@@ -1328,6 +1397,13 @@ mod tests {
         assert_eq!(changed.learning.freshness, LearningFreshness::Current);
 
         let report = memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+        assert_eq!(report.coverage.procedure_application_claims_inspected, 1);
+        assert_eq!(
+            report
+                .coverage
+                .exact_current_procedure_application_claims_inspected,
+            0
+        );
         assert!(!report
             .signals
             .iter()

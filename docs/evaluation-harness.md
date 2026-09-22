@@ -224,17 +224,18 @@ an exact retry replays the same review event, and a same-request/different-note 
 final learning must remain exactly two durable events (proposal + review), with verified/trusted state.
 This is idempotency evidence only. Version-bound Procedure application/outcome history is exercised
 separately by `procedure-application-outcome-history` and does not change the replay contract here. That
-same pass → fail → pass journey also probes Memory Health schema v4: only the failed exact-current
+same pass → fail → pass journey also probes Memory Health schema v5: only the failed exact-current
 Procedure application may produce `procedure-application-outcome-attention`, and the signal must retain
-the same non-causality/authority boundaries as the underlying observation.
+the same non-causality/authority boundaries as the underlying observation. The report additionally
+must disclose three inspected Procedure application claims and three exact-current claims.
 
 `context-utility-unobserved-binding-health` covers the complementary measurement-gap path. It binds a
 real non-empty context pack, finishes the session without observing it, then requires body-free
 unobserved-binding coverage from `ley_session_get`, exact terminal finish-event identity on both the
-finish and unobserved-binding row, and exactly one Memory Health v4
+finish and unobserved-binding row, and exactly one Memory Health v5
 `unobserved-context-utility-binding` review signal. The report must also count one inspected binding,
-zero uniquely observed bindings, and one unobserved binding. Context-body and absolute-path canaries
-must remain absent. Core regressions additionally prove that active sessions are not signaled, a later
+zero uniquely observed bindings, one unobserved binding, and zero Procedure application claims.
+Context-body and absolute-path canaries must remain absent. Core regressions additionally prove that active sessions are not signaled, a later
 valid observation removes the signal, more than five recent unobserved binding rows are bounded with
 omission/truncation disclosure, and two observations of one binding count as one observed binding.
 The targeted desktop Session Inspector regression separately renders one unobserved binding from this
@@ -606,9 +607,9 @@ current entries are **Topic Dossiers**, **Current Project State**, **Context Pac
 - a real active-session project-state journey proving working/open-state, historical-decision, verification, exact current Specification authority handles without Specification-body copying, current→changed Specification attention/fingerprint invalidation, and privacy semantics;
 - zero privacy-canary leakage from the returned project-state projection.
 - Context Pack Inspector exact-ID reproduction, hidden-body omission, forged-ID mismatch honesty, and zero path leakage through the real MCP path.
-- Memory Health schema-v4 advisory/non-destructive semantics, review/uncited/duplicate/session/unresolved/recovery signals, exact-current Procedure application outcome attention for the failed member of the real pass → fail → pass history, pass-only/version-mismatch suppression, terminal unobserved context-utility binding attention plus bounded total/observed/unobserved binding coverage, explicit unsupported reverification/helpfulness disclosure, private recovery/task/Procedure/context-body omission, deletion fidelity, and zero path leakage through the real MCP path.
+- Memory Health schema-v5 advisory/non-destructive semantics, review/uncited/duplicate/session/unresolved/recovery signals, exact-current Procedure application outcome attention for the failed member of the real pass → fail → pass history, pass-only/version-mismatch suppression, bounded total/exact-current Procedure-application claim coverage, terminal unobserved context-utility binding attention plus bounded total/observed/unobserved binding coverage, explicit unsupported reverification/helpfulness disclosure, private recovery/task/Procedure/context-body omission, deletion fidelity, and zero path leakage through the real MCP path.
 - Agent Legibility coverage for captured architecture, important directory, declared command, observed command, policy, schema/migration, API candidate, observability reference, current plan, and approved Specification metadata; deterministic source binding; explicit no-score semantics; private Specification-body omission; deletion fidelity; and zero local-path leakage through the real MCP path.
-- Reviewed Runbook coverage for explicit user-confirmed current procedure/pitfall/convention selection, deterministic runbook/source identity, no authority increase, unrelated-session omission, exact-ID stale-export rejection, explicit host/egress selection, cloud blocking under local-only policy, non-installing Skill output, and zero local-path leakage through the real CLI path.
+- Reviewed Runbook coverage for explicit user-confirmed current procedure/pitfall/convention selection, deterministic runbook/source identity including cross-category CLI-order canonicalization, no authority increase, unrelated-session omission, exact-ID stale-export rejection, explicit host/egress selection, cloud blocking under local-only policy, non-installing Skill output, and zero local-path leakage through the real CLI path.
 - Verification Evidence coverage for a real structured test outcome with an immutable captured-artifact citation; propagation through `ley_session_get` and Current Project State; deliberate live-file drift after the checkpoint without hash drift in Ley; explicit `liveSourceChecked: false`; and zero live-canary or local-path leakage. Unknown/uncaptured evidence paths are rejected by focused core coverage.
 - Branch / Worktree Controls reuse the real divergent-branch journey. Before merge, exact `divergent` Memory Search must return only divergent-applicable history, `current-lineage` must exclude the experimental evidence, and `ley_session_get` must show the checkpoint and capture freshness as divergent. After a real `--no-ff` merge, the same retained search/session evidence must recompute to `merged` without re-ingestion. Every surface keeps `liveSourceChecked: false`, and local-path privacy remains zero.
 - Richer Graph Relations use both the real captured one-hop implementation/importing-test fixture and

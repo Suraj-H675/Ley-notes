@@ -136,7 +136,6 @@ pub fn compile_reviewed_runbook(
     let mut procedures = Vec::new();
     let mut pitfalls = Vec::new();
     let mut conventions = Vec::new();
-    let mut source_hashes = Vec::new();
     for learning_id in &input.learning_ids {
         let learning = read_learning(&diagnostic.root, &vault, learning_id)?;
         if learning.project_id != diagnostic.identity.project_id {
@@ -172,7 +171,6 @@ pub fn compile_reviewed_runbook(
             learning.event_count,
             learning.updated_at_unix_ms,
         ))?;
-        source_hashes.push(source_hash.clone());
         let entry = ReviewedRunbookEntry {
             learning_id: learning.learning_id,
             kind: learning.kind,
@@ -195,7 +193,19 @@ pub fn compile_reviewed_runbook(
         }
     }
 
-    let source_fingerprint = hash_json(&source_hashes)?;
+    let canonical_source_learning_ids = procedures
+        .iter()
+        .chain(&pitfalls)
+        .chain(&conventions)
+        .map(|entry| entry.learning_id.clone())
+        .collect::<Vec<_>>();
+    let canonical_source_hashes = procedures
+        .iter()
+        .chain(&pitfalls)
+        .chain(&conventions)
+        .map(|entry| entry.source_hash.clone())
+        .collect::<Vec<_>>();
+    let source_fingerprint = hash_json(&canonical_source_hashes)?;
     let runbook_id = format!(
         "rbk_{}",
         hex_sha256(
@@ -204,7 +214,7 @@ pub fn compile_reviewed_runbook(
                 diagnostic.identity.project_id.as_str(),
                 title.as_str(),
                 source_fingerprint.as_str(),
-                input.learning_ids.as_slice(),
+                canonical_source_learning_ids.as_slice(),
             ))
             .map_err(|error| LeyCoreError::InvalidRunbookRequest(format!(
                 "could not fingerprint reviewed runbook: {error}"
@@ -241,8 +251,8 @@ pub fn compile_reviewed_runbook(
         procedures,
         pitfalls,
         conventions,
-        source_learning_ids: input.learning_ids,
-        source_learning_count: source_hashes.len(),
+        source_learning_ids: canonical_source_learning_ids,
+        source_learning_count: canonical_source_hashes.len(),
         text_characters,
         markdown,
         live_source_checked: false,
@@ -679,6 +689,15 @@ mod tests {
         };
         let runbook = compile_reviewed_runbook(&project, &vault, input.clone()).unwrap();
         let rebuilt = compile_reviewed_runbook(&project, &vault, input.clone()).unwrap();
+        let reordered = compile_reviewed_runbook(
+            &project,
+            &vault,
+            ReviewedRunbookInput {
+                title: "Release workflow".to_owned(),
+                learning_ids: vec![convention.clone(), pitfall.clone(), procedure.clone()],
+            },
+        )
+        .unwrap();
         assert_eq!(runbook.schema_version, REVIEWED_RUNBOOK_SCHEMA_VERSION);
         assert_eq!(runbook.projection, PROJECTION);
         assert!(!runbook.persisted);
@@ -688,6 +707,10 @@ mod tests {
         assert!(runbook.runbook_id.starts_with("rbk_"));
         assert_eq!(runbook.runbook_id, rebuilt.runbook_id);
         assert_eq!(runbook.source_fingerprint, rebuilt.source_fingerprint);
+        assert_eq!(runbook.markdown, reordered.markdown);
+        assert_eq!(runbook.runbook_id, reordered.runbook_id);
+        assert_eq!(runbook.source_fingerprint, reordered.source_fingerprint);
+        assert_eq!(runbook.source_learning_ids, reordered.source_learning_ids);
         assert_eq!(runbook.procedures.len(), 1);
         assert_eq!(runbook.pitfalls.len(), 1);
         assert_eq!(runbook.conventions.len(), 1);

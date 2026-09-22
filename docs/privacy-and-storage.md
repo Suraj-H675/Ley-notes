@@ -52,8 +52,9 @@ unobserved-binding rows containing IDs, snapshot IDs, compile limits/token estim
 counts, non-usage/revalidation flags, and—only for terminal sessions—the immutable finish event ID as
 an optional follow-up anchor. It deliberately does not copy the bound task excerpt or context bodies
 into those rows. Terminal non-empty unobserved bindings may also appear as advisory measurement gaps;
-Memory Health schema v4 reports inspected total/observed/unobserved utility-binding coverage without
-copying task/context bodies or implying a utility judgment.
+Memory Health schema v5 reports inspected total/observed/unobserved utility-binding coverage plus
+total/exact-current Procedure-application claim coverage without copying task/context bodies or
+implying a utility/reverification judgment. `sessionsOmitted` remains the bounded-history disclosure.
 
 Explicit historical host import uses that same private session ledger rather than a second transcript database. The first supported source is a user-supplied Codex global message-history JSONL file plus one explicitly selected session UUID. Ley opens only that explicit regular file with no-follow semantics, validates the documented `session_id` / Unix-second `ts` / `text` record shape, and bounds the read to 64 MiB, 100,000 records, 1 MiB per record, and 512 selected messages. Only selected user messages are imported. The external file path, raw Codex session UUID, assistant/tool/hidden-reasoning history, and unrelated-session messages are not retained. The session stores an opaque `hsi_` source reference and each imported turn stores its original source timestamp. Existing capture mode and secret-redaction rules apply before durable bodies are written. The import does not scan `~/.codex`, parse rollout/session transcripts, or add an MCP import route.
 

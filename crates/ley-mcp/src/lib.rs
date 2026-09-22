@@ -6948,6 +6948,14 @@ mod tests {
         assert_eq!(allowed["persisted"], false);
         assert_eq!(allowed["destructiveActionsTaken"], false);
         assert_eq!(allowed["liveSourceChecked"], false);
+        assert_eq!(
+            allowed["coverage"]["procedureApplicationClaimsInspected"],
+            0
+        );
+        assert_eq!(
+            allowed["coverage"]["exactCurrentProcedureApplicationClaimsInspected"],
+            0
+        );
         assert!(allowed["healthFingerprint"]
             .as_str()
             .unwrap()
