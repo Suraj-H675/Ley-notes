@@ -17,8 +17,8 @@ use crate::{
     evaluate_agent_egress, search_project_memory, AgentEgressBlockReason, AgentEgressPolicy,
     AgentEgressScopeKind, AgentEgressTarget, ContextMountRegistry, ContextMountStatus,
     EgressPolicyRegistry, GraphCitation, KnowledgeScopeKind, KnowledgeScopeRegistry,
-    KnowledgeScopeSourceStatus, LearningFreshness, LearningOriginSummary, LearningState,
-    LearningTrustState, LeyCoreError, PolicyBundleRegistry, ProjectMemoryConflict,
+    KnowledgeScopeSourceStatus, LearningFreshness, LearningKind, LearningOriginSummary,
+    LearningState, LearningTrustState, LeyCoreError, PolicyBundleRegistry, ProjectMemoryConflict,
     ProjectMemoryConflictKind, ProjectMemoryRankingSignals, ProjectMemoryResultKind,
     ProjectMemorySearch, ProjectMemorySearchLimits, ProjectMemorySearchResult,
     ProjectMemorySearchRetrieval, ProjectMemoryTrustSignal, ProjectRevisionFreshness,
@@ -574,6 +574,10 @@ pub struct CompiledContextItem {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub learning_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learning_kind: Option<LearningKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learning_event_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citation: Option<GraphCitation>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1452,6 +1456,8 @@ fn compile_search_result_with_authorities(
             excerpt: candidate.item.excerpt,
             session_id: candidate.item.session_id,
             learning_id: candidate.item.learning_id,
+            learning_kind: candidate.item.learning_kind,
+            learning_event_count: candidate.item.learning_event_count,
             citation: candidate.item.citation,
             learning_state: candidate.item.learning_state,
             learning_trust_state: candidate.item.learning_trust_state,
@@ -3782,6 +3788,7 @@ mod tests {
             session_id: None,
             learning_id: (kind == ProjectMemoryResultKind::Learning).then(|| id.to_owned()),
             learning_kind: None,
+            learning_event_count: None,
             citation: None,
             learning_state: None,
             learning_trust_state: None,

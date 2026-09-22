@@ -4,6 +4,10 @@
 
 Accepted.
 
+Later extension: ADR 0073 adds optional exact-version Procedure application claims on top of this
+correlation protocol. Ordinary utility events remain schema v5; claim-bearing observations use schema
+v15 and keep the original non-causation/non-authority boundary.
+
 ## Context
 
 The final P1 roadmap item asks for context/memory utility feedback based on downstream outcomes. `LEY.md` is explicit that Ley should measure final task benefit rather than retrieval theater, but the current product has no durable way to say which exact compiled context pack preceded a later structured checkpoint or session result.

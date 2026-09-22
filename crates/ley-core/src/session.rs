@@ -38,6 +38,7 @@ pub const SESSION_BATCH_RECOVERY_SCHEMA_VERSION: u32 = 11;
 pub const SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION: u32 = 12;
 pub const SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION: u32 = 13;
 pub const SESSION_TOOL_EVIDENCE_SCHEMA_VERSION: u32 = 14;
+pub const SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION: u32 = 15;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
@@ -52,6 +53,7 @@ pub const SESSION_TOOL_RESULT_LIMIT_CHARACTERS: usize = 16_000;
 const SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT: usize = 1_000;
 pub const SESSION_CONTEXT_UTILITY_OUTCOME_LIMIT: usize = 20;
 pub const SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT: usize = 64;
+pub const SESSION_CONTEXT_UTILITY_APPLIED_LEARNING_LIMIT: usize = 16;
 
 const STORE_ROOT: &str = ".ley";
 const AGENT_MEMORY_DIRECTORY: &str = "agent-memory";
@@ -73,6 +75,7 @@ const SESSION_V11_FILE: &str = "session-v11.json";
 const SESSION_V12_FILE: &str = "session-v12.json";
 const SESSION_V13_FILE: &str = "session-v13.json";
 const SESSION_V14_FILE: &str = "session-v14.json";
+const SESSION_V15_FILE: &str = "session-v15.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -539,6 +542,10 @@ pub struct ContextUtilityIncludedRecord {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub learning_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learning_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learning_event_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub specification_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -617,6 +624,8 @@ pub struct ContextUtilityObservationInput {
     pub expected_event_count: u64,
     pub binding_id: String,
     pub downstream_event_ids: Vec<String>,
+    #[serde(default)]
+    pub claimed_applied_learning_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -630,6 +639,8 @@ pub struct ContextUtilityObservation {
     pub context_pack_id: String,
     pub downstream_event_ids: Vec<String>,
     pub downstream_outcomes: Vec<ContextUtilityOutcomeEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claimed_applied_learning_ids: Vec<String>,
     pub context_usage_proven: bool,
     pub causal_utility_proven: bool,
     pub trust_changes_applied: bool,
@@ -2706,6 +2717,28 @@ pub fn record_context_utility_observation(
             "context utility downstream event IDs must be unique".to_owned(),
         ));
     }
+    if input.claimed_applied_learning_ids.len() > SESSION_CONTEXT_UTILITY_APPLIED_LEARNING_LIMIT {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "context utility can claim at most {SESSION_CONTEXT_UTILITY_APPLIED_LEARNING_LIMIT} applied procedure learnings"
+        )));
+    }
+    for learning_id in &input.claimed_applied_learning_ids {
+        if !valid_prefixed_hex(learning_id, "lrn_", 32) {
+            return Err(LeyCoreError::InvalidSessionRequest(
+                "context utility claimed applied learning IDs must use lrn_ identifiers".to_owned(),
+            ));
+        }
+    }
+    input.claimed_applied_learning_ids.sort();
+    if input
+        .claimed_applied_learning_ids
+        .windows(2)
+        .any(|window| window[0] == window[1])
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility claimed applied learning IDs must be unique".to_owned(),
+        ));
+    }
     let diagnostic = diagnose_project(&project_start)?;
     validate_project_memory(&diagnostic.root, &vault)?;
     let event_id = deterministic_id(
@@ -2722,11 +2755,13 @@ pub fn record_context_utility_observation(
         context_pack_id: String::new(),
         downstream_event_ids: input.downstream_event_ids,
         downstream_outcomes: Vec::new(),
+        claimed_applied_learning_ids: input.claimed_applied_learning_ids,
         context_usage_proven: false,
         causal_utility_proven: false,
         trust_changes_applied: false,
         ranking_changes_applied: false,
     };
+    let has_application_claims = !observation.claimed_applied_learning_ids.is_empty();
     mutate_session(
         &diagnostic.identity.project_id,
         session_id,
@@ -2735,7 +2770,11 @@ pub fn record_context_utility_observation(
             request_id: input.request_id,
             redactions: Vec::new(),
             payload: SessionEventPayload::ContextUtilityObserved(observation),
-            schema_version: SESSION_CONTEXT_UTILITY_SCHEMA_VERSION,
+            schema_version: if has_application_claims {
+                SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION
+            } else {
+                SESSION_CONTEXT_UTILITY_SCHEMA_VERSION
+            },
             allow_create: false,
             expected_event_count: Some(input.expected_event_count),
         },
@@ -2754,6 +2793,8 @@ fn context_utility_included_records(
             kind: Some("specification".to_owned()),
             session_id: None,
             learning_id: None,
+            learning_kind: None,
+            learning_event_count: None,
             specification_id: Some(specification.specification_id.clone()),
             mount_id: None,
             source_project_id: None,
@@ -2766,6 +2807,11 @@ fn context_utility_included_records(
             kind: Some(project_memory_result_kind_label(item.kind).to_owned()),
             session_id: item.session_id.clone(),
             learning_id: item.learning_id.clone(),
+            learning_kind: item
+                .learning_kind
+                .map(learning_kind_label)
+                .map(str::to_owned),
+            learning_event_count: item.learning_event_count,
             specification_id: None,
             mount_id: None,
             source_project_id: None,
@@ -2778,6 +2824,8 @@ fn context_utility_included_records(
             kind: Some(project_memory_result_kind_label(item.kind).to_owned()),
             session_id: item.session_id.clone(),
             learning_id: item.learning_id.clone(),
+            learning_kind: None,
+            learning_event_count: None,
             specification_id: None,
             mount_id: Some(item.mount_id.clone()),
             source_project_id: Some(item.source_project_id.clone()),
@@ -2790,6 +2838,16 @@ fn context_utility_included_records(
         .saturating_sub(SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT);
     records.truncate(SESSION_CONTEXT_UTILITY_INCLUDED_RECORD_LIMIT);
     (records, omitted)
+}
+
+fn learning_kind_label(kind: crate::LearningKind) -> &'static str {
+    match kind {
+        crate::LearningKind::Procedure => "procedure",
+        crate::LearningKind::Constraint => "constraint",
+        crate::LearningKind::Pitfall => "pitfall",
+        crate::LearningKind::Convention => "convention",
+        crate::LearningKind::Fact => "fact",
+    }
 }
 
 fn project_memory_result_kind_label(kind: ProjectMemoryResultKind) -> &'static str {
@@ -4056,6 +4114,16 @@ fn resolve_pending_context_utility(
                 "context utility binding is missing from this session".to_owned(),
             )
         })?;
+    if observation
+        .claimed_applied_learning_ids
+        .iter()
+        .any(|learning_id| !binding_contains_exact_procedure(binding, learning_id))
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "claimed applied procedure learning was not an exact active-project procedure in the bound context pack"
+                .to_owned(),
+        ));
+    }
     let mut outcomes = Vec::with_capacity(observation.downstream_event_ids.len());
     for event_id in &observation.downstream_event_ids {
         let event = existing
@@ -4086,6 +4154,17 @@ fn resolve_pending_context_utility(
     observation.context_pack_id = binding.context_pack_id.clone();
     observation.downstream_outcomes = outcomes;
     Ok(())
+}
+
+fn binding_contains_exact_procedure(binding: &ContextUtilityBinding, learning_id: &str) -> bool {
+    binding.included_records.iter().any(|record| {
+        record.source == ContextUtilityRecordSource::ActiveProjectMemory
+            && record.entity_id == learning_id
+            && record.kind.as_deref() == Some("learning")
+            && record.learning_id.as_deref() == Some(learning_id)
+            && record.learning_kind.as_deref() == Some("procedure")
+            && record.learning_event_count.is_some_and(|count| count > 0)
+    })
 }
 
 fn context_utility_outcome_from_event(
@@ -4517,7 +4596,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_TOOL_EVIDENCE_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION {
+        SESSION_V15_FILE
+    } else if session.schema_version >= SESSION_TOOL_EVIDENCE_SCHEMA_VERSION {
         SESSION_V14_FILE
     } else if session.schema_version >= SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION {
         SESSION_V13_FILE
@@ -4993,6 +5074,15 @@ fn validate_context_utility_history(
             "context utility observation context pack does not match its binding",
         );
     }
+    if observation
+        .claimed_applied_learning_ids
+        .iter()
+        .any(|learning_id| !binding_contains_exact_procedure(binding, learning_id))
+    {
+        return invalid_session_store(
+            "context utility claimed procedure application is not bound to an exact active-project procedure",
+        );
+    }
     let mut expected = Vec::with_capacity(observation.downstream_event_ids.len());
     for event_id in &observation.downstream_event_ids {
         let downstream = previous_events
@@ -5062,6 +5152,7 @@ fn validate_event(
             | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
             | SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
             | SESSION_TOOL_EVIDENCE_SCHEMA_VERSION
+            | SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -5254,6 +5345,11 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
         SessionEventPayload::ContextUtilityBound(_)
             | SessionEventPayload::ContextUtilityObserved(_)
     );
+    let is_context_utility_application = matches!(
+        &event.payload,
+        SessionEventPayload::ContextUtilityObserved(observation)
+            if !observation.claimed_applied_learning_ids.is_empty()
+    );
     if event.schema_version == SESSION_V1_SCHEMA_VERSION
         && (is_turn_event
             || is_recovery_checkpoint
@@ -5317,6 +5413,20 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
     if is_tool_observation && event.schema_version != SESSION_TOOL_EVIDENCE_SCHEMA_VERSION {
         return invalid_session_store(
             "observed host tool evidence requires session event schema version 14",
+        );
+    }
+    if event.schema_version == SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION
+        && !is_context_utility_application
+    {
+        return invalid_session_store(
+            "schema version 15 is reserved for context utility observations with claimed procedure applications",
+        );
+    }
+    if is_context_utility_application
+        && event.schema_version != SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION
+    {
+        return invalid_session_store(
+            "claimed procedure applications require session event schema version 15",
         );
     }
     if event.schema_version == SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
@@ -5403,6 +5513,31 @@ fn validate_context_utility_binding(
                 return invalid_session_store("context utility learning ID is invalid");
             }
         }
+        if let Some(learning_kind) = &record.learning_kind {
+            validate_stored_text("contextUtility.record.learningKind", learning_kind, 1, 32)?;
+            if !matches!(
+                learning_kind.as_str(),
+                "procedure" | "constraint" | "pitfall" | "convention" | "fact"
+            ) {
+                return invalid_session_store("context utility learning kind is invalid");
+            }
+        }
+        if record.learning_event_count == Some(0) {
+            return invalid_session_store("context utility learning event count is invalid");
+        }
+        let has_learning_version_metadata =
+            record.learning_kind.is_some() || record.learning_event_count.is_some();
+        if has_learning_version_metadata
+            && (record.source != ContextUtilityRecordSource::ActiveProjectMemory
+                || record.kind.as_deref() != Some("learning")
+                || record.learning_id.as_deref() != Some(record.entity_id.as_str())
+                || record.learning_kind.is_none()
+                || record.learning_event_count.is_none())
+        {
+            return invalid_session_store(
+                "context utility learning version metadata is not bound to one active-project learning",
+            );
+        }
         if let Some(specification_id) = &record.specification_id {
             if !valid_prefixed_hex(specification_id, "spec_", 32) {
                 return invalid_session_store("context utility specification ID is invalid");
@@ -5423,6 +5558,8 @@ fn validate_context_utility_binding(
                 if record.specification_id.as_deref() != Some(record.entity_id.as_str())
                     || record.session_id.is_some()
                     || record.learning_id.is_some()
+                    || record.learning_kind.is_some()
+                    || record.learning_event_count.is_some()
                     || record.mount_id.is_some()
                     || record.source_project_id.is_some()
                 {
@@ -5443,6 +5580,8 @@ fn validate_context_utility_binding(
             }
             ContextUtilityRecordSource::MountedReference => {
                 if record.specification_id.is_some()
+                    || record.learning_kind.is_some()
+                    || record.learning_event_count.is_some()
                     || record.mount_id.is_none()
                     || record.source_project_id.is_none()
                 {
@@ -5483,6 +5622,22 @@ fn validate_context_utility_observation(
         || observation.downstream_outcomes.len() != observation.downstream_event_ids.len()
     {
         return invalid_session_store("context utility downstream outcome set is invalid");
+    }
+    if observation.claimed_applied_learning_ids.len()
+        > SESSION_CONTEXT_UTILITY_APPLIED_LEARNING_LIMIT
+        || observation
+            .claimed_applied_learning_ids
+            .windows(2)
+            .any(|window| window[0] >= window[1])
+    {
+        return invalid_session_store(
+            "context utility claimed applied learning IDs must be bounded, sorted, and unique",
+        );
+    }
+    for learning_id in &observation.claimed_applied_learning_ids {
+        if !valid_prefixed_hex(learning_id, "lrn_", 32) {
+            return invalid_session_store("context utility claimed applied learning ID is invalid");
+        }
     }
     for (event_id, outcome) in observation
         .downstream_event_ids
@@ -8012,8 +8167,11 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{
-        compile_project_context_with_registries, ingest_project, initialize_project, CaptureMode,
-        ContextCompileLimits, ContextMountRegistry, SpecificationRegistry,
+        compile_project_context_with_registries, ingest_project, initialize_project,
+        propose_learning, read_learning, review_learning, CaptureMode, ContextCompileLimits,
+        ContextMountRegistry, LearningActor, LearningEvidenceInput, LearningFeedbackAction,
+        LearningKind, LearningProvenance, LearningTrustState, ProposeLearningInput,
+        ReviewLearningInput, SpecificationRegistry,
     };
     use std::process::Command;
     use std::sync::{Arc, Barrier};
@@ -8636,6 +8794,7 @@ mod tests {
             expected_event_count: finished.session.event_count,
             binding_id: binding_id.clone(),
             downstream_event_ids: vec![checkpoint.event_id.clone(), finished.event_id.clone()],
+            claimed_applied_learning_ids: Vec::new(),
         };
         let observed =
             record_context_utility_observation(&project, &vault, &session_id, input.clone())
@@ -8698,6 +8857,335 @@ mod tests {
     }
 
     #[test]
+    fn context_utility_claims_exact_bound_procedure_application_as_schema_v15() {
+        let (base, project, vault) = setup_memory();
+
+        let evidence_session =
+            start_session(&project, &vault, start_input(numbered_request_id(1))).unwrap();
+        let evidence_checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &evidence_session.session.session_id,
+            checkpoint_input(
+                numbered_request_id(2),
+                "Reviewed release procedure evidence",
+            ),
+        )
+        .unwrap();
+        let evidence_record_id = evidence_checkpoint
+            .session
+            .checkpoints
+            .last()
+            .unwrap()
+            .id
+            .clone();
+        let evidence = LearningEvidenceInput {
+            session_id: evidence_session.session.session_id.clone(),
+            record_id: evidence_record_id,
+            note: "Reviewed operational evidence.".to_owned(),
+        };
+
+        let proposed_procedure = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: numbered_request_id(3),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Release verification procedure".to_owned(),
+                guidance: "Run the release verification checks before shipping.".to_owned(),
+                confidence_percent: 90,
+                provenance: LearningProvenance::AgentAuthored,
+                evidence: vec![evidence.clone()],
+            },
+        )
+        .unwrap();
+        let procedure_id = proposed_procedure.learning.learning_id.clone();
+        let confirmed_procedure = review_learning(
+            &project,
+            &vault,
+            &procedure_id,
+            ReviewLearningInput {
+                request_id: numbered_request_id(4),
+                expected_event_count: Some(proposed_procedure.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Reviewed release procedure.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(confirmed_procedure.learning.event_count, 2);
+
+        let proposed_fact = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: numbered_request_id(5),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Fact,
+                title: "Release verification fact".to_owned(),
+                guidance: "The release verification suite exists.".to_owned(),
+                confidence_percent: 90,
+                provenance: LearningProvenance::AgentAuthored,
+                evidence: vec![evidence],
+            },
+        )
+        .unwrap();
+        let fact_id = proposed_fact.learning.learning_id.clone();
+        let confirmed_fact = review_learning(
+            &project,
+            &vault,
+            &fact_id,
+            ReviewLearningInput {
+                request_id: numbered_request_id(6),
+                expected_event_count: Some(proposed_fact.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Reviewed release fact.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(confirmed_fact.learning.event_count, 2);
+
+        let started = start_session(&project, &vault, start_input(numbered_request_id(7))).unwrap();
+        let session_id = started.session.session_id.clone();
+        let task = "release verification procedure suite checks";
+        let pack = compile_test_pack(&base, &project, &vault, task);
+        assert!(pack.items.iter().any(|item| {
+            item.learning_id.as_deref() == Some(procedure_id.as_str())
+                && item.learning_kind == Some(LearningKind::Procedure)
+                && item.learning_event_count == Some(confirmed_procedure.learning.event_count)
+                && item.trusted_for_reuse
+        }));
+        assert!(pack.items.iter().any(|item| {
+            item.learning_id.as_deref() == Some(fact_id.as_str())
+                && item.learning_kind == Some(LearningKind::Fact)
+                && item.learning_event_count == Some(confirmed_fact.learning.event_count)
+                && item.trusted_for_reuse
+        }));
+
+        let bound = bind_context_utility_pack(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityBindingInput {
+                request_id: numbered_request_id(8),
+                expected_event_count: started.session.event_count,
+                expected_context_pack_id: pack.context_pack_id.clone(),
+                task: task.to_owned(),
+                max_results: 8,
+                max_tokens: 1_500,
+            },
+            &pack,
+        )
+        .unwrap();
+        let binding = bound.session.context_utility_bindings.last().unwrap();
+        let binding_id = binding.id.clone();
+        assert!(binding.included_records.iter().any(|record| {
+            record.source == ContextUtilityRecordSource::ActiveProjectMemory
+                && record.entity_id == procedure_id
+                && record.kind.as_deref() == Some("learning")
+                && record.learning_id.as_deref() == Some(procedure_id.as_str())
+                && record.learning_kind.as_deref() == Some("procedure")
+                && record.learning_event_count == Some(confirmed_procedure.learning.event_count)
+        }));
+        assert!(binding.included_records.iter().any(|record| {
+            record.entity_id == fact_id
+                && record.learning_kind.as_deref() == Some("fact")
+                && record.learning_event_count == Some(confirmed_fact.learning.event_count)
+        }));
+
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &session_id,
+            checkpoint_input(
+                numbered_request_id(9),
+                "Applied the reviewed release procedure and recorded typed verification.",
+            ),
+        )
+        .unwrap();
+        let expected_event_count = checkpoint.session.event_count;
+
+        let fact_error = record_context_utility_observation(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityObservationInput {
+                request_id: numbered_request_id(10),
+                expected_event_count,
+                binding_id: binding_id.clone(),
+                downstream_event_ids: vec![checkpoint.event_id.clone()],
+                claimed_applied_learning_ids: vec![fact_id.clone()],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            fact_error,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("not an exact active-project procedure")
+        ));
+        assert_eq!(
+            read_session(&project, &vault, &session_id)
+                .unwrap()
+                .event_count,
+            expected_event_count
+        );
+
+        let missing_id = format!("lrn_{}", "f".repeat(32));
+        let missing_error = record_context_utility_observation(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityObservationInput {
+                request_id: numbered_request_id(11),
+                expected_event_count,
+                binding_id: binding_id.clone(),
+                downstream_event_ids: vec![checkpoint.event_id.clone()],
+                claimed_applied_learning_ids: vec![missing_id],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            missing_error,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("not an exact active-project procedure")
+        ));
+
+        let before_learning = read_learning(&project, &vault, &procedure_id).unwrap();
+        let observation_input = ContextUtilityObservationInput {
+            request_id: numbered_request_id(12),
+            expected_event_count,
+            binding_id: binding_id.clone(),
+            downstream_event_ids: vec![checkpoint.event_id.clone()],
+            claimed_applied_learning_ids: vec![procedure_id.clone()],
+        };
+        let observed = record_context_utility_observation(
+            &project,
+            &vault,
+            &session_id,
+            observation_input.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            observed.session.schema_version,
+            SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION
+        );
+        assert!(observed.session_path.ends_with(SESSION_V15_FILE));
+        let utility = observed
+            .session
+            .context_utility_observations
+            .last()
+            .unwrap();
+        assert_eq!(
+            utility.claimed_applied_learning_ids,
+            vec![procedure_id.clone()]
+        );
+        assert_eq!(utility.downstream_outcomes.len(), 1);
+        assert_eq!(utility.downstream_outcomes[0].passed_verifications, 1);
+        assert_eq!(utility.downstream_outcomes[0].failed_verifications, 0);
+        assert!(!utility.context_usage_proven);
+        assert!(!utility.causal_utility_proven);
+        assert!(!utility.trust_changes_applied);
+        assert!(!utility.ranking_changes_applied);
+
+        let retry =
+            record_context_utility_observation(&project, &vault, &session_id, observation_input)
+                .unwrap();
+        assert!(retry.replayed);
+        assert_eq!(retry.event_id, observed.event_id);
+        assert_eq!(retry.session.event_count, observed.session.event_count);
+
+        let after_learning = read_learning(&project, &vault, &procedure_id).unwrap();
+        assert_eq!(after_learning.event_count, before_learning.event_count);
+        assert_eq!(after_learning.state, before_learning.state);
+        assert_eq!(after_learning.trust_state, before_learning.trust_state);
+        assert_eq!(after_learning.freshness, before_learning.freshness);
+
+        let learning_context = crate::read_learning_context(
+            &project,
+            &vault,
+            &procedure_id,
+            crate::DEFAULT_LEARNING_CONTEXT_EVIDENCE,
+            crate::DEFAULT_LEARNING_CONTEXT_HISTORY,
+            crate::DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+            crate::DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(learning_context.application_observation_count, 1);
+        assert_eq!(learning_context.application_observations.len(), 1);
+        assert_eq!(learning_context.omitted_application_observations, 0);
+        assert!(learning_context
+            .application_claim_notice
+            .contains("caller-declared"));
+        let application = &learning_context.application_observations[0];
+        assert_eq!(application.session_id, session_id);
+        assert_eq!(
+            application.learning_event_count,
+            confirmed_procedure.learning.event_count
+        );
+        assert!(application.learning_version_matches_current);
+        assert_eq!(application.task_excerpt, task);
+        assert_eq!(application.passed_verifications, 1);
+        assert_eq!(application.failed_verifications, 0);
+        assert!(!application.procedure_followed_proven);
+        assert!(!application.condition_applicability_proven);
+        assert!(!application.context_usage_proven);
+        assert!(!application.causal_utility_proven);
+        assert!(!application.trust_changes_applied);
+        assert!(!application.ranking_changes_applied);
+
+        let contested = review_learning(
+            &project,
+            &vault,
+            &procedure_id,
+            ReviewLearningInput {
+                request_id: numbered_request_id(13),
+                expected_event_count: Some(after_learning.event_count),
+                actor: LearningActor::Agent,
+                action: LearningFeedbackAction::Contest,
+                note: "Later evidence raises a review concern without rewriting prior application history."
+                    .to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            contested.learning.event_count,
+            confirmed_procedure.learning.event_count + 1
+        );
+        assert_eq!(
+            contested.learning.trust_state,
+            LearningTrustState::Contested
+        );
+        let changed_learning_context = crate::read_learning_context(
+            &project,
+            &vault,
+            &procedure_id,
+            crate::DEFAULT_LEARNING_CONTEXT_EVIDENCE,
+            crate::DEFAULT_LEARNING_CONTEXT_HISTORY,
+            crate::DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+            crate::DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(changed_learning_context.application_observation_count, 1);
+        let historical_application = &changed_learning_context.application_observations[0];
+        assert_eq!(
+            historical_application.learning_event_count,
+            confirmed_procedure.learning.event_count
+        );
+        assert!(!historical_application.learning_version_matches_current);
+
+        let rebuilt = read_session(&project, &vault, &session_id).unwrap();
+        assert_eq!(
+            rebuilt.context_utility_observations,
+            observed.session.context_utility_observations
+        );
+    }
+
+    #[test]
     fn context_utility_rejects_unbound_non_downstream_or_non_outcome_evidence() {
         let (base, project, vault) = setup_memory();
         let started = start_session(&project, &vault, start_input(request_id('5'))).unwrap();
@@ -8734,6 +9222,7 @@ mod tests {
                 expected_event_count: 1,
                 binding_id: format!("cub_{}", "0".repeat(32)),
                 downstream_event_ids: vec![started.event_id.clone()],
+                claimed_applied_learning_ids: Vec::new(),
             },
         )
         .unwrap_err();
@@ -8769,6 +9258,7 @@ mod tests {
                 expected_event_count: 2,
                 binding_id: binding_id.clone(),
                 downstream_event_ids: vec![started.event_id],
+                claimed_applied_learning_ids: Vec::new(),
             },
         )
         .unwrap_err();
@@ -8799,6 +9289,7 @@ mod tests {
                 expected_event_count: 3,
                 binding_id,
                 downstream_event_ids: vec![renamed.event_id],
+                claimed_applied_learning_ids: Vec::new(),
             },
         )
         .unwrap_err();

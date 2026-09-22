@@ -69,6 +69,7 @@ METRIC_NAMES = (
     "trace_to_code_retrieval",
     "ripple_effect_retrieval",
     "context_memory_utility",
+    "procedure_application_history",
     "external_connector",
     "multimodal_evidence",
     "knowledge_scope",
@@ -527,8 +528,8 @@ P1_CAPABILITY_COVERAGE = {
     },
     "context-memory-utility-feedback": {
         "adversarial": (
-            "context-memory-utility-feedback",
-            "context_memory_utility",
+            "procedure-application-outcome-history",
+            "procedure_application_history",
             "truthy",
         ),
         "downstream": (
@@ -542,8 +543,8 @@ P1_CAPABILITY_COVERAGE = {
             "zero",
         ),
         "regression": (
-            "context-memory-utility-feedback",
-            "context_memory_utility",
+            "procedure-application-outcome-history",
+            "procedure_application_history",
             "truthy",
         ),
     },
@@ -6454,6 +6455,369 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not context_utility_ok:
             failures.append(
                 "context/memory utility feedback did not preserve exact pre-work pack binding, downstream-only outcome attribution, metadata-only privacy, retry safety, and non-authority semantics"
+            )
+
+    procedure_history_expectation = scenario.get("expected_procedure_application_history")
+    if isinstance(procedure_history_expectation, dict):
+        title = str(
+            procedure_history_expectation.get(
+                "title",
+                "Release verification procedure",
+            )
+        )
+        guidance = str(
+            procedure_history_expectation.get(
+                "guidance",
+                "Run release verification before shipping.",
+            )
+        )
+        runs = [
+            item
+            for item in procedure_history_expectation.get("runs", [])
+            if isinstance(item, dict)
+        ]
+        if len(runs) != 3:
+            raise RuntimeError(
+                "procedure application history fixture must define exactly three runs"
+            )
+
+        evidence_started = mcp_call(
+            project,
+            "ley_session_start",
+            {
+                "requestId": request_id(
+                    f"{scenario['id']}:procedure-history:evidence:start"
+                ),
+                "name": "Procedure review evidence",
+                "goal": "Create durable evidence for one user-reviewed procedure.",
+                "host": "codex",
+            },
+            WRITE_FLAGS,
+        )
+        evidence_session_id = str(evidence_started.get("sessionId", ""))
+        mcp_call(
+            project,
+            "ley_session_checkpoint",
+            {
+                "sessionId": evidence_session_id,
+                "requestId": request_id(
+                    f"{scenario['id']}:procedure-history:evidence:checkpoint"
+                ),
+                "expectedEventCount": 1,
+                "summary": "Verified the reusable release procedure source.",
+                "touchedArtifacts": ["src/release.rs"],
+                "verification": [
+                    {
+                        "kind": "test",
+                        "status": "passed",
+                        "summary": "Procedure source evidence reviewed.",
+                    }
+                ],
+            },
+            WRITE_FLAGS,
+        )
+        evidence_context = mcp_call(
+            project,
+            "ley_session_get",
+            {
+                "sessionId": evidence_session_id,
+                "maxCheckpoints": 5,
+                "maxCharacters": 8_000,
+            },
+        )
+        evidence_checkpoints = [
+            item
+            for item in evidence_context.get("checkpoints", [])
+            if isinstance(item, dict)
+        ]
+        if not evidence_checkpoints:
+            raise RuntimeError(
+                "procedure application history fixture created no checkpoint evidence"
+            )
+        evidence_record_id = str(evidence_checkpoints[-1].get("checkpointId", ""))
+        proposed = mcp_call(
+            project,
+            "ley_learning_propose",
+            {
+                "requestId": request_id(
+                    f"{scenario['id']}:procedure-history:proposal"
+                ),
+                "kind": "procedure",
+                "title": title,
+                "guidance": guidance,
+                "confidencePercent": 90,
+                "provenance": "agent-authored",
+                "evidence": [
+                    {
+                        "sessionId": evidence_session_id,
+                        "recordId": evidence_record_id,
+                        "note": "Evaluation evidence for reviewed procedure application history.",
+                    }
+                ],
+            },
+            WRITE_FLAGS,
+        )
+        learning_id = str(proposed.get("learningId", ""))
+        reviewed = cli_json(
+            [
+                "learning",
+                "review",
+                learning_id,
+                str(project),
+                "--actor",
+                "user",
+                "--action",
+                "confirm",
+                "--note",
+                "Explicitly reviewed procedure for application-history evaluation.",
+                "--request-id",
+                request_id(f"{scenario['id']}:procedure-history:review"),
+                "--json",
+            ]
+        )
+        reviewed_learning = (
+            reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
+        )
+        reviewed_event_count = int(reviewed_learning.get("eventCount", 0))
+        run_outputs: list[object] = [evidence_context, proposed, reviewed]
+        run_checks: list[bool] = []
+        invalid_claim_rejected = False
+
+        for index, run_spec in enumerate(runs):
+            task = str(run_spec.get("task", ""))
+            verification_status = str(run_spec.get("verification_status", ""))
+            expected_passed = int(run_spec.get("passed_verifications", 0))
+            expected_failed = int(run_spec.get("failed_verifications", 0))
+            if not task or verification_status not in {"passed", "failed"}:
+                raise RuntimeError(
+                    "procedure application history run requires task and passed/failed verification_status"
+                )
+
+            started = mcp_call(
+                project,
+                "ley_session_start",
+                {
+                    "requestId": request_id(
+                        f"{scenario['id']}:procedure-history:{index}:start"
+                    ),
+                    "name": f"Procedure application run {index + 1}",
+                    "goal": task,
+                    "host": "codex",
+                },
+                WRITE_FLAGS,
+            )
+            work_session_id = str(started.get("sessionId", ""))
+            compiled = mcp_call(
+                project,
+                "ley_compile_context",
+                {"task": task, "maxResults": 8, "maxTokens": 1_500},
+            )
+            learning_items = [
+                item
+                for item in compiled.get("items", [])
+                if isinstance(item, dict)
+                and item.get("learningId") == learning_id
+            ]
+            learning_item = learning_items[0] if len(learning_items) == 1 else {}
+            context_pack_id = str(compiled.get("contextPackId", ""))
+            bound = mcp_call(
+                project,
+                "ley_context_utility_bind",
+                {
+                    "sessionId": work_session_id,
+                    "requestId": request_id(
+                        f"{scenario['id']}:procedure-history:{index}:bind"
+                    ),
+                    "expectedEventCount": 1,
+                    "contextPackId": context_pack_id,
+                    "task": task,
+                    "maxResults": 8,
+                    "maxTokens": 1_500,
+                },
+                WRITE_FLAGS,
+            )
+            binding_id = str(bound.get("bindingId", ""))
+            checkpoint = mcp_call(
+                project,
+                "ley_session_checkpoint",
+                {
+                    "sessionId": work_session_id,
+                    "requestId": request_id(
+                        f"{scenario['id']}:procedure-history:{index}:checkpoint"
+                    ),
+                    "expectedEventCount": 2,
+                    "summary": (
+                        "Caller claims the reviewed procedure was applied under this run's "
+                        "recorded task/condition; preserve the typed outcome separately."
+                    ),
+                    "verification": [
+                        {
+                            "kind": "test",
+                            "status": verification_status,
+                            "summary": f"Procedure application run {index + 1} verification {verification_status}.",
+                        }
+                    ],
+                },
+                WRITE_FLAGS,
+            )
+            checkpoint_event_id = str(checkpoint.get("eventId", ""))
+
+            if index == 0:
+                try:
+                    mcp_call(
+                        project,
+                        "ley_context_utility_observe",
+                        {
+                            "sessionId": work_session_id,
+                            "requestId": request_id(
+                                f"{scenario['id']}:procedure-history:invalid-claim"
+                            ),
+                            "expectedEventCount": 3,
+                            "bindingId": binding_id,
+                            "downstreamEventIds": [checkpoint_event_id],
+                            "claimedAppliedLearningIds": [
+                                "lrn_" + ("f" * 32)
+                            ],
+                        },
+                        WRITE_FLAGS,
+                    )
+                except RuntimeError as error:
+                    invalid_claim_rejected = (
+                        "not an exact active-project procedure" in str(error)
+                    )
+
+            observed = mcp_call(
+                project,
+                "ley_context_utility_observe",
+                {
+                    "sessionId": work_session_id,
+                    "requestId": request_id(
+                        f"{scenario['id']}:procedure-history:{index}:observe"
+                    ),
+                    "expectedEventCount": 3,
+                    "bindingId": binding_id,
+                    "downstreamEventIds": [checkpoint_event_id],
+                    "claimedAppliedLearningIds": [learning_id],
+                },
+                WRITE_FLAGS,
+            )
+            session_context = mcp_call(
+                project,
+                "ley_session_get",
+                {
+                    "sessionId": work_session_id,
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            utility_rows = [
+                item
+                for item in session_context.get("contextUtilityObservations", [])
+                if isinstance(item, dict)
+            ]
+            utility = utility_rows[0] if len(utility_rows) == 1 else {}
+            outcomes = [
+                item
+                for item in utility.get("downstreamOutcomes", [])
+                if isinstance(item, dict)
+            ]
+            outcome = outcomes[0] if len(outcomes) == 1 else {}
+            run_checks.append(
+                bool(
+                    learning_item.get("learningKind") == "procedure"
+                    and learning_item.get("learningEventCount") == reviewed_event_count
+                    and learning_item.get("trustedForReuse") is True
+                    and context_pack_id.startswith("cpk_")
+                    and binding_id.startswith("cub_")
+                    and observed.get("eventCount") == 4
+                    and session_context.get("schemaVersion") == 15
+                    and utility.get("claimedAppliedLearningIds") == [learning_id]
+                    and outcome.get("passedVerifications") == expected_passed
+                    and outcome.get("failedVerifications") == expected_failed
+                    and utility.get("contextUsageProven") is False
+                    and utility.get("causalUtilityProven") is False
+                    and utility.get("trustChangesApplied") is False
+                    and utility.get("rankingChangesApplied") is False
+                )
+            )
+            run_outputs.extend(
+                [started, compiled, bound, checkpoint, observed, session_context]
+            )
+
+        final_learning = mcp_call(
+            project,
+            "ley_learning_get",
+            {
+                "learningId": learning_id,
+                "maxEvidence": 10,
+                "maxHistory": 10,
+                "maxArtifactsPerEvidence": 10,
+                "maxCharacters": 16_000,
+            },
+        )
+        application_rows = [
+            item
+            for item in final_learning.get("applicationObservations", [])
+            if isinstance(item, dict)
+        ]
+        applications_by_task = {
+            str(item.get("taskExcerpt", "")): item for item in application_rows
+        }
+        expected_tasks = {str(item.get("task", "")) for item in runs}
+        expected_outcomes = {
+            str(item.get("task", "")): (
+                int(item.get("passed_verifications", 0)),
+                int(item.get("failed_verifications", 0)),
+            )
+            for item in runs
+        }
+        history_rows_ok = len(application_rows) == 3 and set(
+            applications_by_task
+        ) == expected_tasks
+        if history_rows_ok:
+            history_rows_ok = all(
+                application.get("learningEventCount") == reviewed_event_count
+                and application.get("learningVersionMatchesCurrent") is True
+                and application.get("passedVerifications")
+                == expected_outcomes[task][0]
+                and application.get("failedVerifications")
+                == expected_outcomes[task][1]
+                and application.get("procedureFollowedProven") is False
+                and application.get("conditionApplicabilityProven") is False
+                and application.get("contextUsageProven") is False
+                and application.get("causalUtilityProven") is False
+                and application.get("trustChangesApplied") is False
+                and application.get("rankingChangesApplied") is False
+                for task, application in applications_by_task.items()
+            )
+        final_text = json.dumps(final_learning, sort_keys=True)
+        procedure_history_ok = (
+            learning_id.startswith("lrn_")
+            and proposed.get("eventCount") == 1
+            and reviewed_event_count == 2
+            and final_learning.get("eventCount") == 2
+            and final_learning.get("state") == "verified"
+            and final_learning.get("trustState") == "trusted"
+            and final_learning.get("applicationObservationCount") == 3
+            and final_learning.get("omittedApplicationObservations") == 0
+            and "caller-declared"
+            in str(final_learning.get("applicationClaimNotice", ""))
+            and invalid_claim_rejected
+            and all(run_checks)
+            and history_rows_ok
+            and str(project) not in final_text
+            and str(vault) not in final_text
+        )
+        scores["procedure_application_history"] = procedure_history_ok
+        run_outputs.append(final_learning)
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)],
+            run_outputs,
+        )
+        evidence_text.extend(run_outputs)
+        if not procedure_history_ok:
+            failures.append(
+                "procedure application history did not preserve exact reviewed-version binding, mixed typed outcomes, changed-condition task excerpts, invalid-claim rejection, or non-authority semantics"
             )
 
     inspector_expectation = scenario.get("expected_context_pack_inspector")

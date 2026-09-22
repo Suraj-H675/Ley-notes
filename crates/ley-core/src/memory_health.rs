@@ -561,7 +561,7 @@ fn unsupported_signals() -> Vec<UnsupportedMemoryHealthSignal> {
     vec![
         UnsupportedMemoryHealthSignal {
             signal: "old-procedure-never-successfully-reverified",
-            reason: "Ley does not yet store a typed procedure-learning to verification-outcome linkage, so age/timestamps alone are insufficient to claim successful or failed reverification.",
+            reason: "Ley now stores version-bound caller-declared procedure application claims with typed downstream outcomes, but those observations do not prove the procedure was followed, caused the outcome, or remained applicable under comparable conditions. Memory Health therefore still cannot classify successful or failed reverification from age/outcome counts alone.",
         },
         UnsupportedMemoryHealthSignal {
             signal: "failed-consolidations",

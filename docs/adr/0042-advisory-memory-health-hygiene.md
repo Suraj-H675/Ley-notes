@@ -4,6 +4,11 @@
 
 Accepted.
 
+Later extension: ADR 0073 adds version-bound caller-declared Procedure application observations with
+typed downstream outcomes. The stronger health claim discussed here—successful/failed reverification
+under faithfully executed and comparable conditions—remains unsupported because those properties are
+still not proven.
+
 ## Context
 
 Ley's fourth P1 roadmap item is Memory Health / Hygiene. The North Star calls for maintenance signals such as stale or redundant knowledge, uncited claims, conflicting memories, incomplete sessions, unconsolidated evidence, and other signs that retained memory may need review. It also requires hygiene to remain non-destructive: Ley should surface problems and support deliberate maintenance rather than silently deleting or rewriting history.

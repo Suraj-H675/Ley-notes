@@ -1032,6 +1032,7 @@ mod tests {
             session_id: None,
             learning_id: (kind == ProjectMemoryResultKind::Learning).then(|| id.to_owned()),
             learning_kind,
+            learning_event_count: None,
             citation: None,
             learning_state: None,
             learning_trust_state: None,

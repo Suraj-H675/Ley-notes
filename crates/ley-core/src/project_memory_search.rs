@@ -42,6 +42,7 @@ const RESPONSE_BASE_TOKENS: usize = 64;
 const RESPONSE_RESULT_OVERHEAD_TOKENS: usize = 72;
 const LEARNING_ORIGIN_SUMMARY_TOKENS: usize = 48;
 const LEARNING_KIND_TOKENS: usize = 8;
+const LEARNING_EVENT_COUNT_TOKENS: usize = 6;
 const RESPONSE_CONFLICT_OVERHEAD_TOKENS: usize = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +120,8 @@ pub struct ProjectMemorySearchResult {
     pub learning_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub learning_kind: Option<LearningKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub learning_event_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citation: Option<GraphCitation>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -220,6 +223,7 @@ struct Candidate {
     session_id: Option<String>,
     learning_id: Option<String>,
     learning_kind: Option<LearningKind>,
+    learning_event_count: Option<u64>,
     citation: Option<GraphCitation>,
     learning_state: Option<LearningState>,
     learning_trust_state: Option<LearningTrustState>,
@@ -737,6 +741,7 @@ fn learning_candidate(
         terms,
     );
     candidate.learning_kind = Some(learning.kind);
+    candidate.learning_event_count = Some(learning.event_count);
     candidate.learning_origin_summary = Some(learning.origin_lineage_summary.clone());
     candidate.learning_superseded_by = learning.superseded_by.clone();
     candidate.revision_applicability = capture_applicability.cloned();
@@ -825,6 +830,7 @@ fn new_candidate(
         session_id,
         learning_id,
         learning_kind: None,
+        learning_event_count: None,
         citation,
         learning_state,
         learning_trust_state,
@@ -1044,6 +1050,12 @@ fn fit_result(
         .saturating_add(
             scored
                 .candidate
+                .learning_event_count
+                .map_or(0, |_| LEARNING_EVENT_COUNT_TOKENS),
+        )
+        .saturating_add(
+            scored
+                .candidate
                 .revision_applicability
                 .as_ref()
                 .map_or(0, estimate_revision_applicability_tokens),
@@ -1087,6 +1099,7 @@ fn fit_result(
             session_id: scored.candidate.session_id,
             learning_id: scored.candidate.learning_id,
             learning_kind: scored.candidate.learning_kind,
+            learning_event_count: scored.candidate.learning_event_count,
             citation: scored.candidate.citation,
             learning_state: scored.candidate.learning_state,
             learning_trust_state: scored.candidate.learning_trust_state,
@@ -1433,6 +1446,7 @@ mod tests {
             session_id: None,
             learning_id: (kind == ProjectMemoryResultKind::Learning).then(|| entity_id.to_owned()),
             learning_kind: None,
+            learning_event_count: None,
             citation: None,
             learning_state: None,
             learning_trust_state: None,
@@ -1476,6 +1490,7 @@ mod tests {
             freshness: LearningFreshness::Current,
             corroborating_sessions: 1,
             updated_at_unix_ms: 10,
+            event_count: 2,
             superseded_by: None,
         };
         let candidate = learning_candidate(
@@ -1489,6 +1504,7 @@ mod tests {
             candidate.learning_kind,
             Some(crate::LearningKind::Procedure)
         );
+        assert_eq!(candidate.learning_event_count, Some(2));
         let fitted = fit_result(
             ScoredCandidate {
                 candidate,
@@ -1509,6 +1525,7 @@ mod tests {
         .unwrap();
         assert_eq!(fitted.0.learning_origin_summary, Some(origin));
         assert_eq!(fitted.0.learning_kind, Some(crate::LearningKind::Procedure));
+        assert_eq!(fitted.0.learning_event_count, Some(2));
         assert!(fitted.1 <= 1_000);
     }
 

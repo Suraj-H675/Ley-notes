@@ -523,6 +523,14 @@ pub struct ObserveContextUtilityParams {
     #[schemars(length(min = 1, max = 20))]
     #[schemars(inner(regex(pattern = "^evt_[0-9a-f]{64}$")))]
     pub downstream_event_ids: Vec<String>,
+    /// Optional caller-declared active-project procedure learning IDs that were applied during
+    /// the downstream work. Every ID must have been present as the exact reviewed procedure
+    /// version in the bound pack. This is an application claim, not proof of model attention,
+    /// causation, universal applicability, or permission to change learning trust/ranking.
+    #[serde(default)]
+    #[schemars(length(max = 16))]
+    #[schemars(inner(regex(pattern = "^lrn_[0-9a-f]{32}$")))]
+    pub claimed_applied_learning_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -2392,6 +2400,7 @@ impl LeyMcpServer {
                     expected_event_count: params.expected_event_count,
                     binding_id: params.binding_id,
                     downstream_event_ids: params.downstream_event_ids,
+                    claimed_applied_learning_ids: params.claimed_applied_learning_ids,
                 },
             )
         }))
@@ -4416,12 +4425,15 @@ mod tests {
     use super::*;
     use ley_core::{
         checkpoint_session, generate_specification_id, ingest_project, initialize_project,
-        record_session_prompt, record_session_response, record_session_tool_observation,
-        start_session, AgentEgressPolicy, AttemptInput, BindingRegistry,
-        BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, DecisionInput, ProblemInput,
-        ResolutionInput, SessionSource, SpecificationRegistry, StartSessionInput,
-        ToolObservationInput, ToolObservationKind, TurnEvidenceInput, TurnEvidenceOrigin,
-        BINDING_REGISTRY_FILE, BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_FILE,
+        propose_learning, record_session_prompt, record_session_response,
+        record_session_tool_observation, review_learning, start_session, AgentEgressPolicy,
+        AttemptInput, BindingRegistry, BootstrapSpecificationRegistry, CaptureMode,
+        CheckpointInput, DecisionInput, LearningActor, LearningEvidenceInput,
+        LearningFeedbackAction, LearningKind, LearningProvenance, ProblemInput,
+        ProposeLearningInput, ResolutionInput, ReviewLearningInput, SessionSource,
+        SpecificationRegistry, StartSessionInput, ToolObservationInput, ToolObservationKind,
+        TurnEvidenceInput, TurnEvidenceOrigin, BINDING_REGISTRY_FILE,
+        BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_FILE,
         MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS, MAX_PROJECT_ACTIVITY_RESULTS,
         SPECIFICATION_REGISTRY_FILE,
     };
@@ -5322,9 +5334,14 @@ mod tests {
             utility_observe_schema["properties"]["downstreamEventIds"]["maxItems"],
             20
         );
+        assert_eq!(
+            utility_observe_schema["properties"]["claimedAppliedLearningIds"]["maxItems"],
+            16
+        );
         let utility_observe_schema_text = utility_observe_schema.to_string();
         assert!(utility_observe_schema_text.contains("cub_"));
         assert!(utility_observe_schema_text.contains("evt_"));
+        assert!(utility_observe_schema_text.contains("lrn_"));
         let batch_recovery_commit_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -9724,6 +9741,7 @@ mod tests {
             expected_event_count: 4,
             binding_id: binding_id.clone(),
             downstream_event_ids: vec![checkpoint_event_id.clone(), finish_event_id.clone()],
+            claimed_applied_learning_ids: Vec::new(),
         };
         let observed = server
             .context_utility_observe(Parameters(utility_params()))
@@ -9789,6 +9807,238 @@ mod tests {
                 outcome["kind"] == "session-finish" && outcome["sessionStatus"] == "completed"
             }));
         let serialized = context.to_string();
+        assert!(!serialized.contains(project.to_str().unwrap()));
+        assert!(!serialized.contains(vault.to_str().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn context_utility_claims_reviewed_procedure_application_without_granting_proof() {
+        let (temporary, project, vault, _read_only_server) = fixture();
+        let evidence_session = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "Procedure evidence".to_owned(),
+                goal: "Create reviewed procedure evidence".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let evidence_checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &evidence_session.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "Verified release procedure source".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["lib.rs".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Release verification procedure".to_owned(),
+                guidance: "Run release verification before shipping.".to_owned(),
+                confidence_percent: 90,
+                provenance: LearningProvenance::AgentAuthored,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: evidence_session.session.session_id,
+                    record_id: evidence_checkpoint.session.checkpoints[0].id.clone(),
+                    note: "Reviewed MCP application evidence.".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+        let learning_id = proposed.learning.learning_id.clone();
+        let reviewed = review_learning(
+            &project,
+            &vault,
+            &learning_id,
+            ReviewLearningInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                expected_event_count: Some(proposed.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Reviewed procedure for MCP application test.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(reviewed.learning.event_count, 2);
+
+        let mut server =
+            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
+        server.specification_registry = Arc::new(SpecificationRegistry::at(
+            temporary.path().join("application-specifications-v1.json"),
+        ));
+        server.context_mount_registry = Arc::new(ContextMountRegistry::at(
+            temporary.path().join("application-context-mounts-v1.json"),
+        ));
+        server.policy_bundle_registry = Arc::new(PolicyBundleRegistry::at(
+            temporary.path().join("application-policy-bundles-v1.json"),
+        ));
+        server.egress_policy_registry = Arc::new(EgressPolicyRegistry::at(
+            temporary.path().join("application-agent-egress-v1.json"),
+        ));
+
+        let started = server
+            .session_start(Parameters(StartSessionParams {
+                request_id: format!("req_{}", "5".repeat(32)),
+                name: "Apply reviewed release procedure".to_owned(),
+                goal: "Exercise one bound procedure application".to_owned(),
+                host: Some("test-host".to_owned()),
+                agent: Some("test-agent".to_owned()),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let session_id = started["sessionId"].as_str().unwrap().to_owned();
+        let task = "release verification procedure shipping";
+        let compiled = server
+            .compile_context(Parameters(CompileContextParams {
+                task: task.to_owned(),
+                max_results: Some(8),
+                max_tokens: Some(1_500),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let learning_item = compiled["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["learningId"] == learning_id)
+            .unwrap();
+        assert_eq!(learning_item["learningKind"], "procedure");
+        assert_eq!(learning_item["learningEventCount"], 2);
+        assert_eq!(learning_item["trustedForReuse"], true);
+        let context_pack_id = compiled["contextPackId"].as_str().unwrap().to_owned();
+
+        let bound = server
+            .context_utility_bind(Parameters(BindContextUtilityParams {
+                session_id: session_id.clone(),
+                request_id: format!("req_{}", "6".repeat(32)),
+                expected_event_count: 1,
+                context_pack_id: context_pack_id.clone(),
+                task: task.to_owned(),
+                max_results: Some(8),
+                max_tokens: Some(1_500),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let binding_id = bound["bindingId"].as_str().unwrap().to_owned();
+
+        let checkpoint = server
+            .session_checkpoint(Parameters(CheckpointSessionParams {
+                session_id: session_id.clone(),
+                request_id: format!("req_{}", "7".repeat(32)),
+                expected_event_count: Some(2),
+                summary: "Claimed the reviewed procedure was applied; typed verification passed."
+                    .to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["lib.rs".to_owned()],
+                commands: Vec::new(),
+                verification: vec![McpVerification {
+                    kind: "test".to_owned(),
+                    status: McpVerificationStatus::Passed,
+                    summary: "Release verification passed".to_owned(),
+                    command: Some("cargo test -p fixture".to_owned()),
+                    evidence_artifact_paths: vec!["lib.rs".to_owned()],
+                }],
+                unresolved: Vec::new(),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let checkpoint_event_id = checkpoint["eventId"].as_str().unwrap().to_owned();
+
+        let observed = server
+            .context_utility_observe(Parameters(ObserveContextUtilityParams {
+                session_id: session_id.clone(),
+                request_id: format!("req_{}", "8".repeat(32)),
+                expected_event_count: 3,
+                binding_id: binding_id.clone(),
+                downstream_event_ids: vec![checkpoint_event_id],
+                claimed_applied_learning_ids: vec![learning_id.clone()],
+            }))
+            .await
+            .unwrap();
+        assert_eq!(observed.is_error, Some(false));
+
+        let session = server
+            .session_get(Parameters(SessionContextParams {
+                session_id: session_id.clone(),
+                max_checkpoints: Some(5),
+                max_characters: Some(8_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(session["schemaVersion"], 15);
+        let utility = &session["contextUtilityObservations"][0];
+        assert_eq!(utility["claimedAppliedLearningIds"][0], learning_id);
+        assert_eq!(utility["downstreamOutcomes"][0]["passedVerifications"], 1);
+        assert_eq!(utility["contextUsageProven"], false);
+        assert_eq!(utility["causalUtilityProven"], false);
+        assert_eq!(utility["trustChangesApplied"], false);
+        assert_eq!(utility["rankingChangesApplied"], false);
+
+        let learning = server
+            .learning_get(Parameters(LearningContextParams {
+                learning_id: learning_id.clone(),
+                max_evidence: Some(5),
+                max_history: Some(10),
+                max_artifacts_per_evidence: Some(20),
+                max_characters: Some(16_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(learning["eventCount"], 2);
+        assert_eq!(learning["state"], "verified");
+        assert_eq!(learning["trustState"], "trusted");
+        assert_eq!(learning["applicationObservationCount"], 1);
+        assert_eq!(learning["omittedApplicationObservations"], 0);
+        assert!(learning["applicationClaimNotice"]
+            .as_str()
+            .unwrap()
+            .contains("caller-declared"));
+        let application = &learning["applicationObservations"][0];
+        assert_eq!(application["sessionId"], session_id);
+        assert_eq!(application["learningEventCount"], 2);
+        assert_eq!(application["learningVersionMatchesCurrent"], true);
+        assert_eq!(application["taskExcerpt"], task);
+        assert_eq!(application["passedVerifications"], 1);
+        assert_eq!(application["failedVerifications"], 0);
+        assert_eq!(application["procedureFollowedProven"], false);
+        assert_eq!(application["conditionApplicabilityProven"], false);
+        assert_eq!(application["contextUsageProven"], false);
+        assert_eq!(application["causalUtilityProven"], false);
+
+        let serialized = learning.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));
     }

@@ -79,6 +79,7 @@ pub struct SessionContextUtilityObservation {
     pub omitted_included_records: usize,
     pub downstream_event_ids: Vec<String>,
     pub downstream_outcomes: Vec<ContextUtilityOutcomeEvidence>,
+    pub claimed_applied_learning_ids: Vec<String>,
     pub context_pack_revalidated: bool,
     pub context_usage_proven: bool,
     pub causal_utility_proven: bool,
@@ -522,6 +523,7 @@ fn context_from_session(
             omitted_included_records,
             downstream_event_ids: observation.downstream_event_ids.clone(),
             downstream_outcomes: observation.downstream_outcomes.clone(),
+            claimed_applied_learning_ids: observation.claimed_applied_learning_ids.clone(),
             context_pack_revalidated: binding.context_pack_revalidated,
             context_usage_proven: observation.context_usage_proven,
             causal_utility_proven: observation.causal_utility_proven,
@@ -1533,6 +1535,7 @@ mod tests {
                     expected_event_count: event_count,
                     binding_id,
                     downstream_event_ids: vec![checkpoint.event_id],
+                    claimed_applied_learning_ids: Vec::new(),
                 },
             )
             .unwrap();

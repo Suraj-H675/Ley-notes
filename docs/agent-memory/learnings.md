@@ -54,6 +54,36 @@ Corrections also preserve origin history: newly resolved origins are unioned wit
 
 Every desktop correction and review decision is tied to the ledger event count visible when the inspector opened. If another agent or window changes the learning first, Ley refuses the stale action and asks the user to reload rather than applying a decision to unseen text. If the bounded inspector had to truncate the claim, review controls remain unavailable until the complete projection is inspected through the CLI. Rejected and superseded learnings remain inspectable terminal history without non-working action buttons.
 
+## Procedure application history
+
+For a verified/trusted/current Procedure, an explicitly instrumented host workflow can preserve later
+application/outcome history without changing the learning itself. The workflow must first compile and
+bind the exact task context with `ley_context_utility_bind`. After typed checkpoint/session-finish
+outcomes exist, `ley_context_utility_observe` may include up to sixteen
+`claimedAppliedLearningIds`.
+
+Ley accepts a claimed learning only when the exact `lrn_` ID was present in that immutable binding as
+an active-project Procedure with a concrete learning ledger `eventCount`. Claim-bearing observations use
+session schema v15. A learning correction/review afterward does not rewrite the old observation:
+`ley_learning_get` reports the bound `learningEventCount` plus
+`learningVersionMatchesCurrent`.
+
+`ley_learning_get` returns at most twenty newest `applicationObservations` for the learning and reports
+the total/omitted count. Each row includes the session/utility binding identity, bounded task excerpt,
+typed downstream outcomes, and passed/failed/skipped/unknown verification counts. This is historical
+experience, not automatic proof:
+
+- `procedureFollowedProven` is false;
+- `conditionApplicabilityProven` is false;
+- `contextUsageProven` is false;
+- `causalUtilityProven` is false; and
+- no trust/ranking change is applied.
+
+A passing run therefore does not promote the Procedure, and a failing run does not reject or stale it.
+Different task excerpts can preserve observations made under changed conditions, but Ley does not infer
+that those conditions are equivalent. Explicit user review/correction/supersession remains the only
+authority-changing path. See [ADR 0073](../adr/0073-version-bound-procedure-application-observations.md).
+
 Once a learning is verified, trusted, current, and fully visible, **Promote to note** creates an ordinary Markdown note under `Agent Memory/Lessons`. The note contains the exact reviewed guidance, portable YAML provenance, confidence and validity at promotion, and bounded source identifiers. Supporting evidence notes are not copied. The learning ledger remains unchanged, while the new note becomes user-owned and participates in normal search, links, tags, graph, revisions, moves, and deletion.
 
 Promotion is duplicate-safe by learning ID. Repeating it opens the existing promoted note even after that note was renamed or moved. An unrelated note with the requested title is never overwritten. Before writing or reopening, Ley verifies that the open note vault canonically matches the project’s private Agent Memory binding; it refuses to copy memory into another currently open vault. Later learning corrections do not silently rewrite a promoted note; promotion is an attributed snapshot, not hidden synchronization. See [ADR 0021](../adr/0021-vault-verified-agent-memory-note-links.md).
