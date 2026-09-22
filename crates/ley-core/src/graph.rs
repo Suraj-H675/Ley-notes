@@ -619,7 +619,7 @@ fn add_import_facts(
             (Some("rust"), "use_declaration")
                 | (
                     Some("javascript" | "typescript"),
-                    "import_statement" | "export_statement"
+                    "import_statement" | "export_statement" | "call_expression"
                 )
                 | (
                     Some("python"),
@@ -635,7 +635,7 @@ fn add_import_facts(
             .trim();
         let language = source.artifact.language.as_deref().unwrap_or_default();
         let targets = match language {
-            "javascript" | "typescript" => module_source_target(node, source)
+            "javascript" | "typescript" => js_ts_module_target(node, source)
                 .into_iter()
                 .collect::<Vec<_>>(),
             _ => import_targets(language, statement),
@@ -670,9 +670,37 @@ fn add_import_facts(
     });
 }
 
+fn js_ts_module_target(node: Node<'_>, source: &GraphSource) -> Option<String> {
+    match node.kind() {
+        "import_statement" | "export_statement" => module_source_target(node, source),
+        "call_expression" => dynamic_import_target(node, source),
+        _ => None,
+    }
+}
+
 fn module_source_target(node: Node<'_>, source: &GraphSource) -> Option<String> {
     let source_node = node.child_by_field_name("source")?;
-    let raw = source_node.utf8_text(source.text.as_bytes()).ok()?.trim();
+    quoted_module_target(source_node, source)
+}
+
+fn dynamic_import_target(node: Node<'_>, source: &GraphSource) -> Option<String> {
+    let function = node.child_by_field_name("function")?;
+    if function.kind() != "import" {
+        return None;
+    }
+    let arguments = node.child_by_field_name("arguments")?;
+    if arguments.kind() != "arguments" || arguments.named_child_count() != 1 {
+        return None;
+    }
+    let target = arguments.named_child(0)?;
+    if target.kind() != "string" {
+        return None;
+    }
+    quoted_module_target(target, source)
+}
+
+fn quoted_module_target(node: Node<'_>, source: &GraphSource) -> Option<String> {
+    let raw = node.utf8_text(source.text.as_bytes()).ok()?.trim();
     if raw.len() < 2 {
         return None;
     }
@@ -2124,6 +2152,105 @@ mod tests {
             normalize_relative_project_path("tests", "../../outside"),
             None
         );
+    }
+
+    #[test]
+    fn literal_dynamic_imports_resolve_without_promoting_computed_targets() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = vec![
+            source(
+                "src/renderer.ts",
+                "typescript",
+                "export function render() { return 'ok'; }\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "tests/dynamic.test.ts",
+                "typescript",
+                "async function load() { return import('../src/renderer'); }\nvoid load();\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "tests/computed.test.ts",
+                "typescript",
+                "const target = '../src/renderer';\nvoid import(target);\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "tests/template.test.ts",
+                "typescript",
+                "void import(`../src/renderer`);\n",
+                ArtifactKind::Source,
+            ),
+            source(
+                "tests/package.test.ts",
+                "typescript",
+                "void import('vitest');\n",
+                ArtifactKind::Source,
+            ),
+        ];
+        let graph = build_project_graph(
+            root.path(),
+            "prj_0123456789abcdef0123456789abcdef",
+            "Dynamic import graph",
+            &format!("snp_{}", "f".repeat(64)),
+            &sources,
+            1,
+        )
+        .unwrap();
+
+        let file_id = |path: &str| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.kind == GraphNodeKind::File && node.path.as_deref() == Some(path))
+                .unwrap()
+                .id
+                .clone()
+        };
+        let dynamic_id = file_id("tests/dynamic.test.ts");
+        let implementation_id = file_id("src/renderer.ts");
+        let resolved = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == dynamic_id
+                    && edge.label.as_deref() == Some("../src/renderer")
+            })
+            .unwrap();
+        assert_eq!(resolved.target, implementation_id);
+        assert_eq!(resolved.provenance, FactProvenance::Deterministic);
+        assert_eq!(resolved.confidence, 1.0);
+        assert_eq!(
+            resolved.citation.as_ref().unwrap().artifact_path,
+            "tests/dynamic.test.ts"
+        );
+
+        for path in ["tests/computed.test.ts", "tests/template.test.ts"] {
+            let source_id = file_id(path);
+            assert!(!graph.edges.iter().any(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == source_id
+                    && edge.label.as_deref() == Some("../src/renderer")
+            }));
+        }
+
+        let package_id = file_id("tests/package.test.ts");
+        let package = graph
+            .edges
+            .iter()
+            .find(|edge| {
+                edge.kind == GraphEdgeKind::Imports
+                    && edge.source == package_id
+                    && edge.label.as_deref() == Some("vitest")
+            })
+            .unwrap();
+        assert!(graph.nodes.iter().any(|node| {
+            node.id == package.target
+                && node.kind == GraphNodeKind::ExternalModule
+                && node.name == "vitest"
+        }));
     }
 
     #[test]

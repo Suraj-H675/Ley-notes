@@ -169,12 +169,16 @@ All returned agent/search outputs are checked for project/vault/index-path leaka
 
 ## Retrieval relation and progressive-disclosure scenarios
 
-The deterministic graph/retrieval corpus now includes six distinct relation/query shapes rather than
+The deterministic graph/retrieval corpus now includes seven distinct relation/query shapes rather than
 counting one direct import edge as evidence for every retrieval task:
 
 - `graph-relative-import-test-impact` is the one-hop code→test baseline. Direct context search for an
   implementation-only marker must miss the importing test; one incoming deterministic `imports` edge
   and the exact reverse path must recover it while excluding an unrelated test.
+- `graph-dynamic-import-test-impact` applies the same one-hop contract to a quoted literal
+  JavaScript/TypeScript dynamic `import('../src/renderer')`. Core regressions require computed and
+  template-string imports to produce no module relation and a literal package target to remain an
+  external module.
 - `graph-python-relative-import-test-impact` applies the same one-hop contract to an explicit Python
   relative import (`from ..renderer import render_frame`). Absolute Python imports are not promoted by
   this slice; the captured-path resolver must recover only the exact relative target.
@@ -199,7 +203,7 @@ counting one direct import edge as evidence for every retrieval task:
   the test. Core regressions separately prove that exported string values do not become dependency
   edges, package re-exports stay external, and ambiguous local re-exports are not guessed.
 
-All four use captured snapshot relations only, preserve `liveSourceChecked: false`, require
+All seven use captured snapshot relations only, preserve `liveSourceChecked: false`, require
 deterministic provenance, and reject local-path leakage. The P1 Richer Graph Relations downstream cell
 continues to use the independent one-hop task contract, while its regression cell now uses the deeper
 ripple-effect representative.
