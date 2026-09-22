@@ -70,6 +70,7 @@ METRIC_NAMES = (
     "ripple_effect_retrieval",
     "context_memory_utility",
     "procedure_application_history",
+    "procedure_outcome_health_attention",
     "external_connector",
     "multimodal_evidence",
     "knowledge_scope",
@@ -411,8 +412,8 @@ P1_CAPABILITY_COVERAGE = {
             "zero",
         ),
         "regression": (
-            "memory-health-hygiene",
-            "memory_health",
+            "procedure-application-outcome-history",
+            "procedure_outcome_health_attention",
             "truthy",
         ),
     },
@@ -7120,6 +7121,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         reviewed_event_count = int(reviewed_learning.get("eventCount", 0))
         run_outputs: list[object] = [evidence_context, proposed, reviewed]
         run_checks: list[bool] = []
+        procedure_run_records: list[dict[str, str]] = []
         invalid_claim_rejected = False
 
         for index, run_spec in enumerate(runs):
@@ -7279,6 +7281,14 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and utility.get("rankingChangesApplied") is False
                 )
             )
+            procedure_run_records.append(
+                {
+                    "session_id": work_session_id,
+                    "observation_id": str(utility.get("id", "")),
+                    "task": task,
+                    "verification_status": verification_status,
+                }
+            )
             run_outputs.extend(
                 [started, compiled, bound, checkpoint, observed, session_context]
             )
@@ -7358,6 +7368,110 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             failures.append(
                 "procedure application history did not preserve exact reviewed-version binding, mixed typed outcomes, changed-condition task excerpts, invalid-claim rejection, or non-authority semantics"
             )
+
+        procedure_health_expectation = scenario.get(
+            "expected_procedure_outcome_health_attention"
+        )
+        if isinstance(procedure_health_expectation, dict):
+            failed_runs = [
+                item
+                for item in procedure_run_records
+                if item.get("verification_status") == "failed"
+            ]
+            passed_runs = [
+                item
+                for item in procedure_run_records
+                if item.get("verification_status") == "passed"
+            ]
+            procedure_health = mcp_call(
+                project,
+                "ley_memory_health",
+                {
+                    "maxSignals": int(
+                        procedure_health_expectation.get("max_signals", 100)
+                    ),
+                    "maxSessions": int(
+                        procedure_health_expectation.get("max_sessions", 20)
+                    ),
+                    "maxCharacters": int(
+                        procedure_health_expectation.get("max_characters", 16_000)
+                    ),
+                },
+            )
+            procedure_health_text = json.dumps(procedure_health, sort_keys=True)
+            attention_signals = [
+                item
+                for item in procedure_health.get("signals", [])
+                if isinstance(item, dict)
+                and item.get("kind")
+                == procedure_health_expectation.get(
+                    "signal_kind", "procedure-application-outcome-attention"
+                )
+            ]
+            attention = attention_signals[0] if len(attention_signals) == 1 else {}
+            detail = str(attention.get("detail", ""))
+            required_detail_fragments = [
+                str(item)
+                for item in procedure_health_expectation.get("detail_fragments", [])
+            ]
+            forbidden_markers = [
+                str(item)
+                for item in procedure_health_expectation.get("forbidden_markers", [])
+                if str(item)
+            ]
+            failed_run = failed_runs[0] if len(failed_runs) == 1 else {}
+            procedure_health_privacy = privacy_violation_rate(
+                [str(project), str(vault), *forbidden_markers],
+                [procedure_health],
+            )
+            expected_unsupported_signal = str(
+                procedure_health_expectation.get(
+                    "unsupported_signal",
+                    "old-procedure-never-successfully-reverified",
+                )
+            )
+            procedure_health_ok = (
+                len(procedure_run_records) == 3
+                and len(failed_runs) == 1
+                and len(passed_runs) == 2
+                and bool(failed_run.get("session_id"))
+                and bool(failed_run.get("observation_id"))
+                and all(
+                    attention.get("relatedSessionIds")
+                    != [passed_run.get("session_id")]
+                    and attention.get("relatedRecordIds")
+                    != [passed_run.get("observation_id")]
+                    for passed_run in passed_runs
+                )
+                and procedure_health.get("schemaVersion")
+                == int(procedure_health_expectation.get("schema_version", 2))
+                and procedure_health.get("persisted") is False
+                and procedure_health.get("destructiveActionsTaken") is False
+                and procedure_health.get("liveSourceChecked") is False
+                and len(attention_signals) == 1
+                and attention.get("severity")
+                == procedure_health_expectation.get("severity", "review")
+                and attention.get("relatedLearningIds") == [learning_id]
+                and attention.get("relatedSessionIds") == [failed_run.get("session_id")]
+                and attention.get("relatedRecordIds")
+                == [failed_run.get("observation_id")]
+                and all(fragment in detail for fragment in required_detail_fragments)
+                and expected_unsupported_signal
+                in {
+                    str(item.get("signal"))
+                    for item in procedure_health.get("unsupportedSignals", [])
+                    if isinstance(item, dict)
+                }
+                and not any(marker in procedure_health_text for marker in forbidden_markers)
+                and procedure_health_privacy == 0.0
+            )
+            scores["procedure_outcome_health_attention"] = procedure_health_ok
+            run_outputs.append(procedure_health)
+            evidence_text.append(procedure_health)
+            if not procedure_health_ok:
+                failures.append(
+                    "procedure application outcome Memory Health did not isolate the failed run's attention signal, preserve advisory semantics, or withhold task/path/body details"
+                )
 
     inspector_expectation = scenario.get("expected_context_pack_inspector")
     if isinstance(inspector_expectation, dict):
@@ -7496,7 +7610,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "chronically-retrieved-but-unhelpful-memory",
         }
         health_ok = (
-            health.get("schemaVersion") == 1
+            health.get("schemaVersion") == 2
             and health.get("projection") == "on-demand-memory-health"
             and health.get("persisted") is False
             and health.get("destructiveActionsTaken") is False

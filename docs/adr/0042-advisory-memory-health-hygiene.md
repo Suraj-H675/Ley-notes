@@ -9,11 +9,22 @@ typed downstream outcomes. The stronger health claim discussed here—successful
 under faithfully executed and comparable conditions—remains unsupported because those properties are
 still not proven.
 
+Later extension: ADR 0077 upgrades Memory Health to schema v2 with a narrower
+`procedure-application-outcome-attention` review signal. It reports a failed typed verification outcome
+only when the caller-declared application is bound to the exact current trusted Procedure version. It
+does **not** classify the Procedure as failed or successfully/unsuccessfully reverified.
+
 ## Context
 
 Ley's fourth P1 roadmap item is Memory Health / Hygiene. The North Star calls for maintenance signals such as stale or redundant knowledge, uncited claims, conflicting memories, incomplete sessions, unconsolidated evidence, and other signs that retained memory may need review. It also requires hygiene to remain non-destructive: Ley should surface problems and support deliberate maintenance rather than silently deleting or rewriting history.
 
-Several useful signals already exist as typed state in P0/P1 infrastructure: learning trust/freshness, session lifecycle status, latest-checkpoint open work, Memory Compiler recovery backlog, and revision applicability. Other desired signals do **not** yet have enough recorded evidence to support a truthful classification. In particular, Ley does not currently retain typed consolidation-attempt outcomes, downstream retrieval-helpfulness feedback, or a learning-to-verification linkage that could prove an old procedure was or was not successfully reverified.
+Several useful signals already exist as typed state in P0/P1 infrastructure: learning trust/freshness,
+session lifecycle status, latest-checkpoint open work, Memory Compiler recovery backlog, revision
+applicability, and exact-version caller-declared Procedure application observations with typed downstream
+outcomes. Other desired signals do **not** yet have enough recorded evidence to support a truthful
+classification. In particular, Ley still does not retain typed consolidation-attempt outcomes or
+downstream retrieval-helpfulness feedback, and Procedure application observations do not prove faithful
+execution, comparable conditions, context use, or causation.
 
 ## Decision
 
@@ -34,9 +45,19 @@ The first slice reports only signals derivable from existing typed state:
 - post-checkpoint unconsolidated prompt/response evidence reported by the existing Memory Compiler;
 - latest-checkpoint session memory whose captured Git revision is proven divergent from the current line.
 
+Schema v2 additionally reports `procedure-application-outcome-attention` once per qualifying retained
+observation when all of the following are true: the current learning is a verified/trusted/current
+Procedure; the immutable context binding contains that exact Procedure event version; the caller
+explicitly claimed that Procedure was applied; and typed downstream evidence contains at least one
+failed verification. The signal remains `review` severity and cites only the learning/session/observation
+IDs plus bounded outcome counts. Pass-only observations do not create this signal, and an observation
+bound to an older Procedure event version stops qualifying once the current learning version changes.
+
 The projection explicitly lists unsupported health ideas rather than inferring them from weak proxies:
 
-- `old-procedure-never-successfully-reverified` is unsupported because Ley does not yet store a typed procedure-learning → verification-outcome relationship;
+- `old-procedure-never-successfully-reverified` remains unsupported because a caller-declared application
+  plus a typed verification outcome does not prove the Procedure was faithfully followed, applicable
+  under comparable conditions, used from the supplied context, or causally responsible for the result;
 - `failed-consolidations` is unsupported because Ley does not yet persist consolidation-attempt outcome history;
 - `chronically-retrieved-but-unhelpful-memory` is unsupported because Ley does not yet record downstream retrieval utility/helpfulness feedback with sufficient provenance.
 
@@ -48,13 +69,23 @@ Severity is triage metadata, not authority. A health signal does not grant permi
 
 Conflicting same-subject records never use a newest-wins rule. If multiple trusted-current learnings disagree, the report surfaces `conflicting-trusted-claims` and recommends explicit review; it does not select a winner.
 
+`procedure-application-outcome-attention` is likewise triage, not judgment. A failed downstream
+verification is a historical outcome associated with one exact caller-declared Procedure application.
+Ley does not infer that the Procedure itself failed, that a pass reverified it, or that a fail should
+contest/stale/reject it. `procedureFollowedProven`, condition applicability, context usage, and causal
+utility remain unproven under ADR 0073, and Memory Health applies no trust or ranking change.
+
 ## Privacy, egress, and persistence
 
 The report is rebuilt on demand from the fixed project's learning index, structured sessions, Memory Compiler metadata, captured snapshot identity, and bounded local Git freshness metadata. It persists no health cache and keeps `liveSourceChecked: false`.
 
 The MCP reader uses the same historical-memory egress gate as project resume, Topic Dossiers, Current Project State, and broad session/learning readers. Fine-grained historical restrictions therefore cannot be bypassed through health diagnostics.
 
-Recovery backlog signals expose counts/state/checkpoint identity, not post-checkpoint prompt/response bodies. The real evaluation fixture deliberately inserts a private turn-body canary and requires it to remain absent from `ley_memory_health` output.
+Recovery backlog signals expose counts/state/checkpoint identity, not post-checkpoint prompt/response
+bodies. Procedure outcome attention copies no task excerpt, Procedure guidance, context body, project
+path, or vault path; it uses stable IDs and typed outcome counts already retained in the selected
+session ledger. Real evaluation fixtures require those bodies/paths to remain absent from
+`ley_memory_health` output.
 
 Because the report is non-persistent, session/project erasure requires no separate health-cache purge transaction. Deletion-fidelity evaluation rebuilds Memory Health after erasure and requires erased canaries to remain absent.
 
@@ -79,5 +110,7 @@ Tradeoffs:
 - duplicate detection is intentionally conservative: exact normalized subject plus materially equivalent bounded guidance, not embedding similarity;
 - same-subject/different-guidance is a review signal, not proof the claims truly contradict;
 - only the bounded inspected session set contributes session/recovery health signals;
+- Procedure outcome attention is similarly limited to that bounded inspected session set and therefore
+  does not claim a whole-history quality judgment;
 - no automatic consolidation, deletion, archival, or suppression is performed;
 - later feedback/evidence systems are required before Ley can truthfully diagnose failed consolidations, chronically unhelpful retrievals, or procedure reverification history.

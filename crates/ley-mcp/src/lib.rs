@@ -120,7 +120,10 @@ active/paused latest checkpoints are working state, and `recentDecisions` remain
 `currentStateProven: false`. Use \
 `ley_memory_health` only for deliberate maintenance review: its signals are advisory triage, \
 `destructiveActionsTaken` remains false, and `unsupportedSignals` are evidence gaps rather than \
-permission to guess or auto-clean memory. Use `ley_consolidation_inbox` only for deliberate local \
+permission to guess or auto-clean memory. A `procedure-application-outcome-attention` signal means only \
+that one exact-current caller-declared Procedure application has a failed typed downstream verification; \
+it does not prove Procedure failure, faithful execution, comparable conditions, context use, causation, \
+or reverification. Use `ley_consolidation_inbox` only for deliberate local \
 consolidation review at paused/completed/abandoned session boundaries. It is a disposable read-only \
 planner: `persisted`, `modelInvoked`, `backgroundWorkStarted`, `destructiveActionsTaken`, and each \
 item's `automaticWriteAllowed` remain false, and `semanticFaithfulnessProven` remains false. It returns \

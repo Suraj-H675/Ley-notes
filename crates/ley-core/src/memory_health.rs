@@ -1,7 +1,8 @@
 use crate::revision::RevisionResolver;
 use crate::{
     compile_session_memory, list_learnings, list_sessions, project_memory_overview, read_session,
-    LearningFreshness, LearningSummary, LearningTrustState, LeyCoreError, MemoryCompilationState,
+    AgentSession, ContextUtilityRecordSource, LearningFreshness, LearningKind, LearningState,
+    LearningSummary, LearningTrustState, LeyCoreError, MemoryCompilationState,
     ProjectRevisionFreshness, RevisionCompatibility, SessionSourceKind, SessionStatus, TaskStatus,
     MAX_MEMORY_COMPILE_RESULTS, MIN_MEMORY_COMPILE_CHARACTERS,
 };
@@ -10,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const MEMORY_HEALTH_SCHEMA_VERSION: u32 = 1;
+pub const MEMORY_HEALTH_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_MEMORY_HEALTH_SIGNALS: usize = 100;
 pub const MAX_MEMORY_HEALTH_SIGNALS: usize = 200;
 pub const DEFAULT_MEMORY_HEALTH_SESSIONS: usize = 20;
@@ -64,6 +65,7 @@ pub enum MemoryHealthSignalKind {
     UnconsolidatedEvidence,
     UnresolvedWorkingState,
     DivergentSessionMemory,
+    ProcedureApplicationOutcomeAttention,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -172,6 +174,7 @@ pub fn memory_health_report(
     let overview = project_memory_overview(project_start, vault)?;
     let learnings = list_learnings(project_start, vault)?;
     let mut drafts = learning_health_signals(&learnings);
+    let current_procedure_versions = current_procedure_versions(&learnings);
 
     let mut summaries = list_sessions(project_start, vault)?;
     summaries.sort_by(|left, right| {
@@ -190,6 +193,10 @@ pub fn memory_health_report(
     for summary in selected_sessions {
         let session = read_session(project_start, vault, &summary.session_id)?;
         let latest = session.checkpoints.last();
+        drafts.extend(procedure_application_health_signals(
+            &session,
+            &current_procedure_versions,
+        ));
         if matches!(
             session.status,
             SessionStatus::Active | SessionStatus::Paused
@@ -557,6 +564,84 @@ fn learning_signal(
     }
 }
 
+fn current_procedure_versions(learnings: &[LearningSummary]) -> BTreeMap<String, u64> {
+    learnings
+        .iter()
+        .filter(|learning| {
+            learning.kind == LearningKind::Procedure
+                && learning.state == LearningState::Verified
+                && learning.trust_state == LearningTrustState::Trusted
+                && learning.freshness == LearningFreshness::Current
+        })
+        .map(|learning| (learning.learning_id.clone(), learning.event_count))
+        .collect()
+}
+
+fn procedure_application_health_signals(
+    session: &AgentSession,
+    current_procedure_versions: &BTreeMap<String, u64>,
+) -> Vec<SignalDraft> {
+    let mut drafts = Vec::new();
+
+    for observation in &session.context_utility_observations {
+        let Some(binding) = session
+            .context_utility_bindings
+            .iter()
+            .find(|binding| binding.id == observation.binding_id)
+        else {
+            continue;
+        };
+
+        for learning_id in &observation.claimed_applied_learning_ids {
+            let Some(current_event_count) = current_procedure_versions.get(learning_id) else {
+                continue;
+            };
+            let bound_exact_current_procedure = binding.included_records.iter().any(|record| {
+                record.source == ContextUtilityRecordSource::ActiveProjectMemory
+                    && record.kind.as_deref() == Some("learning")
+                    && record.entity_id == *learning_id
+                    && record.learning_id.as_deref() == Some(learning_id.as_str())
+                    && record.learning_kind.as_deref() == Some("procedure")
+                    && record.learning_event_count == Some(*current_event_count)
+            });
+            if !bound_exact_current_procedure {
+                continue;
+            }
+
+            let (passed, failed, skipped, unknown) = observation.downstream_outcomes.iter().fold(
+                (0usize, 0usize, 0usize, 0usize),
+                |(passed, failed, skipped, unknown), outcome| {
+                    (
+                        passed.saturating_add(outcome.passed_verifications),
+                        failed.saturating_add(outcome.failed_verifications),
+                        skipped.saturating_add(outcome.skipped_verifications),
+                        unknown.saturating_add(outcome.unknown_verifications),
+                    )
+                },
+            );
+            if failed == 0 {
+                continue;
+            }
+
+            drafts.push(SignalDraft {
+                kind: MemoryHealthSignalKind::ProcedureApplicationOutcomeAttention,
+                severity: MemoryHealthSeverity::Review,
+                title: "Historical Procedure application outcome attention".to_owned(),
+                detail: format!(
+                    "Historical caller-declared Procedure application has typed verification outcome counts: passed={passed}, failed={failed}, skipped={skipped}, unknown={unknown}. procedure-following, condition applicability, context usage, and causation are unproven."
+                ),
+                learning_ids: vec![learning_id.clone()],
+                session_ids: vec![session.session_id.clone()],
+                record_ids: vec![observation.id.clone()],
+                updated_at_unix_ms: observation.recorded_at_unix_ms,
+                recommended_action: "Review the cited historical outcome with current source and evidence; do not infer procedure failure, applicability, context use, or causation from this signal.",
+            });
+        }
+    }
+
+    drafts
+}
+
 fn unsupported_signals() -> Vec<UnsupportedMemoryHealthSignal> {
     vec![
         UnsupportedMemoryHealthSignal {
@@ -759,12 +844,16 @@ impl TextBudget {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, ingest_project, initialize_project, propose_learning, read_session,
-        record_session_prompt, record_session_response, review_learning, start_session,
-        AttemptInput, CaptureMode, CheckpointInput, DecisionInput, LearningActor,
-        LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance,
-        PlanItemInput, ProblemInput, ProposeLearningInput, ReviewLearningInput, SessionSource,
+        bind_context_utility_pack, checkpoint_session, compile_project_context_with_registries,
+        ingest_project, initialize_project, propose_learning, read_learning, read_session,
+        record_context_utility_observation, record_session_prompt, record_session_response,
+        review_learning, start_session, AttemptInput, CaptureMode, CheckpointInput,
+        ContextCompileLimits, ContextMountRegistry, ContextUtilityBindingInput,
+        ContextUtilityObservationInput, DecisionInput, LearningActor, LearningEvidenceInput,
+        LearningFeedbackAction, LearningKind, LearningProvenance, PlanItemInput, ProblemInput,
+        ProposeLearningInput, ReviewLearningInput, SessionSource, SpecificationRegistry,
         StartSessionInput, TaskInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
+        VerificationStatus,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -839,6 +928,268 @@ mod tests {
             started.session.session_id,
             checkpoint.session.checkpoints.last().unwrap().id.clone(),
         )
+    }
+
+    fn procedure_application_fixture(
+        verification_status: VerificationStatus,
+    ) -> (
+        tempfile::TempDir,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        String,
+        String,
+        String,
+    ) {
+        let (temporary, project, vault, session_id, checkpoint_id) = base_fixture();
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: request_id('3'),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Storage migration procedure".to_owned(),
+                guidance: "Use SQLite WAL for storage migrations.".to_owned(),
+                confidence_percent: 90,
+                provenance: LearningProvenance::AgentAuthored,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: session_id.clone(),
+                    record_id: checkpoint_id,
+                    note: "Reviewed storage migration evidence.".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+        let learning_id = proposed.learning.learning_id.clone();
+        let confirmed = review_learning(
+            &project,
+            &vault,
+            &learning_id,
+            ReviewLearningInput {
+                request_id: request_id('4'),
+                expected_event_count: Some(proposed.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Confirmed storage migration procedure.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(confirmed.learning.state, crate::LearningState::Verified);
+        assert_eq!(confirmed.learning.trust_state, LearningTrustState::Trusted);
+        assert_eq!(confirmed.learning.freshness, LearningFreshness::Current);
+
+        let specifications =
+            SpecificationRegistry::at(temporary.path().join("health-specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(temporary.path().join("health-mounts-v1.json"));
+        let pack = compile_project_context_with_registries(
+            &project,
+            &vault,
+            "Storage migration procedure use SQLite WAL for storage migrations",
+            ContextCompileLimits {
+                max_results: 12,
+                max_tokens: 2_000,
+            },
+            &specifications,
+            &mounts,
+        )
+        .unwrap();
+        assert!(pack.items.iter().any(|item| {
+            item.learning_id.as_deref() == Some(learning_id.as_str())
+                && item.learning_kind == Some(LearningKind::Procedure)
+                && item.learning_event_count == Some(confirmed.learning.event_count)
+                && item.trusted_for_reuse
+        }));
+
+        let before_binding = read_session(&project, &vault, &session_id).unwrap();
+        let bound = bind_context_utility_pack(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityBindingInput {
+                request_id: request_id('5'),
+                expected_event_count: before_binding.event_count,
+                expected_context_pack_id: pack.context_pack_id.clone(),
+                task: pack.task.clone(),
+                max_results: 12,
+                max_tokens: pack.max_tokens,
+            },
+            &pack,
+        )
+        .unwrap();
+        let binding_id = bound
+            .session
+            .context_utility_bindings
+            .last()
+            .unwrap()
+            .id
+            .clone();
+
+        let downstream = checkpoint_session(
+            &project,
+            &vault,
+            &session_id,
+            CheckpointInput {
+                request_id: request_id('6'),
+                summary: "Recorded typed procedure outcome.".to_owned(),
+                plan: Vec::<PlanItemInput>::new(),
+                decisions: Vec::<DecisionInput>::new(),
+                tasks: Vec::<TaskInput>::new(),
+                problems: Vec::<ProblemInput>::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: vec![VerificationInput {
+                    kind: "procedure-check".to_owned(),
+                    status: verification_status,
+                    summary: "Typed procedure verification outcome.".to_owned(),
+                    command: None,
+                    evidence_artifact_paths: Vec::new(),
+                }],
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let observed = record_context_utility_observation(
+            &project,
+            &vault,
+            &session_id,
+            ContextUtilityObservationInput {
+                request_id: request_id('7'),
+                expected_event_count: downstream.session.event_count,
+                binding_id,
+                downstream_event_ids: vec![downstream.event_id],
+                claimed_applied_learning_ids: vec![learning_id.clone()],
+            },
+        )
+        .unwrap();
+        let observation_id = observed
+            .session
+            .context_utility_observations
+            .last()
+            .unwrap()
+            .id
+            .clone();
+
+        (
+            temporary,
+            project,
+            vault,
+            session_id,
+            learning_id,
+            observation_id,
+        )
+    }
+
+    #[test]
+    fn reports_failed_current_procedure_application_outcome_attention() {
+        let (_temporary, project, vault, session_id, learning_id, observation_id) =
+            procedure_application_fixture(VerificationStatus::Failed);
+
+        let report = memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+        let signal = report
+            .signals
+            .iter()
+            .find(|signal| {
+                signal.kind == MemoryHealthSignalKind::ProcedureApplicationOutcomeAttention
+            })
+            .expect("failed procedure outcome should create memory health attention");
+        assert_eq!(
+            report
+                .signals
+                .iter()
+                .filter(|signal| {
+                    signal.kind == MemoryHealthSignalKind::ProcedureApplicationOutcomeAttention
+                })
+                .count(),
+            1
+        );
+        assert_eq!(report.schema_version, 2);
+        assert_eq!(signal.severity, MemoryHealthSeverity::Review);
+        assert_eq!(
+            serde_json::to_string(&signal.kind).unwrap(),
+            "\"procedure-application-outcome-attention\""
+        );
+        assert_eq!(signal.related_learning_ids, vec![learning_id]);
+        assert_eq!(signal.related_session_ids, vec![session_id]);
+        assert_eq!(signal.related_record_ids, vec![observation_id]);
+        assert!(signal.detail.contains("passed=0"));
+        assert!(signal.detail.contains("failed=1"));
+        assert!(signal.detail.contains("skipped=0"));
+        assert!(signal.detail.contains("unknown=0"));
+        assert!(signal.detail.contains("procedure-following"));
+        assert!(signal.detail.contains("condition applicability"));
+        assert!(signal.detail.contains("context usage"));
+        assert!(signal.detail.contains("causation"));
+        assert!(
+            report
+                .unsupported_signals
+                .iter()
+                .any(|unsupported| unsupported.signal
+                    == "old-procedure-never-successfully-reverified")
+        );
+    }
+
+    #[test]
+    fn pass_only_procedure_application_does_not_create_outcome_attention() {
+        let (_temporary, project, vault, _session_id, _learning_id, _observation_id) =
+            procedure_application_fixture(VerificationStatus::Passed);
+
+        let report = memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+        assert!(!report
+            .signals
+            .iter()
+            .any(|signal| signal.kind
+                == MemoryHealthSignalKind::ProcedureApplicationOutcomeAttention));
+    }
+
+    #[test]
+    fn older_procedure_application_version_does_not_create_current_attention() {
+        let (_temporary, project, vault, _session_id, learning_id, _observation_id) =
+            procedure_application_fixture(VerificationStatus::Failed);
+        let before = read_learning(&project, &vault, &learning_id).unwrap();
+        let changed = review_learning(
+            &project,
+            &vault,
+            &learning_id,
+            ReviewLearningInput {
+                request_id: request_id('8'),
+                expected_event_count: Some(before.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Recorded a later reviewed procedure version.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert!(changed.learning.event_count > before.event_count);
+        assert_eq!(changed.learning.state, crate::LearningState::Verified);
+        assert_eq!(changed.learning.trust_state, LearningTrustState::Trusted);
+        assert_eq!(changed.learning.freshness, LearningFreshness::Current);
+
+        let report = memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+        assert!(!report
+            .signals
+            .iter()
+            .any(|signal| signal.kind
+                == MemoryHealthSignalKind::ProcedureApplicationOutcomeAttention));
+    }
+
+    #[test]
+    fn procedure_application_outcome_report_is_non_mutating() {
+        let (_temporary, project, vault, session_id, _learning_id, _observation_id) =
+            procedure_application_fixture(VerificationStatus::Failed);
+        let before_learning = list_learnings(&project, &vault).unwrap();
+        let before_session = read_session(&project, &vault, &session_id).unwrap();
+        let first = memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+        let after_learning = list_learnings(&project, &vault).unwrap();
+        let after_session = read_session(&project, &vault, &session_id).unwrap();
+        let second = memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
+
+        assert_eq!(before_learning, after_learning);
+        assert_eq!(before_session, after_session);
+        assert_eq!(first.health_fingerprint, second.health_fingerprint);
+        assert!(!first.persisted);
+        assert!(!first.destructive_actions_taken);
     }
 
     #[test]
