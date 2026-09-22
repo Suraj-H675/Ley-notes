@@ -48,6 +48,7 @@ METRIC_NAMES = (
     "selective_abstention",
     "parallel_session_separation",
     "cross_surface_staleness",
+    "long_horizon_continuity",
     "deletion_fidelity",
     "forgetting_residue_rate",
     "inactive_workspace_clean",
@@ -7035,6 +7036,338 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             failures.append(
                 "concurrent host/local session mutation did not preserve stale-write protection: "
                 + ", ".join(failed_cross_surface_checks)
+            )
+
+    long_horizon_expectation = scenario.get(
+        "expected_long_horizon_continuity"
+    )
+    if isinstance(long_horizon_expectation, dict):
+        iterations = [
+            item
+            for item in long_horizon_expectation.get("iterations", [])
+            if isinstance(item, dict)
+        ]
+        query = str(long_horizon_expectation.get("query", ""))
+        activity_query = str(
+            long_horizon_expectation.get(
+                "activity_query",
+                "Startup requirement",
+            )
+        )
+        current_requirement_marker = str(
+            long_horizon_expectation.get(
+                "current_requirement_marker",
+                "",
+            )
+        )
+        legacy_markers = [
+            str(value)
+            for value in long_horizon_expectation.get(
+                "legacy_markers",
+                [],
+            )
+        ]
+        final_handoff_marker = str(
+            long_horizon_expectation.get(
+                "final_handoff_marker",
+                "",
+            )
+        )
+        if (
+            len(iterations) != 10
+            or not query
+            or not activity_query
+            or not current_requirement_marker
+            or not legacy_markers
+            or not final_handoff_marker
+        ):
+            raise RuntimeError(
+                "long-horizon continuity fixture requires exactly ten iterations, current/legacy markers, query, and final handoff"
+            )
+
+        session_ids: list[str] = []
+        decision_record_ids_by_marker: dict[str, str] = {}
+        session_contexts: list[dict[str, object]] = []
+        for index, iteration in enumerate(iterations, start=1):
+            name = str(iteration.get("name", f"Iteration {index:02d}"))
+            goal = str(
+                iteration.get(
+                    "goal",
+                    "Continue the changing startup requirement implementation.",
+                )
+            )
+            summary = str(
+                iteration.get(
+                    "summary",
+                    f"Iteration {index:02d} checkpoint.",
+                )
+            )
+            decision_title = str(
+                iteration.get(
+                    "decision_title",
+                    f"Startup requirement iteration {index:02d}",
+                )
+            )
+            decision = str(iteration.get("decision", ""))
+            handoff = str(iteration.get("handoff", ""))
+            result_summary = str(
+                iteration.get(
+                    "result_summary",
+                    f"Iteration {index:02d} completed.",
+                )
+            )
+            if not decision or not handoff:
+                raise RuntimeError(
+                    f"long-horizon iteration {index} requires decision and handoff"
+                )
+
+            long_session_id, _ = create_structured_session(
+                project,
+                seed=f"{scenario['id']}:long-horizon:{index}",
+                name=name,
+                goal=goal,
+                summary=summary,
+                decisions=[
+                    {
+                        "title": decision_title,
+                        "decision": decision,
+                        "rationale": (
+                            "Historical requirement state for this exact iteration; "
+                            "the current approved Specification remains authoritative."
+                        ),
+                    }
+                ],
+                host="codex" if index % 2 else "claude-code",
+            )
+            mcp_call(
+                project,
+                "ley_session_finish",
+                {
+                    "sessionId": long_session_id,
+                    "requestId": request_id(
+                        f"{scenario['id']}:long-horizon:{index}:finish"
+                    ),
+                    "status": "completed",
+                    "summary": result_summary,
+                    "handoff": handoff,
+                    "finalResponse": "",
+                    "unresolved": [],
+                },
+                WRITE_FLAGS,
+            )
+            context = mcp_call(
+                project,
+                "ley_session_get",
+                {
+                    "sessionId": long_session_id,
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            session_ids.append(long_session_id)
+            session_contexts.append(context)
+            for checkpoint in context.get("checkpoints", []):
+                if not isinstance(checkpoint, dict):
+                    continue
+                for row in checkpoint.get("decisions", []):
+                    if not isinstance(row, dict):
+                        continue
+                    decision_text = str(row.get("decision", ""))
+                    for marker in legacy_markers:
+                        if marker in decision_text:
+                            decision_record_ids_by_marker[marker] = str(
+                                row.get("id", "")
+                            )
+            time.sleep(0.003)
+
+        session_list = mcp_call(
+            project,
+            "ley_sessions_list",
+            {"maxResults": 20},
+        )
+        resume = mcp_call(
+            project,
+            "ley_project_resume",
+            {
+                "maxSessions": 3,
+                "maxLearnings": 1,
+                "maxCharacters": 12_000,
+            },
+        )
+        activity = mcp_call(
+            project,
+            "ley_search_activity",
+            {
+                "query": activity_query,
+                "maxResults": 20,
+            },
+        )
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {
+                "task": query,
+                "maxResults": 12,
+                "maxTokens": 3_000,
+            },
+        )
+
+        listed_sessions = [
+            item
+            for item in session_list.get("sessions", [])
+            if isinstance(item, dict)
+        ]
+        resumed_sessions = [
+            item
+            for item in resume.get("sessions", [])
+            if isinstance(item, dict)
+        ]
+        decisions = [
+            item
+            for item in activity.get("decisions", [])
+            if isinstance(item, dict)
+        ]
+        activity_text = json.dumps(activity, sort_keys=True)
+        compiled_context_text = context_contract_text(compiled)
+        compiled_exclusions = [
+            item
+            for item in compiled.get("exclusions", [])
+            if isinstance(item, dict)
+        ]
+        legacy_record_ids = {
+            record_id
+            for record_id in decision_record_ids_by_marker.values()
+            if record_id
+        }
+        contradicted_legacy_ids = {
+            str(item.get("entityId", ""))
+            for item in compiled_exclusions
+            if item.get("reason") == "contradicts-human-intent"
+        }
+        contradictory_legacy_marker = str(
+            long_horizon_expectation.get(
+                "contradictory_legacy_marker",
+                legacy_markers[0],
+            )
+        )
+        contradictory_legacy_id = decision_record_ids_by_marker.get(
+            contradictory_legacy_marker,
+            "",
+        )
+        historical_items = [
+            item
+            for item in compiled.get("items", [])
+            if isinstance(item, dict)
+            and item.get("kind") in {"session", "decision"}
+        ]
+        expected_latest_names = [
+            str(iterations[index].get("name", ""))
+            for index in (9, 8, 7)
+        ]
+        actual_latest_names = [
+            str(item.get("name", ""))
+            for item in resumed_sessions
+        ]
+        resumed_results = [
+            item.get("result", {})
+            for item in resumed_sessions
+            if isinstance(item.get("result"), dict)
+        ]
+        all_handoffs = json.dumps(resumed_results, sort_keys=True)
+
+        long_horizon_checks = {
+            "ten-distinct-sessions":
+                len(session_ids) == 10
+                and len(set(session_ids)) == 10,
+            "session-list-complete":
+                session_list.get("totalSessions") == 10
+                and session_list.get("omittedSessions") == 0
+                and len(listed_sessions) == 10
+                and all(
+                    item.get("status") == "completed"
+                    and item.get("checkpointCount") == 1
+                    and int(item.get("eventCount", 0)) == 3
+                    for item in listed_sessions
+                ),
+            "resume-bounded":
+                resume.get("totalSessions") == 10
+                and resume.get("omittedSessions") == 7
+                and len(resumed_sessions) == 3
+                and actual_latest_names == expected_latest_names
+                and all(
+                    item.get("status") == "completed"
+                    and isinstance(item.get("result"), dict)
+                    and item["result"].get("status") == "completed"
+                    for item in resumed_sessions
+                ),
+            "latest-handoff-visible":
+                final_handoff_marker in all_handoffs,
+            "history-inspectable":
+                activity.get("totalSessions") == 10
+                and activity.get("totalMatchingDecisions") == 10
+                and len(decisions) == 10
+                and all(marker in activity_text for marker in legacy_markers),
+            "legacy-records-resolved":
+                len(decision_record_ids_by_marker) == len(legacy_markers)
+                and len(legacy_record_ids) == len(legacy_markers),
+            "current-specification-present":
+                current_requirement_marker.lower()
+                in compiled_context_text.lower()
+                and compiled.get("authorityPrecedence")
+                == "human-intent-over-historical-memory",
+            "contradictory-history-withheld":
+                bool(contradictory_legacy_id)
+                and contradictory_legacy_marker.lower()
+                not in compiled_context_text.lower(),
+            "historical-conflict-disclosed":
+                bool(contradictory_legacy_id)
+                and contradictory_legacy_id in contradicted_legacy_ids,
+            "remaining-history-lower-authority":
+                all(
+                    item.get("authority") == "historical-project-memory"
+                    and item.get("trustedForReuse") is False
+                    for item in historical_items
+                ),
+            "snapshot-only":
+                session_list.get("liveSourceChecked", False) is False
+                and resume.get("liveSourceChecked") is False
+                and activity.get("liveSourceChecked") is False
+                and compiled.get("liveSourceChecked") is False,
+        }
+        long_horizon_ok = all(long_horizon_checks.values())
+        scores["long_horizon_continuity"] = long_horizon_ok
+        record_downstream_task_contract(
+            scores,
+            failures,
+            task_contract_success(
+                compiled,
+                [current_requirement_marker],
+                [contradictory_legacy_marker],
+            )
+            and final_handoff_marker in all_handoffs,
+            "long-horizon continuity did not preserve current approved intent plus the bounded latest handoff without admitting obsolete requirement markers",
+        )
+        long_horizon_outputs = [
+            session_list,
+            resume,
+            activity,
+            compiled,
+            *session_contexts,
+        ]
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)],
+            long_horizon_outputs,
+        )
+        evidence_text.extend(long_horizon_outputs)
+        if not long_horizon_ok:
+            failed_long_horizon_checks = [
+                label
+                for label, passed in long_horizon_checks.items()
+                if not passed
+            ]
+            failures.append(
+                "ten-session changing-requirement continuity failed: "
+                + ", ".join(failed_long_horizon_checks)
             )
 
     deletion_expectation = scenario.get("expected_deletion_fidelity")

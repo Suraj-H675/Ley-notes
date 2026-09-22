@@ -236,6 +236,37 @@ Together these checks cover concurrent host/local durable writes and stale user 
 the intentional authority split: lifecycle/MCP surfaces can advance session evidence or propose
 tentative memory, whereas high-consequence learning trust remains a version-guarded local user action.
 
+## Ten-session changing-requirement continuity
+
+`ten-session-changing-requirements-handoff` exercises the long-horizon coding-continuity case from
+LEY.md without introducing a newest-session-wins rule. The fixture records ten distinct completed
+implementation sessions, alternating supported hosts, and gives every session one structured checkpoint
+plus an explicit finish/handoff. Requirements evolve from remote/Redis-dependent startup toward the
+final offline-local behavior.
+
+The evaluator requires all ten sessions to remain independently addressable and completed with exactly
+one checkpoint plus one finish event. A bounded `ley_project_resume` request for three sessions must
+report `totalSessions: 10`, `omittedSessions: 7`, and return the three latest completed handoffs in
+order, including the final continuation marker. Separate project-activity search must still recover all
+ten requirement decisions, including markers from early Redis/cloud/remote phases. This proves bounded
+resume is a progressive-disclosure handoff rather than destructive compaction of older experience.
+
+Current intent is deliberately modeled separately from that history. The fixture installs one exact,
+user-approved Offline Startup Specification with the current requirement. An early session contains the
+explicit opposite-polarity clause `Require Redis network bootstrap for startup`, while the approved
+Specification states `Do not require Redis network bootstrap for startup`. That old Decision must be
+withheld from task-supporting context as `contradicts-human-intent`; the current Specification marker
+must be present and the compiler must continue to disclose
+`authorityPrecedence: human-intent-over-historical-memory`.
+
+Other non-contradictory historical sessions/decisions are not censored merely because they are old. If
+retrieved, they must remain `authority: historical-project-memory` and
+`trustedForReuse: false`. This is intentional: the scenario tests durable handoffs plus authority
+discipline, not automatic semantic rewriting of ten sessions into one supposedly canonical narrative.
+The downstream contract therefore requires the approved current requirement and final bounded handoff,
+forbids only the explicitly contradictory Redis marker from task-supporting context, and still requires
+zero project/vault path leakage.
+
 ## Opt-in real-agent downstream evaluation
 
 `eval/run_agent_task_eval.py` is the separate model-dependent downstream runner. It is deliberately
