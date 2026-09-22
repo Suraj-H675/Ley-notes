@@ -402,6 +402,28 @@ privacy leakage and keeps rich/composite/tool-evidence behavior inside the exist
 Memory Compiler, memory-binding, and origin-lineage gates rather than introducing weaker standalone
 metrics.
 
+The Context Mount representative also exercises reference precedence and the complete public
+fail-closed availability lifecycle. Its active project carries current SQLite guidance while the
+explicitly mounted source carries conflicting Redis guidance. Both may be visible when the mount is
+healthy, but they remain section-separated: active-project evidence stays in the ordinary active
+context, mounted evidence stays `authority: mounted-reference` /
+`sourceBoundary: untrusted-mounted-project-memory`, and the compiler discloses
+`referencePrecedence: active-project-over-mounted-reference`. The scenario does not reinterpret this
+as automatic conflict resolution or hide the lower-authority reference.
+
+The same mounted source is then moved and legitimately reobserved, after which a different initialized
+Ley project is placed at the observed location. Compilation must report
+`source-identity-changed`, keep the authorized mount diagnostically visible, search zero mounted
+sources, return no mounted body, and preserve active-project context. After restoring the original
+source identity, the scenario temporarily removes the observed source path and requires
+`source-project-unavailable` with the same fail-closed behavior. It then restores the project,
+removes only the source vault, and requires `source-vault-unavailable`. In all three degraded states
+`authorizedMounts == 1`, `readyMounts == 0`, `unavailableMounts == 1`, and
+`searchedMounts == 0`; active context survives, mounted content is withheld, and original/moved/
+parked project or vault paths remain private. Explicit unmount finally removes the current authority.
+This covers the changed-identity/unavailable-mounted-scope adversarial cases without editing Ley's
+private registries by hand.
+
 Focused subset runs validate the matrix schema but intentionally skip full result-value coverage because
 not every representative scenario was executed.
 

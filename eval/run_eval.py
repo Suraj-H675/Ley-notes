@@ -3582,15 +3582,32 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         scopes = [
             item for item in compiled.get("mountedReferenceScopes", []) if isinstance(item, dict)
         ]
+        active_items = [
+            item for item in compiled.get("items", []) if isinstance(item, dict)
+        ]
         mounted_marker = str(mounted_expectation.get("mounted_marker", ""))
         unmounted_marker = str(mounted_expectation.get("unmounted_marker", ""))
+        active_marker = str(mounted_expectation.get("active_marker", ""))
         serialized_compiled = json.dumps(compiled, sort_keys=True)
+        serialized_active_items = json.dumps(active_items, sort_keys=True)
+        serialized_references = json.dumps(references, sort_keys=True)
         mounted_visible = any(
             item.get("mountId") == mount_id
             and item.get("authority") == "mounted-reference"
             and item.get("sourceBoundary") == "untrusted-mounted-project-memory"
             and mounted_marker.lower() in json.dumps(item).lower()
             for item in references
+        )
+        active_visible = (
+            not active_marker
+            or active_marker.lower() in serialized_active_items.lower()
+        )
+        precedence_separation = (
+            (not active_marker or active_marker.lower() not in serialized_references.lower())
+            and (
+                not mounted_marker
+                or mounted_marker.lower() not in serialized_active_items.lower()
+            )
         )
         scope_visible = any(
             item.get("mountId") == mount_id and item.get("state") == "ready"
@@ -3603,6 +3620,207 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         ) and str(project) not in serialized_compiled and str(vault) not in serialized_compiled
         unrelated_hidden = not unmounted_marker or unmounted_marker.lower() not in serialized_compiled.lower()
         before_clean = not before.get("mountedReferenceScopes") and not before.get("mountedReferences")
+
+        transient_mount_paths: list[Path] = []
+        identity_changed: dict[str, object] | None = None
+        identity_changed_ok = True
+        if bool(
+            mounted_expectation.get(
+                "simulate_source_identity_changed",
+                False,
+            )
+        ):
+            _, mounted_vault = mounted_projects[mount_index]
+            moved_project = base_dir / f"mounted-project-{mount_index}-moved"
+            parked_project = base_dir / f"mounted-project-{mount_index}-parked"
+            mounted_project.rename(moved_project)
+            transient_mount_paths.extend([moved_project, parked_project])
+            run(
+                [
+                    "bind",
+                    str(moved_project),
+                    "--vault",
+                    str(mounted_vault),
+                    "--json",
+                ]
+            )
+            moved_project.rename(parked_project)
+            moved_project.mkdir()
+            run(
+                [
+                    "init",
+                    str(moved_project),
+                    "--name",
+                    "Replacement mounted source identity",
+                    "--capture",
+                    "structured",
+                    "--json",
+                ]
+            )
+            identity_changed = mcp_call(
+                project,
+                "ley_compile_context",
+                {"task": query, "maxResults": 8, "maxTokens": 2_000},
+            )
+            identity_scopes = [
+                item
+                for item in identity_changed.get("mountedReferenceScopes", [])
+                if isinstance(item, dict)
+            ]
+            identity_coverage = identity_changed.get(
+                "mountedReferenceCoverage",
+                {},
+            )
+            identity_text = json.dumps(identity_changed, sort_keys=True)
+            identity_active_text = json.dumps(
+                identity_changed.get("items", []),
+                sort_keys=True,
+            )
+            identity_changed_ok = (
+                any(
+                    item.get("mountId") == mount_id
+                    and item.get("state") == "source-identity-changed"
+                    for item in identity_scopes
+                )
+                and not identity_changed.get("mountedReferences")
+                and isinstance(identity_coverage, dict)
+                and identity_coverage.get("authorizedMounts") == 1
+                and identity_coverage.get("readyMounts") == 0
+                and identity_coverage.get("unavailableMounts") == 1
+                and identity_coverage.get("searchedMounts") == 0
+                and (
+                    not active_marker
+                    or active_marker.lower() in identity_active_text.lower()
+                )
+                and (
+                    not mounted_marker
+                    or mounted_marker.lower() not in identity_text.lower()
+                )
+                and str(project) not in identity_text
+                and str(vault) not in identity_text
+                and str(mounted_project) not in identity_text
+                and str(mounted_vault) not in identity_text
+                and str(moved_project) not in identity_text
+                and str(parked_project) not in identity_text
+            )
+            shutil.rmtree(moved_project)
+            parked_project.rename(moved_project)
+
+        project_unavailable: dict[str, object] | None = None
+        project_unavailable_ok = True
+        if bool(
+            mounted_expectation.get(
+                "simulate_source_project_unavailable",
+                False,
+            )
+        ):
+            unavailable_parked = (
+                base_dir / f"mounted-project-{mount_index}-temporarily-unavailable"
+            )
+            transient_mount_paths.append(unavailable_parked)
+            moved_project.rename(unavailable_parked)
+            project_unavailable = mcp_call(
+                project,
+                "ley_compile_context",
+                {"task": query, "maxResults": 8, "maxTokens": 2_000},
+            )
+            project_unavailable_scopes = [
+                item
+                for item in project_unavailable.get(
+                    "mountedReferenceScopes",
+                    [],
+                )
+                if isinstance(item, dict)
+            ]
+            project_unavailable_coverage = project_unavailable.get(
+                "mountedReferenceCoverage",
+                {},
+            )
+            project_unavailable_text = json.dumps(
+                project_unavailable,
+                sort_keys=True,
+            )
+            project_unavailable_active_text = json.dumps(
+                project_unavailable.get("items", []),
+                sort_keys=True,
+            )
+            project_unavailable_ok = (
+                any(
+                    item.get("mountId") == mount_id
+                    and item.get("state") == "source-project-unavailable"
+                    for item in project_unavailable_scopes
+                )
+                and not project_unavailable.get("mountedReferences")
+                and isinstance(project_unavailable_coverage, dict)
+                and project_unavailable_coverage.get("authorizedMounts") == 1
+                and project_unavailable_coverage.get("readyMounts") == 0
+                and project_unavailable_coverage.get("unavailableMounts") == 1
+                and project_unavailable_coverage.get("searchedMounts") == 0
+                and (
+                    not active_marker
+                    or active_marker.lower()
+                    in project_unavailable_active_text.lower()
+                )
+                and (
+                    not mounted_marker
+                    or mounted_marker.lower()
+                    not in project_unavailable_text.lower()
+                )
+                and str(project) not in project_unavailable_text
+                and str(vault) not in project_unavailable_text
+                and str(mounted_project) not in project_unavailable_text
+                and str(mounted_vault) not in project_unavailable_text
+                and str(moved_project) not in project_unavailable_text
+                and str(unavailable_parked) not in project_unavailable_text
+            )
+            unavailable_parked.rename(moved_project)
+
+        unavailable: dict[str, object] | None = None
+        unavailable_ok = True
+        if bool(mounted_expectation.get("simulate_source_vault_unavailable", False)):
+            _, mounted_vault = mounted_projects[mount_index]
+            shutil.rmtree(mounted_vault)
+            unavailable = mcp_call(
+                project,
+                "ley_compile_context",
+                {"task": query, "maxResults": 8, "maxTokens": 2_000},
+            )
+            unavailable_scopes = [
+                item
+                for item in unavailable.get("mountedReferenceScopes", [])
+                if isinstance(item, dict)
+            ]
+            unavailable_coverage = unavailable.get("mountedReferenceCoverage", {})
+            unavailable_text = json.dumps(unavailable, sort_keys=True)
+            unavailable_active_text = json.dumps(
+                unavailable.get("items", []), sort_keys=True
+            )
+            unavailable_ok = (
+                any(
+                    item.get("mountId") == mount_id
+                    and item.get("state") == "source-vault-unavailable"
+                    for item in unavailable_scopes
+                )
+                and not unavailable.get("mountedReferences")
+                and isinstance(unavailable_coverage, dict)
+                and unavailable_coverage.get("authorizedMounts") == 1
+                and unavailable_coverage.get("readyMounts") == 0
+                and unavailable_coverage.get("unavailableMounts") == 1
+                and unavailable_coverage.get("searchedMounts") == 0
+                and (
+                    not active_marker
+                    or active_marker.lower() in unavailable_active_text.lower()
+                )
+                and (
+                    not mounted_marker
+                    or mounted_marker.lower() not in unavailable_text.lower()
+                )
+                and str(project) not in unavailable_text
+                and str(vault) not in unavailable_text
+                and str(mounted_project) not in unavailable_text
+                and str(mounted_vault) not in unavailable_text
+            )
+
         run(["mount", "remove", mount_id, str(project), "--json"])
         after = mcp_call(
             project,
@@ -3614,11 +3832,16 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             before_clean
             and mount.get("agentContextEnabled") is True
             and mounted_visible
+            and active_visible
+            and precedence_separation
             and scope_visible
             and unrelated_hidden
             and no_paths
             and compiled.get("referencePrecedence") == "active-project-over-mounted-reference"
             and int(compiled.get("estimatedTokens", 0)) <= int(compiled.get("maxTokens", 0))
+            and identity_changed_ok
+            and project_unavailable_ok
+            and unavailable_ok
             and after_clean
         )
         scores["mounted_reference"] = mounted_ok
@@ -3643,10 +3866,28 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)]
-            + [str(path) for pair in mounted_projects for path in pair],
-            [compiled],
+            + [str(path) for pair in mounted_projects for path in pair]
+            + [str(path) for path in transient_mount_paths],
+            [compiled]
+            + ([identity_changed] if identity_changed is not None else [])
+            + (
+                [project_unavailable]
+                if project_unavailable is not None
+                else []
+            )
+            + ([unavailable] if unavailable is not None else []),
         )
-        evidence_text.extend([before, compiled, after])
+        evidence_text.extend(
+            [before, compiled]
+            + ([identity_changed] if identity_changed is not None else [])
+            + (
+                [project_unavailable]
+                if project_unavailable is not None
+                else []
+            )
+            + ([unavailable] if unavailable is not None else [])
+            + [after]
+        )
         if not mounted_ok:
             failures.append(
                 "explicit Context Mount did not preserve authorization/isolation/budget/unmount semantics"
