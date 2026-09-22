@@ -4148,6 +4148,182 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         ):
             raise RuntimeError("knowledge scope fixture indices/query are invalid")
 
+        active_conflict_learning_id = ""
+        active_conflict_setup_ok = True
+        active_learning_definition = knowledge_scope_expectation.get(
+            "active_trusted_learning"
+        )
+        if isinstance(active_learning_definition, dict):
+            source_path = str(active_learning_definition.get("source_path", ""))
+            if not source_path:
+                raise RuntimeError(
+                    "knowledge-scope active trusted learning fixture requires source_path"
+                )
+            started = mcp_call(
+                project,
+                "ley_session_start",
+                {
+                    "requestId": request_id(
+                        f"{scenario['id']}:scope-conflict:active:start"
+                    ),
+                    "name": "Active shared-scope conflict state",
+                    "goal": "Preserve reviewed active-project state for shared-scope conflict adjudication.",
+                    "host": "codex",
+                },
+                WRITE_FLAGS,
+            )
+            active_session_id = str(started.get("sessionId", ""))
+            mcp_call(
+                project,
+                "ley_session_checkpoint",
+                {
+                    "sessionId": active_session_id,
+                    "requestId": request_id(
+                        f"{scenario['id']}:scope-conflict:active:checkpoint"
+                    ),
+                    "expectedEventCount": 1,
+                    "summary": "Captured current active-project cache guidance.",
+                    "touchedArtifacts": [source_path],
+                },
+                WRITE_FLAGS,
+            )
+            active_session = mcp_call(
+                project,
+                "ley_session_get",
+                {
+                    "sessionId": active_session_id,
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            active_checkpoints = [
+                item
+                for item in active_session.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            if not active_checkpoints:
+                raise RuntimeError(
+                    "knowledge-scope active trusted learning fixture created no checkpoint"
+                )
+            proposal = mcp_call(
+                project,
+                "ley_learning_propose",
+                {
+                    "requestId": request_id(
+                        f"{scenario['id']}:scope-conflict:active:learning"
+                    ),
+                    "kind": str(active_learning_definition.get("kind", "constraint")),
+                    "title": str(active_learning_definition.get("title", "")),
+                    "guidance": str(active_learning_definition.get("guidance", "")),
+                    "confidencePercent": 95,
+                    "provenance": "agent-authored",
+                    "evidence": [
+                        {
+                            "sessionId": active_session_id,
+                            "recordId": str(
+                                active_checkpoints[-1].get("checkpointId", "")
+                            ),
+                            "note": "Current active-project state for shared-scope conflict evaluation.",
+                        }
+                    ],
+                },
+                WRITE_FLAGS,
+            )
+            active_conflict_learning_id = str(proposal.get("learningId", ""))
+            reviewed = cli_json(
+                [
+                    "learning",
+                    "review",
+                    active_conflict_learning_id,
+                    str(project),
+                    "--actor",
+                    "user",
+                    "--action",
+                    "confirm",
+                    "--note",
+                    "Explicitly reviewed active-project state for shared-scope conflict evaluation.",
+                    "--request-id",
+                    request_id(f"{scenario['id']}:scope-conflict:active:review"),
+                    "--json",
+                ]
+            )
+            reviewed_learning = (
+                reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
+            )
+            active_conflict_setup_ok = (
+                active_conflict_learning_id.startswith("lrn_")
+                and reviewed_learning.get("eventCount") == 2
+                and reviewed_learning.get("state") == "verified"
+                and reviewed_learning.get("trustState") == "trusted"
+            )
+
+        shared_conflict_decision_id = ""
+        shared_conflict_setup_ok = True
+        shared_decision_definition = knowledge_scope_expectation.get(
+            "shared_historical_decision"
+        )
+        if isinstance(shared_decision_definition, dict):
+            decision_source_index = int(
+                shared_decision_definition.get("source_index", source_indices[0])
+            )
+            if (
+                decision_source_index < 0
+                or decision_source_index >= len(scope_projects)
+                or decision_source_index not in source_indices
+            ):
+                raise RuntimeError(
+                    "knowledge-scope historical decision source must be attached to the scope"
+                )
+            decision_project, _ = scope_projects[decision_source_index]
+            decision_session_id, _ = create_structured_session(
+                decision_project,
+                seed=f"{scenario['id']}:scope-conflict:reference",
+                name="Historical shared cache decision",
+                goal="Preserve lower-precedence historical shared guidance.",
+                summary="Shared source historically chose Redis cache.",
+                decisions=[
+                    {
+                        "title": str(
+                            shared_decision_definition.get(
+                                "title", "Redis cache startup state"
+                            )
+                        ),
+                        "decision": str(
+                            shared_decision_definition.get(
+                                "decision", "Use Redis cache for startup state."
+                            )
+                        ),
+                        "rationale": "Historical shared-project choice.",
+                    }
+                ],
+            )
+            decision_session = mcp_call(
+                decision_project,
+                "ley_session_get",
+                {
+                    "sessionId": decision_session_id,
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            decision_checkpoints = [
+                item
+                for item in decision_session.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            decision_rows = (
+                decision_checkpoints[-1].get("decisions", [])
+                if decision_checkpoints
+                else []
+            )
+            if isinstance(decision_rows, list) and decision_rows:
+                shared_conflict_decision_id = str(
+                    decision_rows[0].get("id", "")
+                    if isinstance(decision_rows[0], dict)
+                    else ""
+                )
+            shared_conflict_setup_ok = shared_conflict_decision_id.startswith("dec_")
+
         before = mcp_call(
             project,
             "ley_compile_context",
@@ -4198,6 +4374,14 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             for item in compiled.get("sharedKnowledgeReferences", [])
             if isinstance(item, dict)
         ]
+        shared_exclusions = [
+            item
+            for item in compiled.get("sharedKnowledgeExclusions", [])
+            if isinstance(item, dict)
+        ]
+        active_items = [
+            item for item in compiled.get("items", []) if isinstance(item, dict)
+        ]
         compiled_text = json.dumps(compiled, sort_keys=True)
         expected_source_ids = {
             str(item.get("sourceProjectId", ""))
@@ -4223,6 +4407,35 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and item.get("name") == scope_name
             for item in shared_scopes
         )
+        active_conflict_visible = (
+            not active_conflict_learning_id
+            or any(
+                item.get("learningId") == active_conflict_learning_id
+                and item.get("trustedForReuse") is True
+                for item in active_items
+            )
+        )
+        shared_history_conflict_ok = (
+            not shared_conflict_decision_id
+            or (
+                not any(
+                    item.get("entityId") == shared_conflict_decision_id
+                    for item in shared_references
+                )
+                and any(
+                    item.get("scopeId") == scope_id
+                    and item.get("entityId") == shared_conflict_decision_id
+                    and item.get("reason") == "conflicting-memory"
+                    and item.get("conflictingActiveProjectEntityIds")
+                    == [active_conflict_learning_id]
+                    for item in shared_exclusions
+                )
+                and compiled.get("sharedKnowledgeCoverage", {}).get(
+                    "activeProjectConflicts"
+                )
+                == 1
+            )
+        )
         unrelated_hidden = (
             not unrelated_marker
             or unrelated_marker.lower() not in compiled_text.lower()
@@ -4244,6 +4457,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and not before.get("sharedKnowledgeReferences")
             and scope_visible
             and source_visible
+            and active_conflict_setup_ok
+            and shared_conflict_setup_ok
+            and active_conflict_visible
+            and shared_history_conflict_ok
             and unrelated_hidden
             and no_paths
             and compiled.get("sharedKnowledgePrecedence")

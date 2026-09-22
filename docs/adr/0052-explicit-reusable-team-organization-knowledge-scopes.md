@@ -2,6 +2,10 @@
 
 Status: Accepted
 
+Later extension: ADR 0075 applies ADR 0074's narrow reviewed-current active-state conflict rule to
+lower-precedence shared Knowledge Scope Decision/Learning guidance. Shared direct evidence remains
+visible and shared scope authority remains read-only.
+
 ## Context
 
 Ley's P0 Context Mounts deliberately authorize one active project to reuse one other captured project as lower-precedence read-only reference context. That is the right primitive for an isolated reference, but it becomes repetitive when the same bounded set of project knowledge should be reused across several active projects for a team or organization.

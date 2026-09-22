@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-22
 
+Later extension: ADR 0075 applies the same deterministic active-current-state conflict predicate to
+still-lower-precedence attached team/organization Knowledge Scopes. Explicit Context Mount semantics
+defined here remain unchanged.
+
 ## Context
 
 ADR 0034 established task-conditioned Context Mount admission with structural precedence:
