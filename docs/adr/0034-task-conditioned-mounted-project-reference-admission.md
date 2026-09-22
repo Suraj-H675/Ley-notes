@@ -3,6 +3,10 @@
 - Status: Accepted
 - Date: 2026-09-17
 
+Later extension: ADR 0074 adds a narrow active-project-current-state conflict rule for mounted
+historical Decision/Learning guidance. Exact reviewed/current active-project Learnings may withhold
+explicitly contradictory mounted history while mounted direct evidence remains visible.
+
 ## Context
 
 ADR 0033 established explicit read-only project Context Mount authority before any agent retrieval path consumed it. The next P0 slice must let an active project reuse captured knowledge from deliberately attached projects without turning Ley's observed-project catalog into ambient MCP search, changing write scope, or flattening reference history into active-project authority.

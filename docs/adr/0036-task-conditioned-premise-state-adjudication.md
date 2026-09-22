@@ -2,6 +2,11 @@
 
 Status: accepted
 
+Later extension: ADR 0074 preserves this premise engine's active-project scope while adding a separate
+Context Mount admission rule: explicitly contradictory mounted historical guidance may be withheld
+against reviewed/current active-project Learnings. Mounted history still cannot redefine current state
+or create premise authority.
+
 ## Context
 
 Ley's fixed-project hybrid search can nominate captured evidence, structured session history, and learnings, while the Context Compiler already separates relevance from authority and withholds stale, contested, rejected, superseded, or materially conflicting memory from normal prompt assembly. That prevents unsafe reuse, but it does not yet tell an agent when the task itself appears to rely on one of those invalidated states.

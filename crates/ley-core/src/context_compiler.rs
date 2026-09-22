@@ -392,6 +392,8 @@ pub struct MountedReferenceExclusion {
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub specification_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub conflicting_active_project_entity_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -443,6 +445,7 @@ pub struct MountedReferenceCoverage {
     pub admitted_candidates: usize,
     pub admission_rejected: usize,
     pub human_intent_conflicts: usize,
+    pub active_project_conflicts: usize,
     pub returned_scopes: usize,
     pub omitted_scopes: usize,
     pub returned_items: usize,
@@ -1920,6 +1923,27 @@ fn append_mounted_references(
                     semantic_similarity: candidate.item.ranking.semantic_similarity,
                     trust_signal: candidate.item.trust_signal,
                     specification_ids,
+                    conflicting_active_project_entity_ids: Vec::new(),
+                });
+                continue;
+            }
+            let conflicting_active_project_entity_ids =
+                conflicting_active_project_entity_ids(&pack, &candidate);
+            if !conflicting_active_project_entity_ids.is_empty() {
+                coverage.admission_rejected += 1;
+                coverage.active_project_conflicts += 1;
+                exclusions.push(MountedReferenceExclusion {
+                    mount_id: mount.mount_id.clone(),
+                    source_project_id: mount.source_project_id.clone(),
+                    kind: candidate.item.kind,
+                    entity_id: candidate.item.entity_id.clone(),
+                    stage: ContextExclusionStage::Admission,
+                    reason: ContextExclusionReason::ConflictingMemory,
+                    lexical_rank: candidate.item.ranking.lexical_rank,
+                    semantic_similarity: candidate.item.ranking.semantic_similarity,
+                    trust_signal: candidate.item.trust_signal,
+                    specification_ids: Vec::new(),
+                    conflicting_active_project_entity_ids,
                 });
                 continue;
             }
@@ -2456,6 +2480,7 @@ fn mounted_exclusion_from_context(
         semantic_similarity: exclusion.semantic_similarity,
         trust_signal: exclusion.trust_signal,
         specification_ids: exclusion.specification_ids,
+        conflicting_active_project_entity_ids: Vec::new(),
     }
 }
 
@@ -2474,6 +2499,7 @@ fn mounted_assembly_exclusion(
         semantic_similarity: mounted.candidate.item.ranking.semantic_similarity,
         trust_signal: mounted.candidate.item.trust_signal,
         specification_ids: Vec::new(),
+        conflicting_active_project_entity_ids: Vec::new(),
     }
 }
 
@@ -2528,13 +2554,19 @@ fn estimate_mounted_exclusion_tokens(exclusion: &MountedReferenceExclusion) -> u
         .iter()
         .map(|id| id.chars().count())
         .sum::<usize>();
+    let active_project_characters = exclusion
+        .conflicting_active_project_entity_ids
+        .iter()
+        .map(|id| id.chars().count())
+        .sum::<usize>();
     let characters = exclusion
         .mount_id
         .chars()
         .count()
         .saturating_add(exclusion.source_project_id.chars().count())
         .saturating_add(exclusion.entity_id.chars().count())
-        .saturating_add(specification_characters);
+        .saturating_add(specification_characters)
+        .saturating_add(active_project_characters);
     DIAGNOSTIC_ENTRY_OVERHEAD_TOKENS
         .saturating_add(characters.div_ceil(4))
         .saturating_add(8)
@@ -2845,6 +2877,39 @@ fn conflicting_specification_ids(
         .filter(|specification| explicit_negation_conflict(&specification.source.source, &memory))
         .map(|specification| specification.source.specification_id.clone())
         .collect()
+}
+
+fn conflicting_active_project_entity_ids(
+    pack: &CompiledContextPack,
+    mounted: &AdmittedCandidate,
+) -> Vec<String> {
+    if !matches!(
+        mounted.item.kind,
+        ProjectMemoryResultKind::Decision | ProjectMemoryResultKind::Learning
+    ) {
+        return Vec::new();
+    }
+    let mounted_memory = format!("{}\n{}", mounted.item.title, mounted.item.excerpt);
+    let mut ids = pack
+        .items
+        .iter()
+        .filter(|item| {
+            item.kind == ProjectMemoryResultKind::Learning
+                && item.authority == ContextAuthority::TrustedReviewedKnowledge
+                && item.trusted_for_reuse
+                && item.learning_state == Some(LearningState::Verified)
+                && item.learning_trust_state == Some(LearningTrustState::Trusted)
+                && item.learning_freshness == Some(LearningFreshness::Current)
+                && explicit_negation_conflict(
+                    &format!("{}\n{}", item.title, item.excerpt),
+                    &mounted_memory,
+                )
+        })
+        .map(|item| item.entity_id.clone())
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    ids
 }
 
 fn explicit_negation_conflict(specification: &str, memory: &str) -> bool {
@@ -6369,6 +6434,186 @@ mod tests {
                 && item.specification_ids == vec![specification_id.clone()]
         }));
         assert_eq!(pack.mounted_reference_coverage.human_intent_conflicts, 1);
+        assert!(pack.estimated_tokens <= pack.max_tokens);
+    }
+
+    #[test]
+    fn mounted_historical_guidance_conflicting_with_active_trusted_state_is_explained() {
+        let root = tempdir().unwrap();
+        let config = root.path().join("config");
+        let active = root.path().join("active");
+        let active_vault = root.path().join("active-vault");
+        let reference = root.path().join("reference");
+        let reference_vault = root.path().join("reference-vault");
+        for path in [
+            &active,
+            &active_vault,
+            &reference,
+            &reference_vault,
+            &config,
+        ] {
+            fs::create_dir_all(path).unwrap();
+        }
+        initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
+        initialize_project(&reference, Some("Reference"), CaptureMode::Structured).unwrap();
+        fs::write(
+            active.join("README.md"),
+            "active_cache_policy_marker Do not use Redis cache for startup state.\n",
+        )
+        .unwrap();
+        fs::write(
+            reference.join("REFERENCE.md"),
+            "mounted_direct_cache_marker Use Redis cache for startup state.\n",
+        )
+        .unwrap();
+        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
+        bindings.bind(&active, &active_vault).unwrap();
+        bindings.bind(&reference, &reference_vault).unwrap();
+        ingest_project(&active, &active_vault).unwrap();
+        ingest_project(&reference, &reference_vault).unwrap();
+
+        let active_session = start_session(
+            &active,
+            &active_vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "Active cache state".to_owned(),
+                goal: "Record reviewed active cache guidance".to_owned(),
+                source: Default::default(),
+            },
+        )
+        .unwrap();
+        let active_checkpoint = checkpoint_session(
+            &active,
+            &active_vault,
+            &active_session.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "Captured current active cache guidance".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["README.md".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let proposed = propose_learning(
+            &active,
+            &active_vault,
+            ProposeLearningInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Constraint,
+                title: "Redis cache startup state".to_owned(),
+                guidance: "Do not use Redis cache for startup state.".to_owned(),
+                confidence_percent: 95,
+                provenance: LearningProvenance::Inferred,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: active_session.session.session_id,
+                    record_id: active_checkpoint.session.checkpoints[0].id.clone(),
+                    note: "Current active-project cache constraint.".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+        let active_learning_id = proposed.learning.learning_id.clone();
+        review_learning(
+            &active,
+            &active_vault,
+            &active_learning_id,
+            ReviewLearningInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                expected_event_count: Some(proposed.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Confirmed current active cache constraint.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+
+        let reference_session = start_session(
+            &reference,
+            &reference_vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "5".repeat(32)),
+                name: "Historical reference cache decision".to_owned(),
+                goal: "Preserve old reference guidance".to_owned(),
+                source: Default::default(),
+            },
+        )
+        .unwrap();
+        let reference_checkpoint = checkpoint_session(
+            &reference,
+            &reference_vault,
+            &reference_session.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "6".repeat(32)),
+                summary: "Reference historically chose Redis".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "Redis cache startup state".to_owned(),
+                    decision: "Use Redis cache for startup state.".to_owned(),
+                    rationale: String::new(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let reference_decision_id = reference_checkpoint.session.checkpoints[0].decisions[0]
+            .id
+            .clone();
+
+        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
+        let mounted = mounts.mount_project(&active, &reference).unwrap();
+        let pack = compile_project_context_with_registries(
+            &active,
+            &active_vault,
+            "Redis cache startup state",
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 2_000,
+            },
+            &specifications,
+            &mounts,
+        )
+        .unwrap();
+
+        assert!(pack.items.iter().any(|item| {
+            item.learning_id.as_deref() == Some(active_learning_id.as_str())
+                && item.authority == ContextAuthority::TrustedReviewedKnowledge
+                && item.trusted_for_reuse
+        }));
+        assert!(pack.mounted_references.iter().any(|item| {
+            item.mount_id == mounted.mount.mount_id
+                && item.kind == ProjectMemoryResultKind::Artifact
+                && item.excerpt.contains("mounted_direct_cache_marker")
+        }));
+        assert!(!pack
+            .mounted_references
+            .iter()
+            .any(|item| item.entity_id == reference_decision_id));
+        assert!(pack.mounted_reference_exclusions.iter().any(|item| {
+            item.mount_id == mounted.mount.mount_id
+                && item.entity_id == reference_decision_id
+                && item.reason == ContextExclusionReason::ConflictingMemory
+                && item.specification_ids.is_empty()
+                && item.conflicting_active_project_entity_ids == vec![active_learning_id.clone()]
+        }));
+        assert_eq!(pack.mounted_reference_coverage.active_project_conflicts, 1);
+        assert_eq!(pack.mounted_reference_coverage.human_intent_conflicts, 0);
+        assert_eq!(pack.reference_precedence, REFERENCE_PRECEDENCE);
         assert!(pack.estimated_tokens <= pack.max_tokens);
     }
 

@@ -3558,13 +3558,179 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             mounted_projects.append((mounted_project, mounted_vault))
 
         query = str(mounted_expectation.get("query", ""))
+        mount_index = int(mounted_expectation.get("mount_index", 0))
+        unmounted_index = int(mounted_expectation.get("unmounted_index", 1))
+        active_conflict_learning_id = ""
+        active_conflict_setup_ok = True
+        active_learning_definition = mounted_expectation.get("active_trusted_learning")
+        if isinstance(active_learning_definition, dict):
+            source_path = str(active_learning_definition.get("source_path", ""))
+            if not source_path:
+                raise RuntimeError(
+                    "mounted-reference active trusted learning fixture requires source_path"
+                )
+            started = mcp_call(
+                project,
+                "ley_session_start",
+                {
+                    "requestId": request_id(
+                        f"{scenario['id']}:mount-conflict:active:start"
+                    ),
+                    "name": "Active reference-conflict state",
+                    "goal": "Preserve reviewed active-project state for mount conflict adjudication.",
+                    "host": "codex",
+                },
+                WRITE_FLAGS,
+            )
+            active_session_id = str(started.get("sessionId", ""))
+            mcp_call(
+                project,
+                "ley_session_checkpoint",
+                {
+                    "sessionId": active_session_id,
+                    "requestId": request_id(
+                        f"{scenario['id']}:mount-conflict:active:checkpoint"
+                    ),
+                    "expectedEventCount": 1,
+                    "summary": "Captured current active-project cache guidance.",
+                    "touchedArtifacts": [source_path],
+                },
+                WRITE_FLAGS,
+            )
+            active_session = mcp_call(
+                project,
+                "ley_session_get",
+                {
+                    "sessionId": active_session_id,
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            active_checkpoints = [
+                item
+                for item in active_session.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            if not active_checkpoints:
+                raise RuntimeError(
+                    "mounted-reference active trusted learning fixture created no checkpoint"
+                )
+            proposal = mcp_call(
+                project,
+                "ley_learning_propose",
+                {
+                    "requestId": request_id(
+                        f"{scenario['id']}:mount-conflict:active:learning"
+                    ),
+                    "kind": str(active_learning_definition.get("kind", "constraint")),
+                    "title": str(active_learning_definition.get("title", "")),
+                    "guidance": str(active_learning_definition.get("guidance", "")),
+                    "confidencePercent": 95,
+                    "provenance": "agent-authored",
+                    "evidence": [
+                        {
+                            "sessionId": active_session_id,
+                            "recordId": str(
+                                active_checkpoints[-1].get("checkpointId", "")
+                            ),
+                            "note": "Current active-project state for mounted-reference conflict evaluation.",
+                        }
+                    ],
+                },
+                WRITE_FLAGS,
+            )
+            active_conflict_learning_id = str(proposal.get("learningId", ""))
+            reviewed = cli_json(
+                [
+                    "learning",
+                    "review",
+                    active_conflict_learning_id,
+                    str(project),
+                    "--actor",
+                    "user",
+                    "--action",
+                    "confirm",
+                    "--note",
+                    "Explicitly reviewed active-project state for mounted-reference conflict evaluation.",
+                    "--request-id",
+                    request_id(f"{scenario['id']}:mount-conflict:active:review"),
+                    "--json",
+                ]
+            )
+            reviewed_learning = (
+                reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
+            )
+            active_conflict_setup_ok = (
+                active_conflict_learning_id.startswith("lrn_")
+                and reviewed_learning.get("eventCount") == 2
+                and reviewed_learning.get("state") == "verified"
+                and reviewed_learning.get("trustState") == "trusted"
+            )
+
+        mounted_conflict_decision_id = ""
+        mounted_conflict_setup_ok = True
+        mounted_decision_definition = mounted_expectation.get(
+            "mounted_historical_decision"
+        )
+        if isinstance(mounted_decision_definition, dict):
+            decision_mount_index = int(
+                mounted_decision_definition.get("mount_index", mount_index)
+            )
+            decision_project, _ = mounted_projects[decision_mount_index]
+            decision_session_id, _ = create_structured_session(
+                decision_project,
+                seed=f"{scenario['id']}:mount-conflict:reference",
+                name="Historical mounted cache decision",
+                goal="Preserve lower-precedence historical reference guidance.",
+                summary="Mounted reference historically chose Redis cache.",
+                decisions=[
+                    {
+                        "title": str(
+                            mounted_decision_definition.get(
+                                "title", "Redis cache startup state"
+                            )
+                        ),
+                        "decision": str(
+                            mounted_decision_definition.get(
+                                "decision", "Use Redis cache for startup state."
+                            )
+                        ),
+                        "rationale": "Historical reference-project choice.",
+                    }
+                ],
+            )
+            decision_session = mcp_call(
+                decision_project,
+                "ley_session_get",
+                {
+                    "sessionId": decision_session_id,
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            decision_checkpoints = [
+                item
+                for item in decision_session.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            decision_rows = (
+                decision_checkpoints[-1].get("decisions", [])
+                if decision_checkpoints
+                else []
+            )
+            if isinstance(decision_rows, list) and decision_rows:
+                mounted_conflict_decision_id = str(
+                    decision_rows[0].get("id", "")
+                    if isinstance(decision_rows[0], dict)
+                    else ""
+                )
+            mounted_conflict_setup_ok = mounted_conflict_decision_id.startswith("dec_")
+
         before = mcp_call(
             project,
             "ley_compile_context",
             {"task": query, "maxResults": 8, "maxTokens": 2_000},
         )
-        mount_index = int(mounted_expectation.get("mount_index", 0))
-        unmounted_index = int(mounted_expectation.get("unmounted_index", 1))
         mounted_project, _ = mounted_projects[mount_index]
         mount_receipt = cli_json(
             ["mount", "add", str(mounted_project), str(project), "--json"]
@@ -3582,6 +3748,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         references = [
             item for item in compiled.get("mountedReferences", []) if isinstance(item, dict)
+        ]
+        mounted_exclusions = [
+            item
+            for item in compiled.get("mountedReferenceExclusions", [])
+            if isinstance(item, dict)
         ]
         scopes = [
             item for item in compiled.get("mountedReferenceScopes", []) if isinstance(item, dict)
@@ -3605,6 +3776,35 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         active_visible = (
             not active_marker
             or active_marker.lower() in serialized_active_items.lower()
+        )
+        active_conflict_visible = (
+            not active_conflict_learning_id
+            or any(
+                item.get("learningId") == active_conflict_learning_id
+                and item.get("trustedForReuse") is True
+                for item in active_items
+            )
+        )
+        mounted_history_conflict_ok = (
+            not mounted_conflict_decision_id
+            or (
+                not any(
+                    item.get("entityId") == mounted_conflict_decision_id
+                    for item in references
+                )
+                and any(
+                    item.get("mountId") == mount_id
+                    and item.get("entityId") == mounted_conflict_decision_id
+                    and item.get("reason") == "conflicting-memory"
+                    and item.get("conflictingActiveProjectEntityIds")
+                    == [active_conflict_learning_id]
+                    for item in mounted_exclusions
+                )
+                and compiled.get("mountedReferenceCoverage", {}).get(
+                    "activeProjectConflicts"
+                )
+                == 1
+            )
         )
         precedence_separation = (
             (not active_marker or active_marker.lower() not in serialized_references.lower())
@@ -3837,6 +4037,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and mount.get("agentContextEnabled") is True
             and mounted_visible
             and active_visible
+            and active_conflict_setup_ok
+            and mounted_conflict_setup_ok
+            and active_conflict_visible
+            and mounted_history_conflict_ok
             and precedence_separation
             and scope_visible
             and unrelated_hidden

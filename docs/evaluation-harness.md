@@ -492,14 +492,19 @@ privacy leakage and keeps rich/composite/tool-evidence behavior inside the exist
 Memory Compiler, memory-binding, and origin-lineage gates rather than introducing weaker standalone
 metrics.
 
-The Context Mount representative also exercises reference precedence and the complete public
-fail-closed availability lifecycle. Its active project carries current SQLite guidance while the
-explicitly mounted source carries conflicting Redis guidance. Both may be visible when the mount is
-healthy, but they remain section-separated: active-project evidence stays in the ordinary active
-context, mounted evidence stays `authority: mounted-reference` /
-`sourceBoundary: untrusted-mounted-project-memory`, and the compiler discloses
-`referencePrecedence: active-project-over-mounted-reference`. The scenario does not reinterpret this
-as automatic conflict resolution or hide the lower-authority reference.
+The Context Mount representative also exercises reference precedence, current-state conflict
+adjudication, and the complete public fail-closed availability lifecycle. Its active project carries a
+user-reviewed current Constraint that says not to use Redis for startup state, while the explicitly
+mounted source retains both raw captured Redis source evidence and a historical Decision to use Redis.
+The raw mounted artifact remains visible as lower-authority evidence, but the historical mounted
+Decision must be withheld as `conflicting-memory`, cite the exact active learning ID through
+`conflictingActiveProjectEntityIds`, and increment
+`mountedReferenceCoverage.activeProjectConflicts`. Active-project reviewed knowledge stays in the
+ordinary active context, mounted direct evidence stays `authority: mounted-reference` /
+`sourceBoundary: untrusted-mounted-project-memory`, and the compiler still discloses
+`referencePrecedence: active-project-over-mounted-reference`. The conflict rule uses deterministic
+opposite-polarity/high-term-overlap clauses only; it does not treat semantic similarity as truth or hide
+contradictory direct source evidence.
 
 The same mounted source is then moved and legitimately reobserved, after which a different initialized
 Ley project is placed at the observed location. Compilation must report
