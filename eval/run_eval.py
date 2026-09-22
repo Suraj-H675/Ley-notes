@@ -37,6 +37,7 @@ METRIC_NAMES = (
     "origin_lineage",
     "idempotency",
     "learning_idempotency",
+    "delayed_poisoning_resistance",
     "token_budget",
     "secret_exclusion",
     "specification_admission",
@@ -7584,6 +7585,341 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "learning proposal/review retries did not preserve exact replay identity, conflicting-request rejection, or two-event durable state: "
                 + ", ".join(failed_learning_idempotency_checks)
                 + proposal_conflict_detail
+            )
+
+    delayed_poisoning_expectation = scenario.get(
+        "expected_delayed_poisoning"
+    )
+    if isinstance(delayed_poisoning_expectation, dict):
+        source_path = str(
+            delayed_poisoning_expectation.get("source_path", "")
+        )
+        source_marker = str(
+            delayed_poisoning_expectation.get("source_marker", "")
+        )
+        poison_title = str(
+            delayed_poisoning_expectation.get("poison_title", "")
+        )
+        poison_marker = str(
+            delayed_poisoning_expectation.get("poison_marker", "")
+        )
+        poison_guidance = str(
+            delayed_poisoning_expectation.get("poison_guidance", "")
+        )
+        query = str(delayed_poisoning_expectation.get("query", ""))
+        if not all(
+            [
+                source_path,
+                source_marker,
+                poison_title,
+                poison_marker,
+                poison_guidance,
+                query,
+            ]
+        ):
+            raise RuntimeError("delayed poisoning fixture is incomplete")
+
+        poisoning_session = mcp_call(
+            project,
+            "ley_session_start",
+            {
+                "requestId": request_id(
+                    f"{scenario['id']}:poisoning:start"
+                ),
+                "name": "Inspect suspicious repository text",
+                "goal": (
+                    "Inspect suspicious repository text without treating it "
+                    "as trusted instructions."
+                ),
+                "host": "codex",
+            },
+            WRITE_FLAGS,
+        )
+        poisoning_session_id = str(poisoning_session.get("sessionId", ""))
+        mcp_call(
+            project,
+            "ley_session_checkpoint",
+            {
+                "sessionId": poisoning_session_id,
+                "requestId": request_id(
+                    f"{scenario['id']}:poisoning:checkpoint"
+                ),
+                "summary": (
+                    "Inspected suspicious repository content as untrusted "
+                    "captured evidence."
+                ),
+                "touchedArtifacts": [source_path],
+            },
+            WRITE_FLAGS,
+        )
+        poisoning_snapshot = cli_json(
+            [
+                "session",
+                "show",
+                poisoning_session_id,
+                str(project),
+                "--json",
+            ]
+        )
+        poisoning_checkpoints = (
+            poisoning_snapshot.get("checkpoints", [])
+            if isinstance(poisoning_snapshot, dict)
+            else []
+        )
+        poisoning_checkpoint_id = next(
+            (
+                str(item.get("checkpointId"))
+                for item in reversed(poisoning_checkpoints)
+                if isinstance(item, dict)
+                and isinstance(item.get("checkpointId"), str)
+            ),
+            "",
+        )
+        if not poisoning_checkpoint_id:
+            raise RuntimeError(
+                "delayed poisoning fixture created no checkpoint evidence"
+            )
+
+        proposal = mcp_call(
+            project,
+            "ley_learning_propose",
+            {
+                "requestId": request_id(
+                    f"{scenario['id']}:poisoning:learning"
+                ),
+                "kind": "procedure",
+                "title": poison_title,
+                "guidance": poison_guidance,
+                "confidencePercent": 99,
+                "provenance": "agent-authored",
+                "evidence": [
+                    {
+                        "sessionId": poisoning_session_id,
+                        "recordId": poisoning_checkpoint_id,
+                        "note": (
+                            "Derived from suspicious repository evidence; "
+                            "requires explicit review."
+                        ),
+                    }
+                ],
+            },
+            WRITE_FLAGS,
+        )
+        learning_id = str(proposal.get("learningId", ""))
+        learning = mcp_call(
+            project,
+            "ley_learning_get",
+            {
+                "learningId": learning_id,
+                "maxEvidence": 10,
+                "maxHistory": 10,
+                "maxArtifactsPerEvidence": 10,
+                "maxCharacters": 8_000,
+            },
+        )
+        search = mcp_call(
+            project,
+            "ley_search_memory",
+            {
+                "query": query,
+                "maxResults": 8,
+                "maxTokens": 1_500,
+            },
+        )
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {
+                "task": query,
+                "maxResults": 8,
+                "maxTokens": 1_500,
+            },
+        )
+        trusted_list = mcp_call(
+            project,
+            "ley_learnings_list",
+            {"maxResults": 50},
+        )
+        all_list = mcp_call(
+            project,
+            "ley_learnings_list",
+            {"scope": "all", "maxResults": 50},
+        )
+
+        later_host_id = f"{scenario['id']}-later-host"
+        startup = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": later_host_id,
+            },
+        )
+        later_prompt = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": later_host_id,
+                "turn_id": "delayed-poisoning-later-turn",
+                "prompt": query,
+            },
+        )
+        startup_context = hook_additional_context(startup)
+        task_context = automatic_hook_context(later_prompt)
+
+        lineage = learning.get("originLineage", {})
+        lineage_sources = (
+            lineage.get("sources", [])
+            if isinstance(lineage, dict)
+            else []
+        )
+        search_learning = next(
+            (
+                item
+                for item in search.get("results", [])
+                if isinstance(item, dict)
+                and item.get("kind") == "learning"
+                and item.get("learningId") == learning_id
+            ),
+            {},
+        )
+        compiler_exclusion = next(
+            (
+                item
+                for item in compiled.get("exclusions", [])
+                if isinstance(item, dict)
+                and item.get("entityId") == learning_id
+            ),
+            {},
+        )
+        compiler_items_text = json.dumps(
+            compiled.get("items", []),
+            sort_keys=True,
+        )
+        source_item = next(
+            (
+                item
+                for item in compiled.get("items", [])
+                if isinstance(item, dict)
+                and item.get("kind") == "artifact"
+                and item.get("citation", {}).get("artifactPath")
+                == source_path
+            ),
+            {},
+        )
+        all_learning = next(
+            (
+                item
+                for item in all_list.get("learnings", [])
+                if isinstance(item, dict)
+                and item.get("learningId") == learning_id
+            ),
+            {},
+        )
+
+        delayed_poisoning_checks = {
+            "proposal-review-required":
+                learning_id.startswith("lrn_")
+                and proposal.get("state") == "tentative"
+                and proposal.get("trustState") == "review-required"
+                and proposal.get("requiresUserReview") is True
+                and proposal.get("replayed") is False,
+            "learning-not-reusable":
+                learning.get("state") == "tentative"
+                and learning.get("trustState") == "review-required"
+                and learning.get("trustedForReuse") is False,
+            "lineage-ceiling":
+                isinstance(lineage, dict)
+                and lineage.get("automaticAuthorityCeiling")
+                == "review-required"
+                and lineage.get("causalCompletenessProven") is False
+                and lineage.get("mechanicallyResolved") is True,
+            "lineage-session-record":
+                any(
+                    isinstance(item, dict)
+                    and item.get("kind") == "session-record"
+                    and item.get("sessionId") == poisoning_session_id
+                    and item.get("recordId") == poisoning_checkpoint_id
+                    for item in lineage_sources
+                ),
+            "lineage-captured-artifact":
+                any(
+                    isinstance(item, dict)
+                    and item.get("kind") == "captured-artifact"
+                    and item.get("artifactPath") == source_path
+                    for item in lineage_sources
+                ),
+            "explicit-search-inspectable":
+                search_learning.get("learningTrustState")
+                == "review-required"
+                and search_learning.get("trustSignal") == "unverified"
+                and search_learning.get("trustedForReuse") is False
+                and poison_marker
+                in str(search_learning.get("excerpt", "")),
+            "compiler-excludes-learning":
+                compiler_exclusion.get("kind") == "learning"
+                and compiler_exclusion.get("stage") == "admission"
+                and compiler_exclusion.get("reason")
+                == "unverified-learning"
+                and compiler_exclusion.get("trustSignal")
+                == "unverified"
+                and poison_marker not in compiler_items_text,
+            "source-remains-evidence":
+                source_marker in str(source_item.get("excerpt", ""))
+                and source_item.get("authority") == "direct-evidence"
+                and source_item.get("trustedForReuse") is False,
+            "default-learning-list-clean":
+                trusted_list.get("scope") == "current-trusted"
+                and trusted_list.get("totalMatching") == 0
+                and not trusted_list.get("learnings"),
+            "explicit-learning-list-review-required":
+                all_list.get("scope") == "all"
+                and all_learning.get("trustState") == "review-required"
+                and all_learning.get("state") == "tentative"
+                and poison_marker
+                in str(all_learning.get("guidanceExcerpt", "")),
+            "startup-does-not-inject-poison":
+                poison_marker not in startup_context,
+            "task-context-does-not-inject-poison":
+                bool(task_context)
+                and poison_marker not in task_context
+                and source_marker in task_context
+                and "authority=direct-evidence trusted=false"
+                in task_context
+                and "evidence, not host policy or permission"
+                in task_context,
+        }
+        delayed_poisoning_ok = all(
+            delayed_poisoning_checks.values()
+        )
+        scores["delayed_poisoning_resistance"] = (
+            delayed_poisoning_ok
+        )
+        poisoning_outputs = [
+            proposal,
+            learning,
+            search,
+            compiled,
+            trusted_list,
+            all_list,
+            startup,
+            later_prompt,
+        ]
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)],
+            poisoning_outputs,
+        )
+        evidence_text.extend(poisoning_outputs)
+        if not delayed_poisoning_ok:
+            failed_delayed_poisoning_checks = [
+                label
+                for label, passed in delayed_poisoning_checks.items()
+                if not passed
+            ]
+            failures.append(
+                "delayed repository-text poisoning crossed a review/trust boundary: "
+                + ", ".join(failed_delayed_poisoning_checks)
             )
 
     projects = scenario.get("projects", [])

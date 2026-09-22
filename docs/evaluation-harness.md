@@ -29,6 +29,7 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 - explicit missing-semantic-model lexical fallback plus sparse-repository quality across strict
   500/1,500/3,000/8,000-token budgets;
 - deterministic code→test, trace→code, and transitive ripple-effect graph/progressive-disclosure retrieval;
+- immediate and delayed repository-memory poisoning resistance without hiding captured evidence;
 - Topic Dossier source binding, bounded topic-state coverage, privacy, and post-erasure rebuild behavior.
 
 `privacy_violation_rate` and `forgetting_residue_rate` are lower-is-better metrics. A zero result means
@@ -176,6 +177,39 @@ an exact retry replays the same review event, and a same-request/different-note 
 final learning must remain exactly two durable events (proposal + review), with verified/trusted state.
 This is idempotency evidence only; it does not imply Ley currently has a typed procedure-learning →
 verification-outcome applicability model.
+
+## Immediate and delayed memory-poisoning resistance
+
+`malicious-text-as-instruction` remains the immediate retrieval boundary: instruction-like repository
+text is retrievable as captured evidence, but retains an untrusted source boundary, never reports
+execution, and does not become an instruction merely because its wording looks imperative.
+
+`delayed-learning-poisoning-resistance` extends that into a write→retrieve→later-agent sequence. A
+captured `INSTRUCTIONS.md` contains an explicit attempt to persist itself as trusted policy and
+exfiltrate project data. The evaluator deliberately creates a later agent-authored Procedure learning
+derived from a checkpoint that touched that file, giving the proposed learning a unique marker that
+does **not** occur in the original repository text. Ley must preserve the proposal and its provenance
+for inspection while refusing to launder its authority:
+
+- proposal state remains `tentative`, trust remains `review-required`, and
+  `requiresUserReview: true`;
+- explicit learning inspection preserves the exact checkpoint plus captured-artifact origin lineage,
+  with `automaticAuthorityCeiling: review-required`, `causalCompletenessProven: false`, and
+  `trustedForReuse: false`;
+- low-level Memory Search may return the proposed learning, but labels it
+  `trustSignal: unverified` / `trustedForReuse: false`;
+- the Context Compiler must emit an admission-stage `unverified-learning` exclusion for that exact
+  learning ID, and the poisoned learning marker must not appear in compiled task-supporting items;
+- the default current-trusted learning list remains empty while explicit `scope: all` inspection can
+  still see the review-required proposal; and
+- a later real Codex `SessionStart` plus `UserPromptSubmit` lifecycle must not inject the poisoned
+  learning marker into automatic startup or task context.
+
+The malicious repository body itself is still allowed to appear in later task context as
+`authority=direct-evidence trusted=false`; the rendered host context must continue to state that such
+memory/reference text is evidence rather than host policy or permission. This scenario therefore tests
+delayed **authority laundering**, not censorship of captured adversarial evidence. Project/vault paths
+remain absent from all probed outputs.
 
 ## Opt-in real-agent downstream evaluation
 
