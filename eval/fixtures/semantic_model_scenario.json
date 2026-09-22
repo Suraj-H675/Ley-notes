@@ -1,0 +1,18 @@
+{
+  "id": "local-semantic-hybrid-and-index-recovery",
+  "goal": "Compare lexical-only and verified local hybrid retrieval, then exercise corrupt and stale derived semantic index recovery",
+  "query": "keep customer information safe after an unexpected power failure",
+  "gold_path": "src/storage.rs",
+  "gold_marker": "semantic_gold_marker_73ab",
+  "max_results": 3,
+  "max_tokens": 1500,
+  "minimum_gold_similarity": 0.1,
+  "project_files": {
+    "src/storage.rs": "SQLite write ahead logging persists committed transactions through abrupt shutdowns. fsync transaction boundaries preserve durable state. semantic_gold_marker_73ab\n",
+    "docs/process.md": "Supervisor restarts worker processes after segmentation faults and service exits.\n",
+    "docs/cache.md": "Redis eviction policy and cache warming reduce request latency.\n",
+    "docs/migrations.md": "Schema migrations support forward upgrades and rollback planning.\n",
+    "docs/auth.md": "Session cookies and token rotation protect authenticated requests.\n"
+  },
+  "updated_gold_suffix": "After the storage implementation changes, the same WAL durability rule remains current. semantic_gold_updated_marker_9f51\n"
+}

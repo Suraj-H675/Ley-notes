@@ -1407,9 +1407,15 @@ mod tests {
             }],
         };
         assert!(validate_semantic_index(&index, &binding).is_ok());
+        let current_filename = semantic_index_filename(&binding).unwrap();
         let mut mismatched = binding.clone();
         mismatched.graph_snapshot_id = format!("grf_{}", "2".repeat(64));
         assert!(validate_semantic_index(&index, &mismatched).is_err());
+        assert_ne!(
+            current_filename,
+            semantic_index_filename(&mismatched).unwrap(),
+            "a new snapshot/graph binding must use a different derived-index namespace"
+        );
         let mut invalid = index;
         invalid.entries[0].embedding.pop();
         assert!(validate_semantic_index(&invalid, &binding).is_err());

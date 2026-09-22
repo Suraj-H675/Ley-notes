@@ -141,6 +141,32 @@ verified model and belongs in a separately reproducible model-enabled run. Core 
 tests cover corrupt model/index validation; the runtime index path refuses invalid cached indexes and
 rebuilds them only when a valid local model is available.
 
+### Opt-in verified-model semantic evaluation
+
+`python3 eval/run_semantic_eval.py` is the separate model-enabled lane for the two §28.3 cases that
+cannot be honestly exercised by the cache-isolated deterministic corpus. It **never downloads a
+model**: startup requires Ley's exact pinned Model2Vec artifact to already be installed and
+checksum-verified in the caller's normal local cache, otherwise the run exits before creating a
+project.
+
+The fixture uses one captured project/snapshot and the same paraphrased storage-durability query for
+both modes. The runner first points only that search process at an empty temporary cache, forcing
+explicit lexical-only fallback under a three-result budget. The gold storage artifact must be absent.
+It then restores the caller's verified cache and repeats through real `ley_search_memory`; hybrid mode
+must recover the gold artifact inside the same top-three budget with `semanticRank: 1` and a minimum
+semantic-similarity floor. This is a measured retrieval addition, not a claim that hybrid ranking always
+beats lexical ranking.
+
+The same run then exercises the derived-index failure lifecycle against the real private project memory
+namespace. After hybrid search creates the snapshot-bound index, the fixture corrupts only that derived
+JSON file and temporarily removes write permission from its already-private directory. The next real
+MCP search must remain available but report `artifactContextMode: lexical` with the explicit
+`snapshot-bound semantic index could not be built` fallback reason. Restoring write permission and
+searching again must repair the index and return to hybrid mode. Finally, the fixture changes and
+re-ingests the gold source: the new snapshot must use a new semantic-index binding/file, the gold
+citation's artifact snapshot ID must change, and the old derived index must not be reused as current.
+All returned agent/search outputs are checked for project/vault/index-path leakage.
+
 ## Retrieval relation and progressive-disclosure scenarios
 
 The deterministic graph/retrieval corpus now includes three distinct relation shapes rather than
@@ -176,8 +202,8 @@ content. It requires the exact retry to return the same event/learning identity 
 The same contract is then exercised through explicit user review: one confirm review is recorded,
 an exact retry replays the same review event, and a same-request/different-note retry is rejected. The
 final learning must remain exactly two durable events (proposal + review), with verified/trusted state.
-This is idempotency evidence only; it does not imply Ley currently has a typed procedure-learning →
-verification-outcome applicability model.
+This is idempotency evidence only. Version-bound Procedure application/outcome history is exercised
+separately by procedure-application-outcome-history and does not change the replay contract here.
 
 ## Immediate and delayed memory-poisoning resistance
 
@@ -592,6 +618,16 @@ coverage matrix:
 ```text
 python eval/run_eval.py --p1-coverage
 ```
+
+When Ley's exact pinned local semantic model is already installed and checksum-verified, run the
+separate model-enabled retrieval/index lane:
+
+```text
+python eval/run_semantic_eval.py
+```
+
+That command never installs/downloads a model and is intentionally outside the deterministic P0/P1/P2
+coverage matrices.
 
 Run the complete corpus only when the machine can tolerate it:
 
