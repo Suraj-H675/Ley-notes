@@ -47,6 +47,7 @@ METRIC_NAMES = (
     "egress_policy",
     "selective_abstention",
     "parallel_session_separation",
+    "cross_surface_staleness",
     "deletion_fidelity",
     "forgetting_residue_rate",
     "inactive_workspace_clean",
@@ -6850,6 +6851,190 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not separated:
             failures.append(
                 "parallel sessions were merged or conflicting decisions were promoted as current"
+            )
+
+    cross_surface_expectation = scenario.get("expected_cross_surface_staleness")
+    if isinstance(cross_surface_expectation, dict):
+        host_session_id = str(
+            cross_surface_expectation.get(
+                "host_session_id",
+                "cross-surface-staleness-host",
+            )
+        )
+        prompt_marker = str(
+            cross_surface_expectation.get(
+                "prompt_marker",
+                "cross_surface_host_write_marker",
+            )
+        )
+        final_name = str(
+            cross_surface_expectation.get(
+                "final_name",
+                "Reloaded local session name",
+            )
+        )
+        if not host_session_id or not prompt_marker or not final_name:
+            raise RuntimeError("cross-surface staleness fixture is incomplete")
+
+        startup = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": host_session_id,
+            },
+        )
+        host_ley_session_id = hook_ley_session_id(startup)
+        if not host_ley_session_id:
+            raise RuntimeError(
+                "cross-surface staleness fixture did not resolve the host Ley session"
+            )
+        observed = cli_json(
+            [
+                "session",
+                "show",
+                host_ley_session_id,
+                str(project),
+                "--json",
+            ]
+        )
+        observed_count = int(observed.get("eventCount", 0))
+        observed_name = str(observed.get("name", ""))
+
+        host_prompt = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": host_session_id,
+                "turn_id": "cross-surface-staleness-turn",
+                "prompt": (
+                    f"Record this concurrent host observation: {prompt_marker}"
+                ),
+            },
+        )
+        after_host = cli_json(
+            [
+                "session",
+                "show",
+                host_ley_session_id,
+                str(project),
+                "--json",
+            ]
+        )
+        after_host_count = int(after_host.get("eventCount", 0))
+
+        stale_error = ""
+        try:
+            run(
+                [
+                    "session",
+                    "rename",
+                    host_ley_session_id,
+                    str(project),
+                    "--name",
+                    "Stale local rename must fail",
+                    "--note",
+                    "This local view predates a host memory write.",
+                    "--expected-events",
+                    str(observed_count),
+                    "--json",
+                ]
+            )
+        except RuntimeError as error:
+            stale_error = str(error)
+
+        after_stale = cli_json(
+            [
+                "session",
+                "show",
+                host_ley_session_id,
+                str(project),
+                "--json",
+            ]
+        )
+        reloaded_count = int(after_stale.get("eventCount", 0))
+        cli_json(
+            [
+                "session",
+                "rename",
+                host_ley_session_id,
+                str(project),
+                "--name",
+                final_name,
+                "--note",
+                "Reloaded after the concurrent host write.",
+                "--expected-events",
+                str(reloaded_count),
+                "--json",
+            ]
+        )
+        final_session = cli_json(
+            [
+                "session",
+                "show",
+                host_ley_session_id,
+                str(project),
+                "--json",
+            ]
+        )
+        turns = mcp_call(
+            project,
+            "ley_session_turns_get",
+            {
+                "sessionId": host_ley_session_id,
+                "maxResults": 20,
+                "maxCharacters": 8_000,
+            },
+        )
+        turns_text = json.dumps(turns, sort_keys=True)
+        cross_surface_checks = {
+            "startup-session": host_ley_session_id.startswith("ses_"),
+            "initial-event-count": observed_count >= 1,
+            "host-write-advanced":
+                after_host_count == observed_count + 1
+                and prompt_marker in turns_text,
+            "stale-local-write-rejected":
+                (
+                    f"session changed from {observed_count} events to "
+                    f"{after_host_count}; reload before saving"
+                )
+                in stale_error,
+            "stale-write-nonmutating":
+                int(after_stale.get("eventCount", 0)) == after_host_count
+                and after_stale.get("name") == observed_name,
+            "reloaded-write-succeeds":
+                final_session.get("name") == final_name
+                and int(final_session.get("eventCount", 0))
+                == after_host_count + 1,
+            "snapshot-only":
+                turns.get("liveSourceChecked") is False,
+        }
+        cross_surface_ok = all(cross_surface_checks.values())
+        scores["cross_surface_staleness"] = cross_surface_ok
+        cross_surface_outputs = [
+            startup,
+            host_prompt,
+            observed,
+            after_host,
+            after_stale,
+            final_session,
+            turns,
+        ]
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)],
+            cross_surface_outputs,
+        )
+        evidence_text.extend(cross_surface_outputs)
+        if not cross_surface_ok:
+            failed_cross_surface_checks = [
+                label
+                for label, passed in cross_surface_checks.items()
+                if not passed
+            ]
+            failures.append(
+                "concurrent host/local session mutation did not preserve stale-write protection: "
+                + ", ".join(failed_cross_surface_checks)
             )
 
     deletion_expectation = scenario.get("expected_deletion_fidelity")

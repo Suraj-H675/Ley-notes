@@ -1171,22 +1171,40 @@ fn review_agent_learning(
 ) -> Result<AgentMemoryDashboard, String> {
     resolved_agent_binding(Path::new(&project_path))
         .and_then(|binding| {
-            review_learning(
-                &project_path,
-                &binding.vault_path,
+            review_agent_learning_with_binding(
+                Path::new(&project_path),
+                binding,
                 &learning_id,
-                ReviewLearningInput {
-                    request_id: generate_learning_request_id(),
-                    expected_event_count: Some(expected_event_count),
-                    actor: LearningActor::User,
-                    action,
-                    note,
-                    replacement_learning_id: None,
-                },
-            )?;
-            load_agent_memory_dashboard(Path::new(&project_path), binding)
+                expected_event_count,
+                action,
+                note,
+            )
         })
         .map_err(|error| error.to_string())
+}
+
+fn review_agent_learning_with_binding(
+    project_path: &Path,
+    binding: ProjectVaultBinding,
+    learning_id: &str,
+    expected_event_count: u64,
+    action: LearningFeedbackAction,
+    note: String,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    review_learning(
+        project_path,
+        &binding.vault_path,
+        learning_id,
+        ReviewLearningInput {
+            request_id: generate_learning_request_id(),
+            expected_event_count: Some(expected_event_count),
+            actor: LearningActor::User,
+            action,
+            note,
+            replacement_learning_id: None,
+        },
+    )?;
+    load_agent_memory_dashboard(project_path, binding)
 }
 
 #[tauri::command]
@@ -2818,6 +2836,160 @@ mod tests {
         assert_eq!(
             correction.evidence[0].note,
             "Captured in the dashboard implementation session."
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn desktop_learning_review_rejects_stale_visible_event_count() {
+        use ley_core::{
+            checkpoint_session, propose_learning, start_session, CheckpointInput,
+            LearningEvidenceInput, LearningKind, LearningProvenance, ProposeLearningInput,
+            SessionSource, StartSessionInput,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "ley-desktop-stale-learning-review-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("project");
+        let vault = root.join("vault");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(
+            project.join("README.md"),
+            "# Stale review\n\nKeep desktop reviews version-bound.",
+        )
+        .unwrap();
+        let initialized = initialize_project(
+            &project,
+            Some("Desktop stale review"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let session = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "a".repeat(32)),
+                name: "Capture review evidence".into(),
+                goal: "Create one reviewable learning.".into(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &session.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "b".repeat(32)),
+                summary: "Captured one stable review source.".into(),
+                plan: vec![],
+                decisions: vec![],
+                tasks: vec![],
+                problems: vec![],
+                touched_artifacts: vec!["README.md".into()],
+                commands: vec![],
+                verification: vec![],
+                unresolved: vec![],
+            },
+        )
+        .unwrap();
+        let evidence = LearningEvidenceInput {
+            session_id: session.session.session_id.clone(),
+            record_id: checkpoint.session.checkpoints.last().unwrap().id.clone(),
+            note: "Desktop stale-review evidence.".into(),
+        };
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: format!("req_{}", "c".repeat(32)),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Inspect before review".into(),
+                guidance: "Read the current claim before trusting it.".into(),
+                confidence_percent: 80,
+                provenance: LearningProvenance::AgentAuthored,
+                evidence: vec![evidence.clone()],
+            },
+        )
+        .unwrap();
+        let binding = ProjectVaultBinding {
+            project_id: initialized.identity.project_id,
+            vault_path: vault.canonicalize().unwrap(),
+            source: BindingSource::Override,
+        };
+        let visible_event_count = proposed.learning.event_count;
+        assert_eq!(visible_event_count, 1);
+
+        let concurrent = correct_learning(
+            &project,
+            &vault,
+            &proposed.learning.learning_id,
+            CorrectLearningInput {
+                request_id: format!("req_{}", "d".repeat(32)),
+                expected_event_count: Some(visible_event_count),
+                actor: LearningActor::User,
+                title: "Inspect the latest claim before review".into(),
+                guidance: "Reload the latest learning text before trusting it.".into(),
+                confidence_percent: 85,
+                evidence: vec![evidence],
+                note: "Another desktop window corrected the learning.".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(concurrent.learning.event_count, 2);
+
+        let stale_error = match review_agent_learning_with_binding(
+            &project,
+            binding.clone(),
+            &proposed.learning.learning_id,
+            visible_event_count,
+            LearningFeedbackAction::Confirm,
+            "This stale inspector must not trust unseen text.".into(),
+        ) {
+            Ok(_) => panic!("stale desktop review unexpectedly succeeded"),
+            Err(error) => error,
+        };
+        assert!(stale_error.to_string().contains("reload before saving"));
+
+        let after_stale = read_learning(&project, &vault, &proposed.learning.learning_id).unwrap();
+        assert_eq!(after_stale.event_count, concurrent.learning.event_count);
+        assert_eq!(after_stale.title, concurrent.learning.title);
+        assert_eq!(
+            after_stale.trust_state,
+            ley_core::LearningTrustState::ReviewRequired
+        );
+
+        let reviewed = review_agent_learning_with_binding(
+            &project,
+            binding,
+            &proposed.learning.learning_id,
+            after_stale.event_count,
+            LearningFeedbackAction::Confirm,
+            "Reloaded the corrected claim before confirming it.".into(),
+        )
+        .unwrap();
+        assert_eq!(reviewed.review_inbox.total_matching, 0);
+        assert_eq!(reviewed.resume.total_current_trusted_learnings, 1);
+
+        let final_learning =
+            read_learning(&project, &vault, &proposed.learning.learning_id).unwrap();
+        assert_eq!(final_learning.event_count, 3);
+        assert_eq!(final_learning.state, ley_core::LearningState::Verified);
+        assert_eq!(
+            final_learning.trust_state,
+            ley_core::LearningTrustState::Trusted
         );
 
         fs::remove_dir_all(root).unwrap();

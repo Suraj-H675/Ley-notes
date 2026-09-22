@@ -30,6 +30,7 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
   500/1,500/3,000/8,000-token budgets;
 - deterministic code→test, trace→code, and transitive ripple-effect graph/progressive-disclosure retrieval;
 - immediate and delayed repository-memory poisoning resistance without hiding captured evidence;
+- cross-surface stale-write rejection plus native desktop stale learning-review protection;
 - Topic Dossier source binding, bounded topic-state coverage, privacy, and post-erasure rebuild behavior.
 
 `privacy_violation_rate` and `forgetting_residue_rate` are lower-is-better metrics. A zero result means
@@ -210,6 +211,30 @@ The malicious repository body itself is still allowed to appear in later task co
 memory/reference text is evidence rather than host policy or permission. This scenario therefore tests
 delayed **authority laundering**, not censorship of captured adversarial evidence. Project/vault paths
 remain absent from all probed outputs.
+
+## Cross-surface concurrency and stale user review
+
+`host-local-stale-session-write` exercises one real lifecycle-host/local-writer race. A Codex
+`SessionStart` creates the durable Ley session and a local reader records its current event count.
+A subsequent Codex `UserPromptSubmit` appends one retained host observation to that exact session.
+A local version-guarded `session rename --expected-events <old-count>` must then fail with
+`reload before saving`, leave both the name and event count unchanged, and succeed only after the
+caller reloads the new count. The scenario also reads the retained session turns to prove the host
+marker caused the intervening event and requires zero project/vault path leakage.
+
+Learning review has a stronger user-authority boundary: MCP/agents may propose review-required
+learnings but do not receive confirm/correct/reject/supersede authority. The desktop bridge therefore
+has a focused native regression,
+`desktop_learning_review_rejects_stale_visible_event_count`, rather than pretending an MCP action is
+a desktop review. The Tauri `review_agent_learning` command delegates through the same helper under
+test and forwards the event count visible when the inspector opened. The regression creates a
+review-required learning at event 1, applies a concurrent correction to event 2, and requires the stale
+event-1 desktop confirmation to fail without appending or trusting unseen text. After reloading event 2,
+the same desktop review path may confirm it, producing exactly event 3 and trusted/verified state.
+
+Together these checks cover concurrent host/local durable writes and stale user review while preserving
+the intentional authority split: lifecycle/MCP surfaces can advance session evidence or propose
+tentative memory, whereas high-consequence learning trust remains a version-guarded local user action.
 
 ## Opt-in real-agent downstream evaluation
 
