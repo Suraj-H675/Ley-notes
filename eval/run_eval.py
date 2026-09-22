@@ -6984,6 +6984,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and observed_retry.get("eventId") == observed.get("eventId")
             and observed_retry.get("eventCount") == 5
             and observed_retry.get("replayed") is True
+            and session_context.get("schemaVersion") == 5
+            and session_context.get("projectionSchemaVersion") == 1
             and session_context.get("contextUtilityBindingCount") == 1
             and session_context.get("contextUtilityObservationCount") == 1
             and session_context.get("omittedContextUtilityObservations") == 0
@@ -7441,6 +7443,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     and binding_id.startswith("cub_")
                     and observed.get("eventCount") == 4
                     and session_context.get("schemaVersion") == 15
+                    and session_context.get("projectionSchemaVersion") == 1
                     and utility.get("claimedAppliedLearningIds") == [learning_id]
                     and outcome.get("passedVerifications") == expected_passed
                     and outcome.get("failedVerifications") == expected_failed
@@ -7513,6 +7516,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             learning_id.startswith("lrn_")
             and proposed.get("eventCount") == 1
             and reviewed_event_count == 2
+            and final_learning.get("schemaVersion") == 2
+            and final_learning.get("projectionSchemaVersion") == 1
             and final_learning.get("eventCount") == 2
             and final_learning.get("state") == "verified"
             and final_learning.get("trustState") == "trusted"

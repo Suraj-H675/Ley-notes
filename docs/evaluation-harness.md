@@ -259,6 +259,10 @@ for inspection while refusing to launder its authority:
 - explicit learning inspection preserves the exact checkpoint plus captured-artifact origin lineage,
   with `automaticAuthorityCeiling: review-required`, `causalCompletenessProven: false`, and
   `trustedForReuse: false`;
+- provenance readers keep durable ledger schema identity separate from read-projection identity:
+  ordinary utility Session Context reports ledger schema v5 plus projection v1, Procedure-claim
+  Session Context reports ledger schema v15 plus projection v1, and Learning Context reports durable
+  learning schema v2 plus projection v1;
 - low-level Memory Search may return the proposed learning, but labels it
   `trustSignal: unverified` / `trustedForReuse: false`;
 - the Context Compiler must emit an admission-stage `unverified-learning` exclusion for that exact
@@ -602,7 +606,7 @@ current entries are **Topic Dossiers**, **Current Project State**, **Context Pac
 - a real active-session project-state journey proving working/open-state, historical-decision, verification, exact current Specification authority handles without Specification-body copying, current→changed Specification attention/fingerprint invalidation, and privacy semantics;
 - zero privacy-canary leakage from the returned project-state projection.
 - Context Pack Inspector exact-ID reproduction, hidden-body omission, forged-ID mismatch honesty, and zero path leakage through the real MCP path.
-- Memory Health schema-v2 advisory/non-destructive semantics, review/uncited/duplicate/session/unresolved/recovery signals, exact-current Procedure application outcome attention for the failed member of the real pass → fail → pass history, pass-only/version-mismatch suppression, explicit unsupported reverification disclosure, private recovery/task/Procedure/context-body omission, deletion fidelity, and zero path leakage through the real MCP path.
+- Memory Health schema-v4 advisory/non-destructive semantics, review/uncited/duplicate/session/unresolved/recovery signals, exact-current Procedure application outcome attention for the failed member of the real pass → fail → pass history, pass-only/version-mismatch suppression, terminal unobserved context-utility binding attention plus bounded total/observed/unobserved binding coverage, explicit unsupported reverification/helpfulness disclosure, private recovery/task/Procedure/context-body omission, deletion fidelity, and zero path leakage through the real MCP path.
 - Agent Legibility coverage for captured architecture, important directory, declared command, observed command, policy, schema/migration, API candidate, observability reference, current plan, and approved Specification metadata; deterministic source binding; explicit no-score semantics; private Specification-body omission; deletion fidelity; and zero local-path leakage through the real MCP path.
 - Reviewed Runbook coverage for explicit user-confirmed current procedure/pitfall/convention selection, deterministic runbook/source identity, no authority increase, unrelated-session omission, exact-ID stale-export rejection, explicit host/egress selection, cloud blocking under local-only policy, non-installing Skill output, and zero local-path leakage through the real CLI path.
 - Verification Evidence coverage for a real structured test outcome with an immutable captured-artifact citation; propagation through `ley_session_get` and Current Project State; deliberate live-file drift after the checkpoint without hash drift in Ley; explicit `liveSourceChecked: false`; and zero live-canary or local-path leakage. Unknown/uncaptured evidence paths are rejected by focused core coverage.

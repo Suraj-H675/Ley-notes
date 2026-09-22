@@ -71,6 +71,11 @@ Ley appends the new name and required reason as another immutable event. The ori
 
 The desktop session inspector exposes **Erase session memory** as a reviewed destructive action. It requires the exact current session name and rejects the operation if another writer appended an event after the inspector loaded.
 
+Agent-facing Session Context/Turns responses keep two schema identities separate:
+`projectionSchemaVersion` describes the reader JSON contract, while `schemaVersion` remains the
+underlying durable session ledger schema. A later event-schema upgrade therefore does not silently
+redefine the meaning of the reader payload. See ADR 0083.
+
 When a session contains explicit context-utility bindings, the same inspector also shows a compact
 **Context utility measurement** section. It reports bound, uniquely observed, and unobserved binding
 counts plus at most the already-bounded unobserved binding metadata returned by Session Context. A

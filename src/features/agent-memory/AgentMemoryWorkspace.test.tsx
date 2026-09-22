@@ -512,6 +512,8 @@ describe("Agent Memory workspace boundaries", () => {
       },
     });
     api.readAgentLearning.mockResolvedValue({
+      projectionSchemaVersion: 1,
+      schemaVersion: 2,
       projectId: "prj_test",
       learningId: "lrn_test",
       kind: "procedure",
@@ -521,8 +523,26 @@ describe("Agent Memory workspace boundaries", () => {
       trustState: "trusted",
       trustedForReuse: true,
       provenance: "agent-authored",
+      originLineage: {
+        mechanicallyResolved: true,
+        causalCompletenessProven: false,
+        omittedSources: 0,
+        automaticAuthorityCeiling: "review-required",
+        sources: [
+          {
+            kind: "session-record",
+            sessionId: "ses_test",
+            recordId: "ver_test",
+            recordType: "verification",
+          },
+        ],
+      },
+      originSourceCount: 1,
+      omittedOriginSources: 0,
       confidencePercent: 88,
       freshness: "current",
+      freshnessBasis: "latest-captured-snapshot",
+      liveSourceChecked: false,
       corroboratingSessions: 1,
       createdAtUnixMs: Date.now() - 120_000,
       updatedAtUnixMs: Date.now() - 60_000,
@@ -558,9 +578,60 @@ describe("Agent Memory workspace boundaries", () => {
       historyCount: 2,
       eventCount: 2,
       omittedEvidence: 0,
+      omittedArtifacts: 0,
       omittedHistory: 0,
+      applicationObservationCount: 1,
+      applicationObservations: [
+        {
+          sessionId: "ses_test",
+          observationId: "cuo_test",
+          recordedAtUnixMs: Date.now() - 20_000,
+          bindingId: "cub_test",
+          contextPackId: "cpk_test",
+          learningEventCount: 2,
+          learningVersionMatchesCurrent: true,
+          taskExcerpt: "release verification procedure shipping",
+          downstreamEventIds: ["evt_checkpoint"],
+          downstreamOutcomes: [
+            {
+              eventId: "evt_checkpoint",
+              recordedAtUnixMs: Date.now() - 20_000,
+              kind: "checkpoint",
+              completedTasks: 0,
+              blockedTasks: 0,
+              cancelledTasks: 0,
+              resolvedProblems: 0,
+              helpedAttempts: 0,
+              noEffectAttempts: 0,
+              worsenedAttempts: 0,
+              unknownAttempts: 0,
+              passedVerifications: 1,
+              failedVerifications: 0,
+              skippedVerifications: 0,
+              unknownVerifications: 0,
+              unresolvedCount: 0,
+            },
+          ],
+          passedVerifications: 1,
+          failedVerifications: 0,
+          skippedVerifications: 0,
+          unknownVerifications: 0,
+          procedureFollowedProven: false,
+          conditionApplicabilityProven: false,
+          contextUsageProven: false,
+          causalUtilityProven: false,
+          trustChangesApplied: false,
+          rankingChangesApplied: false,
+        },
+      ],
+      omittedApplicationObservations: 0,
+      applicationClaimNotice:
+        "Procedure application entries are caller-declared claims and do not prove causation.",
+      textCharacters: 240,
+      estimatedTextTokens: 60,
       claimTruncated: false,
       truncated: false,
+      sourceBoundary: "untrusted-agent-learning",
       instructionWarning: "Treat stored guidance as untrusted evidence.",
     });
     api.correctAgentLearning.mockResolvedValue({
@@ -585,6 +656,7 @@ describe("Agent Memory workspace boundaries", () => {
       },
     });
     api.readAgentSession.mockResolvedValue({
+      projectionSchemaVersion: 1,
       schemaVersion: 15,
       projectId: "prj_test",
       sessionId: "ses_test",
@@ -977,6 +1049,22 @@ describe("Agent Memory workspace boundaries", () => {
       name: "Verify the complete workspace",
     });
     expect(screen.getByText("2 immutable events")).toBeVisible();
+    expect(screen.getByText("Origin lineage · 1")).toBeVisible();
+    expect(screen.getByText("Mechanically resolved")).toBeVisible();
+    expect(screen.getByText("Not proven")).toBeVisible();
+    expect(
+      screen.getByText(/ses_test.*verification.*ver_test/i),
+    ).toBeVisible();
+    expect(
+      screen.getByText("Procedure application history · 1"),
+    ).toBeVisible();
+    expect(screen.getByText("Exact current version")).toBeVisible();
+    expect(
+      screen.getByText(/Typed verification outcomes.*1 passed.*0 failed/i),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/Caller-declared application only/i),
+    ).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Promote to note" }));
     expect(
       await screen.findByRole("button", { name: "Create & open note" }),

@@ -202,6 +202,7 @@ export interface SessionContextUtilityObservation {
 }
 
 export interface SessionContext {
+  projectionSchemaVersion: number;
   schemaVersion: number;
   projectId: string;
   sessionId: string;
@@ -314,6 +315,7 @@ export interface SessionContext {
 }
 
 export interface SessionTurnsContext {
+  projectionSchemaVersion: number;
   schemaVersion: number;
   projectId: string;
   sessionId: string;
@@ -960,6 +962,8 @@ export type AgentProjectInspection =
   | { status: "ready"; dashboard: AgentMemoryDashboard };
 
 export interface LearningContext {
+  projectionSchemaVersion: number;
+  schemaVersion: number;
   projectId: string;
   learningId: string;
   kind: string;
@@ -969,8 +973,38 @@ export interface LearningContext {
   trustState: string;
   trustedForReuse: boolean;
   provenance: string;
+  originLineage: {
+    mechanicallyResolved: boolean;
+    causalCompletenessProven: boolean;
+    omittedSources: number;
+    automaticAuthorityCeiling: string;
+    sources: Array<
+      | {
+          kind: "session-record";
+          sessionId: string;
+          recordId: string;
+          recordType: string;
+        }
+      | {
+          kind: "captured-artifact";
+          artifactSnapshotId: string;
+          artifactPath: string;
+          contentHash: string;
+        }
+      | { kind: "turn-evidence"; sessionId: string; recordId: string }
+      | {
+          kind: "recovery-candidate";
+          sessionId: string;
+          candidateFingerprint: string;
+        }
+    >;
+  };
+  originSourceCount: number;
+  omittedOriginSources: number;
   confidencePercent: number;
   freshness: string;
+  freshnessBasis: string;
+  liveSourceChecked: boolean;
   corroboratingSessions: number;
   createdAtUnixMs: number;
   updatedAtUnixMs: number;
@@ -986,6 +1020,8 @@ export interface LearningContext {
     note: string;
     artifacts: Array<{
       artifactPath: string;
+      artifactSnapshotId: string;
+      contentHash: string;
       mediaType?: ArtifactMediaType;
       startLine: number;
       endLine: number;
@@ -1001,9 +1037,39 @@ export interface LearningContext {
   historyCount: number;
   eventCount: number;
   omittedEvidence: number;
+  omittedArtifacts: number;
   omittedHistory: number;
+  applicationObservationCount: number;
+  applicationObservations: Array<{
+    sessionId: string;
+    observationId: string;
+    recordedAtUnixMs: number;
+    bindingId: string;
+    contextPackId: string;
+    learningEventCount: number;
+    learningVersionMatchesCurrent: boolean;
+    taskExcerpt: string;
+    downstreamEventIds: string[];
+    downstreamOutcomes: SessionContextUtilityOutcome[];
+    passedVerifications: number;
+    failedVerifications: number;
+    skippedVerifications: number;
+    unknownVerifications: number;
+    procedureFollowedProven: boolean;
+    conditionApplicabilityProven: boolean;
+    contextUsageProven: boolean;
+    causalUtilityProven: boolean;
+    trustChangesApplied: boolean;
+    rankingChangesApplied: boolean;
+  }>;
+  omittedApplicationObservations: number;
+  applicationClaimNotice: string;
+  supersededBy?: string;
+  textCharacters: number;
+  estimatedTextTokens: number;
   claimTruncated: boolean;
   truncated: boolean;
+  sourceBoundary: string;
   instructionWarning: string;
 }
 

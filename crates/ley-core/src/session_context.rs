@@ -13,6 +13,8 @@ use std::path::Path;
 
 pub const DEFAULT_SESSION_LIST_RESULTS: usize = 20;
 pub const MAX_SESSION_LIST_RESULTS: usize = 50;
+pub const SESSION_CONTEXT_PROJECTION_SCHEMA_VERSION: u32 = 1;
+pub const SESSION_TURNS_CONTEXT_PROJECTION_SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_SESSION_CONTEXT_CHECKPOINTS: usize = 5;
 pub const MAX_SESSION_CONTEXT_CHECKPOINTS: usize = 20;
 pub const MAX_SESSION_CONTEXT_RENAMES: usize = 10;
@@ -125,6 +127,8 @@ pub struct SessionList {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionContextPack {
+    pub projection_schema_version: u32,
+    /// Durable session-ledger schema version. This is intentionally distinct from the read projection version.
     pub schema_version: u32,
     pub project_id: String,
     pub session_id: String,
@@ -224,6 +228,8 @@ pub struct SessionToolObservationContext {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionTurnsContextPack {
+    pub projection_schema_version: u32,
+    /// Durable session-ledger schema version. This is intentionally distinct from the read projection version.
     pub schema_version: u32,
     pub project_id: String,
     pub session_id: String,
@@ -831,6 +837,7 @@ fn context_from_session(
     }
     let text_characters = budget.used;
     SessionContextPack {
+        projection_schema_version: SESSION_CONTEXT_PROJECTION_SCHEMA_VERSION,
         schema_version: session.schema_version,
         project_id: session.project_id,
         session_id: session.session_id,
@@ -1021,6 +1028,7 @@ fn turns_context_from_session(
     }
     let text_characters = budget.used;
     SessionTurnsContextPack {
+        projection_schema_version: SESSION_TURNS_CONTEXT_PROJECTION_SCHEMA_VERSION,
         schema_version: session.schema_version,
         project_id: session.project_id,
         session_id: session.session_id,
@@ -1288,6 +1296,15 @@ mod tests {
             MIN_SESSION_CONTEXT_CHARACTERS,
         )
         .unwrap();
+        assert_eq!(
+            context.projection_schema_version,
+            SESSION_CONTEXT_PROJECTION_SCHEMA_VERSION
+        );
+        assert_eq!(
+            context.schema_version,
+            crate::SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
+        );
+        assert_ne!(context.schema_version, context.projection_schema_version);
         assert_eq!(context.checkpoint_count, 3);
         assert!(context.checkpoints.len() <= 2);
         assert!(context.omitted_checkpoints >= 1);
@@ -1410,6 +1427,15 @@ mod tests {
             DEFAULT_SESSION_TURN_CHARACTERS,
         )
         .unwrap();
+        assert_eq!(
+            history.projection_schema_version,
+            SESSION_TURNS_CONTEXT_PROJECTION_SCHEMA_VERSION
+        );
+        assert_eq!(
+            history.schema_version,
+            crate::SESSION_TOOL_EVIDENCE_SCHEMA_VERSION
+        );
+        assert_ne!(history.schema_version, history.projection_schema_version);
         assert_eq!(history.prompt_count, 1);
         assert_eq!(history.response_count, 0);
         assert_eq!(history.turns.len(), 1);

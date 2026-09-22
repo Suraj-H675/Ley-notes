@@ -7,6 +7,7 @@ import { SessionCanvasEditor } from "./SessionCanvasEditor";
 import type { SessionContext } from "./types";
 
 const session: SessionContext = {
+  projectionSchemaVersion: 1,
   schemaVersion: 1,
   projectId: "prj_test",
   sessionId: "ses_test",

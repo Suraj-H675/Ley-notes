@@ -16,6 +16,7 @@ vi.mock("./api", () => ({
 }));
 
 const session: SessionContext = {
+  projectionSchemaVersion: 1,
   schemaVersion: 1,
   projectId: "prj_test",
   sessionId: "ses_test",

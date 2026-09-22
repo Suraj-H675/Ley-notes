@@ -9,6 +9,7 @@ use std::path::Path;
 
 pub const DEFAULT_LEARNING_LIST_RESULTS: usize = 20;
 pub const MAX_LEARNING_LIST_RESULTS: usize = 50;
+pub const LEARNING_CONTEXT_PROJECTION_SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_LEARNING_CONTEXT_EVIDENCE: usize = 5;
 pub const MAX_LEARNING_CONTEXT_EVIDENCE: usize = 20;
 pub const DEFAULT_LEARNING_CONTEXT_HISTORY: usize = 10;
@@ -81,6 +82,8 @@ pub struct LearningApplicationObservation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningContextPack {
+    pub projection_schema_version: u32,
+    /// Durable learning-ledger schema version. This is intentionally distinct from the read projection version.
     pub schema_version: u32,
     pub project_id: String,
     pub learning_id: String,
@@ -246,6 +249,7 @@ pub fn read_learning_context(
     let text_characters = budget.used;
 
     Ok(LearningContextPack {
+        projection_schema_version: LEARNING_CONTEXT_PROJECTION_SCHEMA_VERSION,
         schema_version: learning.schema_version,
         project_id: learning.project_id,
         learning_id: learning.learning_id,
@@ -644,6 +648,11 @@ mod tests {
             MIN_LEARNING_CONTEXT_CHARACTERS,
         )
         .unwrap();
+        assert_eq!(
+            context.projection_schema_version,
+            LEARNING_CONTEXT_PROJECTION_SCHEMA_VERSION
+        );
+        assert_eq!(context.schema_version, crate::LEARNING_SCHEMA_VERSION);
         assert!(context.trusted_for_reuse);
         assert!(context.truncated);
         assert!(context.claim_truncated);
@@ -663,6 +672,10 @@ mod tests {
             MAX_LEARNING_CONTEXT_CHARACTERS,
         )
         .unwrap();
+        assert_eq!(
+            provenance_bounded.projection_schema_version,
+            LEARNING_CONTEXT_PROJECTION_SCHEMA_VERSION
+        );
         assert!(provenance_bounded.truncated);
         assert!(!provenance_bounded.claim_truncated);
 

@@ -2872,11 +2872,17 @@ function LearningInspectorBody({
       ) : learning ? (
         <div className="space-y-6">
           <LearningOverview learning={learning} />
+          <LearningOriginLineage
+            learning={learning}
+            onSession={onSession}
+            onArtifact={onArtifact}
+          />
           <LearningEvidence
             learning={learning}
             onSession={onSession}
             onArtifact={onArtifact}
           />
+          <LearningApplications learning={learning} onSession={onSession} />
           <LearningHistory learning={learning} />
           {learning.claimTruncated && (
             <p className="rounded-md border border-warning/25 bg-warning/8 p-3 text-micro text-muted-foreground">
@@ -3060,6 +3066,134 @@ function LearningEvidence({
   );
 }
 
+function LearningOriginLineage({
+  learning,
+  onSession,
+  onArtifact,
+}: {
+  learning: LearningContext;
+  onSession: (sessionId: string) => void;
+  onArtifact: (path: string) => void;
+}) {
+  return (
+    <section>
+      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        Origin lineage · {learning.originSourceCount}
+      </h3>
+      <dl className="mt-2 grid gap-2 rounded-md border border-border bg-background/35 p-3 text-meta sm:grid-cols-3">
+        <div>
+          <dt className="text-micro text-muted-foreground">Resolution</dt>
+          <dd className="mt-0.5 font-medium">
+            {learning.originLineage.mechanicallyResolved
+              ? "Mechanically resolved"
+              : "Incomplete lineage"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-micro text-muted-foreground">
+            Causal completeness
+          </dt>
+          <dd className="mt-0.5 font-medium">
+            {learning.originLineage.causalCompletenessProven
+              ? "Proven"
+              : "Not proven"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-micro text-muted-foreground">
+            Automatic authority ceiling
+          </dt>
+          <dd className="mt-0.5 font-medium">
+            {humanize(learning.originLineage.automaticAuthorityCeiling)}
+          </dd>
+        </div>
+      </dl>
+      {learning.originLineage.sources.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {learning.originLineage.sources.map((source, index) => {
+            const key = learningOriginSourceKey(source, index);
+            return (
+              <div
+                key={key}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/35 p-3 text-micro"
+              >
+                <div className="min-w-0">
+                  <span className="font-medium text-muted-foreground-strong">
+                    {humanize(source.kind)}
+                  </span>
+                  <p className="mt-0.5 break-all font-mono text-muted-foreground">
+                    {learningOriginSourceHandle(source)}
+                  </p>
+                </div>
+                {source.kind === "captured-artifact" ? (
+                  <button
+                    type="button"
+                    onClick={() => onArtifact(source.artifactPath)}
+                    className="touch-manipulation rounded font-semibold text-primary outline-none transition-transform hover:underline active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    Open artifact
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onSession(source.sessionId)}
+                    className="touch-manipulation rounded font-semibold text-primary outline-none transition-transform hover:underline active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    Open session
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {learning.omittedOriginSources > 0 && (
+        <p className="mt-2 text-micro text-muted-foreground">
+          {learning.omittedOriginSources} origin sources are outside this
+          bounded view.
+        </p>
+      )}
+      <p className="mt-2 text-micro leading-5 text-muted-foreground">
+        Lineage records where this learning came from. It does not increase
+        authority or prove that the recorded sources are causally complete.
+      </p>
+    </section>
+  );
+}
+
+function learningOriginSourceKey(
+  source: LearningContext["originLineage"]["sources"][number],
+  index: number,
+): string {
+  switch (source.kind) {
+    case "session-record":
+      return `${source.kind}:${source.sessionId}:${source.recordId}`;
+    case "captured-artifact":
+      return `${source.kind}:${source.artifactSnapshotId}:${source.artifactPath}`;
+    case "turn-evidence":
+      return `${source.kind}:${source.sessionId}:${source.recordId}`;
+    case "recovery-candidate":
+      return `${source.kind}:${source.sessionId}:${source.candidateFingerprint}`;
+    default:
+      return `origin:${index}`;
+  }
+}
+
+function learningOriginSourceHandle(
+  source: LearningContext["originLineage"]["sources"][number],
+): string {
+  switch (source.kind) {
+    case "session-record":
+      return `${source.sessionId} · ${source.recordType} · ${source.recordId}`;
+    case "captured-artifact":
+      return `${source.artifactPath} · ${source.artifactSnapshotId}`;
+    case "turn-evidence":
+      return `${source.sessionId} · ${source.recordId}`;
+    case "recovery-candidate":
+      return `${source.sessionId} · ${source.candidateFingerprint}`;
+  }
+}
+
 function LearningHistory({ learning }: { learning: LearningContext }) {
   if (learning.history.length === 0) return null;
   return (
@@ -3091,6 +3225,82 @@ function LearningHistory({ learning }: { learning: LearningContext }) {
           history events.
         </p>
       )}
+    </section>
+  );
+}
+
+function LearningApplications({
+  learning,
+  onSession,
+}: {
+  learning: LearningContext;
+  onSession: (sessionId: string) => void;
+}) {
+  if (learning.applicationObservations.length === 0) return null;
+
+  return (
+    <section>
+      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        Procedure application history · {learning.applicationObservationCount}
+      </h3>
+      <div className="mt-2 space-y-2">
+        {learning.applicationObservations.map((application) => (
+          <article
+            key={application.observationId}
+            className="rounded-md border border-border bg-background/35 p-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={cn(
+                    "rounded px-1.5 py-0.5 font-medium",
+                    application.learningVersionMatchesCurrent
+                      ? "bg-success/10 text-success"
+                      : "bg-warning/10 text-warning",
+                  )}
+                >
+                  {application.learningVersionMatchesCurrent
+                    ? "Exact current version"
+                    : "Older learning version"}
+                </span>
+                <time>{relativeTime(application.recordedAtUnixMs)}</time>
+              </div>
+              <button
+                type="button"
+                onClick={() => onSession(application.sessionId)}
+                className="touch-manipulation rounded font-semibold text-primary outline-none transition-transform hover:underline active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                Open session
+              </button>
+            </div>
+            {application.taskExcerpt && (
+              <p className="mt-2 text-meta leading-5 text-muted-foreground-strong">
+                {application.taskExcerpt}
+              </p>
+            )}
+            <p className="mt-2 text-micro leading-5 text-muted-foreground">
+              Typed verification outcomes · {application.passedVerifications}{" "}
+              passed · {application.failedVerifications} failed ·{" "}
+              {application.skippedVerifications} skipped ·{" "}
+              {application.unknownVerifications} unknown
+            </p>
+            <p className="mt-2 text-micro leading-5 text-muted-foreground">
+              Caller-declared application only. Procedure following, condition
+              applicability, context usage, and causation remain unproven; no
+              trust or ranking change was applied.
+            </p>
+          </article>
+        ))}
+      </div>
+      {learning.omittedApplicationObservations > 0 && (
+        <p className="mt-2 text-micro text-muted-foreground">
+          {learning.omittedApplicationObservations} older application
+          observations are outside this bounded view.
+        </p>
+      )}
+      <p className="mt-2 text-micro leading-5 text-muted-foreground">
+        {learning.applicationClaimNotice}
+      </p>
     </section>
   );
 }

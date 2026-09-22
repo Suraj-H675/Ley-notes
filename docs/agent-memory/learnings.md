@@ -48,7 +48,14 @@ ley learning correct lrn_01234567890123456789012345678901 \
   --note "A later verified run expanded the procedure."
 ```
 
-Ley Desktop exposes the same behavior under **Agent Memory → Lessons → Provenance inspector**. **Correct** edits the current title, guidance, and confidence, requires a reason, preserves the complete cited evidence set, and appends a new immutable version. It does not rewrite the old claim. The corrected version returns to review and must be confirmed separately.
+Ley Desktop exposes the same behavior under **Agent Memory → Lessons → Provenance inspector**. The
+inspector shows bounded origin lineage separately from the broad provenance label: whether the retained
+lineage was mechanically resolved, whether causal completeness is proven, the automatic authority
+ceiling, and stable source handles for retained session records, turns, captured artifacts, or recovery
+candidates. Those handles contain no source bodies and do not increase authority. **Correct** edits the
+current title, guidance, and confidence, requires a reason, preserves the complete cited evidence set,
+and appends a new immutable version. It does not rewrite the old claim. The corrected version returns
+to review and must be confirmed separately.
 
 Corrections also preserve origin history: newly resolved origins are unioned with the prior lineage rather than replacing it. `automaticAuthorityCeiling: review-required` means the derivation/proposal path cannot self-promote its output. Explicit user confirmation can establish trusted learning state, but it does not rewrite the origin chain or turn `causalCompletenessProven: false` into a stronger claim.
 
@@ -83,6 +90,12 @@ A passing run therefore does not promote the Procedure, and a failing run does n
 Different task excerpts can preserve observations made under changed conditions, but Ley does not infer
 that those conditions are equivalent. Explicit user review/correction/supersession remains the only
 authority-changing path. See [ADR 0073](../adr/0073-version-bound-procedure-application-observations.md).
+
+The desktop Provenance inspector mirrors this bounded application history for Procedures. It labels
+whether each observation is bound to the exact current learning version, shows typed verification
+outcome counts, links back to the originating session, and repeats the caller-declared/non-causal
+boundary. It does not classify a Procedure as reverified/failed and exposes no automatic trust or
+ranking action.
 
 Once a learning is verified, trusted, current, and fully visible, **Promote to note** creates an ordinary Markdown note under `Agent Memory/Lessons`. The note contains the exact reviewed guidance, portable YAML provenance, confidence and validity at promotion, and bounded source identifiers. Supporting evidence notes are not copied. The learning ledger remains unchanged, while the new note becomes user-owned and participates in normal search, links, tags, graph, revisions, moves, and deletion.
 

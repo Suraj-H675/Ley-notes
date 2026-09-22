@@ -7746,6 +7746,7 @@ mod tests {
             .unwrap();
         assert_eq!(history.is_error, Some(false));
         let history = history.structured_content.unwrap();
+        assert_eq!(history["projectionSchemaVersion"], 1);
         assert_eq!(history["promptCount"], 1);
         assert_eq!(history["responseCount"], 0);
         assert_eq!(history["toolObservationCount"], 1);
@@ -10060,6 +10061,7 @@ mod tests {
             .structured_content
             .unwrap();
         assert_eq!(session["schemaVersion"], 15);
+        assert_eq!(session["projectionSchemaVersion"], 1);
         let utility = &session["contextUtilityObservations"][0];
         assert_eq!(utility["claimedAppliedLearningIds"][0], learning_id);
         assert_eq!(utility["downstreamOutcomes"][0]["passedVerifications"], 1);
@@ -10080,6 +10082,8 @@ mod tests {
             .unwrap()
             .structured_content
             .unwrap();
+        assert_eq!(learning["schemaVersion"], 2);
+        assert_eq!(learning["projectionSchemaVersion"], 1);
         assert_eq!(learning["eventCount"], 2);
         assert_eq!(learning["state"], "verified");
         assert_eq!(learning["trustState"], "trusted");
