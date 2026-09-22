@@ -46,7 +46,9 @@ For structural impact questions, hosts may use `ley_graph_neighbors` / `ley_grap
 
 When a host deliberately uses the explicit context-utility workflow, it should observe the bound pack
 after eligible typed checkpoint/finish outcomes exist. `ley_session_get` exposes unobserved binding
-coverage and at most five recent body-free unobserved binding metadata rows. A terminal
+coverage, unique observed-binding coverage, and at most five recent body-free unobserved binding
+metadata rows. For a terminal session, `finish.eventId` and the row's `terminalFinishEventId` expose
+the exact retained finish event that can be deliberately passed to the observe tool. A terminal
 `unobserved-context-utility-binding` Memory Health signal is a measurement-gap reminder only; it is not
 evidence that the model used or ignored the context and must not alter trust/ranking automatically.
 

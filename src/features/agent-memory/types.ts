@@ -124,7 +124,85 @@ export interface ProjectRevisionFreshness {
   capturedBranchMatchesCurrent?: boolean;
 }
 
+export interface SessionContextUtilityIncludedRecord {
+  source: "specification" | "active-project-memory" | "mounted-reference";
+  entityId: string;
+  kind?: string;
+  sessionId?: string;
+  learningId?: string;
+  learningKind?: string;
+  learningEventCount?: number;
+  specificationId?: string;
+  mountId?: string;
+  sourceProjectId?: string;
+}
+
+export interface SessionContextUtilityOutcome {
+  eventId: string;
+  recordedAtUnixMs: number;
+  kind: "checkpoint" | "session-finish";
+  completedTasks: number;
+  blockedTasks: number;
+  cancelledTasks: number;
+  resolvedProblems: number;
+  helpedAttempts: number;
+  noEffectAttempts: number;
+  worsenedAttempts: number;
+  unknownAttempts: number;
+  passedVerifications: number;
+  failedVerifications: number;
+  skippedVerifications: number;
+  unknownVerifications: number;
+  sessionStatus?: "active" | "completed" | "paused" | "abandoned";
+  unresolvedCount: number;
+}
+
+export interface SessionContextUnobservedUtilityBinding {
+  bindingId: string;
+  eventId: string;
+  recordedAtUnixMs: number;
+  contextPackId: string;
+  artifactSnapshotId: string;
+  graphSnapshotId: string;
+  egressTarget?: "cloud" | "local";
+  maxResults: number;
+  maxTokens: number;
+  estimatedTokens: number;
+  includedRecordCount: number;
+  omittedIncludedRecords: number;
+  contextPackRevalidated: boolean;
+  contextUsageProven: boolean;
+  terminalFinishEventId?: string;
+}
+
+export interface SessionContextUtilityObservation {
+  id: string;
+  eventId: string;
+  recordedAtUnixMs: number;
+  expectedEventCount: number;
+  bindingId: string;
+  contextPackId: string;
+  taskExcerpt: string;
+  artifactSnapshotId: string;
+  graphSnapshotId: string;
+  egressTarget?: "cloud" | "local";
+  maxResults: number;
+  maxTokens: number;
+  estimatedTokens: number;
+  includedRecords: SessionContextUtilityIncludedRecord[];
+  omittedIncludedRecords: number;
+  downstreamEventIds: string[];
+  downstreamOutcomes: SessionContextUtilityOutcome[];
+  claimedAppliedLearningIds: string[];
+  contextPackRevalidated: boolean;
+  contextUsageProven: boolean;
+  causalUtilityProven: boolean;
+  trustChangesApplied: boolean;
+  rankingChangesApplied: boolean;
+}
+
 export interface SessionContext {
+  schemaVersion: number;
   projectId: string;
   sessionId: string;
   originalName: string;
@@ -141,10 +219,10 @@ export interface SessionContext {
   updatedAtUnixMs: number;
   eventCount: number;
   checkpointCount: number;
-  promptCount?: number;
-  responseCount?: number;
-  retainedTurnCount?: number;
-  omittedTurnCount?: number;
+  promptCount: number;
+  responseCount: number;
+  retainedTurnCount: number;
+  omittedTurnCount: number;
   renameCount: number;
   renames: Array<{
     recordedAtUnixMs: number;
@@ -152,6 +230,14 @@ export interface SessionContext {
     note: string;
   }>;
   omittedRenames: number;
+  contextUtilityBindingCount: number;
+  contextUtilityObservationCount: number;
+  observedContextUtilityBindingCount: number;
+  unobservedContextUtilityBindingCount: number;
+  unobservedContextUtilityBindings: SessionContextUnobservedUtilityBinding[];
+  omittedUnobservedContextUtilityBindings: number;
+  contextUtilityObservations: SessionContextUtilityObservation[];
+  omittedContextUtilityObservations: number;
   checkpoints: Array<{
     checkpointId: string;
     recordedAtUnixMs: number;
@@ -209,6 +295,7 @@ export interface SessionContext {
     unresolved: string[];
   }>;
   finish?: {
+    eventId: string;
     recordedAtUnixMs: number;
     status: string;
     summary: string;
@@ -221,6 +308,8 @@ export interface SessionContext {
   estimatedTextTokens: number;
   truncated: boolean;
   revisionFreshness: ProjectRevisionFreshness;
+  liveSourceChecked: boolean;
+  sourceBoundary: string;
   instructionWarning: string;
 }
 

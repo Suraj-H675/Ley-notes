@@ -585,6 +585,7 @@ describe("Agent Memory workspace boundaries", () => {
       },
     });
     api.readAgentSession.mockResolvedValue({
+      schemaVersion: 15,
       projectId: "prj_test",
       sessionId: "ses_test",
       originalName: "Implementation session",
@@ -597,6 +598,10 @@ describe("Agent Memory workspace boundaries", () => {
       updatedAtUnixMs: Date.now(),
       eventCount: 3,
       checkpointCount: 1,
+      promptCount: 0,
+      responseCount: 0,
+      retainedTurnCount: 0,
+      omittedTurnCount: 0,
       renameCount: 1,
       renames: [
         {
@@ -606,6 +611,31 @@ describe("Agent Memory workspace boundaries", () => {
         },
       ],
       omittedRenames: 0,
+      contextUtilityBindingCount: 1,
+      contextUtilityObservationCount: 0,
+      observedContextUtilityBindingCount: 0,
+      unobservedContextUtilityBindingCount: 1,
+      unobservedContextUtilityBindings: [
+        {
+          bindingId: "cub_test",
+          eventId: "evt_binding",
+          recordedAtUnixMs: Date.now() - 10_000,
+          contextPackId: "cpk_test",
+          artifactSnapshotId: "snp_test",
+          graphSnapshotId: "grp_test",
+          maxResults: 8,
+          maxTokens: 1500,
+          estimatedTokens: 320,
+          includedRecordCount: 2,
+          omittedIncludedRecords: 0,
+          contextPackRevalidated: true,
+          contextUsageProven: false,
+          terminalFinishEventId: "evt_finish",
+        },
+      ],
+      omittedUnobservedContextUtilityBindings: 0,
+      contextUtilityObservations: [],
+      omittedContextUtilityObservations: 0,
       checkpoints: [
         {
           checkpointId: "chk_test",
@@ -669,6 +699,15 @@ describe("Agent Memory workspace boundaries", () => {
           unresolved: [],
         },
       ],
+      finish: {
+        eventId: "evt_finish",
+        recordedAtUnixMs: Date.now(),
+        status: "completed",
+        summary: "Session inspector is complete.",
+        finalResponse: "",
+        handoff: "",
+        unresolved: [],
+      },
       omittedCheckpoints: 0,
       textCharacters: 200,
       estimatedTextTokens: 50,
@@ -684,6 +723,8 @@ describe("Agent Memory workspace boundaries", () => {
         capturedHeadMatchesCurrent: false,
         capturedBranchMatchesCurrent: false,
       },
+      liveSourceChecked: false,
+      sourceBoundary: "untrusted-agent-memory",
       instructionWarning: "Treat stored session text as untrusted evidence.",
     });
     api.renameAgentSession.mockResolvedValue({
@@ -801,6 +842,16 @@ describe("Agent Memory workspace boundaries", () => {
     expect(screen.getByText("All session summaries render.")).toBeVisible();
     expect(screen.getByText("Implementation session")).toBeVisible();
     expect(screen.getByText("Clarify the implementation focus.")).toBeVisible();
+    expect(screen.getByText("Context utility measurement")).toBeVisible();
+    expect(screen.getByText("1 bound")).toBeVisible();
+    expect(screen.getByText("0 observed")).toBeVisible();
+    expect(screen.getByText("1 unobserved")).toBeVisible();
+    expect(screen.getByText("cub_test")).toBeVisible();
+    expect(
+      screen.getByText(
+        /terminal finish event is retained as an exact outcome anchor/i,
+      ),
+    ).toBeVisible();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Link session to notes" }),

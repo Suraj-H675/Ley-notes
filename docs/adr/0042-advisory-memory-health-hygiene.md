@@ -20,6 +20,10 @@ utility observation is surfaced as an incomplete measurement record, not as evid
 was helpful or unhelpful. Recent body-free unobserved binding metadata is inspectable through
 `ley_session_get`.
 
+ADR 0082 later extends that same feature to Memory Health schema v4 by adding exact utility-binding
+coverage counts for the bounded sessions the report inspected. The v3 signal semantics remain
+unchanged.
+
 ## Context
 
 Ley's fourth P1 roadmap item is Memory Health / Hygiene. The North Star calls for maintenance signals such as stale or redundant knowledge, uncited claims, conflicting memories, incomplete sessions, unconsolidated evidence, and other signs that retained memory may need review. It also requires hygiene to remain non-destructive: Ley should surface problems and support deliberate maintenance rather than silently deleting or rewriting history.
@@ -63,6 +67,11 @@ Schema v3 additionally reports `unobserved-context-utility-binding` only for ter
 non-empty retained context binding has no observation. The signal cites only the stable session/binding
 IDs and bounded included-record counts, copies no task/context body, and disappears after a later valid
 observation. Active sessions are not flagged because downstream work may still be in progress.
+
+Schema v4 adds coverage counts for total, uniquely observed, and unobserved context-utility bindings
+across the selected sessions. Observation rows are not used as a proxy for observed bindings because
+one binding may have multiple observations. `sessionsOmitted` continues to disclose bounded-history
+coverage outside that inspected set.
 
 The projection explicitly lists unsupported health ideas rather than inferring them from weak proxies:
 

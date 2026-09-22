@@ -47,11 +47,13 @@ Structured session events live under `<vault>/.ley/agent-memory/projects/<projec
 
 Context-utility bindings/observations remain in that same session ledger rather than a separate
 analytics store. `ley_session_get` may derive an exact count of bindings that have no observation and
-return at most five recent body-free unobserved-binding rows containing IDs, snapshot IDs, compile
-limits/token estimate, included-record counts, and non-usage/revalidation flags. It deliberately does
-not copy the bound task excerpt or context bodies into those rows. Terminal non-empty unobserved
-bindings may also appear in Memory Health v3 as advisory measurement gaps; the health signal likewise
-contains no task/context body and implies no utility judgment.
+the complementary count of uniquely observed bindings, then return at most five recent body-free
+unobserved-binding rows containing IDs, snapshot IDs, compile limits/token estimate, included-record
+counts, non-usage/revalidation flags, and—only for terminal sessions—the immutable finish event ID as
+an optional follow-up anchor. It deliberately does not copy the bound task excerpt or context bodies
+into those rows. Terminal non-empty unobserved bindings may also appear as advisory measurement gaps;
+Memory Health schema v4 reports inspected total/observed/unobserved utility-binding coverage without
+copying task/context bodies or implying a utility judgment.
 
 Explicit historical host import uses that same private session ledger rather than a second transcript database. The first supported source is a user-supplied Codex global message-history JSONL file plus one explicitly selected session UUID. Ley opens only that explicit regular file with no-follow semantics, validates the documented `session_id` / Unix-second `ts` / `text` record shape, and bounds the read to 64 MiB, 100,000 records, 1 MiB per record, and 512 selected messages. Only selected user messages are imported. The external file path, raw Codex session UUID, assistant/tool/hidden-reasoning history, and unrelated-session messages are not retained. The session stores an opaque `hsi_` source reference and each imported turn stores its original source timestamp. Existing capture mode and secret-redaction rules apply before durable bodies are written. The import does not scan `~/.codex`, parse rollout/session transcripts, or add an MCP import route.
 

@@ -7116,6 +7116,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         unobserved_binding = (
             unobserved_binding_rows[0] if len(unobserved_binding_rows) == 1 else {}
         )
+        finish_event_id = str(finished.get("eventId", ""))
+        finish_context = session_context.get("finish", {})
+        health_coverage = health.get("coverage", {})
         unobserved_ok = (
             context_pack_id.startswith("cpk_")
             and binding_id.startswith("cub_")
@@ -7123,13 +7126,21 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and finished.get("eventCount") == 3
             and session_context.get("contextUtilityBindingCount") == 1
             and session_context.get("contextUtilityObservationCount") == 0
+            and session_context.get("observedContextUtilityBindingCount") == 0
             and session_context.get("unobservedContextUtilityBindingCount") == 1
+            and isinstance(finish_context, dict)
+            and finish_context.get("eventId") == finish_event_id
             and len(unobserved_binding_rows) == 1
             and unobserved_binding.get("bindingId") == binding_id
             and unobserved_binding.get("contextPackId") == context_pack_id
+            and unobserved_binding.get("terminalFinishEventId") == finish_event_id
             and unobserved_binding.get("contextPackRevalidated") is True
             and unobserved_binding.get("contextUsageProven") is False
             and int(unobserved_binding.get("includedRecordCount", 0)) > 0
+            and health.get("schemaVersion") == 4
+            and health_coverage.get("contextUtilityBindingsInspected") == 1
+            and health_coverage.get("observedContextUtilityBindingsInspected") == 0
+            and health_coverage.get("unobservedContextUtilityBindingsInspected") == 1
             and health.get("persisted") is False
             and health.get("destructiveActionsTaken") is False
             and health.get("liveSourceChecked") is False
@@ -7602,7 +7613,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     for passed_run in passed_runs
                 )
                 and procedure_health.get("schemaVersion")
-                == int(procedure_health_expectation.get("schema_version", 3))
+                == int(procedure_health_expectation.get("schema_version", 4))
                 and procedure_health.get("persisted") is False
                 and procedure_health.get("destructiveActionsTaken") is False
                 and procedure_health.get("liveSourceChecked") is False
@@ -7768,7 +7779,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "chronically-retrieved-but-unhelpful-memory",
         }
         health_ok = (
-            health.get("schemaVersion") == 3
+            health.get("schemaVersion") == 4
             and health.get("projection") == "on-demand-memory-health"
             and health.get("persisted") is False
             and health.get("destructiveActionsTaken") is False

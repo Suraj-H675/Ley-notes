@@ -78,6 +78,8 @@ pub struct SessionContextUnobservedUtilityBinding {
     pub omitted_included_records: usize,
     pub context_pack_revalidated: bool,
     pub context_usage_proven: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_finish_event_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -145,6 +147,7 @@ pub struct SessionContextPack {
     pub omitted_renames: usize,
     pub context_utility_binding_count: usize,
     pub context_utility_observation_count: usize,
+    pub observed_context_utility_binding_count: usize,
     pub unobserved_context_utility_binding_count: usize,
     pub unobserved_context_utility_bindings: Vec<SessionContextUnobservedUtilityBinding>,
     pub omitted_unobserved_context_utility_bindings: usize,
@@ -352,6 +355,7 @@ pub struct SessionContextVerification {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionContextFinish {
+    pub event_id: String,
     pub recorded_at_unix_ms: u64,
     pub status: SessionStatus,
     pub summary: String,
@@ -481,6 +485,7 @@ fn context_from_session(
     let rename_count = session.renames.len();
     let goal = budget.take(&session.goal, (max_text_characters / 4).min(2_000));
     let finish = session.finish.as_ref().map(|finish| SessionContextFinish {
+        event_id: finish.event_id.clone(),
         recorded_at_unix_ms: finish.recorded_at_unix_ms,
         status: finish.status,
         summary: budget.take(&finish.summary, (max_text_characters / 10).min(2_000)),
@@ -511,6 +516,11 @@ fn context_from_session(
         .iter()
         .map(|observation| observation.binding_id.as_str())
         .collect::<BTreeSet<_>>();
+    let observed_context_utility_binding_count = session
+        .context_utility_bindings
+        .iter()
+        .filter(|binding| observed_context_utility_binding_ids.contains(binding.id.as_str()))
+        .count();
     let unobserved_context_utility_binding_count = session
         .context_utility_bindings
         .iter()
@@ -541,6 +551,10 @@ fn context_from_session(
             omitted_included_records: binding.omitted_included_records,
             context_pack_revalidated: binding.context_pack_revalidated,
             context_usage_proven: binding.context_usage_proven,
+            terminal_finish_event_id: session
+                .finish
+                .as_ref()
+                .map(|finish| finish.event_id.clone()),
         })
         .collect::<Vec<_>>();
     let omitted_unobserved_context_utility_bindings = unobserved_context_utility_binding_count
@@ -839,6 +853,7 @@ fn context_from_session(
         omitted_renames,
         context_utility_binding_count,
         context_utility_observation_count,
+        observed_context_utility_binding_count,
         unobserved_context_utility_binding_count,
         unobserved_context_utility_bindings,
         omitted_unobserved_context_utility_bindings,
@@ -1629,6 +1644,10 @@ mod tests {
             MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS + 1
         );
         assert_eq!(context.unobserved_context_utility_binding_count, 0);
+        assert_eq!(
+            context.observed_context_utility_binding_count,
+            MAX_SESSION_CONTEXT_UTILITY_OBSERVATIONS + 1
+        );
         assert!(context.unobserved_context_utility_bindings.is_empty());
         assert_eq!(context.omitted_unobserved_context_utility_bindings, 0);
         assert_eq!(
@@ -1646,6 +1665,145 @@ mod tests {
                 .completed_tasks,
             1
         );
+    }
+
+    #[test]
+    fn session_context_counts_unique_observed_bindings_not_observations() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        initialize_project(&project, Some("Utility coverage"), CaptureMode::Structured).unwrap();
+        std::fs::write(project.join("README.md"), "# Utility coverage\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "e".repeat(32)),
+                name: "Utility coverage".to_owned(),
+                goal: "Count observed bindings uniquely".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let specifications =
+            SpecificationRegistry::at(base.path().join("coverage-specifications-v1.json"));
+        let mounts = ContextMountRegistry::at(base.path().join("coverage-mounts-v1.json"));
+        let pack = compile_project_context_with_registries(
+            &project,
+            &vault,
+            "utility coverage",
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 1_500,
+            },
+            &specifications,
+            &mounts,
+        )
+        .unwrap();
+        let bound = bind_context_utility_pack(
+            &project,
+            &vault,
+            &started.session.session_id,
+            ContextUtilityBindingInput {
+                request_id: format!("req_{}", "f".repeat(32)),
+                expected_event_count: started.session.event_count,
+                expected_context_pack_id: pack.context_pack_id.clone(),
+                task: pack.task.clone(),
+                max_results: 8,
+                max_tokens: 1_500,
+            },
+            &pack,
+        )
+        .unwrap();
+        let binding_id = bound.session.context_utility_bindings[0].id.clone();
+
+        let checkpoint_one = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{:032x}", 900),
+                summary: "First utility outcome".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: vec![TaskInput {
+                    title: "First outcome".to_owned(),
+                    status: TaskStatus::Completed,
+                    details: String::new(),
+                }],
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let observed_one = record_context_utility_observation(
+            &project,
+            &vault,
+            &started.session.session_id,
+            ContextUtilityObservationInput {
+                request_id: format!("req_{:032x}", 901),
+                expected_event_count: checkpoint_one.session.event_count,
+                binding_id: binding_id.clone(),
+                downstream_event_ids: vec![checkpoint_one.event_id],
+                claimed_applied_learning_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        let checkpoint_two = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{:032x}", 902),
+                summary: "Second utility outcome".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: vec![TaskInput {
+                    title: "Second outcome".to_owned(),
+                    status: TaskStatus::Completed,
+                    details: String::new(),
+                }],
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let observed_two = record_context_utility_observation(
+            &project,
+            &vault,
+            &started.session.session_id,
+            ContextUtilityObservationInput {
+                request_id: format!("req_{:032x}", 903),
+                expected_event_count: checkpoint_two.session.event_count,
+                binding_id,
+                downstream_event_ids: vec![checkpoint_two.event_id],
+                claimed_applied_learning_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert!(observed_two.session.event_count > observed_one.session.event_count);
+
+        let context = read_session_context(
+            &project,
+            &vault,
+            &started.session.session_id,
+            MAX_SESSION_CONTEXT_CHECKPOINTS,
+            MAX_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(context.context_utility_binding_count, 1);
+        assert_eq!(context.context_utility_observation_count, 2);
+        assert_eq!(context.observed_context_utility_binding_count, 1);
+        assert_eq!(context.unobserved_context_utility_binding_count, 0);
     }
 
     #[test]

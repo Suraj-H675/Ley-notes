@@ -13,6 +13,11 @@ Terminal non-empty bindings may appear as Memory Health v3 measurement-gap atten
 `ley_session_get` returns only bounded body-free metadata for recent unobserved bindings. This does
 not change durable binding/observation schemas or infer utility.
 
+The same extension later preserves the immutable terminal finish `eventId` in Session Context and on
+terminal unobserved-binding rows, exposes unique observed/unobserved binding counts, and advances
+Memory Health coverage to schema v4. The finish ID is only a valid follow-up anchor; observation still
+requires an explicit write and normal under-lock validation.
+
 ## Context
 
 The final P1 roadmap item asks for context/memory utility feedback based on downstream outcomes. `LEY.md` is explicit that Ley should measure final task benefit rather than retrieval theater, but the current product has no durable way to say which exact compiled context pack preceded a later structured checkpoint or session result.

@@ -9831,7 +9831,14 @@ mod tests {
             .unwrap();
         assert_eq!(context["contextUtilityBindingCount"], 1);
         assert_eq!(context["contextUtilityObservationCount"], 1);
+        assert_eq!(context["observedContextUtilityBindingCount"], 1);
+        assert_eq!(context["unobservedContextUtilityBindingCount"], 0);
+        assert!(context["unobservedContextUtilityBindings"]
+            .as_array()
+            .is_some_and(|bindings| bindings.is_empty()));
+        assert_eq!(context["omittedUnobservedContextUtilityBindings"], 0);
         assert_eq!(context["omittedContextUtilityObservations"], 0);
+        assert_eq!(context["finish"]["eventId"], finish_event_id);
         let utility = &context["contextUtilityObservations"][0];
         assert_eq!(utility["bindingId"], binding_id);
         assert_eq!(utility["contextPackId"], context_pack_id);

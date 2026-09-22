@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const MEMORY_HEALTH_SCHEMA_VERSION: u32 = 3;
+pub const MEMORY_HEALTH_SCHEMA_VERSION: u32 = 4;
 pub const DEFAULT_MEMORY_HEALTH_SIGNALS: usize = 100;
 pub const MAX_MEMORY_HEALTH_SIGNALS: usize = 200;
 pub const DEFAULT_MEMORY_HEALTH_SESSIONS: usize = 20;
@@ -106,6 +106,9 @@ pub struct MemoryHealthCoverage {
     pub total_sessions: usize,
     pub sessions_inspected: usize,
     pub sessions_omitted: usize,
+    pub context_utility_bindings_inspected: usize,
+    pub observed_context_utility_bindings_inspected: usize,
+    pub unobserved_context_utility_bindings_inspected: usize,
     pub candidate_signals: usize,
     pub signals_returned: usize,
     pub signals_omitted: usize,
@@ -190,9 +193,33 @@ pub fn memory_health_report(
         .take(limits.max_sessions)
         .collect::<Vec<_>>();
     let sessions_inspected = selected_sessions.len();
+    let mut context_utility_bindings_inspected = 0usize;
+    let mut observed_context_utility_bindings_inspected = 0usize;
+    let mut unobserved_context_utility_bindings_inspected = 0usize;
     let mut revision_resolver = RevisionResolver::new(project_start, overview.git.as_ref())?;
     for summary in selected_sessions {
         let session = read_session(project_start, vault, &summary.session_id)?;
+        let observed_binding_ids = session
+            .context_utility_observations
+            .iter()
+            .map(|observation| observation.binding_id.as_str())
+            .collect::<BTreeSet<_>>();
+        context_utility_bindings_inspected = context_utility_bindings_inspected
+            .saturating_add(session.context_utility_bindings.len());
+        let observed_bindings = session
+            .context_utility_bindings
+            .iter()
+            .filter(|binding| observed_binding_ids.contains(binding.id.as_str()))
+            .count();
+        observed_context_utility_bindings_inspected =
+            observed_context_utility_bindings_inspected.saturating_add(observed_bindings);
+        unobserved_context_utility_bindings_inspected =
+            unobserved_context_utility_bindings_inspected.saturating_add(
+                session
+                    .context_utility_bindings
+                    .len()
+                    .saturating_sub(observed_bindings),
+            );
         let latest = session.checkpoints.last();
         drafts.extend(procedure_application_health_signals(
             &session,
@@ -360,6 +387,9 @@ pub fn memory_health_report(
         total_sessions,
         sessions_inspected,
         sessions_omitted: total_sessions.saturating_sub(sessions_inspected),
+        context_utility_bindings_inspected,
+        observed_context_utility_bindings_inspected,
+        unobserved_context_utility_bindings_inspected,
         candidate_signals,
         signals_returned: signals.len(),
         signals_omitted: candidate_signals.saturating_sub(signals.len()),
@@ -1143,7 +1173,7 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(report.schema_version, 3);
+        assert_eq!(report.schema_version, 4);
         assert_eq!(signal.severity, MemoryHealthSeverity::Review);
         assert_eq!(
             serde_json::to_string(&signal.kind).unwrap(),

@@ -1921,6 +1921,7 @@ function SessionInspectorBody({
             </p>
           )}
           <SessionOverview session={session} />
+          <SessionUtilityMeasurement session={session} />
           <SessionCapturedTurns
             session={session}
             turns={turns}
@@ -1987,6 +1988,71 @@ function SessionOverview({ session }: { session: SessionContext }) {
         </span>
         <span>{session.eventCount} immutable events</span>
         <span>~{session.estimatedTextTokens} context tokens</span>
+      </div>
+    </section>
+  );
+}
+
+function SessionUtilityMeasurement({ session }: { session: SessionContext }) {
+  if (session.contextUtilityBindingCount <= 0) return null;
+
+  return (
+    <section aria-labelledby="session-utility-measurement-title">
+      <SectionLabel
+        id="session-utility-measurement-title"
+        icon={BrainCircuit}
+        label="Context utility measurement"
+      />
+      <div className="mt-2 rounded-md border border-border bg-surface-1 p-4 shadow-panel sm:p-5">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-meta">
+          <span>{session.contextUtilityBindingCount} bound</span>
+          <span>{session.observedContextUtilityBindingCount} observed</span>
+          <span>{session.unobservedContextUtilityBindingCount} unobserved</span>
+        </div>
+        <p className="mt-2 text-micro leading-5 text-muted-foreground">
+          Measurement provenance only. These counts do not prove that supplied
+          context was used, helpful, harmful, or causally responsible for the
+          session outcome.
+        </p>
+
+        {session.unobservedContextUtilityBindings.length > 0 && (
+          <div className="mt-3 space-y-2 border-t border-border pt-3">
+            {session.unobservedContextUtilityBindings.map((binding) => (
+              <article
+                key={binding.bindingId}
+                className="rounded-md border border-border bg-background/35 p-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-micro text-muted-foreground-strong">
+                    {binding.bindingId}
+                  </span>
+                  <time className="text-micro text-muted-foreground">
+                    {relativeTime(binding.recordedAtUnixMs)}
+                  </time>
+                </div>
+                <p className="mt-1 text-micro leading-5 text-muted-foreground">
+                  {binding.includedRecordCount} included record handles
+                  {binding.omittedIncludedRecords > 0
+                    ? ` · ${binding.omittedIncludedRecords} omitted`
+                    : ""}
+                  {` · ~${binding.estimatedTokens} tokens`}
+                </p>
+                {binding.terminalFinishEventId && (
+                  <p className="mt-2 text-micro leading-5 text-muted-foreground-strong">
+                    The terminal finish event is retained as an exact outcome
+                    anchor for an explicit utility observation.
+                  </p>
+                )}
+              </article>
+            ))}
+            {session.omittedUnobservedContextUtilityBindings > 0 && (
+              <p className="text-micro text-muted-foreground">
+                {session.omittedUnobservedContextUtilityBindings} older
+                unobserved bindings are outside this bounded view.
+              </p>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

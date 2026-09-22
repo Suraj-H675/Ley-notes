@@ -71,6 +71,13 @@ Ley appends the new name and required reason as another immutable event. The ori
 
 The desktop session inspector exposes **Erase session memory** as a reviewed destructive action. It requires the exact current session name and rejects the operation if another writer appended an event after the inspector loaded.
 
+When a session contains explicit context-utility bindings, the same inspector also shows a compact
+**Context utility measurement** section. It reports bound, uniquely observed, and unobserved binding
+counts plus at most the already-bounded unobserved binding metadata returned by Session Context. A
+terminal unobserved row may state that the retained finish event is available as an exact observation
+anchor. This is provenance/coverage only: the desktop does not infer context usage, helpfulness,
+harmfulness, causation, trust, or ranking, and it exposes no automatic observation/repair action.
+
 The equivalent local CLI command is intentionally explicit:
 
 ```bash

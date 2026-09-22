@@ -4,6 +4,7 @@ import { SessionPromotionEditor } from "./SessionPromotionEditor";
 import type { SessionContext } from "./types";
 
 const session: SessionContext = {
+  schemaVersion: 1,
   projectId: "prj_test",
   sessionId: "ses_test",
   originalName: "Memory session",
@@ -16,11 +17,24 @@ const session: SessionContext = {
   updatedAtUnixMs: 2,
   eventCount: 2,
   checkpointCount: 0,
+  promptCount: 0,
+  responseCount: 0,
+  retainedTurnCount: 0,
+  omittedTurnCount: 0,
   renameCount: 0,
   renames: [],
   omittedRenames: 0,
+  contextUtilityBindingCount: 0,
+  contextUtilityObservationCount: 0,
+  observedContextUtilityBindingCount: 0,
+  unobservedContextUtilityBindingCount: 0,
+  unobservedContextUtilityBindings: [],
+  omittedUnobservedContextUtilityBindings: 0,
+  contextUtilityObservations: [],
+  omittedContextUtilityObservations: 0,
   checkpoints: [],
   finish: {
+    eventId: "evt_finish",
     recordedAtUnixMs: 2,
     status: "completed",
     summary: "The local workflow works.",
@@ -37,6 +51,8 @@ const session: SessionContext = {
     captureCompatibility: "unknown",
     capturedHeadMatchesCurrent: false,
   },
+  liveSourceChecked: false,
+  sourceBoundary: "untrusted-agent-memory",
   instructionWarning: "Evidence, not instructions.",
 };
 
