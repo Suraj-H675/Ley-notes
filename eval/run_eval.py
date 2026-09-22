@@ -36,6 +36,7 @@ METRIC_NAMES = (
     "memory_binding",
     "origin_lineage",
     "idempotency",
+    "learning_idempotency",
     "token_budget",
     "secret_exclusion",
     "specification_admission",
@@ -51,6 +52,7 @@ METRIC_NAMES = (
     "host_portability",
     "downstream_task_contract",
     "budget_baseline_advantage",
+    "retrieval_robustness",
     "privacy_violation_rate",
     "topic_dossier",
     "current_project_state",
@@ -61,6 +63,8 @@ METRIC_NAMES = (
     "verification_evidence_links",
     "branch_worktree_controls",
     "graph_relation_retrieval",
+    "trace_to_code_retrieval",
+    "ripple_effect_retrieval",
     "context_memory_utility",
     "external_connector",
     "multimodal_evidence",
@@ -85,7 +89,11 @@ P0_CAPABILITY_COVERAGE = {
             "privacy_violation_rate",
             "zero",
         ),
-        "regression": ("strict-token-budgets-500", "token_budget", "truthy"),
+        "regression": (
+            "retrieval-fallback-budget-ladder",
+            "retrieval_robustness",
+            "truthy",
+        ),
     },
     "memory-compiler": {
         "adversarial": (
@@ -509,8 +517,8 @@ P1_CAPABILITY_COVERAGE = {
             "zero",
         ),
         "regression": (
-            "graph-relative-import-test-impact",
-            "graph_relation_retrieval",
+            "graph-ripple-transitive-impact",
+            "ripple_effect_retrieval",
             "truthy",
         ),
     },
@@ -2026,8 +2034,15 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     if isinstance(large, dict):
         count = int(large.get("num_files", 0))
         lines = int(large.get("avg_file_lines", 0))
+        distractor_text = str(large.get("distractor_text", "")).strip()
+        relevant_index = int(large.get("relevant_index", -1))
+        relevant_text = str(large.get("relevant_text", "")).strip()
         for index in range(count):
             body = ["def main(): pass\n" if index == 0 else f"def worker_{index}(): pass\n"]
+            if distractor_text:
+                body.append(f"# {distractor_text}\n")
+            if index == relevant_index and relevant_text:
+                body.append(f"# {relevant_text}\n")
             body.extend(f"# generated evidence line {line}\n" for line in range(max(0, lines - 1)))
             write_project_files(project, {f"src/module_{index:03d}.py": "".join(body)})
     events = scenario.get("session_events", [])
@@ -5442,6 +5457,304 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "deterministic captured relative-import graph relation did not improve implementation-to-test retrieval over the direct context-search baseline"
             )
 
+    trace_to_code_expectation = scenario.get("expected_trace_to_code_retrieval")
+    if isinstance(trace_to_code_expectation, dict):
+        trace_query = str(trace_to_code_expectation.get("trace_query", ""))
+        trace_path = str(trace_to_code_expectation.get("trace_path", ""))
+        symbol = str(trace_to_code_expectation.get("symbol", ""))
+        code_path = str(trace_to_code_expectation.get("code_path", ""))
+        unrelated_path = str(trace_to_code_expectation.get("unrelated_path", ""))
+        if not all([trace_query, trace_path, symbol, code_path, unrelated_path]):
+            raise RuntimeError(
+                "trace-to-code fixture requires trace query/path, symbol, code path, and unrelated path"
+            )
+
+        trace_search = mcp_call(
+            project,
+            "ley_search_context",
+            {
+                "query": trace_query,
+                "maxResults": 8,
+                "maxTokens": 1_500,
+            },
+        )
+        trace_items = [
+            item
+            for item in trace_search.get("items", [])
+            if isinstance(item, dict)
+        ]
+        trace_item = next(
+            (
+                item
+                for item in trace_items
+                if item.get("path") == trace_path
+            ),
+            {},
+        )
+        trace_citation = (
+            trace_item.get("citation", {})
+            if isinstance(trace_item, dict)
+            else {}
+        )
+        trace_evidence = mcp_call(
+            project,
+            "ley_read_evidence",
+            {
+                "artifactPath": trace_path,
+                "startLine": int(trace_citation.get("startLine", 1)),
+                "endLine": int(trace_citation.get("endLine", 20)),
+                "maxCharacters": 2_000,
+            },
+        )
+        symbol_neighbors = mcp_call(
+            project,
+            "ley_graph_neighbors",
+            {
+                "node": symbol,
+                "depth": 1,
+                "maxNodes": 20,
+                "direction": "incoming",
+                "edgeKinds": ["defines"],
+            },
+        )
+        neighbor_nodes = [
+            item
+            for item in symbol_neighbors.get("nodes", [])
+            if isinstance(item, dict)
+        ]
+        neighbor_edges = [
+            item
+            for item in symbol_neighbors.get("edges", [])
+            if isinstance(item, dict)
+        ]
+        neighbor_paths = {
+            str(item.get("path"))
+            for item in neighbor_nodes
+            if isinstance(item.get("path"), str)
+        }
+        defines_edge = next(
+            (
+                item
+                for item in neighbor_edges
+                if item.get("kind") == "defines"
+                and item.get("citation", {}).get("artifactPath") == code_path
+            ),
+            None,
+        )
+        trace_search_text = json.dumps(trace_search, sort_keys=True)
+        trace_evidence_text = str(trace_evidence.get("text", ""))
+        trace_outputs_text = json.dumps(
+            [trace_search, trace_evidence, symbol_neighbors],
+            sort_keys=True,
+        )
+        trace_to_code_checks = {
+            "trace-search-snapshot-only":
+                trace_search.get("liveSourceChecked") is False,
+            "trace-artifact-returned":
+                trace_item.get("kind") == "artifact"
+                and trace_item.get("path") == trace_path,
+            "trace-body-has-symbol": symbol in trace_evidence_text,
+            "trace-body-has-marker": trace_query in trace_evidence_text,
+            "trace-read-bound":
+                trace_evidence.get("artifactPath") == trace_path
+                and trace_evidence.get("liveSourceChecked") is False,
+            "direct-search-does-not-cheat": code_path not in trace_search_text,
+            "symbol-resolution-unambiguous":
+                symbol_neighbors.get("ambiguous") is False,
+            "graph-snapshot-only":
+                symbol_neighbors.get("liveSourceChecked") is False,
+            "defining-file-found": code_path in neighbor_paths,
+            "unrelated-file-absent": unrelated_path not in neighbor_paths,
+            "defines-edge-present": defines_edge is not None,
+            "defines-edge-deterministic":
+                isinstance(defines_edge, dict)
+                and defines_edge.get("provenance") == "deterministic"
+                and defines_edge.get("confidence") == 1.0,
+            "project-path-private": str(project) not in trace_outputs_text,
+            "vault-path-private": str(vault) not in trace_outputs_text,
+        }
+        trace_to_code_ok = all(trace_to_code_checks.values())
+        scores["trace_to_code_retrieval"] = trace_to_code_ok
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)],
+            [trace_search, trace_evidence, symbol_neighbors],
+        )
+        evidence_text.extend(
+            [trace_search, trace_evidence, symbol_neighbors]
+        )
+        if not trace_to_code_ok:
+            failed_trace_checks = [
+                label
+                for label, passed in trace_to_code_checks.items()
+                if not passed
+            ]
+            failures.append(
+                "trace-to-code retrieval did not preserve the captured-trace -> symbol -> defining-file progressive-disclosure chain: "
+                + ", ".join(failed_trace_checks)
+            )
+
+    ripple_expectation = scenario.get("expected_ripple_effect_retrieval")
+    if isinstance(ripple_expectation, dict):
+        root_path = str(ripple_expectation.get("root_path", ""))
+        service_path = str(ripple_expectation.get("service_path", ""))
+        api_path = str(ripple_expectation.get("api_path", ""))
+        relevant_test_path = str(
+            ripple_expectation.get("relevant_test_path", "")
+        )
+        unrelated_test_path = str(
+            ripple_expectation.get("unrelated_test_path", "")
+        )
+        baseline_query = str(ripple_expectation.get("baseline_query", ""))
+        if not all(
+            [
+                root_path,
+                service_path,
+                api_path,
+                relevant_test_path,
+                unrelated_test_path,
+                baseline_query,
+            ]
+        ):
+            raise RuntimeError(
+                "ripple-effect fixture requires root/service/api/test paths and baseline query"
+            )
+
+        baseline = mcp_call(
+            project,
+            "ley_search_context",
+            {
+                "query": baseline_query,
+                "maxResults": 8,
+                "maxTokens": 1_500,
+            },
+        )
+        shallow = mcp_call(
+            project,
+            "ley_graph_neighbors",
+            {
+                "node": Path(root_path).name,
+                "depth": 1,
+                "maxNodes": 30,
+                "direction": "incoming",
+                "edgeKinds": ["imports"],
+            },
+        )
+        expanded = mcp_call(
+            project,
+            "ley_graph_neighbors",
+            {
+                "node": Path(root_path).name,
+                "depth": 3,
+                "maxNodes": 50,
+                "direction": "incoming",
+                "edgeKinds": ["imports"],
+            },
+        )
+        path = mcp_call(
+            project,
+            "ley_graph_path",
+            {
+                "from": Path(relevant_test_path).name,
+                "to": Path(root_path).name,
+                "maxDepth": 3,
+                "maxVisitedNodes": 100,
+                "direction": "outgoing",
+                "edgeKinds": ["imports"],
+            },
+        )
+        shallow_paths = {
+            str(item.get("path"))
+            for item in shallow.get("nodes", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("path"), str)
+        }
+        expanded_paths = {
+            str(item.get("path"))
+            for item in expanded.get("nodes", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("path"), str)
+        }
+        path_nodes = [
+            item for item in path.get("nodes", []) if isinstance(item, dict)
+        ]
+        path_edges = [
+            item for item in path.get("edges", []) if isinstance(item, dict)
+        ]
+        path_paths = [
+            str(item.get("path"))
+            for item in path_nodes
+            if isinstance(item.get("path"), str)
+        ]
+        baseline_text = json.dumps(baseline, sort_keys=True)
+        expected_path = [
+            relevant_test_path,
+            api_path,
+            service_path,
+            root_path,
+        ]
+        ripple_ok = (
+            baseline.get("liveSourceChecked") is False
+            and relevant_test_path not in baseline_text
+            and shallow.get("ambiguous") is False
+            and shallow.get("liveSourceChecked") is False
+            and root_path in shallow_paths
+            and service_path in shallow_paths
+            and api_path not in shallow_paths
+            and relevant_test_path not in shallow_paths
+            and expanded.get("ambiguous") is False
+            and expanded.get("liveSourceChecked") is False
+            and all(
+                expected in expanded_paths
+                for expected in (
+                    root_path,
+                    service_path,
+                    api_path,
+                    relevant_test_path,
+                )
+            )
+            and unrelated_test_path not in expanded_paths
+            and path.get("found") is True
+            and path.get("ambiguous") is False
+            and path.get("liveSourceChecked") is False
+            and path_paths == expected_path
+            and len(path_edges) == 3
+            and all(
+                edge.get("kind") == "imports"
+                and edge.get("provenance") == "deterministic"
+                for edge in path_edges
+            )
+        )
+        scores["ripple_effect_retrieval"] = ripple_ok
+        record_downstream_task_contract(
+            scores,
+            failures,
+            text_contract_success(
+                json.dumps({"expanded": expanded, "path": path}, sort_keys=True),
+                [relevant_test_path],
+                [unrelated_test_path],
+            )
+            and not text_contract_success(
+                json.dumps(shallow, sort_keys=True),
+                [relevant_test_path],
+                [],
+            )
+            and not text_contract_success(
+                baseline_text,
+                [relevant_test_path],
+                [],
+            ),
+            "ripple-effect traversal did not surface the transitive impacted test beyond shallow/direct retrieval",
+        )
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)],
+            [baseline, shallow, expanded, path],
+        )
+        evidence_text.extend([baseline, shallow, expanded, path])
+        if not ripple_ok:
+            failures.append(
+                "multi-hop import graph did not preserve the expected core -> service -> API -> test impact chain"
+            )
+
     verification_evidence_expectation = scenario.get("expected_verification_evidence")
     if isinstance(verification_evidence_expectation, dict):
         if not session_id:
@@ -6675,6 +6988,142 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "bounded recent-resume baseline unexpectedly satisfied the older task-specific evidence contract"
             )
 
+    retrieval_expectation = scenario.get("expected_retrieval_robustness")
+    if isinstance(retrieval_expectation, dict):
+        query = str(retrieval_expectation.get("query", ""))
+        required_marker = str(
+            retrieval_expectation.get("required_marker", "")
+        )
+        budgets = [
+            int(value)
+            for value in retrieval_expectation.get(
+                "budgets",
+                [500, 1_500, 3_000, 8_000],
+            )
+        ]
+        max_results = int(retrieval_expectation.get("max_results", 20))
+        if (
+            not query
+            or not required_marker
+            or budgets != sorted(set(budgets))
+            or not budgets
+            or budgets[0] < 500
+        ):
+            raise RuntimeError("retrieval robustness fixture is incomplete")
+
+        result_counts: list[int] = []
+        search_outputs: list[dict[str, object]] = []
+        compiler_outputs: list[dict[str, object]] = []
+        per_budget_checks: list[bool] = []
+        private_cache = str(EVAL_ENV.get("XDG_CACHE_HOME", ""))
+
+        for budget in budgets:
+            search_payload = mcp_call(
+                project,
+                "ley_search_memory",
+                {
+                    "query": query,
+                    "maxResults": max_results,
+                    "maxTokens": budget,
+                },
+            )
+            compiler_payload = mcp_call(
+                project,
+                "ley_compile_context",
+                {
+                    "task": query,
+                    "maxResults": max_results,
+                    "maxTokens": budget,
+                },
+            )
+            search_outputs.append(search_payload)
+            compiler_outputs.append(compiler_payload)
+            result_counts.append(
+                len(
+                    [
+                        item
+                        for item in search_payload.get("results", [])
+                        if isinstance(item, dict)
+                    ]
+                )
+            )
+
+            search_retrieval = search_payload.get("retrieval", {})
+            compiler_retrieval = compiler_payload.get("retrieval", {})
+            search_fallback_reasons = [
+                str(search_retrieval.get("boundedRerankFallbackReason", "")),
+                str(search_retrieval.get("artifactContextFallbackReason", "")),
+            ]
+            compiler_fallback_reasons = [
+                str(compiler_retrieval.get("boundedRerankFallbackReason", "")),
+                str(compiler_retrieval.get("artifactContextFallbackReason", "")),
+            ]
+            compiler_semantic_gap = any(
+                isinstance(item, dict)
+                and item.get("kind") == "semantic-fallback"
+                for item in compiler_payload.get("gaps", [])
+            )
+            search_text = json.dumps(
+                search_payload.get("results", []),
+                sort_keys=True,
+            )
+            serialized_outputs = json.dumps(
+                [search_payload, compiler_payload],
+                sort_keys=True,
+            )
+            fallback_reasons = search_fallback_reasons + compiler_fallback_reasons
+            per_budget_checks.append(
+                search_retrieval.get("mode") == "lexical"
+                and search_retrieval.get("boundedRerankMode") == "lexical"
+                and search_retrieval.get("artifactContextMode") == "lexical"
+                and compiler_retrieval.get("mode") == "lexical"
+                and compiler_retrieval.get("boundedRerankMode") == "lexical"
+                and compiler_retrieval.get("artifactContextMode") == "lexical"
+                and all(reason and "not installed" in reason for reason in fallback_reasons)
+                and compiler_semantic_gap
+                and required_marker in search_text
+                and task_contract_success(
+                    compiler_payload,
+                    [required_marker],
+                    [],
+                )
+                and int(search_payload.get("estimatedTokens", 0)) <= budget
+                and int(compiler_payload.get("estimatedTokens", 0)) <= budget
+                and (
+                    not private_cache
+                    or private_cache not in serialized_outputs
+                )
+                and str(project) not in serialized_outputs
+                and str(vault) not in serialized_outputs
+            )
+
+        ladder_non_decreasing = all(
+            left <= right
+            for left, right in zip(result_counts, result_counts[1:])
+        )
+        ladder_expands = result_counts[-1] > result_counts[0]
+        robustness_ok = (
+            all(per_budget_checks)
+            and ladder_non_decreasing
+            and ladder_expands
+        )
+        scores["retrieval_robustness"] = robustness_ok
+        scores["token_budget"] = (
+            all(per_budget_checks)
+            and ladder_non_decreasing
+        )
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)]
+            + ([private_cache] if private_cache else []),
+            [*search_outputs, *compiler_outputs],
+        )
+        evidence_text.extend(search_outputs)
+        evidence_text.extend(compiler_outputs)
+        if not robustness_ok:
+            failures.append(
+                "retrieval robustness did not preserve lexical fallback, useful sparse evidence, or the multi-budget ladder"
+            )
+
     if scenario.get("expected_event_count") is not None:
         if not session_id:
             failures.append("idempotency fixture created no session")
@@ -6686,6 +7135,215 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 failures.append(f"expected {scenario['expected_event_count']} checkpoint(s), got {checkpoint_count}")
             if len(receipts) >= 2 and not receipts[-1].get("replayed"):
                 failures.append("exact retry did not report replayed=true")
+
+    learning_idempotency_expectation = scenario.get(
+        "expected_learning_idempotency"
+    )
+    if isinstance(learning_idempotency_expectation, dict):
+        if not session_id:
+            raise RuntimeError("learning idempotency fixture created no session")
+        session_snapshot = cli_json(
+            ["session", "show", session_id, str(project), "--json"]
+        )
+        checkpoint_rows = (
+            session_snapshot.get("checkpoints", [])
+            if isinstance(session_snapshot, dict)
+            else []
+        )
+        evidence_record_id = next(
+            (
+                str(checkpoint.get("checkpointId"))
+                for checkpoint in reversed(checkpoint_rows)
+                if isinstance(checkpoint, dict)
+                and isinstance(checkpoint.get("checkpointId"), str)
+            ),
+            "",
+        )
+        if not evidence_record_id:
+            raise RuntimeError(
+                "learning idempotency fixture created no stable checkpoint evidence record"
+            )
+
+        title = str(
+            learning_idempotency_expectation.get(
+                "title",
+                "Idempotent reviewed learning",
+            )
+        )
+        guidance = str(
+            learning_idempotency_expectation.get(
+                "guidance",
+                "Reuse exact retries without duplicating durable learning events.",
+            )
+        )
+        proposal_request_id = request_id(
+            f"{scenario['id']}:learning-idempotency:proposal"
+        )
+        proposal_args = {
+            "requestId": proposal_request_id,
+            "kind": "fact",
+            "title": title,
+            "guidance": guidance,
+            "confidencePercent": 80,
+            "provenance": "agent-authored",
+            "evidence": [
+                {
+                    "sessionId": session_id,
+                    "recordId": evidence_record_id,
+                    "note": "Stable evidence for learning idempotency evaluation.",
+                }
+            ],
+        }
+        proposed = mcp_call(
+            project,
+            "ley_learning_propose",
+            proposal_args,
+            WRITE_FLAGS,
+        )
+        proposal_retry = mcp_call(
+            project,
+            "ley_learning_propose",
+            proposal_args,
+            WRITE_FLAGS,
+        )
+        learning_id = str(proposed.get("learningId", ""))
+
+        proposal_conflict_error = ""
+        conflicting_proposal_args = dict(proposal_args)
+        conflicting_proposal_args["guidance"] = (
+            guidance + " conflicting retry payload"
+        )
+        try:
+            mcp_call(
+                project,
+                "ley_learning_propose",
+                conflicting_proposal_args,
+                WRITE_FLAGS,
+            )
+        except RuntimeError as error:
+            proposal_conflict_error = str(error)
+
+        review_request_id = request_id(
+            f"{scenario['id']}:learning-idempotency:review"
+        )
+        review_args = [
+            "learning",
+            "review",
+            learning_id,
+            str(project),
+            "--actor",
+            "user",
+            "--action",
+            "confirm",
+            "--note",
+            "Exact reviewed learning idempotency evaluation.",
+            "--request-id",
+            review_request_id,
+            "--json",
+        ]
+        reviewed = cli_json(review_args)
+        review_retry = cli_json(review_args)
+
+        review_conflict_error = ""
+        conflicting_review_args = list(review_args)
+        note_index = conflicting_review_args.index("--note") + 1
+        conflicting_review_args[note_index] = (
+            "Conflicting retry payload for the same review request."
+        )
+        try:
+            run(conflicting_review_args)
+        except RuntimeError as error:
+            review_conflict_error = str(error)
+
+        final_learning = mcp_call(
+            project,
+            "ley_learning_get",
+            {
+                "learningId": learning_id,
+                "maxEvidence": 10,
+                "maxHistory": 10,
+                "maxArtifactsPerEvidence": 10,
+                "maxCharacters": 8_000,
+            },
+        )
+        reviewed_learning = (
+            reviewed.get("learning", {})
+            if isinstance(reviewed, dict)
+            else {}
+        )
+        retried_learning = (
+            review_retry.get("learning", {})
+            if isinstance(review_retry, dict)
+            else {}
+        )
+        proposal_conflict_rejected = any(
+            marker in proposal_conflict_error
+            for marker in (
+                "request ID was already used with different learning content",
+                "learning request ID was reused with different content",
+            )
+        )
+        review_conflict_rejected = any(
+            marker in review_conflict_error
+            for marker in (
+                "request ID was already used with different learning content",
+                "learning request ID was reused with different content",
+            )
+        )
+        learning_idempotency_checks = {
+            "learning-id": learning_id.startswith("lrn_"),
+            "proposal-recorded":
+                proposed.get("replayed") is False
+                and proposed.get("eventCount") == 1,
+            "proposal-replayed":
+                proposal_retry.get("replayed") is True
+                and proposal_retry.get("learningId") == learning_id
+                and proposal_retry.get("eventId") == proposed.get("eventId")
+                and proposal_retry.get("eventCount") == 1,
+            "proposal-conflict-rejected": proposal_conflict_rejected,
+            "review-recorded": reviewed.get("replayed") is False,
+            "review-replayed":
+                review_retry.get("replayed") is True
+                and review_retry.get("eventId") == reviewed.get("eventId"),
+            "review-learning-identity":
+                reviewed_learning.get("learningId") == learning_id
+                and retried_learning.get("learningId") == learning_id,
+            "review-event-count":
+                reviewed_learning.get("eventCount") == 2
+                and retried_learning.get("eventCount") == 2,
+            "review-conflict-rejected": review_conflict_rejected,
+            "final-learning-identity":
+                final_learning.get("learningId") == learning_id,
+            "final-event-count": final_learning.get("eventCount") == 2,
+            "final-state": final_learning.get("state") == "verified",
+            "final-trust": final_learning.get("trustState") == "trusted",
+        }
+        learning_idempotency_ok = all(learning_idempotency_checks.values())
+        scores["learning_idempotency"] = learning_idempotency_ok
+        evidence_text.extend(
+            [
+                proposed,
+                proposal_retry,
+                final_learning,
+            ]
+        )
+        if not learning_idempotency_ok:
+            failed_learning_idempotency_checks = [
+                label
+                for label, passed in learning_idempotency_checks.items()
+                if not passed
+            ]
+            proposal_conflict_detail = (
+                f"; proposal conflict observed: {proposal_conflict_error}"
+                if "proposal-conflict-rejected"
+                in failed_learning_idempotency_checks
+                else ""
+            )
+            failures.append(
+                "learning proposal/review retries did not preserve exact replay identity, conflicting-request rejection, or two-event durable state: "
+                + ", ".join(failed_learning_idempotency_checks)
+                + proposal_conflict_detail
+            )
 
     projects = scenario.get("projects", [])
     if isinstance(projects, list) and len(projects) >= 2:
@@ -9762,6 +10420,7 @@ def main(argv: list[str] | None = None) -> int:
     results: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix="ley-eval-") as temporary:
         EVAL_ENV["XDG_CONFIG_HOME"] = str(Path(temporary) / "config")
+        EVAL_ENV["XDG_CACHE_HOME"] = str(Path(temporary) / "cache")
         for index, scenario in enumerate(scenarios, start=1):
             try:
                 result = evaluate_scenario(scenario, Path(temporary) / str(scenario["id"]))

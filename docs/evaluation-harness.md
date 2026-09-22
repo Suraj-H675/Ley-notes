@@ -5,13 +5,18 @@ Ley's executable acceptance corpus lives in `eval/fixtures/scenarios.jsonl` and 
 surfaces against isolated temporary projects/vaults. It is intentionally deterministic: unit tests
 prove local invariants, while these scenarios prove multi-surface product behavior.
 
+Each run also owns private temporary `XDG_CONFIG_HOME` **and** `XDG_CACHE_HOME` roots. This prevents a
+developer's real Ley configuration or locally installed semantic model from silently changing which
+retrieval system an acceptance scenario exercises. Deterministic scenarios therefore start with no
+semantic model unless a future fixture explicitly stages one inside that run's private cache.
+
 ## What the harness measures
 
 The corpus contains both write-time and read/use-time checks. Current metric families include:
 
 - retrieval recall/precision and strict token-budget enforcement;
 - selective abstention when no useful memory exists;
-- crash recovery, transition binding, idempotency, and origin-lineage preservation;
+- crash recovery, transition binding, session/learning mutation idempotency, and origin-lineage preservation;
 - meaningful-boundary local consolidation review, direct turn-evidence lineage, and terminal-session non-mutation;
 - human-intent Specification admission plus revision-bound structured Acceptance criteria and Verification methods, Context Mount isolation, premise resistance, and revision applicability;
 - explicit external GitHub connector scope/egress, read-only MCP exposure, stable remove/re-add identity, and non-laundering;
@@ -21,6 +26,9 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 - deletion fidelity and forgetting-residue rate across Ley-managed raw/derived retrieval surfaces;
 - harmless behavior in uninitialized workspaces;
 - a deterministic downstream task-evidence contract and a bounded recent-resume baseline comparison;
+- explicit missing-semantic-model lexical fallback plus sparse-repository quality across strict
+  500/1,500/3,000/8,000-token budgets;
+- deterministic code→test, trace→code, and transitive ripple-effect graph/progressive-disclosure retrieval;
 - Topic Dossier source binding, bounded topic-state coverage, privacy, and post-erasure rebuild behavior.
 
 `privacy_violation_rate` and `forgetting_residue_rate` are lower-is-better metrics. A zero result means
@@ -106,6 +114,68 @@ read-time task-context selection.
 This is a deterministic evidence-sufficiency proxy, **not** a score for model reasoning and not a claim
 that Ley has beaten an external agent benchmark. Model-dependent downstream benchmarks can be layered
 on later, but they must remain reproducible and separately reported.
+
+## Retrieval fallback and budget ladder
+
+`retrieval-fallback-budget-ladder` is the P0 Context Compiler regression representative for retrieval
+robustness. It materializes an 80-file, roughly 120-lines-per-file project where many files contain
+lower-signal migration terms and one sparse file contains the stronger task evidence. The scenario
+queries both `ley_search_memory` and `ley_compile_context` at 500, 1,500, 3,000, and 8,000 tokens and
+requires:
+
+- the sparse required marker at every budget;
+- `estimatedTokens <= maxTokens` at every layer/budget;
+- low-level and compiler retrieval metadata to report `lexical` for overall, bounded-rerank, and
+  artifact-context modes;
+- non-empty “model not installed” fallback reasons without leaking the private cache/project/vault
+  paths;
+- an explicit compiler `semantic-fallback` gap;
+- non-decreasing bounded search-result counts as budget grows; and
+- strictly more retained results at 8,000 tokens than at 500.
+
+The deterministic harness deliberately does **not** download Ley's pinned semantic model and therefore
+does not call this a lexical-vs-hybrid benchmark. True hybrid comparison requires an explicitly staged
+verified model and belongs in a separately reproducible model-enabled run. Core semantic-retrieval
+tests cover corrupt model/index validation; the runtime index path refuses invalid cached indexes and
+rebuilds them only when a valid local model is available.
+
+## Retrieval relation and progressive-disclosure scenarios
+
+The deterministic graph/retrieval corpus now includes three distinct relation shapes rather than
+counting one direct import edge as evidence for every retrieval task:
+
+- `graph-relative-import-test-impact` is the one-hop code→test baseline. Direct context search for an
+  implementation-only marker must miss the importing test; one incoming deterministic `imports` edge
+  and the exact reverse path must recover it while excluding an unrelated test.
+- `trace-to-code-progressive-disclosure` keeps a runtime trace as ordinary captured evidence rather
+  than inventing trace graph nodes. Direct search returns only the trace artifact, bounded
+  `ley_read_evidence` exposes the stable `parseSession` symbol cue, and incoming deterministic
+  `defines` traversal must resolve that symbol to `src/session.ts` while excluding an unrelated
+  source file. The trace itself deliberately contains no source path, so the graph step supplies the
+  defining-file discovery rather than merely echoing the trace.
+- `graph-ripple-transitive-impact` materializes a four-hop repository shape: changed core module,
+  importing service, importing API, and importing API test. Direct search and depth-1 graph traversal
+  must miss the transitive test, while depth-3 incoming traversal and the exact outgoing path recover
+  the full test→API→service→core chain and still exclude an unrelated test.
+
+All three use captured snapshot relations only, preserve `liveSourceChecked: false`, require
+deterministic provenance, and reject local-path leakage. The P1 Richer Graph Relations downstream cell
+continues to use the independent one-hop task contract, while its regression cell now uses the deeper
+ripple-effect representative.
+
+## Learning mutation idempotency
+
+`duplicate-learning-mutation-idempotency` complements the older duplicate session-event fixture.
+The scenario creates one real retained checkpoint, proposes a cited learning with a caller-stable
+request ID, retries the exact proposal, then deliberately reuses that request ID with changed learning
+content. It requires the exact retry to return the same event/learning identity with
+`replayed: true`, and the conflicting retry to be rejected rather than appended or conflated.
+
+The same contract is then exercised through explicit user review: one confirm review is recorded,
+an exact retry replays the same review event, and a same-request/different-note retry is rejected. The
+final learning must remain exactly two durable events (proposal + review), with verified/trusted state.
+This is idempotency evidence only; it does not imply Ley currently has a typed procedure-learning →
+verification-outcome applicability model.
 
 ## Opt-in real-agent downstream evaluation
 
@@ -285,6 +355,9 @@ than read-time context selection. P1 capabilities listed in the downstream-contr
 likewise configuration-enforced; diagnostic/inspection surfaces such as Memory Health or Context Pack
 Inspector keep their native metrics rather than being forced into an artificial task-content benchmark.
 The listed P2 reusable-context capabilities are configuration-enforced in the same way.
+The Context Compiler regression cell is additionally bound to the retrieval fallback/budget-ladder
+scenario rather than the older single-500-token truncation check; that older fixture remains in the
+full corpus as a narrower regression.
 
 The crash-recovery representative exercises the supported candidate-bound recovery writers through the
 real MCP server. It first verifies and idempotently commits one unresolved claim through the legacy
@@ -355,7 +428,14 @@ current entries are **Topic Dossiers**, **Current Project State**, **Context Pac
 - Reviewed Runbook coverage for explicit user-confirmed current procedure/pitfall/convention selection, deterministic runbook/source identity, no authority increase, unrelated-session omission, exact-ID stale-export rejection, explicit host/egress selection, cloud blocking under local-only policy, non-installing Skill output, and zero local-path leakage through the real CLI path.
 - Verification Evidence coverage for a real structured test outcome with an immutable captured-artifact citation; propagation through `ley_session_get` and Current Project State; deliberate live-file drift after the checkpoint without hash drift in Ley; explicit `liveSourceChecked: false`; and zero live-canary or local-path leakage. Unknown/uncaptured evidence paths are rejected by focused core coverage.
 - Branch / Worktree Controls reuse the real divergent-branch journey. Before merge, exact `divergent` Memory Search must return only divergent-applicable history, `current-lineage` must exclude the experimental evidence, and `ley_session_get` must show the checkpoint and capture freshness as divergent. After a real `--no-ff` merge, the same retained search/session evidence must recompute to `merged` without re-ingestion. Every surface keeps `liveSourceChecked: false`, and local-path privacy remains zero.
-- Richer Graph Relations use a real captured implementation/importing-test fixture. Direct context search for an implementation-only marker is the simpler baseline and must not surface the test; `ley_graph_neighbors` must discover exactly the importing test through an incoming deterministic `imports` edge while excluding an unrelated test, and `ley_graph_path` must prove the one-edge test→implementation path with captured citation/provenance. Focused core coverage additionally proves ambiguous dual file matches, package imports, and project-escape paths are not promoted into local deterministic file relations. Graph results keep `liveSourceChecked: false` and leak no machine paths.
+- Richer Graph Relations use both the real captured one-hop implementation/importing-test fixture and
+  the transitive ripple fixture described above. Direct context search remains the simpler baseline;
+  the one-hop representative proves exact incoming-import discovery and the test→implementation path,
+  while the regression representative proves depth-3 expansion through service/API layers to a
+  transitive impacted test that depth-1/direct retrieval miss. Focused core coverage additionally
+  proves ambiguous dual file matches, package imports, and project-escape paths are not promoted into
+  local deterministic file relations. Graph results keep `liveSourceChecked: false` and leak no
+  machine paths.
 - Context / Memory Utility Feedback uses a real write-enabled MCP journey: start a session, compile a task pack, bind the exact logical pack before work, replay that bind idempotently, record typed checkpoint and terminal outcomes, reject a pre-binding session event as downstream evidence, observe the valid outcome pair, replay the observation idempotently, and inspect the joined bounded session projection. The scenario requires typed completed/resolved/helped/passed outcome counts, `contextUsageProven: false`, `causalUtilityProven: false`, no trust/ranking mutation, omission of a canary present in the compiled context body, `liveSourceChecked: false`, and zero absolute-path/privacy-canary leakage.
 
 As later P1 capabilities land, each should add its own adversarial, downstream, privacy, and regression
