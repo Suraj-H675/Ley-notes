@@ -9862,14 +9862,255 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             init_project(project_dir, name, vault_dir)
             project_dirs.append(project_dir)
         query = str(scenario.get("query_from_alpha", ["cross project"])[0])
-        payload = mcp_call(project_dirs[0], "ley_search_memory", {"query": query, "maxResults": K, "maxTokens": 500})
+        payload = mcp_call(
+            project_dirs[0],
+            "ley_search_memory",
+            {"query": query, "maxResults": K, "maxTokens": 500},
+        )
         other = projects[1]
         markers = [str(other["name"])] + [str(path) for path in other.get("files", {})] + [str(value) for value in other.get("files", {}).values()]
         returned = serialized([payload]).lower()
         exposed = sum(marker.lower() in returned for marker in markers)
         leak = exposed > 0
+        cross_project_clean = not leak
+
+        isolation = scenario.get("expected_cross_project_isolation")
+        if isinstance(isolation, dict):
+            foreign_index = int(isolation.get("foreign_project_index", 1))
+            if foreign_index <= 0 or foreign_index >= len(project_dirs):
+                raise RuntimeError("cross-project isolation fixture selected an invalid foreign project")
+            foreign_project = project_dirs[foreign_index]
+            session_marker = str(isolation.get("session_marker", ""))
+            learning_marker = str(isolation.get("learning_marker", ""))
+            source_marker = str(isolation.get("source_marker", ""))
+            isolation_query = str(isolation.get("query", query))
+
+            foreign_session_id, _ = create_structured_session(
+                foreign_project,
+                seed=f"{scenario['id']}:foreign-session",
+                name=f"Beta private session {session_marker}",
+                goal=f"Preserve private Beta continuity {session_marker}",
+                summary=f"Private Beta checkpoint {session_marker}",
+                decisions=[
+                    {
+                        "title": "Private Beta billing decision",
+                        "decision": session_marker,
+                    }
+                ],
+            )
+            foreign_session = mcp_call(
+                foreign_project,
+                "ley_session_get",
+                {
+                    "sessionId": foreign_session_id,
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            foreign_checkpoints = [
+                item
+                for item in foreign_session.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            if not foreign_checkpoints:
+                raise RuntimeError("cross-project isolation fixture created no foreign checkpoint")
+            foreign_checkpoint_id = str(foreign_checkpoints[-1].get("checkpointId", ""))
+            foreign_source = mcp_call(
+                foreign_project,
+                "ley_search_context",
+                {"query": "RATE", "maxResults": 20, "maxTokens": 2_000},
+            )
+            proposed = mcp_call(
+                foreign_project,
+                "ley_learning_propose",
+                {
+                    "requestId": request_id(f"{scenario['id']}:foreign-learning:proposal"),
+                    "kind": "fact",
+                    "title": f"Private Beta billing knowledge {learning_marker}",
+                    "guidance": f"Keep {learning_marker} inside Beta Billing only.",
+                    "confidencePercent": 95,
+                    "provenance": "agent-authored",
+                    "evidence": [
+                        {
+                            "sessionId": foreign_session_id,
+                            "recordId": foreign_checkpoint_id,
+                            "note": "Cross-project isolation evaluation evidence.",
+                        }
+                    ],
+                },
+                WRITE_FLAGS,
+            )
+            foreign_learning_id = str(proposed.get("learningId", ""))
+            reviewed = cli_json(
+                [
+                    "learning",
+                    "review",
+                    foreign_learning_id,
+                    str(foreign_project),
+                    "--actor",
+                    "user",
+                    "--action",
+                    "confirm",
+                    "--note",
+                    "Explicitly trusted foreign learning for isolation evaluation.",
+                    "--request-id",
+                    request_id(f"{scenario['id']}:foreign-learning:review"),
+                    "--json",
+                ]
+            )
+            foreign_learning = mcp_call(
+                foreign_project,
+                "ley_learning_get",
+                {
+                    "learningId": foreign_learning_id,
+                    "maxEvidence": 10,
+                    "maxHistory": 10,
+                    "maxArtifactsPerEvidence": 10,
+                    "maxCharacters": 8_000,
+                },
+            )
+            reviewed_learning = (
+                reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
+            )
+            source_canary_ok = source_marker in serialized([foreign_source])
+            session_canary_ok = session_marker in serialized([foreign_session])
+            learning_canary_ok = learning_marker in serialized([foreign_learning])
+            learning_trusted_ok = (
+                reviewed_learning.get("state") == "verified"
+                and reviewed_learning.get("trustState") == "trusted"
+            )
+            foreign_canaries_proven = (
+                source_canary_ok
+                and session_canary_ok
+                and learning_canary_ok
+                and learning_trusted_ok
+            )
+            if not foreign_canaries_proven:
+                failures.append(
+                    "cross-project isolation fixture did not positively prove all foreign canaries inside Beta: "
+                    f"source={source_canary_ok}, "
+                    f"session={session_canary_ok}, "
+                    f"learning={learning_canary_ok}, "
+                    f"trusted={learning_trusted_ok}"
+                )
+            mcp_call(
+                foreign_project,
+                "ley_session_finish",
+                {
+                    "sessionId": foreign_session_id,
+                    "requestId": request_id(f"{scenario['id']}:foreign-session:finish"),
+                    "status": "completed",
+                    "summary": f"Completed private Beta work {session_marker}",
+                    "finalResponse": "Private Beta work completed.",
+                    "handoff": f"Continue Beta-only work {session_marker}",
+                    "unresolved": [],
+                },
+                WRITE_FLAGS,
+            )
+
+            alpha = project_dirs[0]
+            alpha_memory = mcp_call(
+                alpha,
+                "ley_search_memory",
+                {"query": isolation_query, "maxResults": 20, "maxTokens": 2_000},
+            )
+            alpha_context_search = mcp_call(
+                alpha,
+                "ley_search_context",
+                {"query": isolation_query, "maxResults": 20, "maxTokens": 2_000},
+            )
+            alpha_activity = mcp_call(
+                alpha,
+                "ley_search_activity",
+                {"query": isolation_query, "maxResults": 20},
+            )
+            alpha_compiled = mcp_call(
+                alpha,
+                "ley_compile_context",
+                {"task": isolation_query, "maxResults": 20, "maxTokens": 2_000},
+            )
+            alpha_sessions = mcp_call(
+                alpha,
+                "ley_sessions_list",
+                {"maxResults": 50},
+            )
+            alpha_learnings = mcp_call(
+                alpha,
+                "ley_learnings_list",
+                {"scope": "all", "maxResults": 50},
+            )
+
+            foreign_session_rejected = False
+            foreign_session_probe: object = {}
+            try:
+                foreign_session_probe = mcp_call(
+                    alpha,
+                    "ley_session_get",
+                    {
+                        "sessionId": foreign_session_id,
+                        "maxCheckpoints": 5,
+                        "maxCharacters": 8_000,
+                    },
+                )
+            except RuntimeError as error:
+                foreign_session_probe = str(error)
+                foreign_session_rejected = (
+                    "session not found in this fixed project" in str(error)
+                )
+
+            foreign_learning_rejected = False
+            foreign_learning_probe: object = {}
+            try:
+                foreign_learning_probe = mcp_call(
+                    alpha,
+                    "ley_learning_get",
+                    {
+                        "learningId": foreign_learning_id,
+                        "maxEvidence": 10,
+                        "maxHistory": 10,
+                        "maxArtifactsPerEvidence": 10,
+                        "maxCharacters": 8_000,
+                    },
+                )
+            except RuntimeError as error:
+                foreign_learning_probe = str(error)
+                foreign_learning_rejected = (
+                    "learning not found in this fixed project" in str(error)
+                )
+
+            isolated_outputs: list[object] = [
+                alpha_memory,
+                alpha_context_search,
+                alpha_activity,
+                context_contract_text(alpha_compiled),
+                alpha_sessions,
+                alpha_learnings,
+                foreign_session_probe,
+                foreign_learning_probe,
+            ]
+            private_markers = [source_marker, session_marker, learning_marker]
+            private_markers = [marker for marker in private_markers if marker]
+            isolated_text = serialized(isolated_outputs)
+            private_exposed = sum(marker in isolated_text for marker in private_markers)
+            fixed_project_isolation_ok = (
+                foreign_canaries_proven
+                and private_exposed == 0
+                and foreign_session_rejected
+                and foreign_learning_rejected
+            )
+            cross_project_clean = cross_project_clean and fixed_project_isolation_ok
+            markers.extend(private_markers)
+            exposed += private_exposed
+            if not fixed_project_isolation_ok:
+                failures.append(
+                    "fixed-project isolation leaked foreign source/session/learning memory or accepted a foreign stable ID: "
+                    f"markersExposed={private_exposed}, "
+                    f"foreignSessionRejected={foreign_session_rejected}, "
+                    f"foreignLearningRejected={foreign_learning_rejected}"
+                )
+
         scores["privacy_violation_rate"] = exposed / len(markers) if markers else 0.0
-        scores["cross_project_clean"] = not leak
+        scores["cross_project_clean"] = cross_project_clean
         if leak:
             failures.append("cross-project search returned another project's marker")
 

@@ -37,6 +37,23 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 the fixture's canaries were not extractable from the probed Ley-managed surfaces; it is not a claim
 that arbitrary undiscovered channels or user-owned external copies do not exist.
 
+## Fixed-project cross-project isolation
+
+`two-projects-cross-isolation` proves the LEY.md isolation journey across more than captured source.
+The evaluator initializes independent Alpha and Beta projects/vaults, then gives Beta three distinct
+private canaries: captured source content, a completed structured session/Decision, and an explicitly
+user-reviewed trusted learning. None is mounted into Alpha.
+
+Alpha is then probed through fixed-project `ley_search_memory`, `ley_search_context`,
+`ley_search_activity`, `ley_compile_context`, `ley_sessions_list`, and `ley_learnings_list`. All three
+foreign canaries must remain absent, and the compiled-context check serializes only task-supporting
+bodies rather than allowing the query text to satisfy the assertion. The evaluator additionally passes
+the exact Beta session and learning IDs to Alpha's `ley_session_get` and `ley_learning_get`; both reads
+must fail closed. The scenario therefore covers source/session/learning isolation for ordinary fixed-
+project MCP/retrieval even when an attacker already knows a foreign stable ID. It does not prohibit the
+separate explicitly authorized Context Mount, Knowledge Scope, Bootstrap Reference, or desktop global
+cross-project-search workflows, whose authority boundaries are tested independently.
+
 ADR 0068 extends the existing Specification representatives rather than adding a weaker standalone score. `specification-authority-context` requires one exact revision-bound `acr_` row with raw criterion text, source line range, `statusInterpreted: false`, and `persisted: false`; the empty-workspace bootstrap representative requires the same shared projection before target initialization. ADR 0071 extends those same representatives with exact revision-bound `vmd_` Verification-method rows and requires `criterionBindingProven: false`, `observedResultBindingProven: false`, `statusInterpreted: false`, and `persisted: false`. Acceptance criteria retain budget priority over methods. The egress canary places separate private markers inside both an Acceptance criterion and Verification method so a blocked Specification must withhold the whole source and both derived fields. Core regressions prove parser/container false-positive resistance, atomic limits, compiler/Policy-Bundle parity, and that methods use only budget left after existing context plus Acceptance criteria. MCP regressions prove the 256 KiB transport guard drops methods before criteria and preserves the parent before falling back to the existing oversized-result error. ADR 0070 adds the exact criterion-to-historical-Verification review; ADR 0072 extends that same review in-place with optional exact `verificationMethodId`. The real `specification-authority-context` scenario now supplies the projected `acr_`, projected `vmd_`, and real session `ver_` together, requires the method-aware link fingerprint/boundary and exact handles, and still requires method execution/outcome, criterion satisfaction, semantic coverage, current implementation, persistence, automatic-write, and live-source proof to remain false.
 
 ## Downstream task contract and baseline
