@@ -613,10 +613,11 @@ impl TextBudget {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, checkpoint_session_if_current, ingest_project, initialize_project,
-        read_session, record_session_prompt, record_session_response,
+        checkpoint_session, checkpoint_session_if_current, finish_session, ingest_project,
+        initialize_project, read_session, record_session_prompt, record_session_response,
         record_session_tool_observation, start_session, CaptureMode, CheckpointInput,
-        StartSessionInput, ToolObservationInput, ToolObservationKind, TurnEvidenceInput,
+        FinishSessionInput, SessionStatus, StartSessionInput, ToolObservationInput,
+        ToolObservationKind, TurnEvidenceInput,
     };
     use tempfile::tempdir;
     fn fixture(
@@ -943,6 +944,57 @@ mod tests {
             MemoryCompilationEvidenceKind::AssistantResponse
         );
         assert!(pack.evidence.iter().all(|item| item.paired_within_window));
+    }
+
+    #[test]
+    fn reviewable_terminal_evidence_does_not_imply_checkpoint_eligibility() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        record_prompt(
+            &project,
+            &vault,
+            &session_id,
+            &format!("req_{}", "2".repeat(32)),
+            "terminal-reviewable",
+            "Investigate the terminal retry failure",
+        );
+        record_response(
+            &project,
+            &vault,
+            &session_id,
+            &format!("req_{}", "3".repeat(32)),
+            "terminal-reviewable",
+            "The retry failure remains unresolved",
+        );
+        finish_session(
+            &project,
+            &vault,
+            &session_id,
+            FinishSessionInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                status: SessionStatus::Completed,
+                summary: "Close before recovery review.".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let pack = compile_session_memory(
+            &project,
+            &vault,
+            &session_id,
+            DEFAULT_MEMORY_COMPILE_RESULTS,
+            DEFAULT_MEMORY_COMPILE_CHARACTERS,
+        )
+        .unwrap();
+
+        assert_eq!(pack.session_status, SessionStatus::Completed);
+        assert_eq!(pack.state, MemoryCompilationState::ReviewableEvidence);
+        assert!(!pack.can_checkpoint);
+        assert_eq!(pack.total_unconsolidated_evidence, 2);
+        assert_eq!(pack.returned_evidence, 2);
+        assert!(!pack.truncated);
     }
 
     #[test]
