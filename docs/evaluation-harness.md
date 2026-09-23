@@ -547,14 +547,18 @@ response carries non-zero-looking metadata. The same compiler call must derive e
 automatic Command candidate from the complete retained command, reference the exact `toe_` source row,
 serialize `exitCode: null`, and carry a deterministic candidate fingerprint. The scenario then calls
 `ley_session_memory_verify_observed_command` with that exact `toe_` row and event count and requires a
-`review-required` result with the same fingerprint while binding/write/Verification/outcome/semantic
-proof all remain false. Neither the candidate nor verifier result may be persisted into schema-v14
-session state.
+`review-required` result with the same fingerprint. Automatic write/Verification/outcome/semantic
+proof remain false, while `candidateBindingAllowed` becomes true only because this representative has
+zero current `tev_` turns and no sibling current tool observations. The scenario then uses the
+separate write-gated `ley_session_memory_commit_observed_command` route, requires one schema-v16
+Command with `exitCode: null` and exact `toe_`/source-event/observation-kind provenance, retries the
+same request idempotently, and confirms that the closed window no longer returns a current automatic
+Command candidate. The read-only derived candidate itself is never persisted as a separate object.
 Task-, Plan-, batch-, rich-Problem-, and composite-specific secret canaries are injected into captured
 host prompts and must be redacted from recovery packs and absent from durable `session-v9.json`,
 `session-v10.json`, `session-v11.json`, `session-v12.json`, and `session-v13.json`. A separate Bash
 secret canary and raw host tool-call ID are injected into the schema-v14 phase; both must be absent
-from compiler/history output and `session-v14.json`. The representative therefore requires zero
+from compiler/history output, `session-v14.json`, and the later `session-v16.json` projection. The representative therefore requires zero
 privacy leakage and keeps rich/composite/tool-evidence behavior inside the existing Reliable
 Memory Compiler, memory-binding, and origin-lineage gates rather than introducing weaker standalone
 metrics.
