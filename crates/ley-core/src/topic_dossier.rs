@@ -596,7 +596,7 @@ fn expand_supporting_sessions(
             for (index, unresolved) in checkpoint.unresolved.iter().enumerate() {
                 open_items.push(TopicDossierOpenItem {
                     kind: TopicDossierOpenKind::Unresolved,
-                    item_id: format!("{}:unresolved:{index}", checkpoint.id),
+                    item_id: crate::session::unresolved_record_id(&checkpoint.event_id, index),
                     session_id: session_id.clone(),
                     checkpoint_id: checkpoint.id.clone(),
                     title: "Unresolved checkpoint item".to_owned(),
@@ -954,6 +954,13 @@ mod tests {
         }));
         assert!(first.open_items.iter().any(|item| {
             item.kind == TopicDossierOpenKind::Unresolved && item.details.contains("token expiry")
+        }));
+        let source_session = read_session(&project, &vault, &session_id).unwrap();
+        let source_checkpoint = source_session.checkpoints.last().unwrap();
+        let unresolved_record_id =
+            crate::session::unresolved_record_id(&source_checkpoint.event_id, 0);
+        assert!(first.open_items.iter().any(|item| {
+            item.kind == TopicDossierOpenKind::Unresolved && item.item_id == unresolved_record_id
         }));
         let verification = first
             .recent_verification

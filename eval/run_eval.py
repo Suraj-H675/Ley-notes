@@ -5927,6 +5927,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 marker in json.dumps(dossier.get("openItems", []), sort_keys=True)
                 for marker in open_markers
             )
+            and all(
+                not isinstance(item, dict)
+                or item.get("kind") != "unresolved"
+                or str(item.get("itemId", "")).startswith("unr_")
+                for item in dossier.get("openItems", [])
+            )
             and (
                 not verification_marker
                 or verification_marker

@@ -19,6 +19,7 @@ The projection:
 - searches only the fixed active project's already-captured evidence and structured memory;
 - preserves stable evidence IDs, captured artifact citations, learning kind/trust state, conflicts, and revision applicability;
 - expands only the small set of supporting structured sessions nominated by topic-relevant evidence in order to recover open tasks/problems/unresolved work and recent verification records;
+- uses the same deterministic `unr_...` child identity as Session Context for unresolved open items, so dossier `itemId` values remain stable citation/follow-up handles rather than display-only synthetic IDs;
 - deduplicates important artifacts by captured snapshot/path/content hash;
 - categorizes trusted-current procedure/pitfall learnings without promoting unreviewed or stale learning into current knowledge;
 - treats session and checkpoint-revision rows as secondary evidence because supporting-session metadata and top-level revision freshness already represent those dimensions;
