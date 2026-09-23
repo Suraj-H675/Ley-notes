@@ -1503,11 +1503,11 @@ mod tests {
             causal_completeness_proven: false,
             omitted_sources: 0,
             automatic_authority_ceiling: LearningTrustState::ReviewRequired,
-            recorded_sources: 3,
+            recorded_sources: 4,
             session_records: 1,
             captured_artifacts: 1,
             turn_evidence: 1,
-            tool_evidence: 0,
+            tool_evidence: 1,
             recovery_candidates: 0,
         };
         let learning = LearningSummary {
