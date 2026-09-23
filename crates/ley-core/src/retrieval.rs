@@ -442,6 +442,11 @@ pub fn read_project_cited_evidence(
     context_lines: u64,
     max_characters: usize,
 ) -> Result<EvidenceExcerpt, LeyCoreError> {
+    if citation.media_type.is_some() {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "media citations must be read with the media evidence reader".to_owned(),
+        ));
+    }
     if context_lines > 20 {
         return Err(LeyCoreError::InvalidRetrievalRequest(
             "contextLines must be between 0 and 20".to_owned(),
@@ -772,16 +777,20 @@ fn collect_lexical_candidates(
         if score == 0 {
             continue;
         }
-        let (snippet, start_line, end_line, end_column) = if let Some(window) = best {
-            (
-                Some(window.snippet),
-                window.start_line,
-                window.end_line,
-                window.end_column,
-            )
-        } else {
-            (None, 1, artifact.line_count.max(1), 1)
-        };
+        let (snippet, start_line, start_column, end_line, end_column) =
+            if artifact.media_type.is_some() {
+                (None, 0, 0, 0, 0)
+            } else if let Some(window) = best {
+                (
+                    Some(window.snippet),
+                    window.start_line,
+                    1,
+                    window.end_line,
+                    window.end_column,
+                )
+            } else {
+                (None, 1, 1, artifact.line_count.max(1), 1)
+            };
         candidates.push(ContextItem {
             id: format!("artifact:{}", artifact.path),
             kind: ContextItemKind::Artifact,
@@ -792,11 +801,12 @@ fn collect_lexical_candidates(
             citation: GraphCitation {
                 artifact_path: artifact.path.clone(),
                 start_line,
-                start_column: 1,
+                start_column,
                 end_line,
                 end_column,
                 content_hash: artifact.content_hash.clone(),
                 artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
+                media_type: artifact.media_type,
             },
             score,
             provenance: FactProvenance::Deterministic,
@@ -994,6 +1004,7 @@ fn excerpt_from_text(
             end_column,
             content_hash: artifact.content_hash.clone(),
             artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
+            media_type: None,
         },
         truncated,
         freshness: SNAPSHOT_FRESHNESS,
@@ -1564,6 +1575,54 @@ mod tests {
         assert!(forged
             .to_string()
             .contains("content hash does not match its captured artifact"));
+    }
+
+    #[test]
+    fn path_matched_media_context_preserves_media_routing_metadata() {
+        let (_base, project, vault) = setup_memory(CaptureMode::FullEvidence);
+        let original = png_fixture(7);
+        std::fs::write(project.join("verification.png"), &original).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let pack = find_project_context(
+            &project,
+            &vault,
+            "verification.png",
+            RetrievalLimits::default(),
+        )
+        .unwrap();
+        let item = pack
+            .items
+            .iter()
+            .find(|item| item.path.as_deref() == Some("verification.png"))
+            .expect("path-matched image result");
+        assert_eq!(item.citation.media_type, Some(ArtifactMediaType::Png));
+        assert_eq!(item.citation.start_line, 0);
+        assert_eq!(item.citation.start_column, 0);
+        assert_eq!(item.citation.end_line, 0);
+        assert_eq!(item.citation.end_column, 0);
+        assert!(item.snippet.is_none());
+        assert_eq!(
+            serde_json::to_value(&item.citation).unwrap()["mediaType"],
+            "png"
+        );
+
+        let media = read_project_cited_media(
+            &project,
+            &vault,
+            &item.citation.artifact_path,
+            &item.citation.artifact_snapshot_id,
+            &item.citation.content_hash,
+            original.len(),
+        )
+        .unwrap();
+        assert_eq!(media.data, original);
+
+        let text_error =
+            read_project_cited_evidence(&project, &vault, &item.citation, 0, 8_000).unwrap_err();
+        assert!(text_error
+            .to_string()
+            .contains("media citations must be read with the media evidence reader"));
     }
 
     #[test]

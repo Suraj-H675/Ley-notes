@@ -65,6 +65,6 @@ Those require separate retention, provenance, redaction/egress, evaluation, and 
 
 ## Evaluation
 
-P2 coverage includes a deterministic real-binary `multimodal-original-image-evidence` scenario. It captures a PNG under Full Evidence, records a verification citation, mutates the live image afterward, and calls the real MCP media reader. Passing requires schema-v6 non-text citation semantics, the exact original bytes from the cited immutable snapshot, `derivedDescriptionIncluded: false`, `liveSourceChecked: false`, no local-path leakage, and zero privacy-canary violations.
+P2 coverage includes a deterministic real-binary `multimodal-original-image-evidence` scenario. It captures a PNG under Full Evidence, records both structured historical/session evidence and a verification citation, mutates the live image afterward, and exercises direct context search, project-memory search, Topic Dossier projection, and the real MCP media reader. Passing requires every image-bearing search/derived route to preserve `mediaType` plus non-text `0/0` citation semantics, the media reader to return the exact original bytes from the cited immutable snapshot, `derivedDescriptionIncluded: false`, `liveSourceChecked: false`, no local-path/live-mutation leakage, and zero privacy-canary violations.
 
 Core, MCP, learning, desktop, export, and host-package regressions additionally cover Full-Evidence-only retention, extension/signature validation, immutable hash binding, output bounds, original-vs-derived labeling, and historical desktop inspection.

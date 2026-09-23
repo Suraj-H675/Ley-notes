@@ -1,6 +1,7 @@
+use crate::ingestion::{load_project_memory, LoadedProjectMemory};
 use crate::{
-    read_session, search_project_memory, GraphCitation, LearningKind, LeyCoreError,
-    ProjectMemoryConflict, ProjectMemoryRankingSignals, ProjectMemoryResultKind,
+    read_session, search_project_memory, ArtifactMediaType, GraphCitation, LearningKind,
+    LeyCoreError, ProjectMemoryConflict, ProjectMemoryRankingSignals, ProjectMemoryResultKind,
     ProjectMemorySearchLimits, ProjectMemorySearchResult, ProjectMemorySearchRetrieval,
     ProjectMemoryTrustSignal, ProjectRevisionFreshness, RevisionApplicability,
     RevisionCompatibility, SessionArtifactCitation, SessionCheckpoint, SessionStatus, TaskStatus,
@@ -12,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const TOPIC_DOSSIER_SCHEMA_VERSION: u32 = 2;
+pub const TOPIC_DOSSIER_SCHEMA_VERSION: u32 = 3;
 pub const DEFAULT_TOPIC_DOSSIER_RESULTS: usize = 12;
 pub const MAX_TOPIC_DOSSIER_RESULTS: usize = MAX_PROJECT_MEMORY_SEARCH_RESULTS;
 pub const DEFAULT_TOPIC_DOSSIER_TOKENS: usize = 4_000;
@@ -93,6 +94,8 @@ pub struct TopicDossierArtifact {
     pub artifact_path: String,
     pub artifact_snapshot_id: String,
     pub content_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<ArtifactMediaType>,
     pub citations: Vec<GraphCitation>,
     pub evidence_ids: Vec<String>,
 }
@@ -306,6 +309,8 @@ pub fn compile_topic_dossier(
         artifact_candidates.extend(expansion.artifacts.clone());
     }
     artifact_candidates = merge_artifacts(artifact_candidates);
+    let memory = load_project_memory(project_start, vault)?;
+    enrich_artifact_media_types(&mut artifact_candidates, &memory);
     let total_sessions = expansions.len();
     let total_open_items = expansions
         .iter()
@@ -550,6 +555,7 @@ fn expand_supporting_sessions(
                     artifact_path: citation.artifact_path.clone(),
                     artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
                     content_hash: citation.content_hash.clone(),
+                    media_type: citation.media_type,
                     citations: vec![GraphCitation {
                         artifact_path: citation.artifact_path.clone(),
                         start_line: citation.start_line,
@@ -558,6 +564,7 @@ fn expand_supporting_sessions(
                         end_column: 1,
                         content_hash: citation.content_hash.clone(),
                         artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
+                        media_type: citation.media_type,
                     }],
                     evidence_ids: evidence_ids.clone(),
                 });
@@ -611,6 +618,7 @@ fn expand_supporting_sessions(
                         artifact_path: citation.artifact_path.clone(),
                         artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
                         content_hash: citation.content_hash.clone(),
+                        media_type: citation.media_type,
                         citations: vec![GraphCitation {
                             artifact_path: citation.artifact_path.clone(),
                             start_line: citation.start_line,
@@ -619,6 +627,7 @@ fn expand_supporting_sessions(
                             end_column: 1,
                             content_hash: citation.content_hash.clone(),
                             artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
+                            media_type: citation.media_type,
                         }],
                         evidence_ids: vec![verification.id.clone()],
                     });
@@ -703,6 +712,7 @@ fn artifacts_from_evidence(evidence: &[ProjectMemorySearchResult]) -> Vec<TopicD
                     artifact_path: citation.artifact_path.clone(),
                     artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
                     content_hash: citation.content_hash.clone(),
+                    media_type: None,
                     citations: vec![citation.clone()],
                     evidence_ids: vec![result.entity_id.clone()],
                 })
@@ -722,9 +732,13 @@ fn merge_artifacts(artifacts: Vec<TopicDossierArtifact>) -> Vec<TopicDossierArti
             artifact_path: artifact.artifact_path.clone(),
             artifact_snapshot_id: artifact.artifact_snapshot_id.clone(),
             content_hash: artifact.content_hash.clone(),
+            media_type: artifact.media_type,
             citations: Vec::new(),
             evidence_ids: Vec::new(),
         });
+        if entry.media_type.is_none() {
+            entry.media_type = artifact.media_type;
+        }
         entry.citations.extend(artifact.citations);
         entry.evidence_ids.extend(artifact.evidence_ids);
         entry.citations.sort_by(|left, right| {
@@ -737,6 +751,23 @@ fn merge_artifacts(artifacts: Vec<TopicDossierArtifact>) -> Vec<TopicDossierArti
         entry.evidence_ids.dedup();
     }
     merged.into_values().collect()
+}
+
+fn enrich_artifact_media_types(
+    artifacts: &mut [TopicDossierArtifact],
+    memory: &LoadedProjectMemory,
+) {
+    for artifact in artifacts {
+        if artifact.artifact_snapshot_id != memory.manifest.snapshot_id {
+            continue;
+        }
+        let Some(source) = memory.manifest.files.iter().find(|source| {
+            source.path == artifact.artifact_path && source.content_hash == artifact.content_hash
+        }) else {
+            continue;
+        };
+        artifact.media_type = source.media_type;
+    }
 }
 
 fn add_if_fits(
@@ -817,6 +848,19 @@ mod tests {
     };
     use std::fs;
     use tempfile::tempdir;
+
+    fn png_fixture() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(b"IEND");
+        bytes.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
+        bytes
+    }
 
     fn setup_auth_project() -> (
         tempfile::TempDir,
@@ -1005,6 +1049,126 @@ mod tests {
         let refreshed = compile_topic_dossier(&project, &vault, "authentication", limits).unwrap();
         assert_ne!(first.artifact_snapshot_id, refreshed.artifact_snapshot_id);
         assert_ne!(first.source_fingerprint, refreshed.source_fingerprint);
+    }
+
+    #[test]
+    fn dossier_preserves_media_type_for_important_verification_artifacts() {
+        let temporary = tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let vault = temporary.path().join("vault");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(project.join("README.md"), "# Visual verification\n").unwrap();
+        fs::write(project.join("verification.png"), png_fixture()).unwrap();
+        initialize_project(&project, Some("Media dossier"), CaptureMode::FullEvidence).unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "Visual verification".to_owned(),
+                goal: "Preserve visual verification evidence".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "Visual verification evidence captured.".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["verification.png".to_owned()],
+                commands: Vec::new(),
+                verification: vec![VerificationInput {
+                    kind: "visual".to_owned(),
+                    status: VerificationStatus::Passed,
+                    summary: "Visual verification image retained.".to_owned(),
+                    command: None,
+                    evidence_artifact_paths: vec!["verification.png".to_owned()],
+                }],
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let dossier = compile_topic_dossier(
+            &project,
+            &vault,
+            "visual verification",
+            TopicDossierLimits::default(),
+        )
+        .unwrap();
+        let artifact = dossier
+            .important_artifacts
+            .iter()
+            .find(|artifact| artifact.artifact_path == "verification.png")
+            .expect("verification image in dossier important artifacts");
+        assert_eq!(artifact.media_type, Some(ArtifactMediaType::Png));
+        let serialized = serde_json::to_value(&dossier).unwrap();
+        let media_artifact = serialized["importantArtifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|artifact| artifact["artifactPath"] == "verification.png")
+            .unwrap();
+        assert_eq!(media_artifact["mediaType"], "png");
+    }
+
+    #[test]
+    fn dossier_media_enrichment_requires_exact_captured_identity() {
+        let temporary = tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let vault = temporary.path().join("vault");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(project.join("verification.png"), png_fixture()).unwrap();
+        initialize_project(
+            &project,
+            Some("Media enrichment"),
+            CaptureMode::FullEvidence,
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let memory = load_project_memory(&project, &vault).unwrap();
+        let source = memory
+            .manifest
+            .files
+            .iter()
+            .find(|source| source.path == "verification.png")
+            .unwrap();
+        assert_eq!(source.media_type, Some(ArtifactMediaType::Png));
+
+        let mut artifacts = vec![
+            TopicDossierArtifact {
+                artifact_path: source.path.clone(),
+                artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
+                content_hash: source.content_hash.clone(),
+                media_type: None,
+                citations: Vec::new(),
+                evidence_ids: Vec::new(),
+            },
+            TopicDossierArtifact {
+                artifact_path: source.path.clone(),
+                artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
+                content_hash: format!("sha256:{}", "0".repeat(64)),
+                media_type: None,
+                citations: Vec::new(),
+                evidence_ids: Vec::new(),
+            },
+        ];
+
+        enrich_artifact_media_types(&mut artifacts, &memory);
+
+        assert_eq!(artifacts[0].media_type, Some(ArtifactMediaType::Png));
+        assert_eq!(artifacts[1].media_type, None);
     }
 
     #[test]

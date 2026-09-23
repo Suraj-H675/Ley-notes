@@ -234,6 +234,7 @@ pub fn search_observed_projects(
                                 end_column: 1,
                                 content_hash: citation.content_hash.clone(),
                                 artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
+                                media_type: citation.media_type,
                             }
                         }),
                         trust_state: None,
@@ -275,6 +276,7 @@ pub fn search_observed_projects(
                                 end_column: 1,
                                 content_hash: citation.content_hash.clone(),
                                 artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
+                                media_type: citation.media_type,
                             }
                         }),
                         trust_state: None,
@@ -470,10 +472,23 @@ mod tests {
     use super::*;
     use crate::{
         checkpoint_session, ingest_project, initialize_project, start_session, CaptureMode,
-        CheckpointInput, SessionSource, StartSessionInput,
+        CheckpointInput, DecisionInput, SessionSource, StartSessionInput,
     };
     use std::fs;
     use tempfile::tempdir;
+
+    fn png_fixture() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(b"IEND");
+        bytes.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
+        bytes
+    }
 
     #[test]
     fn searches_only_observed_bound_projects_and_preserves_identity() {
@@ -581,6 +596,72 @@ mod tests {
             .results
             .iter()
             .all(|item| item.project_name == "Alpha"));
+    }
+
+    #[test]
+    fn cross_project_activity_preserves_media_routing_metadata() {
+        let root = tempdir().unwrap();
+        let vault = root.path().join("vault");
+        let config = root.path().join("config");
+        let project = root.path().join("visual-project");
+        fs::create_dir_all(&vault).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join("verification.png"), png_fixture()).unwrap();
+        initialize_project(&project, Some("Visual project"), CaptureMode::FullEvidence).unwrap();
+
+        let registry = BindingRegistry::at(config.join("bindings-v1.json"));
+        registry.bind(&project, &vault).unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "Visual continuity".to_owned(),
+                goal: "Record cross_project_media_marker evidence".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "Recorded cross_project_media_marker.".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "cross_project_media_marker".to_owned(),
+                    decision: "Keep the original visual evidence inspectable.".to_owned(),
+                    rationale: "The screenshot is the primary evidence.".to_owned(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["verification.png".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let catalog = ProjectCatalog::at(config.join(crate::PROJECT_CATALOG_FILE));
+        let result =
+            search_observed_projects(&catalog, &registry, "cross_project_media_marker", 10)
+                .unwrap();
+        let decision = result
+            .results
+            .iter()
+            .find(|item| item.kind == CrossProjectResultKind::Decision)
+            .expect("cross-project decision result");
+        let citation = decision.citation.as_ref().expect("decision citation");
+        assert_eq!(citation.media_type, Some(crate::ArtifactMediaType::Png));
+        assert_eq!(citation.start_line, 0);
+        assert_eq!(citation.end_line, 0);
+        assert_eq!(serde_json::to_value(citation).unwrap()["mediaType"], "png");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::ingestion::{ArtifactKind, ArtifactRecord};
+use crate::ingestion::{ArtifactKind, ArtifactMediaType, ArtifactRecord};
 use crate::{validate_project_id, LeyCoreError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -62,6 +62,8 @@ pub struct GraphCitation {
     pub end_column: u64,
     pub content_hash: String,
     pub artifact_snapshot_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_type: Option<ArtifactMediaType>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1188,6 +1190,7 @@ fn citation(
         end_column: range.end_point.column as u64 + 1,
         content_hash: source.artifact.content_hash.clone(),
         artifact_snapshot_id: artifact_snapshot_id.to_owned(),
+        media_type: None,
     }
 }
 
@@ -1215,6 +1218,7 @@ fn full_file_citation(source: &GraphSource, artifact_snapshot_id: &str) -> Graph
         end_column,
         content_hash: source.artifact.content_hash.clone(),
         artifact_snapshot_id: artifact_snapshot_id.to_owned(),
+        media_type: None,
     }
 }
 
@@ -1515,6 +1519,7 @@ fn line_citation(source: &GraphSource, snapshot: &str, needle: &str) -> GraphCit
         end_column: 1,
         content_hash: source.artifact.content_hash.clone(),
         artifact_snapshot_id: snapshot.to_owned(),
+        media_type: None,
     }
 }
 
@@ -1975,6 +1980,31 @@ mod tests {
             },
             text: text.to_owned(),
         }
+    }
+
+    #[test]
+    fn graph_citation_media_type_is_additive_and_legacy_json_round_trips_identically() {
+        let legacy = format!(
+            "{{\"artifactPath\":\"README.md\",\"startLine\":1,\"startColumn\":1,\"endLine\":2,\"endColumn\":1,\"contentHash\":\"sha256:{}\",\"artifactSnapshotId\":\"snp_{}\"}}",
+            "0".repeat(64),
+            "1".repeat(64)
+        );
+        let citation: GraphCitation = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(citation.media_type, None);
+        assert_eq!(serde_json::to_string(&citation).unwrap(), legacy);
+
+        let media = GraphCitation {
+            artifact_path: "verification.png".to_owned(),
+            start_line: 0,
+            start_column: 0,
+            end_line: 0,
+            end_column: 0,
+            content_hash: format!("sha256:{}", "2".repeat(64)),
+            artifact_snapshot_id: format!("snp_{}", "3".repeat(64)),
+            media_type: Some(ArtifactMediaType::Png),
+        };
+        let serialized = serde_json::to_value(media).unwrap();
+        assert_eq!(serialized["mediaType"], "png");
     }
 
     #[test]

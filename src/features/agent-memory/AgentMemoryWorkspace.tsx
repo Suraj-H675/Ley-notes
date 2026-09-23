@@ -297,17 +297,30 @@ export function AgentMemoryWorkspace({
       setSection("lessons");
       setLearningId(destination.learningId ?? null);
     } else {
-      setSection(destination.kind === "artifact" ? "artifacts" : "graph");
       if (destination.kind === "artifact") {
-        setArtifactFocus({
-          path: destination.citation?.artifactPath ?? destination.title,
-          requestId: Date.now(),
-        });
+        if (destination.citation?.mediaType) {
+          setArtifactFocus({
+            path: destination.citation.artifactPath,
+            evidence: destination.citation,
+            requestId: Date.now(),
+          });
+          setSection("artifacts");
+        } else if (destination.citation) {
+          setGraphFocus({
+            evidence: destination.citation,
+            requestId: Date.now(),
+          });
+          setSection("graph");
+        } else {
+          setArtifactFocus({ path: destination.title, requestId: Date.now() });
+          setSection("artifacts");
+        }
       } else if (destination.citation) {
         setGraphFocus({
           evidence: destination.citation,
           requestId: Date.now(),
         });
+        setSection("graph");
       }
     }
   }
@@ -351,8 +364,9 @@ export function AgentMemoryWorkspace({
       setSessionId(result.sessionId);
       return;
     }
-    if (result.kind === "artifact" && result.citation) {
-      openArtifact(result.citation.artifactPath);
+    if (result.kind === "artifact") {
+      if (result.citation) openEvidence(result.citation);
+      else openArtifact(result.title);
       return;
     }
     if (result.citation) openEvidence(result.citation);
@@ -715,7 +729,7 @@ function AgentMemoryWorkspaceView({
               projectName={dashboard.overview.projectName}
               onClose={onLearningClose}
               onSession={onLearningSession}
-              onArtifact={onArtifact}
+              onEvidence={onEvidence}
               onPromote={onPromoteLearning}
               onReviewed={onLearningReviewed}
             />
@@ -2424,11 +2438,10 @@ function SessionCheckpointCard({
             count={checkpoint.verification.length}
           >
             {checkpoint.verification.map((verification) => (
-              <RecordItem
+              <VerificationItem
                 key={verification.id}
-                title={humanize(verification.kind)}
-                body={verification.summary}
-                meta={humanize(verification.status)}
+                verification={verification}
+                onEvidence={onEvidence}
               />
             ))}
           </RecordGroup>
@@ -2699,7 +2712,7 @@ function LearningInspector({
   projectName,
   onClose,
   onSession,
-  onArtifact,
+  onEvidence,
   onPromote,
   onReviewed,
 }: {
@@ -2708,7 +2721,7 @@ function LearningInspector({
   projectName: string;
   onClose: () => void;
   onSession: (sessionId: string) => void;
-  onArtifact: (path: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
   onPromote: (draft: PromotedLearningNoteDraft) => Promise<void>;
   onReviewed: (dashboard: AgentMemoryDashboard) => void;
 }) {
@@ -2815,7 +2828,7 @@ function LearningInspector({
             busy={busy}
             error={error}
             onSession={onSession}
-            onArtifact={onArtifact}
+            onEvidence={onEvidence}
           />
           <LearningInspectorFooter
             learning={learning}
@@ -2853,13 +2866,13 @@ function LearningInspectorBody({
   busy,
   error,
   onSession,
-  onArtifact,
+  onEvidence,
 }: {
   learning: LearningContext | null;
   busy: boolean;
   error: string | null;
   onSession: (sessionId: string) => void;
-  onArtifact: (path: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
@@ -2875,12 +2888,11 @@ function LearningInspectorBody({
           <LearningOriginLineage
             learning={learning}
             onSession={onSession}
-            onArtifact={onArtifact}
           />
           <LearningEvidence
             learning={learning}
             onSession={onSession}
-            onArtifact={onArtifact}
+            onEvidence={onEvidence}
           />
           <LearningApplications learning={learning} onSession={onSession} />
           <LearningHistory learning={learning} />
@@ -2994,11 +3006,11 @@ function LearningOverview({ learning }: { learning: LearningContext }) {
 function LearningEvidence({
   learning,
   onSession,
-  onArtifact,
+  onEvidence,
 }: {
   learning: LearningContext;
   onSession: (sessionId: string) => void;
-  onArtifact: (path: string) => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
 }) {
   return (
     <section>
@@ -3042,11 +3054,18 @@ function LearningEvidence({
                     <button
                       type="button"
                       key={`${artifact.artifactPath}:${artifact.startLine}`}
-                      title={`${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine}`}
-                      onClick={() => onArtifact(artifact.artifactPath)}
+                      title={
+                        artifact.mediaType
+                          ? `Original ${artifact.mediaType} evidence · snapshot ${artifact.artifactSnapshotId}`
+                          : `${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine} · snapshot ${artifact.artifactSnapshotId}`
+                      }
+                      onClick={() => onEvidence(artifact)}
                       className="max-w-full touch-manipulation truncate rounded-sm border border-border bg-surface-2 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
-                      {artifact.artifactPath}:{artifact.startLine}
+                      {artifact.artifactPath}
+                      {artifact.mediaType
+                        ? ` · ${artifact.mediaType}`
+                        : `:${artifact.startLine}`}
                     </button>
                   ))}
                 </div>
@@ -3069,11 +3088,9 @@ function LearningEvidence({
 function LearningOriginLineage({
   learning,
   onSession,
-  onArtifact,
 }: {
   learning: LearningContext;
   onSession: (sessionId: string) => void;
-  onArtifact: (path: string) => void;
 }) {
   return (
     <section>
@@ -3126,13 +3143,12 @@ function LearningOriginLineage({
                   </p>
                 </div>
                 {source.kind === "captured-artifact" ? (
-                  <button
-                    type="button"
-                    onClick={() => onArtifact(source.artifactPath)}
-                    className="touch-manipulation rounded font-semibold text-primary outline-none transition-transform hover:underline active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+                  <span
+                    className="text-micro font-medium text-muted-foreground"
+                    title="This lineage row is an exact provenance identity, not a complete text/media read citation. Open the matching evidence reference below when available."
                   >
-                    Open artifact
-                  </button>
+                    Provenance handle
+                  </span>
                 ) : (
                   <button
                     type="button"
@@ -4034,6 +4050,64 @@ function RecordItem({
       {body && (
         <p className="mt-1 whitespace-pre-wrap text-micro leading-5 text-muted-foreground-strong">
           {body}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function VerificationItem({
+  verification,
+  onEvidence,
+}: {
+  verification: SessionContext["checkpoints"][number]["verification"][number];
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
+}) {
+  return (
+    <div className="rounded-md bg-surface-2/70 px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="text-meta font-medium">{humanize(verification.kind)}</p>
+        <span className="text-micro text-muted-foreground">
+          {humanize(verification.status)}
+        </span>
+      </div>
+      {verification.summary && (
+        <p className="mt-1 whitespace-pre-wrap text-micro leading-5 text-muted-foreground-strong">
+          {verification.summary}
+        </p>
+      )}
+      {verification.command && (
+        <code className="mt-2 block overflow-x-auto rounded-sm border border-border bg-background/45 px-2 py-1.5 font-mono text-micro text-muted-foreground-strong">
+          {verification.command}
+        </code>
+      )}
+      {verification.evidenceArtifacts.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {verification.evidenceArtifacts.map((artifact) => (
+            <button
+              type="button"
+              key={`${artifact.artifactSnapshotId}:${artifact.artifactPath}:${artifact.contentHash}`}
+              title={
+                artifact.mediaType
+                  ? `Original ${artifact.mediaType} verification evidence · snapshot ${artifact.artifactSnapshotId}`
+                  : `${artifact.artifactPath}:${artifact.startLine}-${artifact.endLine} · snapshot ${artifact.artifactSnapshotId}`
+              }
+              onClick={() => onEvidence(artifact)}
+              className="max-w-full touch-manipulation truncate rounded-sm border border-border bg-background/55 px-2 py-1 text-left font-mono text-micro text-muted-foreground outline-none transition-[transform,border-color,background-color,color] hover:border-primary/35 hover:bg-primary/7 hover:text-foreground active:scale-[0.97] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              {artifact.artifactPath}
+              {artifact.mediaType
+                ? ` · ${artifact.mediaType}`
+                : `:${artifact.startLine}`}
+            </button>
+          ))}
+        </div>
+      )}
+      {verification.evidenceArtifactsOmitted > 0 && (
+        <p className="mt-2 text-micro text-muted-foreground">
+          {verification.evidenceArtifactsOmitted} more verification evidence{" "}
+          {verification.evidenceArtifactsOmitted === 1 ? "citation is" : "citations are"}{" "}
+          omitted from this bounded session view.
         </p>
       )}
     </div>

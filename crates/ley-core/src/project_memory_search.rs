@@ -867,6 +867,7 @@ fn graph_citation_from_session(citation: &SessionArtifactCitation) -> GraphCitat
         end_column: 1,
         content_hash: citation.content_hash.clone(),
         artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
+        media_type: citation.media_type,
     }
 }
 
@@ -1435,8 +1436,8 @@ fn sanitize_memory_error(_error: LeyCoreError) -> LeyCoreError {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, ingest_project, initialize_project, start_session, CaptureMode,
-        CheckpointInput, DecisionInput, SessionSource, StartSessionInput,
+        checkpoint_session, ingest_project, initialize_project, start_session, ArtifactMediaType,
+        CaptureMode, CheckpointInput, DecisionInput, SessionSource, StartSessionInput,
     };
     use std::fs;
     use std::process::Command;
@@ -1444,6 +1445,19 @@ mod tests {
 
     fn request_id(digit: char) -> String {
         format!("req_{}", digit.to_string().repeat(32))
+    }
+
+    fn png_fixture() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        bytes.extend_from_slice(b"IEND");
+        bytes.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
+        bytes
     }
 
     fn git(project: &Path, args: &[&str]) {
@@ -1561,6 +1575,72 @@ mod tests {
         assert_eq!(fitted.0.learning_kind, Some(crate::LearningKind::Procedure));
         assert_eq!(fitted.0.learning_event_count, Some(2));
         assert!(fitted.1 <= 1_000);
+    }
+
+    #[test]
+    fn session_derived_search_citation_preserves_media_type() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(project.join("verification.png"), png_fixture()).unwrap();
+        initialize_project(&project, Some("Media search"), CaptureMode::FullEvidence).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('7'),
+                name: "Visual verification".to_owned(),
+                goal: "Record media_search_marker evidence".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: request_id('8'),
+                summary: "Recorded media_search_marker decision.".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "media_search_marker".to_owned(),
+                    decision: "Keep the visual evidence citation inspectable.".to_owned(),
+                    rationale: "The original image is the evidence.".to_owned(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["verification.png".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let search = search_project_memory(
+            &project,
+            &vault,
+            "media_search_marker",
+            ProjectMemorySearchLimits::default(),
+            None,
+        )
+        .unwrap();
+        let decision = search
+            .results
+            .iter()
+            .find(|result| result.kind == ProjectMemoryResultKind::Decision)
+            .expect("session-derived decision result");
+        let citation = decision.citation.as_ref().expect("decision citation");
+        assert_eq!(citation.media_type, Some(ArtifactMediaType::Png));
+        assert_eq!(citation.start_line, 0);
+        assert_eq!(citation.end_line, 0);
+        assert_eq!(serde_json::to_value(citation).unwrap()["mediaType"], "png");
     }
 
     #[test]

@@ -4324,6 +4324,7 @@ mod tests {
             end_column: 20,
             content_hash: format!("sha256:{}", "2".repeat(64)),
             artifact_snapshot_id: format!("snp_{}", "0".repeat(64)),
+            media_type: None,
         });
 
         let pack = compile_search_result(

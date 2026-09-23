@@ -85,6 +85,8 @@ const session: SessionContext = {
           kind: "test",
           status: "passed",
           summary: "The realistic workflow passed.",
+          evidenceArtifacts: [],
+          evidenceArtifactsOmitted: 0,
         },
       ],
       unresolved: [],

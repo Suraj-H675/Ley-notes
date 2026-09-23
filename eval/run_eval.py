@@ -5903,7 +5903,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         artifact_path = str(dossier_expectation.get("artifact_path", ""))
         dossier_ok = (
-            dossier.get("schemaVersion") == 2
+            dossier.get("schemaVersion") == 3
             and dossier.get("persisted") is False
             and dossier.get("projection") == "on-demand-rebuildable-topic-dossier"
             and str(dossier.get("sourceFingerprint", "")).startswith("sha256:")
@@ -6768,6 +6768,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         evidence_path = str(multimodal_expectation.get("evidence_path", ""))
         expected_media_type = str(multimodal_expectation.get("media_type", ""))
         expected_mime_type = str(multimodal_expectation.get("mime_type", ""))
+        search_marker = str(multimodal_expectation.get("search_marker", "")).strip()
         binary_definition = scenario.get("project_binary_files", {})
         if (
             not isinstance(binary_definition, dict)
@@ -6804,6 +6805,62 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
         live_marker = b"live-source-drift-after-media-capture"
         (project / evidence_path).write_bytes(live_marker)
+
+        context_search = mcp_call(
+            project,
+            "ley_search_context",
+            {"query": evidence_path, "maxResults": 5, "maxTokens": 1200},
+        )
+        context_citation = next(
+            (
+                item.get("citation")
+                for item in context_search.get("items", [])
+                if isinstance(item, dict)
+                and item.get("path") == evidence_path
+                and isinstance(item.get("citation"), dict)
+            ),
+            None,
+        )
+        memory_search: dict[str, object] = {}
+        memory_citation: dict[str, object] | None = None
+        dossier: dict[str, object] = {}
+        dossier_artifact: dict[str, object] | None = None
+        if search_marker:
+            memory_search = mcp_call(
+                project,
+                "ley_search_memory",
+                {"query": search_marker, "maxResults": 8, "maxTokens": 2000},
+            )
+            memory_citation = next(
+                (
+                    result.get("citation")
+                    for result in memory_search.get("results", [])
+                    if isinstance(result, dict)
+                    and result.get("kind") == "decision"
+                    and isinstance(result.get("citation"), dict)
+                ),
+                None,
+            )
+            dossier = mcp_call(
+                project,
+                "ley_topic_dossier",
+                {
+                    "topic": search_marker,
+                    "maxResults": 8,
+                    "maxTokens": 3000,
+                    "maxSupportingSessions": 4,
+                },
+            )
+            dossier_artifact = next(
+                (
+                    artifact
+                    for artifact in dossier.get("importantArtifacts", [])
+                    if isinstance(artifact, dict)
+                    and artifact.get("artifactPath") == evidence_path
+                ),
+                None,
+            )
+
         media_payload, media_result = mcp_call_result(
             project,
             "ley_read_media_evidence",
@@ -6831,6 +6888,27 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             if isinstance(tool, dict)
         }
         serialized_media = json.dumps(media_payload, sort_keys=True)
+        search_routes_ok = (
+            isinstance(context_citation, dict)
+            and context_citation.get("contentHash") == expected_hash
+            and context_citation.get("mediaType") == expected_media_type
+            and context_citation.get("startLine") == 0
+            and context_citation.get("endLine") == 0
+            and (
+                not search_marker
+                or (
+                    isinstance(memory_citation, dict)
+                    and memory_citation.get("contentHash") == expected_hash
+                    and memory_citation.get("mediaType") == expected_media_type
+                    and memory_citation.get("startLine") == 0
+                    and memory_citation.get("endLine") == 0
+                    and dossier.get("schemaVersion") == 3
+                    and isinstance(dossier_artifact, dict)
+                    and dossier_artifact.get("contentHash") == expected_hash
+                    and dossier_artifact.get("mediaType") == expected_media_type
+                )
+            )
+        )
         multimodal_ok = (
             "ley_read_media_evidence" in tool_names
             and session_context.get("schemaVersion") == 6
@@ -6853,18 +6931,27 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and image_block.get("mimeType") == expected_mime_type
             and returned_bytes == expected_bytes
             and returned_bytes != live_marker
+            and search_routes_ok
             and str(project) not in serialized_media
             and str(vault) not in serialized_media
         )
         scores["multimodal_evidence"] = multimodal_ok
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault), live_marker.decode("ascii")],
-            [session_context, media_payload],
+            [
+                session_context,
+                context_search,
+                memory_search,
+                dossier,
+                media_payload,
+            ],
         )
-        evidence_text.extend([session_context, media_payload])
+        evidence_text.extend(
+            [session_context, context_search, memory_search, dossier, media_payload]
+        )
         if not multimodal_ok:
             failures.append(
-                "multimodal evidence did not preserve exact original media, immutable citation provenance, non-text semantics, or bounded MCP image delivery"
+                "multimodal evidence did not preserve exact original media, immutable citation provenance, search/derived-view media routing, non-text semantics, or bounded MCP image delivery"
             )
 
     context_utility_expectation = scenario.get("expected_context_utility")

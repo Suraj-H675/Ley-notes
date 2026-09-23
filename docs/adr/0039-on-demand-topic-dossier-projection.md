@@ -55,6 +55,13 @@ memory never reached ranking/result fitting because the lower-level search candi
 result response. The dossier's top-level `truncated` remains the aggregate warning, but callers no
 longer need to infer which source-search stage lost evidence.
 
+Schema v3 preserves the captured media boundary on `importantArtifacts`. Each candidate is enriched
+only from the already-loaded captured artifact manifest when its `artifactSnapshotId`, project-relative
+path, and content hash all match the immutable captured record. Supported image artifacts then expose
+optional `mediaType` (`png`, `jpeg`, or `webp`) even when the artifact was nominated directly by source
+search rather than through a supporting-session verification row. Ley does not infer media from an
+extension, read the live file, generate a description, or increase the artifact's authority.
+
 When budget pressure exists, dossier-specific state is more valuable than duplicate navigation metadata. Session and revision search rows are therefore secondary to conflicts, verification, open state, artifact references, and supporting-session identity. They may still be returned when budget remains.
 
 ## Deletion and rebuildability

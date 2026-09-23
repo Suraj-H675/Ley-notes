@@ -292,6 +292,9 @@ export interface SessionContext {
       kind: string;
       status: string;
       summary: string;
+      command?: string;
+      evidenceArtifacts: ArtifactEvidenceReference[];
+      evidenceArtifactsOmitted: number;
     }>;
     unresolved: string[];
   }>;
@@ -728,6 +731,7 @@ export interface GraphCitation {
   endColumn: number;
   contentHash: string;
   artifactSnapshotId: string;
+  mediaType?: ArtifactMediaType;
 }
 
 export interface ProjectGraphViewNode {
