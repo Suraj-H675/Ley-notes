@@ -49,6 +49,7 @@ METRIC_NAMES = (
     "egress_policy",
     "selective_abstention",
     "parallel_session_separation",
+    "parallel_session_reconciliation",
     "cross_surface_staleness",
     "long_horizon_continuity",
     "deletion_fidelity",
@@ -1965,6 +1966,7 @@ def create_structured_session(
     goal: str,
     summary: str,
     decisions: list[dict[str, str]] | None = None,
+    touched_artifacts: list[str] | None = None,
     host: str = "codex",
 ) -> tuple[str, dict[str, object]]:
     started = mcp_call(
@@ -1986,6 +1988,8 @@ def create_structured_session(
     }
     if decisions:
         checkpoint["decisions"] = decisions
+    if touched_artifacts:
+        checkpoint["touchedArtifacts"] = touched_artifacts
     receipt = mcp_call(
         project,
         "ley_session_checkpoint",
@@ -8206,6 +8210,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "rationale": "Independent workstream A.",
                 }
             ],
+            touched_artifacts=["README.md"],
             host="codex",
         )
         session_b, _ = create_structured_session(
@@ -8221,6 +8226,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "rationale": "Independent workstream B.",
                 }
             ],
+            touched_artifacts=["README.md"],
             host="claude-code",
         )
         context_a = mcp_call(
@@ -8262,6 +8268,261 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             failures.append(
                 "parallel sessions were merged or conflicting decisions were promoted as current"
             )
+
+        reconciliation = parallel_expectation.get("reconciliation")
+        if isinstance(reconciliation, dict):
+            title_reconciled = str(reconciliation.get("title", ""))
+            guidance_reconciled = str(reconciliation.get("guidance", ""))
+            marker_reconciled = str(reconciliation.get("marker", ""))
+            query_reconciled = str(reconciliation.get("query", title_reconciled))
+            checkpoints_a = [
+                item
+                for item in context_a.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            checkpoints_b = [
+                item
+                for item in context_b.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            if len(checkpoints_a) != 1 or len(checkpoints_b) != 1:
+                raise RuntimeError(
+                    "parallel reconciliation fixture expected exactly one checkpoint per session"
+                )
+            checkpoint_a = checkpoints_a[0]
+            checkpoint_b = checkpoints_b[0]
+            checkpoint_id_a = str(checkpoint_a.get("checkpointId", ""))
+            checkpoint_id_b = str(checkpoint_b.get("checkpointId", ""))
+            decisions_a = [
+                item
+                for item in checkpoint_a.get("decisions", [])
+                if isinstance(item, dict)
+            ]
+            decisions_b = [
+                item
+                for item in checkpoint_b.get("decisions", [])
+                if isinstance(item, dict)
+            ]
+            if len(decisions_a) != 1 or len(decisions_b) != 1:
+                raise RuntimeError(
+                    "parallel reconciliation fixture expected one decision per session"
+                )
+            decision_id_a = str(decisions_a[0].get("id", ""))
+            decision_id_b = str(decisions_b[0].get("id", ""))
+            before_checkpoint_a = json.dumps(checkpoint_a, sort_keys=True)
+            before_checkpoint_b = json.dumps(checkpoint_b, sort_keys=True)
+
+            proposed = mcp_call(
+                project,
+                "ley_learning_propose",
+                {
+                    "requestId": request_id(f"{scenario['id']}:parallel:reconcile:proposal"),
+                    "kind": "fact",
+                    "title": title_reconciled,
+                    "guidance": guidance_reconciled,
+                    "confidencePercent": 95,
+                    "provenance": "inferred",
+                    "evidence": [
+                        {
+                            "sessionId": session_a,
+                            "recordId": checkpoint_id_a,
+                            "note": "Reviewed parallel workstream A evidence.",
+                        },
+                        {
+                            "sessionId": session_b,
+                            "recordId": checkpoint_id_b,
+                            "note": "Reviewed parallel workstream B evidence.",
+                        },
+                    ],
+                },
+                WRITE_FLAGS,
+            )
+            learning_id = str(proposed.get("learningId", ""))
+            reviewed = cli_json(
+                [
+                    "learning",
+                    "review",
+                    learning_id,
+                    str(project),
+                    "--actor",
+                    "user",
+                    "--action",
+                    "confirm",
+                    "--note",
+                    "Reviewed both parallel workstreams and accepted one project-level synthesis.",
+                    "--request-id",
+                    request_id(f"{scenario['id']}:parallel:reconcile:review"),
+                    "--json",
+                ]
+            )
+            learning = mcp_call(
+                project,
+                "ley_learning_get",
+                {
+                    "learningId": learning_id,
+                    "maxEvidence": 10,
+                    "maxHistory": 10,
+                    "maxArtifactsPerEvidence": 10,
+                    "maxCharacters": 10_000,
+                },
+            )
+            trusted_list = mcp_call(
+                project,
+                "ley_learnings_list",
+                {"maxResults": 50},
+            )
+            search_after = mcp_call(
+                project,
+                "ley_search_memory",
+                {"query": query_reconciled, "maxResults": 10, "maxTokens": 2_000},
+            )
+            compiled_after = mcp_call(
+                project,
+                "ley_compile_context",
+                {"task": query_reconciled, "maxResults": 10, "maxTokens": 2_000},
+            )
+            context_a_after = mcp_call(
+                project,
+                "ley_session_get",
+                {"sessionId": session_a, "maxCheckpoints": 5, "maxCharacters": 8_000},
+            )
+            context_b_after = mcp_call(
+                project,
+                "ley_session_get",
+                {"sessionId": session_b, "maxCheckpoints": 5, "maxCharacters": 8_000},
+            )
+            after_checkpoints_a = [
+                item
+                for item in context_a_after.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            after_checkpoints_b = [
+                item
+                for item in context_b_after.get("checkpoints", [])
+                if isinstance(item, dict)
+            ]
+            sessions_unchanged = (
+                len(after_checkpoints_a) == 1
+                and len(after_checkpoints_b) == 1
+                and json.dumps(after_checkpoints_a[0], sort_keys=True) == before_checkpoint_a
+                and json.dumps(after_checkpoints_b[0], sort_keys=True) == before_checkpoint_b
+                and marker_a in json.dumps(context_a_after, sort_keys=True)
+                and marker_b not in json.dumps(context_a_after, sort_keys=True)
+                and marker_b in json.dumps(context_b_after, sort_keys=True)
+                and marker_a not in json.dumps(context_b_after, sort_keys=True)
+            )
+
+            evidence_rows = [
+                item for item in learning.get("evidence", []) if isinstance(item, dict)
+            ]
+            evidence_pairs = {
+                (str(item.get("sessionId", "")), str(item.get("recordId", "")))
+                for item in evidence_rows
+            }
+            origin_lineage = learning.get("originLineage", {})
+            reviewed_learning = (
+                reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
+            )
+            trusted_learning_ok = (
+                reviewed_learning.get("state") == "verified"
+                and reviewed_learning.get("trustState") == "trusted"
+                and learning.get("state") == "verified"
+                and learning.get("trustState") == "trusted"
+                and learning.get("freshness") == "current"
+                and learning.get("trustedForReuse") is True
+                and learning.get("corroboratingSessions") == 2
+                and evidence_pairs
+                == {(session_a, checkpoint_id_a), (session_b, checkpoint_id_b)}
+                and isinstance(origin_lineage, dict)
+                and origin_lineage.get("automaticAuthorityCeiling") == "review-required"
+                and origin_lineage.get("causalCompletenessProven") is False
+                and any(
+                    isinstance(item, dict)
+                    and item.get("learningId") == learning_id
+                    for item in trusted_list.get("learnings", [])
+                )
+                and any(
+                    isinstance(item, dict)
+                    and item.get("kind") == "learning"
+                    and item.get("learningId") == learning_id
+                    and item.get("trustSignal") == "trusted-current"
+                    and item.get("trustedForReuse") is True
+                    for item in search_after.get("results", [])
+                )
+            )
+
+            compiled_learning_ok = any(
+                isinstance(item, dict)
+                and item.get("learningId") == learning_id
+                and item.get("trustSignal") == "trusted-current"
+                and item.get("trustedForReuse") is True
+                and marker_reconciled in json.dumps(item)
+                for item in compiled_after.get("items", [])
+            )
+            decisions_withheld = all(
+                not any(
+                    isinstance(item, dict)
+                    and item.get("entityId") == decision_id
+                    for item in compiled_after.get("items", [])
+                )
+                for decision_id in (decision_id_a, decision_id_b)
+            )
+            exclusions = [
+                item
+                for item in compiled_after.get("exclusions", [])
+                if isinstance(item, dict)
+            ]
+            decision_exclusions_ok = all(
+                any(
+                    item.get("entityId") == decision_id
+                    and item.get("reason") == "conflicting-memory"
+                    for item in exclusions
+                )
+                for decision_id in (decision_id_a, decision_id_b)
+            )
+            conflicts = [
+                item
+                for item in compiled_after.get("conflicts", [])
+                if isinstance(item, dict)
+            ]
+            conflict_preserved = any(
+                decision_id_a in item.get("entityIds", [])
+                and decision_id_b in item.get("entityIds", [])
+                for item in conflicts
+            )
+            adjudication_after = compiled_after.get("premiseAdjudication", {})
+            compiler_reconciliation_ok = (
+                compiled_learning_ok
+                and decisions_withheld
+                and decision_exclusions_ok
+                and conflict_preserved
+                and isinstance(adjudication_after, dict)
+                and adjudication_after.get("state") == "conflicting-state"
+                and compiled_after.get("evidenceState") == "conflicting-evidence"
+                and int(compiled_after.get("estimatedTokens", 0))
+                <= int(compiled_after.get("maxTokens", 0))
+            )
+            reconciled = sessions_unchanged and trusted_learning_ok and compiler_reconciliation_ok
+            scores["parallel_session_reconciliation"] = reconciled
+            evidence_text.extend(
+                [
+                    proposed,
+                    reviewed,
+                    learning,
+                    trusted_list,
+                    search_after,
+                    compiled_after,
+                    context_a_after,
+                    context_b_after,
+                ]
+            )
+            if not reconciled:
+                failures.append(
+                    "parallel-agent reconciliation incomplete: "
+                    f"sessionsUnchanged={sessions_unchanged}, "
+                    f"trustedLearning={trusted_learning_ok}, "
+                    f"compilerReconciliation={compiler_reconciliation_ok}"
+                )
 
     cross_surface_expectation = scenario.get("expected_cross_surface_staleness")
     if isinstance(cross_surface_expectation, dict):

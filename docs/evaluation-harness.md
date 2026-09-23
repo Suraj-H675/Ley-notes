@@ -73,6 +73,25 @@ deletion is not misrepresented as deletion of independent human-owned copies. Co
 cover recapture, lifecycle-lock waiting, and symlink/no-follow defense. This native acceptance path is
 the whole-project counterpart to the Python session-erasure residue scenario.
 
+## Parallel-agent separation and reviewed reconciliation
+
+`parallel-agent-session-separation` proves both halves of the parallel-agent acceptance journey.
+Codex and Claude Code first create independent structured sessions with contradictory Decisions under
+the same topic. Each checkpoint cites the same unchanged captured README only as a freshness anchor;
+session inspection must show its own canary and never the other agent's canary. Before reconciliation,
+the Context Compiler must report `conflicting-state` and withhold both historical Decisions from
+task-supporting context rather than choosing a winner by host or recency.
+
+The evaluator then proposes one new project-level learning that cites the two exact session/checkpoint
+pairs, explicitly reviews it as the local user, and re-reads every surface. The learning must be
+verified/trusted/current, corroborated by both sessions, retain a review-required automatic authority
+ceiling plus `causalCompletenessProven: false`, appear in current-trusted Memory Search, and enter
+compiled task context as `trusted-current`. Both original session checkpoint/Decision projections must
+remain byte-for-byte equivalent to their pre-review JSON projection, and the compiler must continue to
+withhold both Decision IDs as `conflicting-memory` while preserving the historical conflict disclosure.
+Review therefore adds a trusted current synthesis without rewriting, merging, or falsely claiming to
+supersede either agent's episodic history.
+
 ADR 0068 extends the existing Specification representatives rather than adding a weaker standalone score. `specification-authority-context` requires one exact revision-bound `acr_` row with raw criterion text, source line range, `statusInterpreted: false`, and `persisted: false`; the empty-workspace bootstrap representative requires the same shared projection before target initialization. ADR 0071 extends those same representatives with exact revision-bound `vmd_` Verification-method rows and requires `criterionBindingProven: false`, `observedResultBindingProven: false`, `statusInterpreted: false`, and `persisted: false`. Acceptance criteria retain budget priority over methods. The egress canary places separate private markers inside both an Acceptance criterion and Verification method so a blocked Specification must withhold the whole source and both derived fields. Core regressions prove parser/container false-positive resistance, atomic limits, compiler/Policy-Bundle parity, and that methods use only budget left after existing context plus Acceptance criteria. MCP regressions prove the 256 KiB transport guard drops methods before criteria and preserves the parent before falling back to the existing oversized-result error. ADR 0070 adds the exact criterion-to-historical-Verification review; ADR 0072 extends that same review in-place with optional exact `verificationMethodId`. The real `specification-authority-context` scenario now supplies the projected `acr_`, projected `vmd_`, and real session `ver_` together, requires the method-aware link fingerprint/boundary and exact handles, and still requires method execution/outcome, criterion satisfaction, semantic coverage, current implementation, persistence, automatic-write, and live-source proof to remain false.
 
 ## Downstream task contract and baseline
