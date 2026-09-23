@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentMemoryWorkspace } from "./AgentMemoryWorkspace";
 import type { AgentMemoryDashboard } from "./types";
@@ -1061,6 +1061,13 @@ describe("Agent Memory workspace boundaries", () => {
       screen.getByText(/ses_test.*verification.*ver_test/i),
     ).toBeVisible();
     expect(screen.getByText(/ses_test.*toe_test/i)).toBeVisible();
+    const originLineage = screen
+      .getByText("Origin lineage · 2")
+      .closest("section");
+    expect(originLineage).not.toBeNull();
+    expect(
+      within(originLineage!).getAllByRole("button", { name: "Open session" }),
+    ).toHaveLength(2);
     expect(
       screen.getByText("Procedure application history · 1"),
     ).toBeVisible();
