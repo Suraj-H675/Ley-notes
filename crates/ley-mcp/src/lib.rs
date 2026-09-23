@@ -189,7 +189,9 @@ episode and siblings are accounted atomically. When the same recovery window con
 minimal supported candidates and no rich Problem, use ley_session_memory_verify_batch so coverage and \
 typed status are checked together. Batch/composite verification is read-only by itself and never \
 authorizes sequential writes that would close the window. \
-`review-required` means structurally accounted, not semantically proven, \
+All recovery verifiers require the Ley session to remain active before a transition can be bound; \
+`session-not-active` or `canCheckpoint: false` means inspect historical evidence only and do not write recovery structure. \
+`review-required` means structurally accounted for an active session, not semantically proven, \
 trusted, or write-authorized. Otherwise request full bounded session evidence with ley_session_turns_get \
 only when the current user task needs it; tool observations remain separate from checkpoint Commands/Verification.";
 const WRITE_INSTRUCTIONS: &str =
