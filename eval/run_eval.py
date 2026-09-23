@@ -27,9 +27,11 @@ WRITE_FLAGS = ("--allow-session-writes", "--allow-learning-proposals")
 METRIC_NAMES = (
     "recall@k",
     "precision",
+    "known_failure_reuse",
     "untrusted_boundary",
     "cross_project_clean",
     "stale_learning",
+    "stale_learning_recovery",
     "capture_recovery",
     "memory_recovery",
     "memory_transition",
@@ -9871,6 +9873,60 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if leak:
             failures.append("cross-project search returned another project's marker")
 
+    stale_use_time = scenario.get("expected_stale_use_time")
+    stale_use_time_learning_id = ""
+    if isinstance(stale_use_time, dict):
+        stale_title = str(stale_use_time.get("title", ""))
+        pre_change = mcp_call(
+            project,
+            "ley_learnings_list",
+            {"scope": "all", "maxResults": 50},
+        )
+        pre_change_learning = next(
+            (
+                item
+                for item in pre_change.get("learnings", [])
+                if isinstance(item, dict) and item.get("title") == stale_title
+            ),
+            None,
+        )
+        if not isinstance(pre_change_learning, dict):
+            raise RuntimeError(
+                "stale-learning fixture could not find its pre-change learning"
+            )
+        stale_use_time_learning_id = str(
+            pre_change_learning.get("learningId", "")
+        )
+        reviewed = cli_json(
+            [
+                "learning",
+                "review",
+                stale_use_time_learning_id,
+                str(project),
+                "--actor",
+                "user",
+                "--action",
+                "confirm",
+                "--note",
+                "Explicitly trusted before source-change invalidation evaluation.",
+                "--request-id",
+                request_id(f"{scenario['id']}:stale:pre-change-review"),
+                "--json",
+            ]
+        )
+        reviewed_learning = (
+            reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
+        )
+        if not (
+            reviewed_learning.get("state") == "verified"
+            and reviewed_learning.get("trustState") == "trusted"
+            and reviewed_learning.get("freshness") == "current"
+        ):
+            raise RuntimeError(
+                "stale-learning fixture could not establish trusted current pre-change state"
+            )
+        evidence_text.extend([pre_change, reviewed])
+
     if scenario.get("source_changed"):
         for relative in scenario.get("deleted_artifacts", []):
             target = project / str(relative)
@@ -9908,6 +9964,192 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if fact.lower() not in serialized(evidence_text).lower():
             failures.append(f"expected fact was not retrievable: {fact}")
 
+    known_failure = scenario.get("expected_known_failure_reuse")
+    if isinstance(known_failure, dict):
+        query = str(known_failure.get("query", ""))
+        expected_title = str(known_failure.get("problem_title", ""))
+        expected_failed = known_failure.get("failed_attempt", {})
+        expected_successful = known_failure.get("successful_attempt", {})
+        expected_root_cause = str(known_failure.get("root_cause", ""))
+        expected_change = str(known_failure.get("change", ""))
+        expected_verification = str(known_failure.get("verification", ""))
+        expected_citation = str(known_failure.get("citation", ""))
+        procedure_spec = known_failure.get("procedure")
+
+        memory_search = mcp_call(
+            project,
+            "ley_search_memory",
+            {"query": query, "maxResults": K, "maxTokens": 1_500},
+        )
+        activity_search = mcp_call(
+            project,
+            "ley_search_activity",
+            {"query": query, "maxResults": K},
+        )
+        evidence_text.extend([memory_search, activity_search])
+
+        memory_problem = next(
+            (
+                result
+                for result in memory_search.get("results", [])
+                if isinstance(result, dict)
+                and result.get("kind") == "problem"
+                and result.get("title") == expected_title
+            ),
+            None,
+        )
+        activity_problem = next(
+            (
+                problem
+                for problem in activity_search.get("problems", [])
+                if isinstance(problem, dict) and problem.get("title") == expected_title
+            ),
+            None,
+        )
+
+        def expected_attempt_present(
+            problem: dict[str, object] | None, expected: object
+        ) -> bool:
+            if not isinstance(problem, dict) or not isinstance(expected, dict):
+                return False
+            return any(
+                isinstance(attempt, dict)
+                and attempt.get("action") == expected.get("action")
+                and attempt.get("outcome") == expected.get("outcome")
+                for attempt in problem.get("attempts", [])
+            )
+
+        resolution = (
+            activity_problem.get("resolution")
+            if isinstance(activity_problem, dict)
+            else None
+        )
+        citations = (
+            activity_problem.get("artifactCitations", [])
+            if isinstance(activity_problem, dict)
+            else []
+        )
+        stable_handle_ok = (
+            isinstance(memory_problem, dict)
+            and isinstance(activity_problem, dict)
+            and memory_problem.get("entityId") == activity_problem.get("recordId")
+            and memory_problem.get("sessionId") == activity_problem.get("sessionId")
+        )
+        resolution_ok = (
+            isinstance(resolution, dict)
+            and resolution.get("rootCause") == expected_root_cause
+            and resolution.get("change") == expected_change
+            and resolution.get("verification") == expected_verification
+        )
+        citation_ok = any(
+            isinstance(citation, dict)
+            and citation.get("artifactPath") == expected_citation
+            and isinstance(citation.get("artifactSnapshotId"), str)
+            and isinstance(citation.get("contentHash"), str)
+            for citation in citations
+        )
+        failed_attempt_ok = expected_attempt_present(activity_problem, expected_failed)
+        successful_attempt_ok = expected_attempt_present(
+            activity_problem, expected_successful
+        )
+        procedure_ok = procedure_spec is None
+        if isinstance(procedure_spec, dict) and isinstance(activity_problem, dict):
+            procedure_title = str(procedure_spec.get("title", ""))
+            procedure_guidance = str(procedure_spec.get("guidance", ""))
+            procedure_query = str(procedure_spec.get("query", ""))
+            problem_session_id = str(activity_problem.get("sessionId", ""))
+            problem_record_id = str(activity_problem.get("recordId", ""))
+            proposal = mcp_call(
+                project,
+                "ley_learning_propose",
+                {
+                    "requestId": request_id(
+                        f"{scenario['id']}:known-failure:procedure:proposal"
+                    ),
+                    "kind": "procedure",
+                    "title": procedure_title,
+                    "guidance": procedure_guidance,
+                    "confidencePercent": 90,
+                    "provenance": "agent-authored",
+                    "evidence": [
+                        {
+                            "sessionId": problem_session_id,
+                            "recordId": problem_record_id,
+                            "note": "Reviewed known-failure recovery procedure.",
+                        }
+                    ],
+                },
+                WRITE_FLAGS,
+            )
+            procedure_learning_id = str(proposal.get("learningId", ""))
+            reviewed = cli_json(
+                [
+                    "learning",
+                    "review",
+                    procedure_learning_id,
+                    str(project),
+                    "--actor",
+                    "user",
+                    "--action",
+                    "confirm",
+                    "--note",
+                    "Reviewed reusable procedure from the verified watcher recovery.",
+                    "--request-id",
+                    request_id(f"{scenario['id']}:known-failure:procedure:review"),
+                    "--json",
+                ]
+            )
+            procedure_search = mcp_call(
+                project,
+                "ley_search_memory",
+                {
+                    "query": procedure_query,
+                    "maxResults": K,
+                    "maxTokens": 1_500,
+                },
+            )
+            evidence_text.extend([proposal, reviewed, procedure_search])
+            reviewed_learning = (
+                reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
+            )
+            procedure_result = next(
+                (
+                    result
+                    for result in procedure_search.get("results", [])
+                    if isinstance(result, dict)
+                    and result.get("kind") == "learning"
+                    and result.get("learningId") == procedure_learning_id
+                    and result.get("title") == procedure_title
+                ),
+                None,
+            )
+            procedure_ok = (
+                reviewed_learning.get("state") == "verified"
+                and reviewed_learning.get("trustState") == "trusted"
+                and isinstance(procedure_result, dict)
+                and procedure_result.get("trustedForReuse") is True
+                and procedure_result.get("excerpt") == procedure_guidance
+            )
+        known_failure_ok = (
+            stable_handle_ok
+            and failed_attempt_ok
+            and successful_attempt_ok
+            and resolution_ok
+            and citation_ok
+            and procedure_ok
+        )
+        scores["known_failure_reuse"] = known_failure_ok
+        if not known_failure_ok:
+            failures.append(
+                "known-failure reuse incomplete: "
+                f"stableHandle={stable_handle_ok}, "
+                f"failedAttempt={failed_attempt_ok}, "
+                f"successfulAttempt={successful_attempt_ok}, "
+                f"resolution={resolution_ok}, "
+                f"citation={citation_ok}, "
+                f"procedure={procedure_ok}"
+            )
+
     if scenario.get("expected_stale_learning"):
         learnings = mcp_call(project, "ley_learnings_list", {"scope": "all", "maxResults": 50})
         title = str(scenario["expected_stale_learning"])
@@ -9916,6 +10158,102 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         scores["stale_learning"] = stale
         if not stale:
             failures.append("source-changed learning was not disclosed as stale")
+
+    if isinstance(stale_use_time, dict):
+        stale_title = str(stale_use_time.get("title", ""))
+        stale_guidance = str(stale_use_time.get("guidance", ""))
+        stale_query = str(stale_use_time.get("query", ""))
+        stale_task = str(stale_use_time.get("task", ""))
+        all_learnings = mcp_call(
+            project,
+            "ley_learnings_list",
+            {"scope": "all", "maxResults": 50},
+        )
+        trusted_learnings = mcp_call(
+            project,
+            "ley_learnings_list",
+            {"maxResults": 50},
+        )
+        stale_search = mcp_call(
+            project,
+            "ley_search_memory",
+            {"query": stale_query, "maxResults": K, "maxTokens": 1_500},
+        )
+        compiled = mcp_call(
+            project,
+            "ley_compile_context",
+            {"task": stale_task, "maxResults": 8, "maxTokens": 1_500},
+        )
+        health = mcp_call(
+            project,
+            "ley_memory_health",
+            {"maxSignals": 100, "maxSessions": 20, "maxCharacters": 16_000},
+        )
+        evidence_text.extend(
+            [all_learnings, trusted_learnings, stale_search, compiled, health]
+        )
+
+        all_learning = next(
+            (
+                item
+                for item in all_learnings.get("learnings", [])
+                if isinstance(item, dict)
+                and item.get("learningId") == stale_use_time_learning_id
+            ),
+            None,
+        )
+        stale_result = next(
+            (
+                result
+                for result in stale_search.get("results", [])
+                if isinstance(result, dict)
+                and result.get("kind") == "learning"
+                and result.get("learningId") == stale_use_time_learning_id
+            ),
+            None,
+        )
+        disclosed_stale_ok = (
+            isinstance(all_learning, dict)
+            and all_learning.get("title") == stale_title
+            and (
+                all_learning.get("freshness") == "source-changed"
+                or all_learning.get("state") == "stale"
+            )
+        )
+        trusted_suppressed_ok = not any(
+            isinstance(item, dict)
+            and item.get("learningId") == stale_use_time_learning_id
+            for item in trusted_learnings.get("learnings", [])
+        )
+        search_marks_stale_ok = (
+            isinstance(stale_result, dict)
+            and stale_result.get("trustSignal") == "stale"
+            and stale_result.get("trustedForReuse") is False
+        )
+        compiled_suppressed_ok = stale_guidance not in serialized([compiled])
+        health_signal_ok = any(
+            isinstance(signal, dict)
+            and signal.get("kind") in {"source-changed-learning", "stale-learning"}
+            and stale_use_time_learning_id in signal.get("relatedLearningIds", [])
+            for signal in health.get("signals", [])
+        )
+        stale_recovery_ok = (
+            disclosed_stale_ok
+            and trusted_suppressed_ok
+            and search_marks_stale_ok
+            and compiled_suppressed_ok
+            and health_signal_ok
+        )
+        scores["stale_learning_recovery"] = stale_recovery_ok
+        if not stale_recovery_ok:
+            failures.append(
+                "stale-learning recovery incomplete: "
+                f"disclosed={disclosed_stale_ok}, "
+                f"trustedSuppressed={trusted_suppressed_ok}, "
+                f"searchStale={search_marks_stale_ok}, "
+                f"compiledSuppressed={compiled_suppressed_ok}, "
+                f"healthAttention={health_signal_ok}"
+            )
 
     if scenario.get("expected_redactions"):
         raw_values = [str(value) for value in scenario["expected_redactions"]]

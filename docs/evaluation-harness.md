@@ -303,6 +303,38 @@ Together these checks cover concurrent host/local durable writes and stale user 
 the intentional authority split: lifecycle/MCP surfaces can advance session evidence or propose
 tentative memory, whereas high-consequence learning trust remains a version-guarded local user action.
 
+## Known-failure reuse
+
+`bug-diagnosis-failed-attempts` now exercises the complete deterministic progressive-disclosure path
+for a previously solved failure rather than passing on nearby keywords alone. The fixture records one
+structured watcher-startup Problem with an exact dead-end restart attempt, a successful event-loop
+initialization attempt, explicit root cause/change/verification fields, and a snapshot-bound citation to
+`src/watcher.py`. Task-facing `ley_search_memory` must return the same stable Problem/session handles as
+`ley_search_activity`; the activity projection must preserve both ordered attempts and their typed
+outcomes, the verified Resolution, and the immutable captured-source citation.
+
+The evaluator then proposes a Procedure from that exact recovered Problem record, confirms it through
+the explicit local user-review route, and requires task-facing project Memory Search to return the same
+learning as verified/trusted/current reusable guidance with its exact reviewed text. This proves the
+known-failure journey as evidence -> structured debugging episode -> reviewed reusable procedure; it
+does not claim that semantic similarity alone proves a new failure has the same cause.
+
+## Stale-learning use-time recovery
+
+`renamed-code-invalidates-learning` now proves the stale-learning journey at use time rather than only
+checking a freshness label. Before changing source, the evaluator explicitly user-confirms the
+artifact-backed `old_name` learning and requires verified/trusted/current state. It then deletes the
+cited source, re-ingests the project, and keeps the newer `renamed_fn` source independently
+retrievable.
+
+After that source drift, the same stable learning must remain discoverable only as historical/review
+state: `scope: all` discloses `source-changed`/stale freshness, default trusted-current listing omits it,
+project Memory Search labels it `trustSignal: stale` with `trustedForReuse: false`, and the Context
+Compiler must not copy the obsolete guidance into task context even when the task is phrased to make
+that old entry-point claim relevant. Memory Health must additionally return a `source-changed-learning`
+or `stale-learning` signal tied to the same learning ID. This proves review recovery without silently
+deleting the historical claim or treating a source rename as automatic semantic correction.
+
 ## Ten-session changing-requirement continuity
 
 `ten-session-changing-requirements-handoff` exercises the long-horizon coding-continuity case from
