@@ -177,7 +177,7 @@ sets `exitCode` to null, and carries a deterministic candidate fingerprint. Re-c
 with `ley_session_memory_verify_observed_command` before relying on it after any session mutation. A \
 `review-required` verifier result proves only that the same complete retained post-checkpoint Bash \
 observation still matches and proves no outcome. `candidateBindingAllowed: true` additionally means the \
-exact source is the sole current tool observation and there is no current turn evidence, so a separately \
+session is still active, the exact source is the sole current tool observation, and there is no current turn evidence, so a separately \
 write-enabled server may use only `ley_session_memory_commit_observed_command`; the candidate is still \
 unpersisted until that explicit call, `automaticWriteAllowed` remains false, and it is never Verification evidence. \
 Before writing reconstructed structure, check unresolved/Decision/minimal-Problem \
@@ -214,7 +214,7 @@ window and it returns review-required with no deferred evidence, use exactly one
 ley_session_memory_commit_batch with the exact batch fingerprint, checkpoint summary, and candidate \
 set; do not commit one candidate first and discard the others. Standalone Attempt/Resolution updates, \
 Verification, Summary, and general/mixed-window Command recovery remain review-only. For exactly one \
-observed Command whose verifier reports `candidateBindingAllowed: true`, use \
+isolated observed Command in an active session whose verifier reports `candidateBindingAllowed: true`, use \
 ley_session_memory_commit_observed_command with the exact source `toe_`, event count, and candidate \
 fingerprint. Ley derives one schema-v16 Command with `exitCode: null`, re-checks isolation under the \
 writer lock, preserves exact tool provenance, and replays an exact retry; do not infer command/test outcome. \

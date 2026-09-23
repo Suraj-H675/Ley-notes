@@ -41,7 +41,7 @@ const FAITHFULNESS_NOTICE: &str = "Ley verified evidence accounting and determin
 pub const OBSERVED_COMMAND_CANDIDATE_SUMMARY: &str =
     "Observed Bash invocation; exit code, command success, test success, and verification outcome are unknown.";
 const OBSERVED_COMMAND_SOURCE_BOUNDARY: &str = "untrusted-derived-command-candidate";
-const OBSERVED_COMMAND_VERIFICATION_NOTICE: &str = "Ley verified only that this candidate still points to one complete retained post-checkpoint Bash observation in the same session. candidateBindingAllowed means only that the dedicated observed-Command recovery writer may bind this exact isolated source without stranding current turn or sibling tool evidence; automaticWriteAllowed remains false. This does not prove execution success, failure, test status, or semantic importance.";
+const OBSERVED_COMMAND_VERIFICATION_NOTICE: &str = "Ley verified only that this candidate still points to one complete retained post-checkpoint Bash observation in the same session. candidateBindingAllowed means only that the session is still active and the dedicated observed-Command recovery writer may bind this exact isolated source without stranding current turn or sibling tool evidence; automaticWriteAllowed remains false. This does not prove execution success, failure, test status, or semantic importance.";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MemoryCandidateKind {
@@ -79,6 +79,7 @@ pub enum ObservedCommandTransitionState {
 #[serde(rename_all = "kebab-case")]
 pub enum ObservedCommandTransitionIssueKind {
     StaleEventCount,
+    SessionNotActive,
     SourceNotFound,
     SourceOutsideCurrentWindow,
     UnsupportedTool,
@@ -534,6 +535,13 @@ pub(crate) fn verify_observed_command_memory_transition_against_session(
         issues.push(ObservedCommandTransitionIssue {
             kind: ObservedCommandTransitionIssueKind::StaleEventCount,
             message: "session event count changed; recompile before relying on this observed Command candidate"
+                .to_owned(),
+        });
+    }
+    if session.status != SessionStatus::Active {
+        issues.push(ObservedCommandTransitionIssue {
+            kind: ObservedCommandTransitionIssueKind::SessionNotActive,
+            message: "observed Command recovery can only be bound while the session is active; paused/completed/abandoned sessions are historical and must not receive a new recovery checkpoint"
                 .to_owned(),
         });
     }
@@ -3132,10 +3140,11 @@ fn overlap_issue(overlap: &MemoryTransitionOverlap) -> MemoryTransitionIssue {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, ingest_project, initialize_project, record_session_prompt,
-        record_session_response, record_session_tool_observation, start_session, AttemptInput,
-        CaptureMode, CheckpointInput, DecisionInput, PlanItemInput, ProblemInput, ResolutionInput,
-        StartSessionInput, TaskInput, ToolObservationInput, ToolObservationKind, TurnEvidenceInput,
+        checkpoint_session, finish_session, ingest_project, initialize_project,
+        record_session_prompt, record_session_response, record_session_tool_observation,
+        start_session, AttemptInput, CaptureMode, CheckpointInput, DecisionInput,
+        FinishSessionInput, PlanItemInput, ProblemInput, ResolutionInput, StartSessionInput,
+        TaskInput, ToolObservationInput, ToolObservationKind, TurnEvidenceInput,
         TurnEvidenceOrigin,
     };
     use tempfile::tempdir;
@@ -7380,6 +7389,82 @@ mod tests {
         ));
         let current = crate::read_session(&project, &vault, &session_id).unwrap();
         assert!(current.checkpoints.is_empty());
+    }
+
+    #[test]
+    fn observed_command_binding_is_unavailable_after_session_stops_being_active() {
+        for status in [
+            SessionStatus::Paused,
+            SessionStatus::Completed,
+            SessionStatus::Abandoned,
+        ] {
+            let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+            let tool = record_session_tool_observation(
+                &project,
+                &vault,
+                &session_id,
+                ToolObservationInput {
+                    request_id: format!("req_{}", "2".repeat(32)),
+                    host: "codex".to_owned(),
+                    turn_correlation_material: None,
+                    tool_call_correlation_material: "non-active-observed-command".to_owned(),
+                    tool_name: "Bash".to_owned(),
+                    observation_kind: ToolObservationKind::Returned,
+                    command: "cargo test -p ley-core terminal_command".to_owned(),
+                    result: "process returned".to_owned(),
+                },
+            )
+            .unwrap();
+            let source_record_id = tool.session.tool_observations[0].record_id.clone();
+            let finished = finish_session(
+                &project,
+                &vault,
+                &session_id,
+                FinishSessionInput {
+                    request_id: format!("req_{}", "3".repeat(32)),
+                    status,
+                    summary: "Session is no longer active.".to_owned(),
+                    final_response: String::new(),
+                    handoff: String::new(),
+                    unresolved: Vec::new(),
+                },
+            )
+            .unwrap();
+
+            let verification = verify_observed_command_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                ObservedCommandMemoryTransitionInput {
+                    expected_event_count: finished.session.event_count,
+                    source_record_id: source_record_id.clone(),
+                },
+            )
+            .unwrap();
+            assert_eq!(verification.session_status, status);
+            assert_eq!(
+                verification.state,
+                ObservedCommandTransitionState::NeedsRevision
+            );
+            assert!(!verification.candidate_binding_allowed);
+            assert!(verification.issues.iter().any(|issue| {
+                issue.kind == ObservedCommandTransitionIssueKind::SessionNotActive
+            }));
+
+            let error = commit_observed_command_memory_transition(
+                &project,
+                &vault,
+                &session_id,
+                CommitObservedCommandMemoryTransitionInput {
+                    request_id: format!("req_{}", "4".repeat(32)),
+                    expected_event_count: finished.session.event_count,
+                    candidate_fingerprint: verification.candidate_fingerprint,
+                    source_record_id,
+                },
+            )
+            .unwrap_err();
+            assert!(matches!(error, LeyCoreError::InvalidSessionRequest(_)));
+        }
     }
 
     #[test]

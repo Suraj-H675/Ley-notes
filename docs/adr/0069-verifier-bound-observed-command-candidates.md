@@ -1,7 +1,8 @@
 # ADR 0069: Verifier-bound observed Command candidates
 
-Later extension: ADR 0085 adds a separate explicit schema-v16 writer only when the verified `toe_`
-source is the sole current tool observation and there is no current post-checkpoint `tev_` evidence.
+Later extension: ADR 0085 adds a separate explicit schema-v16 writer only while the session remains
+active, the verified `toe_` source is the sole current tool observation, and there is no current
+post-checkpoint `tev_` evidence.
 The persistence boundary below records this ADR's original read-only slice.
 
 ## Context

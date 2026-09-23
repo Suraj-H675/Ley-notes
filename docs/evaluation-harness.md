@@ -548,8 +548,8 @@ automatic Command candidate from the complete retained command, reference the ex
 serialize `exitCode: null`, and carry a deterministic candidate fingerprint. The scenario then calls
 `ley_session_memory_verify_observed_command` with that exact `toe_` row and event count and requires a
 `review-required` result with the same fingerprint. Automatic write/Verification/outcome/semantic
-proof remain false, while `candidateBindingAllowed` becomes true only because this representative has
-zero current `tev_` turns and no sibling current tool observations. The scenario then uses the
+proof remain false, while `candidateBindingAllowed` becomes true only because this representative remains active, has
+zero current `tev_` turns, and has no sibling current tool observations. The scenario then uses the
 separate write-gated `ley_session_memory_commit_observed_command` route, requires one schema-v16
 Command with `exitCode: null` and exact `toe_`/source-event/observation-kind provenance, retries the
 same request idempotently, and confirms that the closed window no longer returns a current automatic

@@ -5,8 +5,8 @@
 Accepted.
 
 Extends ADR 0069. The read-only observed-Command verifier remains non-authoritative; this ADR adds a
-separate explicit writer only for a recovery window that contains one complete current tool
-observation and no current turn evidence or sibling tool observations.
+separate explicit writer only while the session is active and the recovery window contains one
+complete current tool observation with no current turn evidence or sibling tool observations.
 
 ## Context
 
@@ -39,10 +39,11 @@ The existing verifier now reports:
 
 1. the exact `toe_` source still verifies as `review-required`;
 2. the expected session event count is current;
-3. the source is strictly after the latest checkpoint;
-4. its retained Bash command is complete;
-5. there are zero current post-checkpoint `tev_` prompt/response records; and
-6. there are zero other current post-checkpoint tool observations.
+3. the session status is still `active`;
+4. the source is strictly after the latest checkpoint;
+5. its retained Bash command is complete;
+6. there are zero current post-checkpoint `tev_` prompt/response records; and
+7. there are zero other current post-checkpoint tool observations.
 
 This flag is **not** automatic write permission. `automaticWriteAllowed` remains false. A caller must
 make a separate explicit write-enabled commit call carrying the exact verifier fingerprint,
@@ -130,8 +131,10 @@ freshness. A v16 Command-derived Learning carries both the recovery candidate fi
 
 Focused core/MCP/evaluation coverage must prove:
 
-- one isolated complete Bash observation verifies with `candidateBindingAllowed: true` while
+- one isolated complete Bash observation in an active session verifies with `candidateBindingAllowed: true` while
   `automaticWriteAllowed` stays false;
+- paused/completed/abandoned sessions report `session-not-active`, never advertise bindability, and
+  reject the write attempt;
 - a current `tev_` record makes binding unavailable and commit fail closed;
 - a sibling current tool observation makes binding unavailable and commit fail closed;
 - commit produces exactly one schema-v16 Command with `exitCode: null` and closes the current tool
