@@ -661,6 +661,12 @@ pub struct ContextFollowUp {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextCompileCoverage {
+    pub search_candidate_limit: usize,
+    pub search_collected_candidates: usize,
+    pub search_omitted_candidates: usize,
+    pub search_omitted_results: usize,
+    pub search_omitted_conflicts: usize,
+    pub search_truncated_result_content: usize,
     pub searched_results: usize,
     pub admitted_candidates: usize,
     pub returned_items: usize,
@@ -1517,6 +1523,12 @@ fn compile_search_result_with_authorities(
         .saturating_add(diagnostics.estimated_tokens)
         .min(limits.max_tokens);
     let coverage = ContextCompileCoverage {
+        search_candidate_limit: search.coverage.candidate_limit,
+        search_collected_candidates: search.coverage.collected_candidates,
+        search_omitted_candidates: search.coverage.omitted_candidates,
+        search_omitted_results: search.coverage.omitted_results,
+        search_omitted_conflicts: search.coverage.omitted_conflicts,
+        search_truncated_result_content: search.coverage.truncated_result_content,
         searched_results,
         admitted_candidates,
         returned_items: items.len(),
@@ -5122,6 +5134,15 @@ mod tests {
                 .withheld_derived_results
                 >= 1
         );
+        assert!(
+            cloud.coverage.search_omitted_results
+                >= cloud
+                    .egress_coverage
+                    .as_ref()
+                    .unwrap()
+                    .withheld_derived_results
+        );
+        assert!(cloud.coverage.search_truncated);
         let cloud_json = serde_json::to_string(&cloud).unwrap();
         assert!(!cloud_json.contains(private_marker));
         assert!(!cloud_json.contains("Specs/Private.md"));

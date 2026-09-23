@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const TOPIC_DOSSIER_SCHEMA_VERSION: u32 = 1;
+pub const TOPIC_DOSSIER_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_TOPIC_DOSSIER_RESULTS: usize = 12;
 pub const MAX_TOPIC_DOSSIER_RESULTS: usize = MAX_PROJECT_MEMORY_SEARCH_RESULTS;
 pub const DEFAULT_TOPIC_DOSSIER_TOKENS: usize = 4_000;
@@ -122,6 +122,10 @@ pub struct TopicDossierSections {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TopicDossierCoverage {
+    pub source_search_candidate_limit: usize,
+    pub source_search_collected_candidates: usize,
+    pub source_search_omitted_candidates: usize,
+    pub source_search_source_truncated: bool,
     pub source_search_results: usize,
     pub source_search_omitted_results: usize,
     pub evidence_returned: usize,
@@ -241,6 +245,10 @@ pub fn compile_topic_dossier(
         conflicts: Vec::new(),
         retrieval: search.retrieval.clone(),
         coverage: TopicDossierCoverage {
+            source_search_candidate_limit: search.coverage.candidate_limit,
+            source_search_collected_candidates: search.coverage.collected_candidates,
+            source_search_omitted_candidates: search.coverage.omitted_candidates,
+            source_search_source_truncated: search.coverage.source_truncated,
             source_search_results: search.results.len(),
             source_search_omitted_results: search.coverage.omitted_results,
             evidence_returned: 0,
@@ -892,8 +900,35 @@ mod tests {
         };
         let first = compile_topic_dossier(&project, &vault, "authentication", limits).unwrap();
         let second = compile_topic_dossier(&project, &vault, "authentication", limits).unwrap();
+        let source_search = search_project_memory(
+            &project,
+            &vault,
+            "authentication",
+            ProjectMemorySearchLimits {
+                max_results: limits.max_results,
+                max_tokens: limits.max_tokens,
+            },
+            None,
+        )
+        .unwrap();
 
         assert_eq!(first.schema_version, TOPIC_DOSSIER_SCHEMA_VERSION);
+        assert_eq!(
+            first.coverage.source_search_candidate_limit,
+            source_search.coverage.candidate_limit
+        );
+        assert_eq!(
+            first.coverage.source_search_collected_candidates,
+            source_search.coverage.collected_candidates
+        );
+        assert_eq!(
+            first.coverage.source_search_omitted_candidates,
+            source_search.coverage.omitted_candidates
+        );
+        assert_eq!(
+            first.coverage.source_search_source_truncated,
+            source_search.coverage.source_truncated
+        );
         assert_eq!(first.topic, "authentication");
         assert!(!first.persisted);
         assert_eq!(first.projection, "on-demand-rebuildable-topic-dossier");

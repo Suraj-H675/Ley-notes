@@ -40,6 +40,20 @@ For a concrete current task, agents should still prefer `ley_compile_context`. A
 
 The serialized dossier response itself is kept within the requested 800–8000 token budget using the same conservative four-characters-per-token approximation used by existing bounded projections. Coverage fields disclose omitted evidence, artifacts, supporting sessions, open items, verification records, and conflicts.
 
+Schema v2 also carries the bounded source-search boundary into dossier coverage:
+
+- `sourceSearchCandidateLimit`;
+- `sourceSearchCollectedCandidates`;
+- `sourceSearchOmittedCandidates`;
+- `sourceSearchSourceTruncated`;
+- the existing `sourceSearchResults` / `sourceSearchOmittedResults`.
+
+This separates two different loss points. `sourceSearchOmittedCandidates` means potentially relevant
+memory never reached ranking/result fitting because the lower-level search candidate cap was reached;
+`sourceSearchOmittedResults` means bounded candidates survived collection but did not fit the search
+result response. The dossier's top-level `truncated` remains the aggregate warning, but callers no
+longer need to infer which source-search stage lost evidence.
+
 When budget pressure exists, dossier-specific state is more valuable than duplicate navigation metadata. Session and revision search rows are therefore secondary to conflicts, verification, open state, artifact references, and supporting-session identity. They may still be returned when budget remains.
 
 ## Deletion and rebuildability

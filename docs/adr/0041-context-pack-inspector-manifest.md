@@ -8,6 +8,17 @@ Extended by ADR 0052: Inspector schema v2 adds reusable team/organization Knowle
 
 Extended by ADR 0053: Inspector schema v3 adds Policy Bundle precedence, bundle/scope/source/Specification attribution, exclusions, coverage, and token accounting without copying bundled policy bodies.
 
+Later extension: Inspector schema v4 preserves quantitative active-project source-search coverage
+(candidate limit, collected/omitted candidates, omitted results/conflicts, and truncated-result-content
+count) from the finalized compiler pack. This makes `searchTruncated` diagnosable without re-running a
+different search or copying context bodies.
+
+Those compiler-coverage fields are part of the finalized logical pack and therefore participate in
+`contextPackId`, just like the existing coverage/omission diagnostics. A compiler upgrade that changes
+truthful omission accounting may consequently produce a different logical pack ID from an older
+binary even when the retained source bodies are unchanged; the Inspector should report that mismatch
+instead of pretending the older pack was reconstructed.
+
 ## Context
 
 Ley's third P1 roadmap item is a Context Pack Inspector. The Context Compiler already exposes most of the raw diagnostics needed to understand a pack—authority, admission basis, exclusions, premise warnings, conflicts, retrieval mode, revision freshness, budgets, omissions, mounts, egress exclusions, and follow-up handles—but there is no stable identity for one compiled pack and no compact manifest that answers “why was this supplied?” without copying all supplied text again.

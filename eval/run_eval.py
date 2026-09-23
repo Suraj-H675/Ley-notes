@@ -4513,7 +4513,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and no_paths
             and compiled.get("sharedKnowledgePrecedence")
             == "explicit-mount-over-shared-knowledge"
-            and scope_inspection.get("schemaVersion") == 3
+            and scope_inspection.get("schemaVersion") == 4
             and scope_inspection.get("matchesExpectedContextPack") is True
             and scope_inspection.get("sharedKnowledgePrecedence")
             == "explicit-mount-over-shared-knowledge"
@@ -4984,7 +4984,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             == "active-project-specification-over-policy-bundle"
             and compiled.get("authorityPrecedence")
             == "human-intent-over-historical-memory"
-            and inspection.get("schemaVersion") == 3
+            and inspection.get("schemaVersion") == 4
             and inspection.get("matchesExpectedContextPack") is True
             and inspection.get("policyBundlePrecedence")
             == "active-project-specification-over-policy-bundle"
@@ -5903,12 +5903,24 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         artifact_path = str(dossier_expectation.get("artifact_path", ""))
         dossier_ok = (
-            dossier.get("schemaVersion") == 1
+            dossier.get("schemaVersion") == 2
             and dossier.get("persisted") is False
             and dossier.get("projection") == "on-demand-rebuildable-topic-dossier"
             and str(dossier.get("sourceFingerprint", "")).startswith("sha256:")
             and dossier.get("sourceFingerprint") == rebuilt.get("sourceFingerprint")
             and dossier.get("liveSourceChecked") is False
+            and int(dossier.get("coverage", {}).get("sourceSearchCandidateLimit", 0)) > 0
+            and int(
+                dossier.get("coverage", {}).get("sourceSearchCollectedCandidates", 0)
+            )
+            >= int(dossier.get("coverage", {}).get("sourceSearchResults", 0))
+            and int(
+                dossier.get("coverage", {}).get("sourceSearchOmittedCandidates", 0)
+            )
+            >= 0
+            and isinstance(
+                dossier.get("coverage", {}).get("sourceSearchSourceTruncated"), bool
+            )
             and int(dossier.get("estimatedTokens", 0)) <= max_tokens
             and all(marker in dossier_text for marker in evidence_markers)
             and all(
@@ -7761,7 +7773,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and len(pack_id) == 68
             and int(compiled.get("createdAtUnixMs", 0)) > 0
             and compiled.get("liveSourceChecked") is False
-            and inspection.get("schemaVersion") == 3
+            and inspection.get("schemaVersion") == 4
             and inspection.get("persisted") is False
             and inspection.get("inspectionBasis")
             == "current-recompiled-context-pack-manifest"
@@ -7772,6 +7784,27 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and inspection.get("budget", {}).get("maxTokens") == max_tokens
             and inspection.get("budget", {}).get("estimatedTokens")
             == compiled.get("estimatedTokens")
+            and int(inspection.get("coverage", {}).get("searchCandidateLimit", 0)) > 0
+            and int(
+                inspection.get("coverage", {}).get("searchCollectedCandidates", 0)
+            )
+            >= int(inspection.get("coverage", {}).get("searchedResults", 0))
+            and int(
+                inspection.get("coverage", {}).get("searchOmittedCandidates", 0)
+            )
+            >= 0
+            and int(
+                inspection.get("coverage", {}).get("searchOmittedResults", 0)
+            )
+            >= 0
+            and int(
+                inspection.get("coverage", {}).get("searchOmittedConflicts", 0)
+            )
+            >= 0
+            and int(
+                inspection.get("coverage", {}).get("searchTruncatedResultContent", 0)
+            )
+            >= 0
             and inspection.get("liveSourceChecked") is False
             and (
                 not hidden_marker

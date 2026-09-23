@@ -6596,6 +6596,18 @@ mod tests {
             .unwrap()
             .starts_with("sha256:"));
         assert!(allowed["estimatedTokens"].as_u64().unwrap() <= 1_500);
+        assert!(allowed["coverage"]["sourceSearchCandidateLimit"]
+            .as_u64()
+            .is_some_and(|value| value > 0));
+        assert!(allowed["coverage"]["sourceSearchCollectedCandidates"]
+            .as_u64()
+            .is_some());
+        assert!(allowed["coverage"]["sourceSearchOmittedCandidates"]
+            .as_u64()
+            .is_some());
+        assert!(allowed["coverage"]["sourceSearchSourceTruncated"]
+            .as_bool()
+            .is_some());
         assert!(allowed.to_string().contains("stable evidence"));
 
         let retained_specification_id = ley_core::generate_specification_id();
@@ -7282,10 +7294,29 @@ mod tests {
         assert_eq!(inspection["matchesExpectedContextPack"], true);
         assert!(inspection["mismatchWarning"].is_null());
         assert_eq!(inspection["persisted"], false);
+        assert_eq!(inspection["schemaVersion"], 4);
         assert_eq!(
             inspection["inspectionBasis"],
             "current-recompiled-context-pack-manifest"
         );
+        assert!(inspection["coverage"]["searchCandidateLimit"]
+            .as_u64()
+            .is_some_and(|value| value > 0));
+        assert!(inspection["coverage"]["searchCollectedCandidates"]
+            .as_u64()
+            .is_some());
+        assert!(inspection["coverage"]["searchOmittedCandidates"]
+            .as_u64()
+            .is_some());
+        assert!(inspection["coverage"]["searchOmittedResults"]
+            .as_u64()
+            .is_some());
+        assert!(inspection["coverage"]["searchOmittedConflicts"]
+            .as_u64()
+            .is_some());
+        assert!(inspection["coverage"]["searchTruncatedResultContent"]
+            .as_u64()
+            .is_some());
         assert!(inspection["includedRecords"]
             .as_array()
             .is_some_and(|records| !records.is_empty()));

@@ -11,7 +11,7 @@ use crate::{
 };
 use serde::Serialize;
 
-pub const CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION: u32 = 3;
+pub const CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION: u32 = 4;
 
 const INSPECTION_BASIS: &str = "current-recompiled-context-pack-manifest";
 const SOURCE_BOUNDARY: &str = "derived-context-pack-inspection";
@@ -520,6 +520,22 @@ mod tests {
             ));
         assert_eq!(inspection.budget.max_tokens, pack.max_tokens);
         assert_eq!(inspection.budget.estimated_tokens, pack.estimated_tokens);
+        assert_eq!(
+            inspection.coverage.search_candidate_limit,
+            pack.coverage.search_candidate_limit
+        );
+        assert_eq!(
+            inspection.coverage.search_collected_candidates,
+            pack.coverage.search_collected_candidates
+        );
+        assert_eq!(
+            inspection.coverage.search_omitted_candidates,
+            pack.coverage.search_omitted_candidates
+        );
+        assert_eq!(
+            inspection.coverage.search_omitted_results,
+            pack.coverage.search_omitted_results
+        );
         assert!(!inspection.live_source_checked);
 
         let serialized = serde_json::to_string(&inspection).unwrap();
@@ -616,7 +632,10 @@ mod tests {
             .contains(private_policy_marker));
 
         let inspection = inspect_context_pack(&pack, Some(&pack.context_pack_id));
-        assert_eq!(inspection.schema_version, 3);
+        assert_eq!(
+            inspection.schema_version,
+            CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION
+        );
         assert_eq!(inspection.policy_bundles.len(), 1);
         assert_eq!(inspection.policy_bundle_coverage.returned_policies, 1);
         assert!(inspection.included_records.iter().any(|record| {

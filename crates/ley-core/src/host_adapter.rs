@@ -1595,6 +1595,12 @@ mod tests {
     #[test]
     fn host_compiler_omissions_account_for_every_compiler_channel() {
         let coverage = ContextCompileCoverage {
+            search_candidate_limit: 256,
+            search_collected_candidates: 17,
+            search_omitted_candidates: 3,
+            search_omitted_results: 2,
+            search_omitted_conflicts: 1,
+            search_truncated_result_content: 1,
             searched_results: 17,
             admitted_candidates: 11,
             returned_items: 4,
