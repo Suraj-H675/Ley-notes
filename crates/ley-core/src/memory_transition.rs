@@ -397,6 +397,7 @@ pub struct MemoryTransitionClaimCheck {
 #[serde(rename_all = "kebab-case")]
 pub enum MemoryTransitionIssueKind {
     StaleEventCount,
+    SessionNotActive,
     EmptyClaims,
     EmptySubject,
     EmptyStatement,
@@ -2591,6 +2592,15 @@ fn verify_transition(
             evidence_record_ids: Vec::new(),
         });
     }
+    if session.status != SessionStatus::Active {
+        issues.push(MemoryTransitionIssue {
+            kind: MemoryTransitionIssueKind::SessionNotActive,
+            message: "recovery transitions can only be bound while the session is active; paused/completed/abandoned sessions are historical and must not receive a new recovery checkpoint"
+                .to_owned(),
+            claim_index: None,
+            evidence_record_ids: Vec::new(),
+        });
+    }
     for (claim_index, claim) in input.claims.iter().enumerate() {
         let subject = claim.subject.trim();
         let statement = claim.statement.trim();
@@ -4257,6 +4267,66 @@ mod tests {
     }
 
     #[test]
+    fn generic_recovery_is_not_bindable_after_session_completion() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "terminal-generic",
+            "Investigate the closed-session retry failure",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "terminal-generic",
+            "The retry failure remains unresolved",
+        );
+        let finished = finish_session(
+            &project,
+            &vault,
+            &session_id,
+            FinishSessionInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                status: SessionStatus::Completed,
+                summary: "Session is complete before recovery review.".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let verification = verify_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            MemoryTransitionInput {
+                expected_event_count: finished.session.event_count,
+                claims: vec![claim(
+                    MemoryCandidateKind::Problem,
+                    "Retry failure",
+                    "The retry failure remains unresolved",
+                    vec![prompt_id, response_id],
+                )],
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(verification.session_status, SessionStatus::Completed);
+        assert_eq!(verification.state, MemoryTransitionState::NeedsRevision);
+        assert!(verification
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::SessionNotActive));
+        assert!(verification.coverage.coverage_complete);
+    }
+
+    #[test]
     fn batch_transition_accounts_shared_evidence_and_has_replayable_order_semantics() {
         let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
         let prompt_id = prompt(
@@ -4840,6 +4910,66 @@ mod tests {
             pending.candidate_fingerprint,
             completed.candidate_fingerprint
         );
+    }
+
+    #[test]
+    fn typed_recovery_is_not_bindable_after_session_pause() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let prompt_id = prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "paused-typed",
+            "Track the paused release task",
+        );
+        let response_id = response(
+            &project,
+            &vault,
+            &session_id,
+            '3',
+            "paused-typed",
+            "The release task remains pending",
+        );
+        let paused = finish_session(
+            &project,
+            &vault,
+            &session_id,
+            FinishSessionInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                status: SessionStatus::Paused,
+                summary: "Pause before recovery review.".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let verification = verify_typed_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            TypedMemoryTransitionInput {
+                expected_event_count: paused.session.event_count,
+                candidate: typed_task(
+                    "Release build",
+                    TaskStatus::Pending,
+                    "",
+                    vec![prompt_id, response_id],
+                ),
+                deferred_evidence_record_ids: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(verification.session_status, SessionStatus::Paused);
+        assert_eq!(verification.state, MemoryTransitionState::NeedsRevision);
+        assert!(verification
+            .issues
+            .iter()
+            .any(|issue| issue.kind == MemoryTransitionIssueKind::SessionNotActive));
+        assert!(verification.coverage.coverage_complete);
     }
 
     #[test]

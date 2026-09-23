@@ -8128,6 +8128,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mcp_generic_recovery_reports_completed_session_as_non_bindable() {
+        let (_temporary, project, vault, server) = fixture();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "8a".repeat(16)),
+                name: "Completed generic recovery".to_owned(),
+                goal: "Keep terminal turn recovery historical".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
+        let recorded = record_session_prompt(
+            &project,
+            &vault,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: format!("req_{}", "9a".repeat(16)),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("completed-generic-recovery".to_owned()),
+                text: "Investigate the terminal retry failure".to_owned(),
+            },
+        )
+        .unwrap();
+        let evidence_record_id = recorded.session.prompts[0].record_id.clone();
+        let finished = finish_session(
+            &project,
+            &vault,
+            &session_id,
+            FinishSessionInput {
+                request_id: format!("req_{}", "aa".repeat(16)),
+                status: SessionStatus::Completed,
+                summary: "Close before generic recovery verification.".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let verified = server
+            .session_memory_verify(Parameters(VerifySessionMemoryParams {
+                session_id,
+                expected_event_count: finished.session.event_count,
+                claims: vec![McpMemoryCandidateClaim {
+                    kind: McpMemoryCandidateKind::Unresolved,
+                    subject: "Terminal retry failure".to_owned(),
+                    statement: "The retry failure remains unresolved".to_owned(),
+                    evidence_record_ids: vec![evidence_record_id],
+                }],
+                deferred_evidence_record_ids: Vec::new(),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(verified.is_error, Some(false));
+        let verified = verified.structured_content.unwrap();
+        assert_eq!(verified["sessionStatus"], "completed");
+        assert_eq!(verified["state"], "needs-revision");
+        assert!(verified["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| issue["kind"] == "session-not-active"));
+        assert_eq!(verified["coverage"]["coverageComplete"], true);
+        assert_eq!(verified["semanticFaithfulnessProven"], false);
+        assert_eq!(verified["liveSourceChecked"], false);
+    }
+
+    #[tokio::test]
     async fn bound_recovery_commit_closes_exact_verified_window_and_replays_exact_retry() {
         let (_temporary, project, vault, _) = fixture();
         let write_server =
