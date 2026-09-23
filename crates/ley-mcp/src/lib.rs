@@ -8024,6 +8024,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mcp_observed_command_recovery_rejects_completed_session() {
+        let (_temporary, project, vault, _) = fixture();
+        let write_server =
+            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "4a".repeat(16)),
+                name: "Completed observed Command recovery".to_owned(),
+                goal: "Keep terminal-session recovery non-bindable".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
+        let observed = record_session_tool_observation(
+            &project,
+            &vault,
+            &session_id,
+            ToolObservationInput {
+                request_id: format!("req_{}", "5a".repeat(16)),
+                host: "codex".to_owned(),
+                turn_correlation_material: None,
+                tool_call_correlation_material: "mcp-completed-command".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test -p ley-core completed_mcp".to_owned(),
+                result: "process returned".to_owned(),
+            },
+        )
+        .unwrap();
+        let source_record_id = observed.session.tool_observations[0].record_id.clone();
+        let finished = finish_session(
+            &project,
+            &vault,
+            &session_id,
+            FinishSessionInput {
+                request_id: format!("req_{}", "6a".repeat(16)),
+                status: SessionStatus::Completed,
+                summary: "Close the session before recovery verification.".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let expected_event_count = finished.session.event_count;
+
+        let verified = write_server
+            .session_memory_verify_observed_command(Parameters(
+                VerifyObservedCommandSessionMemoryParams {
+                    session_id: session_id.clone(),
+                    expected_event_count,
+                    source_record_id: source_record_id.clone(),
+                },
+            ))
+            .await
+            .unwrap();
+        assert_eq!(verified.is_error, Some(false));
+        let verified = verified.structured_content.unwrap();
+        assert_eq!(verified["sessionStatus"], "completed");
+        assert_eq!(verified["state"], "needs-revision");
+        assert_eq!(verified["candidateBindingAllowed"], false);
+        assert!(verified["issues"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| { issue["kind"] == "session-not-active" }));
+        let candidate_fingerprint = verified["candidateFingerprint"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        let rejected = write_server
+            .session_memory_commit_observed_command(Parameters(
+                CommitObservedCommandSessionMemoryParams {
+                    session_id: session_id.clone(),
+                    request_id: format!("req_{}", "7a".repeat(16)),
+                    expected_event_count,
+                    candidate_fingerprint,
+                    source_record_id,
+                },
+            ))
+            .await
+            .unwrap();
+        assert_eq!(rejected.is_error, Some(true));
+
+        let session = write_server
+            .session_get(Parameters(SessionContextParams {
+                session_id,
+                max_checkpoints: Some(5),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(session["eventCount"], expected_event_count);
+        assert_eq!(session["status"], "completed");
+        assert_eq!(session["checkpoints"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
     async fn bound_recovery_commit_closes_exact_verified_window_and_replays_exact_retry() {
         let (_temporary, project, vault, _) = fixture();
         let write_server =
