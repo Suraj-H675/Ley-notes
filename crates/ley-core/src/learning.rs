@@ -3100,6 +3100,30 @@ mod tests {
         )
         .unwrap();
         let source_record_id = observed.session.tool_observations[0].record_id.clone();
+        let direct_tool_error = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: request_id('f'),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Do not cite raw tool evidence".to_owned(),
+                guidance: "Raw tool observations are provenance, not direct learning evidence."
+                    .to_owned(),
+                confidence_percent: 50,
+                provenance: LearningProvenance::Inferred,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: started.session.session_id.clone(),
+                    record_id: source_record_id.clone(),
+                    note: "Raw tool observation must be rejected here.".to_owned(),
+                }],
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            direct_tool_error,
+            LeyCoreError::InvalidLearningRequest(_)
+        ));
         let verification = verify_observed_command_memory_transition(
             &project,
             &vault,

@@ -139,6 +139,7 @@ Focused core/MCP/evaluation coverage must prove:
 - exact retry replays without another event;
 - restart/replay accepts the v16 projection and retains the exact Command;
 - recovery derivation provenance resolves the Command to the exact source `toe_`;
+- a raw schema-v14 `toe_` observation remains invalid as direct Learning proposal evidence;
 - a later Learning persists schema-v3 `ToolEvidence` plus the recovery candidate fingerprint and no
   fake `TurnEvidence` for the tool source;
 - erasing the source Ley session physically removes a Learning derived through that recovered Command,
