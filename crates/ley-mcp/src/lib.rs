@@ -7067,6 +7067,11 @@ mod tests {
         assert_eq!(allowed["destructiveActionsTaken"], false);
         assert_eq!(allowed["liveSourceChecked"], false);
         assert_eq!(allowed["coverage"]["excludedActiveSessions"], 1);
+        assert_eq!(allowed["coverage"]["allEligibleSessionsInspected"], true);
+        assert_eq!(
+            allowed["coverage"]["inspectedSessionsWithUnconsolidatedEvidence"],
+            1
+        );
         let item = allowed["items"]
             .as_array()
             .unwrap()
@@ -7147,6 +7152,15 @@ mod tests {
         assert_eq!(allowed["tableOfContentsNotScore"], true);
         assert_eq!(allowed["liveSourceChecked"], false);
         assert_eq!(allowed["egressTarget"], "cloud");
+        assert_eq!(allowed["coverage"]["allSessionsInspected"], true);
+        assert_eq!(
+            allowed["coverage"]["inspectedSessionObservedCommandCandidates"],
+            0
+        );
+        assert_eq!(
+            allowed["coverage"]["inspectedSessionCurrentPlanCandidates"],
+            0
+        );
         assert!(allowed["mapFingerprint"]
             .as_str()
             .unwrap()

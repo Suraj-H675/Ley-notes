@@ -56,6 +56,14 @@ The MCP route applies the existing historical-memory egress gate before map cons
 
 Callers can bound entries per section, inspected sessions, and copied command/plan text. Coverage reports candidate/returned/omitted counts truthfully; when the text budget is exhausted, later text-bearing entries are omitted rather than returned with empty placeholders.
 
+Schema v2 tightens the session-derived coverage names. Historical observed-command candidates and
+current-plan candidates are computed only from the bounded `sessionsInspected` subset, so the earlier
+names looked more exhaustive than the data actually was. Coverage now exposes
+`inspectedSessionObservedCommandCandidates`, `inspectedSessionCurrentPlanCandidates`, and
+`allSessionsInspected` alongside `sessionsOmitted`. Captured-file, graph, package-script, and
+Specification candidate counts keep their existing names because those sources are not bounded by the
+session limit.
+
 The map carries a deterministic SHA-256 `mapFingerprint` over logical project/snapshot identity, revision freshness, returned sections, gaps, and coverage. Generation time is excluded, so unchanged logical state has the same fingerprint while changed captured source changes the fingerprint.
 
 ## Consequences
@@ -74,4 +82,6 @@ Tradeoffs:
 - the first declared-command slice parses only the captured root `package.json`;
 - a primary API candidate is not proof of public/runtime exposure;
 - current plan items are structured session state, not issue-tracker truth;
+- observed-command/current-plan coverage is bounded by `maxSessions` and must not be interpreted as a
+  whole-project historical total when `allSessionsInspected` is false;
 - broader build-system parsing or a dedicated UI may be added later only with equally explicit source/provenance semantics.

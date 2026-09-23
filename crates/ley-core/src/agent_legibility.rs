@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-pub const AGENT_LEGIBILITY_SCHEMA_VERSION: u32 = 1;
+pub const AGENT_LEGIBILITY_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION: usize = 12;
 pub const MAX_AGENT_LEGIBILITY_ENTRIES_PER_SECTION: usize = 30;
 pub const DEFAULT_AGENT_LEGIBILITY_SESSIONS: usize = 8;
@@ -156,14 +156,15 @@ pub struct AgentLegibilityCoverage {
     pub sessions_total: usize,
     pub sessions_inspected: usize,
     pub sessions_omitted: usize,
+    pub all_sessions_inspected: bool,
     pub architecture_candidates: usize,
     pub policy_candidates: usize,
     pub schema_migration_candidates: usize,
     pub observability_candidates: usize,
     pub api_candidates: usize,
     pub declared_command_candidates: usize,
-    pub observed_command_candidates: usize,
-    pub current_plan_candidates: usize,
+    pub inspected_session_observed_command_candidates: usize,
+    pub inspected_session_current_plan_candidates: usize,
     pub current_specifications: usize,
     pub changed_specifications: usize,
     pub missing_specifications: usize,
@@ -548,14 +549,15 @@ pub fn compile_agent_legibility_map(
         sessions_total,
         sessions_inspected,
         sessions_omitted: sessions_total.saturating_sub(sessions_inspected),
+        all_sessions_inspected: sessions_total == sessions_inspected,
         architecture_candidates: architecture_total,
         policy_candidates: policy_total,
         schema_migration_candidates: schema_total,
         observability_candidates: observability_total,
         api_candidates: api_total,
         declared_command_candidates: declared_command_total,
-        observed_command_candidates: observed_command_total,
-        current_plan_candidates: current_plan_total,
+        inspected_session_observed_command_candidates: observed_command_total,
+        inspected_session_current_plan_candidates: current_plan_total,
         current_specifications: current_spec_total,
         changed_specifications: specification_authority.changed,
         missing_specifications: specification_authority.missing,
@@ -1212,5 +1214,83 @@ mod tests {
         let serialized = serde_json::to_string(&map).unwrap();
         assert!(!serialized.contains("secret-build-command"));
         assert!(!serialized.contains("secret-test-command"));
+    }
+
+    #[test]
+    fn map_names_session_derived_candidate_counts_as_inspected_subset() {
+        let temporary = tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let vault = temporary.path().join("vault");
+        let config = temporary.path().join("config");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        fs::write(project.join("README.md"), "# Legibility bounds\n").unwrap();
+        initialize_project(&project, Some("Legibility bounds"), CaptureMode::Structured).unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let registry = SpecificationRegistry::at(config.join("specifications-v1.json"));
+
+        for (index, digit) in [('1', '2'), ('3', '4')].into_iter().enumerate() {
+            let started = start_session(
+                &project,
+                &vault,
+                StartSessionInput {
+                    request_id: request_id(digit.0),
+                    name: format!("Active legibility session {index}"),
+                    goal: "Exercise bounded session-derived legibility coverage".to_owned(),
+                    source: SessionSource::default(),
+                },
+            )
+            .unwrap();
+            checkpoint_session(
+                &project,
+                &vault,
+                &started.session.session_id,
+                CheckpointInput {
+                    request_id: request_id(digit.1),
+                    summary: "Recorded bounded operating evidence.".to_owned(),
+                    plan: vec![PlanItemInput {
+                        text: format!("Finish bounded plan {index}"),
+                        status: PlanStatus::InProgress,
+                    }],
+                    decisions: Vec::new(),
+                    tasks: Vec::new(),
+                    problems: Vec::new(),
+                    touched_artifacts: Vec::new(),
+                    commands: vec![CommandInput {
+                        command: format!("cargo test bounded_{index}"),
+                        exit_code: Some(0),
+                        summary: "Historical command evidence.".to_owned(),
+                    }],
+                    verification: Vec::new(),
+                    unresolved: Vec::new(),
+                },
+            )
+            .unwrap();
+        }
+
+        let map = compile_agent_legibility_map(
+            &project,
+            &vault,
+            AgentLegibilityLimits {
+                max_entries_per_section: 12,
+                max_sessions: 1,
+                max_characters: 12_000,
+            },
+            &registry,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(map.schema_version, 2);
+        assert_eq!(map.coverage.sessions_total, 2);
+        assert_eq!(map.coverage.sessions_inspected, 1);
+        assert_eq!(map.coverage.sessions_omitted, 1);
+        assert!(!map.coverage.all_sessions_inspected);
+        assert_eq!(
+            map.coverage.inspected_session_observed_command_candidates,
+            1
+        );
+        assert_eq!(map.coverage.inspected_session_current_plan_candidates, 1);
+        assert!(map.coverage.truncated);
     }
 }

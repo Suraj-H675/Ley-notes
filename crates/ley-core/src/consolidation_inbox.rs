@@ -7,7 +7,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub const CONSOLIDATION_INBOX_SCHEMA_VERSION: u32 = 1;
+pub const CONSOLIDATION_INBOX_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_CONSOLIDATION_INBOX_ITEMS: usize = 20;
 pub const MAX_CONSOLIDATION_INBOX_ITEMS: usize = 50;
 pub const DEFAULT_CONSOLIDATION_INBOX_SESSIONS: usize = 30;
@@ -75,7 +75,8 @@ pub struct ConsolidationInboxCoverage {
     pub excluded_imported_sessions: usize,
     pub sessions_inspected: usize,
     pub sessions_omitted: usize,
-    pub sessions_with_unconsolidated_evidence: usize,
+    pub all_eligible_sessions_inspected: bool,
+    pub inspected_sessions_with_unconsolidated_evidence: usize,
     pub items_returned: usize,
     pub items_omitted: usize,
     pub truncated: bool,
@@ -205,23 +206,25 @@ pub fn consolidation_inbox(
             source_boundary: SOURCE_BOUNDARY,
         });
     }
-    let sessions_with_unconsolidated_evidence = candidates.len();
+    let inspected_sessions_with_unconsolidated_evidence = candidates.len();
     let items = candidates
         .into_iter()
         .take(limits.max_items)
         .collect::<Vec<_>>();
+    let sessions_omitted = eligible_boundary_sessions.saturating_sub(sessions_inspected);
     let coverage = ConsolidationInboxCoverage {
         total_sessions,
         eligible_boundary_sessions,
         excluded_active_sessions,
         excluded_imported_sessions,
         sessions_inspected,
-        sessions_omitted: eligible_boundary_sessions.saturating_sub(sessions_inspected),
-        sessions_with_unconsolidated_evidence,
+        sessions_omitted,
+        all_eligible_sessions_inspected: sessions_omitted == 0,
+        inspected_sessions_with_unconsolidated_evidence,
         items_returned: items.len(),
-        items_omitted: sessions_with_unconsolidated_evidence.saturating_sub(items.len()),
+        items_omitted: inspected_sessions_with_unconsolidated_evidence.saturating_sub(items.len()),
         truncated: eligible_boundary_sessions > sessions_inspected
-            || sessions_with_unconsolidated_evidence > items.len()
+            || inspected_sessions_with_unconsolidated_evidence > items.len()
             || items
                 .iter()
                 .any(|item| item.omitted_proposal_evidence_record_ids > 0),
@@ -561,5 +564,86 @@ mod tests {
         assert!(!serde_json::to_string(&inbox)
             .unwrap()
             .contains("MINIMAL_CONSOLIDATION_BODY_CANARY"));
+    }
+
+    #[test]
+    fn inbox_coverage_names_only_inspected_unconsolidated_sessions_under_bounds() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&vault).unwrap();
+        initialize_project(
+            &project,
+            Some("Bounded consolidation coverage"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        std::fs::write(project.join("README.md"), "# Consolidation coverage\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        for (index, digit) in [('1', '2'), ('3', '4')].into_iter().enumerate() {
+            let session = start_session(
+                &project,
+                &vault,
+                StartSessionInput {
+                    request_id: request_id(digit.0),
+                    name: format!("Terminal boundary {index}"),
+                    goal: "Retain evidence for bounded consolidation coverage".to_owned(),
+                    source: SessionSource::default(),
+                },
+            )
+            .unwrap();
+            record_session_prompt(
+                &project,
+                &vault,
+                &session.session.session_id,
+                TurnEvidenceInput {
+                    request_id: request_id(digit.1),
+                    origin: TurnEvidenceOrigin::ManualCli,
+                    host: None,
+                    correlation_material: Some(format!("coverage-{index}")),
+                    text: format!("CONSOLIDATION_COVERAGE_BODY_{index}"),
+                },
+            )
+            .unwrap();
+            finish_session(
+                &project,
+                &vault,
+                &session.session.session_id,
+                FinishSessionInput {
+                    request_id: format!("req_{:032x}", 700 + index),
+                    status: SessionStatus::Completed,
+                    summary: "Terminal boundary retained unconsolidated evidence.".to_owned(),
+                    final_response: String::new(),
+                    handoff: String::new(),
+                    unresolved: Vec::new(),
+                },
+            )
+            .unwrap();
+        }
+
+        let inbox = consolidation_inbox(
+            &project,
+            &vault,
+            ConsolidationInboxLimits {
+                max_items: 20,
+                max_sessions: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(inbox.schema_version, 2);
+        assert_eq!(inbox.coverage.eligible_boundary_sessions, 2);
+        assert_eq!(inbox.coverage.sessions_inspected, 1);
+        assert_eq!(inbox.coverage.sessions_omitted, 1);
+        assert!(!inbox.coverage.all_eligible_sessions_inspected);
+        assert_eq!(
+            inbox
+                .coverage
+                .inspected_sessions_with_unconsolidated_evidence,
+            1
+        );
+        assert_eq!(inbox.coverage.items_returned, 1);
+        assert!(inbox.coverage.truncated);
     }
 }

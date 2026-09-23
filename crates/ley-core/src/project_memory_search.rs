@@ -256,14 +256,16 @@ impl Candidate {
 struct CandidateCollector {
     limit: usize,
     total_candidates: usize,
+    revision_filter: Option<RevisionCompatibility>,
     candidates: Vec<Candidate>,
 }
 
 impl CandidateCollector {
-    fn new(limit: usize) -> Self {
+    fn with_revision_filter(limit: usize, revision_filter: Option<RevisionCompatibility>) -> Self {
         Self {
             limit,
             total_candidates: 0,
+            revision_filter,
             candidates: Vec::new(),
         }
     }
@@ -271,14 +273,20 @@ impl CandidateCollector {
     fn push(&mut self, candidate: Candidate) {
         self.total_candidates = self.total_candidates.saturating_add(1);
         self.candidates.push(candidate);
-        self.candidates.sort_by(candidate_selection_order);
+        let revision_filter = self.revision_filter;
+        self.candidates.sort_by(|left, right| {
+            candidate_selection_order_with_revision_filter(left, right, revision_filter)
+        });
         self.candidates
             .dedup_by(|left, right| left.stable_id() == right.stable_id());
         self.candidates.truncate(self.limit);
     }
 
     fn finish(mut self) -> (Vec<Candidate>, usize) {
-        self.candidates.sort_by(candidate_selection_order);
+        let revision_filter = self.revision_filter;
+        self.candidates.sort_by(|left, right| {
+            candidate_selection_order_with_revision_filter(left, right, revision_filter)
+        });
         let omitted = self.total_candidates.saturating_sub(self.candidates.len());
         (self.candidates, omitted)
     }
@@ -353,7 +361,10 @@ pub fn search_project_memory(
     )
     .map_err(sanitize_memory_error)?;
 
-    let mut collector = CandidateCollector::new(MAX_PROJECT_MEMORY_SEARCH_CANDIDATES);
+    let mut collector = CandidateCollector::with_revision_filter(
+        MAX_PROJECT_MEMORY_SEARCH_CANDIDATES,
+        revision_filter,
+    );
     let mut conflicts = ConflictCollector {
         total_conflicts: 0,
         conflicts: Vec::new(),
@@ -867,6 +878,28 @@ fn candidate_selection_order(left: &Candidate, right: &Candidate) -> std::cmp::O
         .then_with(|| right.updated_at_unix_ms.cmp(&left.updated_at_unix_ms))
         .then_with(|| left.kind.cmp(&right.kind))
         .then_with(|| left.entity_id.cmp(&right.entity_id))
+}
+
+fn candidate_selection_order_with_revision_filter(
+    left: &Candidate,
+    right: &Candidate,
+    revision_filter: Option<RevisionCompatibility>,
+) -> std::cmp::Ordering {
+    if let Some(filter) = revision_filter {
+        let left_matches = left
+            .revision_applicability
+            .as_ref()
+            .is_some_and(|applicability| applicability.compatibility == filter);
+        let right_matches = right
+            .revision_applicability
+            .as_ref()
+            .is_some_and(|applicability| applicability.compatibility == filter);
+        right_matches
+            .cmp(&left_matches)
+            .then_with(|| candidate_selection_order(left, right))
+    } else {
+        candidate_selection_order(left, right)
+    }
 }
 
 fn conflict_order(
@@ -1531,7 +1564,7 @@ mod tests {
 
     #[test]
     fn bounded_candidate_collection_preserves_exact_matches() {
-        let mut collector = CandidateCollector::new(2);
+        let mut collector = CandidateCollector::with_revision_filter(2, None);
         collector.push(candidate(
             ProjectMemoryResultKind::Session,
             "older",
@@ -1561,6 +1594,55 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|candidate| candidate.entity_id == "exact"));
+    }
+
+    #[test]
+    fn bounded_candidate_collection_preserves_requested_revision_matches() {
+        let mut collector =
+            CandidateCollector::with_revision_filter(2, Some(RevisionCompatibility::Divergent));
+        for id in ["current-exact", "current-strong"] {
+            let mut current = candidate(
+                ProjectMemoryResultKind::Decision,
+                id,
+                id,
+                "branch query",
+                1_000,
+                true,
+            );
+            current.revision_applicability = Some(RevisionApplicability {
+                compatibility: RevisionCompatibility::CurrentLineage,
+                captured_head: Some(format!("head-{id}")),
+                captured_branch: Some("main".to_owned()),
+            });
+            collector.push(current);
+        }
+
+        let mut divergent = candidate(
+            ProjectMemoryResultKind::Decision,
+            "divergent-match",
+            "divergent match",
+            "branch query",
+            10,
+            false,
+        );
+        divergent.revision_applicability = Some(RevisionApplicability {
+            compatibility: RevisionCompatibility::Divergent,
+            captured_head: Some("head-divergent".to_owned()),
+            captured_branch: Some("experiment".to_owned()),
+        });
+        collector.push(divergent);
+
+        let (mut candidates, _) = collector.finish();
+        candidates.retain(|candidate| {
+            candidate
+                .revision_applicability
+                .as_ref()
+                .is_some_and(|applicability| {
+                    applicability.compatibility == RevisionCompatibility::Divergent
+                })
+        });
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].entity_id, "divergent-match");
     }
 
     #[test]

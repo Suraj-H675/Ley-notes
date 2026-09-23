@@ -5764,7 +5764,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         inbox_text = json.dumps([inbox, rebuilt], sort_keys=True)
         inbox_ok = (
-            inbox.get("schemaVersion") == 1
+            inbox.get("schemaVersion") == 2
             and inbox.get("persisted") is False
             and inbox.get("modelInvoked") is False
             and inbox.get("backgroundWorkStarted") is False
@@ -5772,6 +5772,13 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and inbox.get("liveSourceChecked") is False
             and inbox.get("inboxFingerprint") == rebuilt.get("inboxFingerprint")
             and int(inbox.get("coverage", {}).get("excludedActiveSessions", 0)) >= 1
+            and inbox.get("coverage", {}).get("allEligibleSessionsInspected") is True
+            and int(
+                inbox.get("coverage", {}).get(
+                    "inspectedSessionsWithUnconsolidatedEvidence", 0
+                )
+            )
+            == 1
             and len(candidates) == 1
             and candidate.get("sessionStatus") == "completed"
             and candidate.get("automaticWriteAllowed") is False
@@ -7915,7 +7922,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             legibility_expectation.get("specification_path", "")
         )
         legibility_ok = (
-            legibility.get("schemaVersion") == 1
+            legibility.get("schemaVersion") == 2
             and legibility.get("projection") == "on-demand-agent-legibility-map"
             and legibility.get("persisted") is False
             and legibility.get("tableOfContentsNotScore") is True
@@ -7924,6 +7931,19 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and legibility.get("mapFingerprint") == rebuilt.get("mapFingerprint")
             and legibility.get("liveSourceChecked") is False
             and legibility.get("egressTarget") == "cloud"
+            and legibility.get("coverage", {}).get("allSessionsInspected") is True
+            and int(
+                legibility.get("coverage", {}).get(
+                    "inspectedSessionObservedCommandCandidates", 0
+                )
+            )
+            >= 1
+            and int(
+                legibility.get("coverage", {}).get(
+                    "inspectedSessionCurrentPlanCandidates", 0
+                )
+            )
+            >= 1
             and (
                 not architecture_path
                 or architecture_path

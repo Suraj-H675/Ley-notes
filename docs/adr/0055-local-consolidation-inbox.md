@@ -93,6 +93,14 @@ The first slice is intentionally small:
 - sessions of the same status are ordered by newest session update, then stable session ID;
 - coverage explicitly reports omitted/truncated sessions, items, and evidence handles.
 
+Schema v2 tightens that coverage contract. The earlier
+`sessionsWithUnconsolidatedEvidence` name looked project-wide even though Ley can only know that count
+for the bounded `sessionsInspected` subset. The field is replaced with
+`inspectedSessionsWithUnconsolidatedEvidence`, and `allEligibleSessionsInspected` states whether
+`maxSessions` covered the complete eligible paused/completed/abandoned native-session population.
+`sessionsOmitted` remains the exact numeric boundary. Ley does not inspect omitted sessions merely to
+manufacture a global unconsolidated-evidence count.
+
 These bounds apply before any future model-assisted interpretation and prevent the inbox from becoming a transcript dump or unbounded work queue.
 
 ## Egress and authority
@@ -151,5 +159,9 @@ Passing requires:
 - origin lineage records those exact turn-evidence IDs with an automatic authority ceiling of `review-required`;
 - the cited completed session's event count is unchanged after inbox inspection and learning proposal;
 - privacy canaries remain absent from all observable inbox/learning/session outputs used by the scenario.
+
+Focused coverage also requires a two-terminal-session / `maxSessions: 1` case to report one inspected
+session, one omitted session, `allEligibleSessionsInspected: false`, and exactly one
+`inspectedSessionsWithUnconsolidatedEvidence` rather than presenting that bounded count as project-wide.
 
 Focused core, CLI, and MCP tests additionally cover Minimal/body-free evidence, imported-session exclusion, tool bounds, historical egress, direct-turn validation, and cited-session non-mutation.
