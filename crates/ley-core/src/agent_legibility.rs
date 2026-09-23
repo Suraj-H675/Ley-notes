@@ -54,7 +54,7 @@ pub enum LegibilityCommandCategory {
     Other,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LegibilityCommandSource {
     PackageScript,
@@ -850,11 +850,18 @@ fn dedupe_commands(commands: &mut Vec<LegibilityCommand>) {
         left.category
             .cmp(&right.category)
             .then_with(|| left.command.cmp(&right.command))
+            .then_with(|| left.source.cmp(&right.source))
             .then_with(|| left.session_id.cmp(&right.session_id))
             .then_with(|| left.record_id.cmp(&right.record_id))
     });
     let mut seen = BTreeSet::new();
-    commands.retain(|command| seen.insert((command.category, normalize_content(&command.command))));
+    commands.retain(|command| {
+        seen.insert((
+            command.category,
+            command.source,
+            normalize_content(&command.command),
+        ))
+    });
 }
 
 fn normalize_content(value: &str) -> String {
@@ -1179,6 +1186,63 @@ mod tests {
         .unwrap();
         assert_ne!(first.artifact_snapshot_id, changed.artifact_snapshot_id);
         assert_ne!(first.map_fingerprint, changed.map_fingerprint);
+    }
+
+    #[test]
+    fn command_dedupe_preserves_distinct_observed_provenance() {
+        let mut commands = vec![
+            LegibilityCommand {
+                command: "cargo test -p api".to_owned(),
+                category: LegibilityCommandCategory::Test,
+                source: LegibilityCommandSource::ObservedCheckpoint,
+                declaration_name: None,
+                artifact_path: None,
+                session_id: Some("ses_checkpoint".to_owned()),
+                checkpoint_id: Some("ckp_checkpoint".to_owned()),
+                record_id: Some("cmd_checkpoint".to_owned()),
+                selection_basis: "latest-inspected-checkpoint-observed-command",
+            },
+            LegibilityCommand {
+                command: "cargo  test -p api".to_owned(),
+                category: LegibilityCommandCategory::Test,
+                source: LegibilityCommandSource::ObservedCheckpoint,
+                declaration_name: None,
+                artifact_path: None,
+                session_id: Some("ses_duplicate".to_owned()),
+                checkpoint_id: Some("ckp_duplicate".to_owned()),
+                record_id: Some("cmd_duplicate".to_owned()),
+                selection_basis: "latest-inspected-checkpoint-observed-command",
+            },
+            LegibilityCommand {
+                command: "cargo test -p api".to_owned(),
+                category: LegibilityCommandCategory::Test,
+                source: LegibilityCommandSource::ObservedVerification,
+                declaration_name: None,
+                artifact_path: None,
+                session_id: Some("ses_verification".to_owned()),
+                checkpoint_id: Some("ckp_verification".to_owned()),
+                record_id: Some("ver_verification".to_owned()),
+                selection_basis: "latest-inspected-checkpoint-verification-command",
+            },
+        ];
+
+        dedupe_commands(&mut commands);
+
+        assert_eq!(commands.len(), 2);
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| command.source == LegibilityCommandSource::ObservedCheckpoint)
+                .count(),
+            1
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .filter(|command| command.source == LegibilityCommandSource::ObservedVerification)
+                .count(),
+            1
+        );
     }
 
     #[test]
