@@ -82,6 +82,12 @@ describe("CapturePrivacyPanel memory erasure", () => {
     fireEvent.click(await screen.findByText("Erase memory…"));
     expect(screen.getByText("This cannot be undone by Ley")).toBeVisible();
     expect(
+      screen.getByText(/ordinary Markdown notes, Canvas documents/i),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/user-owned note or Canvas copy of erased Agent Memory remains/i),
+    ).toBeVisible();
+    expect(
       screen.getByText(/backups, filesystem snapshots, or copies/i),
     ).toBeVisible();
 

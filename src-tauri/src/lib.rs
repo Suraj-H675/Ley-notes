@@ -608,10 +608,20 @@ fn update_agent_capture_mode(
 
 #[tauri::command]
 fn erase_agent_project_memory(project_path: String) -> Result<AgentProjectInspection, String> {
-    let binding =
-        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
-    erase_project_memory(&project_path, &binding.vault_path).map_err(|error| error.to_string())?;
-    inspect_agent_project(project_path)
+    let registry = BindingRegistry::system_default().map_err(|error| error.to_string())?;
+    erase_agent_project_memory_with_registry(Path::new(&project_path), &registry)
+}
+
+fn erase_agent_project_memory_with_registry(
+    project_path: &Path,
+    registry: &BindingRegistry,
+) -> Result<AgentProjectInspection, String> {
+    let binding = registry
+        .resolve(project_path, None)
+        .map_err(|error| error.to_string())?;
+    erase_project_memory(project_path, &binding.vault_path).map_err(|error| error.to_string())?;
+    let diagnostic = diagnose_project(project_path).map_err(|error| error.to_string())?;
+    inspect_initialized_agent_project_with_registry(diagnostic, registry)
 }
 
 #[derive(Serialize)]
@@ -703,7 +713,15 @@ fn inspect_agent_project(project_path: String) -> Result<AgentProjectInspection,
         }
         Err(error) => return Err(error.to_string()),
     };
-    let binding = match resolved_agent_binding(&diagnostic.root) {
+    let registry = BindingRegistry::system_default().map_err(|error| error.to_string())?;
+    inspect_initialized_agent_project_with_registry(diagnostic, &registry)
+}
+
+fn inspect_initialized_agent_project_with_registry(
+    diagnostic: ProjectDiagnostic,
+    registry: &BindingRegistry,
+) -> Result<AgentProjectInspection, String> {
+    let binding = match registry.resolve(&diagnostic.root, None) {
         Ok(binding) => binding,
         Err(LeyCoreError::VaultNotBound(_)) => {
             let preview =
@@ -2212,6 +2230,184 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_project_erasure_preserves_user_owned_markdown_canvas_and_binding() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-native-project-erasure-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let project = root.join("project");
+        let vault = root.join("vault");
+        let config = root.join("config");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::create_dir_all(&config).unwrap();
+
+        let source = b"# Portable project\n\nproject_source_canary_7d21\n";
+        fs::write(project.join("README.md"), source).unwrap();
+        let initialized = initialize_project(
+            &project,
+            Some("Portable erasure project"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let project_metadata =
+            fs::read(project.join(ley_core::LEY_DIRECTORY).join("project.json")).unwrap();
+        let binding_registry_path = config.join(ley_core::BINDING_REGISTRY_FILE);
+        let registry = BindingRegistry::at(&binding_registry_path);
+        let binding = registry.bind(&project, &vault).unwrap();
+        let binding_registry_bytes = fs::read(&binding_registry_path).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let private_memory_canary = "private_agent_memory_canary_8be4";
+        let note_body = format!(
+            "# Portable user note\n\nThis independent Markdown copy keeps {private_memory_canary}.\n"
+        );
+        let canvas_body = format!(
+            "{{\"nodes\":[{{\"id\":\"a\",\"type\":\"text\",\"text\":\"{private_memory_canary}\",\"x\":0,\"y\":0,\"width\":260,\"height\":140}}],\"edges\":[]}}"
+        );
+        write_vault_file(
+            vault.to_string_lossy().into_owned(),
+            "Portable/User note.md".to_owned(),
+            note_body.clone(),
+        )
+        .unwrap();
+        write_canvas_file(
+            vault.to_string_lossy().into_owned(),
+            "canvases/User board.canvas".to_owned(),
+            canvas_body.clone(),
+        )
+        .unwrap();
+
+        let started = ley_core::start_session(
+            &project,
+            &vault,
+            ley_core::StartSessionInput {
+                request_id: ley_core::generate_request_id(),
+                name: "Private erasure session".to_owned(),
+                goal: format!("Retain {private_memory_canary} only in Agent Memory"),
+                source: ley_core::SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let checkpoint = ley_core::checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            ley_core::CheckpointInput {
+                request_id: ley_core::generate_request_id(),
+                summary: format!("Captured {private_memory_canary} before project erasure"),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["README.md".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let checkpoint_id = checkpoint.session.checkpoints[0].id.clone();
+        let proposed = ley_core::propose_learning(
+            &project,
+            &vault,
+            ley_core::ProposeLearningInput {
+                request_id: ley_core::generate_learning_request_id(),
+                actor: ley_core::LearningActor::Agent,
+                kind: ley_core::LearningKind::Fact,
+                title: "Private erasure learning".to_owned(),
+                guidance: format!("Remember {private_memory_canary} only inside Agent Memory."),
+                confidence_percent: 90,
+                provenance: ley_core::LearningProvenance::Inferred,
+                evidence: vec![ley_core::LearningEvidenceInput {
+                    session_id: started.session.session_id.clone(),
+                    record_id: checkpoint_id,
+                    note: "Whole-project erasure acceptance evidence.".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+        assert!(ley_core::read_session_context(
+            &project,
+            &vault,
+            &started.session.session_id,
+            5,
+            8_000
+        )
+        .unwrap()
+        .checkpoints
+        .iter()
+        .any(|checkpoint| checkpoint.summary.contains(private_memory_canary)));
+        assert!(ley_core::read_learning_context(
+            &project,
+            &vault,
+            &proposed.learning.learning_id,
+            10,
+            10,
+            10,
+            8_000
+        )
+        .unwrap()
+        .guidance
+        .contains(private_memory_canary));
+
+        let project_store = vault
+            .join(".ley")
+            .join("agent-memory")
+            .join("projects")
+            .join(&initialized.identity.project_id);
+        assert!(project_store.is_dir());
+
+        let inspection = erase_agent_project_memory_with_registry(&project, &registry).unwrap();
+        let AgentProjectInspection::NeedsCapture {
+            project_id,
+            project_name,
+            binding: preserved_binding,
+            ..
+        } = inspection
+        else {
+            panic!("expected NeedsCapture after whole-project Agent Memory erasure");
+        };
+        assert_eq!(project_id, initialized.identity.project_id);
+        assert_eq!(project_name, "Portable erasure project");
+        assert_eq!(preserved_binding.project_id, binding.project_id);
+        assert!(!project_store.exists());
+        assert!(matches!(
+            ley_core::project_memory_overview(&project, &vault),
+            Err(LeyCoreError::ProjectMemoryUnavailable(_))
+        ));
+
+        assert_eq!(fs::read(project.join("README.md")).unwrap(), source);
+        assert_eq!(
+            fs::read(project.join(ley_core::LEY_DIRECTORY).join("project.json")).unwrap(),
+            project_metadata
+        );
+        assert_eq!(
+            registry.resolve(&project, None).unwrap().vault_path,
+            binding.vault_path
+        );
+        assert_eq!(
+            fs::read(&binding_registry_path).unwrap(),
+            binding_registry_bytes
+        );
+        assert_eq!(
+            fs::read_to_string(vault.join("Portable/User note.md")).unwrap(),
+            note_body
+        );
+        assert_eq!(
+            fs::read_to_string(vault.join("canvases/User board.canvas")).unwrap(),
+            canvas_body
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn linked_agent_notes_require_the_canonically_bound_vault() {

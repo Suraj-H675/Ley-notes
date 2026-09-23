@@ -507,9 +507,12 @@ function CapturePrivacyContent({
               </h3>
               <p className="mt-1 text-meta leading-5 text-muted-foreground">
                 Permanently removes captured artifacts, graph history, sessions,
-                and lessons from this vault. Your project files, notes,{" "}
+                and lessons from this vault. Your project files, ordinary
+                Markdown notes, Canvas documents,{" "}
                 <span className="font-mono text-micro">.ley</span> settings, and
-                private vault binding stay in place.
+                private vault binding stay in place. Any user-owned note or
+                Canvas copy of erased Agent Memory remains until you delete that
+                copy through the normal vault workflow.
               </p>
             </div>
             <Button

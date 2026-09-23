@@ -54,6 +54,25 @@ project MCP/retrieval even when an attacker already knows a foreign stable ID. I
 separate explicitly authorized Context Mount, Knowledge Scope, Bootstrap Reference, or desktop global
 cross-project-search workflows, whose authority boundaries are tested independently.
 
+## Whole-project erasure and human portability
+
+Whole-project Agent Memory erasure is intentionally **desktop/user authority**, not an MCP or automatic
+host capability, so its executable acceptance proof lives in the native Tauri test surface rather than
+`run_eval.py`. `desktop_project_erasure_preserves_user_owned_markdown_canvas_and_binding` drives the
+same registry-resolved helper used by the `erase_agent_project_memory` Tauri command against a temporary
+initialized project and bound vault.
+
+The fixture creates real captured artifacts/graph state, a structured session, and an evidence-backed
+learning containing a private-memory canary. It also creates independent user-owned Markdown and JSON
+Canvas copies plus ordinary project source. Erasure must return the project to `needs-capture`, remove
+the complete per-project Agent Memory namespace so ordinary memory inspection becomes unavailable, and
+preserve the project source, repository-local `.ley/project.json`, private vault binding, Markdown note,
+and Canvas bytes exactly. The user-owned note/Canvas copies intentionally remain even when they contain
+content also present in erased Agent Memory; the UI now states this explicitly so logical Ley-memory
+deletion is not misrepresented as deletion of independent human-owned copies. Core tests separately
+cover recapture, lifecycle-lock waiting, and symlink/no-follow defense. This native acceptance path is
+the whole-project counterpart to the Python session-erasure residue scenario.
+
 ADR 0068 extends the existing Specification representatives rather than adding a weaker standalone score. `specification-authority-context` requires one exact revision-bound `acr_` row with raw criterion text, source line range, `statusInterpreted: false`, and `persisted: false`; the empty-workspace bootstrap representative requires the same shared projection before target initialization. ADR 0071 extends those same representatives with exact revision-bound `vmd_` Verification-method rows and requires `criterionBindingProven: false`, `observedResultBindingProven: false`, `statusInterpreted: false`, and `persisted: false`. Acceptance criteria retain budget priority over methods. The egress canary places separate private markers inside both an Acceptance criterion and Verification method so a blocked Specification must withhold the whole source and both derived fields. Core regressions prove parser/container false-positive resistance, atomic limits, compiler/Policy-Bundle parity, and that methods use only budget left after existing context plus Acceptance criteria. MCP regressions prove the 256 KiB transport guard drops methods before criteria and preserves the parent before falling back to the existing oversized-result error. ADR 0070 adds the exact criterion-to-historical-Verification review; ADR 0072 extends that same review in-place with optional exact `verificationMethodId`. The real `specification-authority-context` scenario now supplies the projected `acr_`, projected `vmd_`, and real session `ver_` together, requires the method-aware link fingerprint/boundary and exact handles, and still requires method execution/outcome, criterion satisfaction, semantic coverage, current implementation, persistence, automatic-write, and live-source proof to remain false.
 
 ## Downstream task contract and baseline
