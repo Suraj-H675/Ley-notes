@@ -1,5 +1,9 @@
 # ADR 0067: Deterministic observed Command candidates
 
+Later extensions: ADR 0069 adds exact source-bound verification; ADR 0085 adds an explicit
+schema-v16 writer only for an isolated complete current tool-evidence window. The persistence
+boundary below records this ADR's original read-only slice.
+
 - Status: Accepted
 - Date: 2026-09-21
 - Extends: ADR 0029, ADR 0055, ADR 0066
@@ -70,16 +74,16 @@ This distinction prevents an older eligible observation omitted by result bounds
 
 This ADR does not create a durable memory event, checkpoint, Command record, candidate fingerprint, verifier anchor, or writer.
 
-Specifically:
+Specifically, in this ADR's original read-only slice:
 
-- `toe_` IDs remain invalid evidence IDs for all current Memory Transition verifiers/writers;
+- `toe_` IDs remain invalid evidence IDs for the generic/typed/batch/rich/composite Memory Transition verifiers/writers;
 - `totalUnconsolidatedEvidence`, recovery state, prompt/response `tev_` coverage, and all existing fingerprints are unchanged;
 - no session schema version changes; schema v14 remains the newest durable tool-observation schema;
 - no checkpoint count or session event is added by compilation;
 - no trust, review, egress, filesystem, network, or tool permission is granted; and
 - generic checkpoint writes are not an automatic-candidate commit path.
 
-A future durable candidate-bound Command writer requires a separate ADR and must define exact provenance, stale-write semantics, overlap/duplication behavior, and whether any stronger execution evidence can supply an exit code. Verification recovery remains separately deferred.
+A future durable candidate-bound Command writer requires a separate ADR and must define exact provenance, stale-write semantics, overlap/duplication behavior, and whether any stronger execution evidence can supply an exit code. ADR 0085 later provides only the narrow isolated-source writer: one exact current `toe_`, no current `tev_` turns, no sibling tool observations, `exitCode: null`, and no outcome claim. Mixed/general Command and Verification recovery remain deferred.
 
 ## Privacy and resource behavior
 

@@ -1507,6 +1507,7 @@ mod tests {
             session_records: 1,
             captured_artifacts: 1,
             turn_evidence: 1,
+            tool_evidence: 0,
             recovery_candidates: 0,
         };
         let learning = LearningSummary {

@@ -14,6 +14,9 @@ This became ambiguous as the projections evolved independently. Session Context 
 verification evidence, context-utility coverage, terminal finish identity, and other read-only fields
 without changing the meaning of the durable session ledger. Learning Context likewise gained origin
 lineage and bounded Procedure application history while the durable learning ledger remained v2.
+ADR 0085 later advances the durable learning ledger to v3 so recovered observed-Command lineage can
+name exact `toe_` tool evidence without mislabeling it as `tev_` turn evidence; the reader projection
+remains v1 because that ledger-provenance change does not require an incompatible reader shape.
 
 Consumers therefore need two explicit identities rather than interpreting ledger evolution as reader
 compatibility.
@@ -39,7 +42,7 @@ policy without rewriting historical ledgers.
 
 - a schema-v15 session can truthfully report `schemaVersion: 15` and
   `projectionSchemaVersion: 1` at the same time;
-- a learning can report durable learning schema v2 while its reader remains projection v1;
+- a learning can report durable learning schema v3 while its reader remains projection v1;
 - desktop/agent consumers can reason about reader compatibility without guessing from event history;
 - existing consumers that already interpret `schemaVersion` as ledger provenance remain compatible;
 - no migration, persistence rewrite, or derived cache is introduced.
@@ -49,4 +52,4 @@ policy without rewriting historical ledgers.
 MCP regressions require a schema-v15 Procedure-application session to retain
 `projectionSchemaVersion: 1` through `ley_session_get`, and the bounded turns reader to expose its own
 projection v1. The Procedure application evaluation also requires `ley_learning_get` to report durable
-learning schema v2 alongside projection v1. TypeScript contracts mirror these fields explicitly.
+learning schema v3 alongside projection v1. TypeScript contracts mirror these fields explicitly.

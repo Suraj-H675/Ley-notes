@@ -39,6 +39,7 @@ pub const SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION: u32 = 12;
 pub const SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION: u32 = 13;
 pub const SESSION_TOOL_EVIDENCE_SCHEMA_VERSION: u32 = 14;
 pub const SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION: u32 = 15;
+pub const SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION: u32 = 16;
 pub const SESSION_EVENT_LIMIT_BYTES: u64 = 1_048_576;
 pub const SESSION_PROJECTION_LIMIT_BYTES: u64 = 67_108_864;
 pub const SESSION_EVENT_LIMIT: usize = 10_000;
@@ -76,6 +77,7 @@ const SESSION_V12_FILE: &str = "session-v12.json";
 const SESSION_V13_FILE: &str = "session-v13.json";
 const SESSION_V14_FILE: &str = "session-v14.json";
 const SESSION_V15_FILE: &str = "session-v15.json";
+const SESSION_V16_FILE: &str = "session-v16.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -772,6 +774,10 @@ struct RecoveryCheckpointProvenance {
     evidence_record_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     record_bindings: Vec<RecoveryRecordBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_tool_observation_kind: Option<ToolObservationKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1146,6 +1152,17 @@ pub(crate) struct RecoveredPlanCheckpointInput {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct RecoveredObservedCommandCheckpointInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub source_record_id: String,
+    pub source_event_id: String,
+    pub observation_kind: ToolObservationKind,
+    pub command: String,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct RecoveredBatchCheckpointInput {
     pub request_id: String,
     pub expected_event_count: u64,
@@ -1257,6 +1274,36 @@ pub(crate) fn checkpoint_recovered_plan_session(
 ) -> Result<SessionMutation, LeyCoreError> {
     let (project_id, pending) =
         recovered_plan_pending(project_start.as_ref(), vault.as_ref(), session_id, input)?;
+    mutate_session(&project_id, session_id, pending, vault)
+}
+
+pub(crate) fn replay_recovered_observed_command_session_if_present(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredObservedCommandCheckpointInput,
+) -> Result<Option<SessionMutation>, LeyCoreError> {
+    let (project_id, pending) = recovered_observed_command_pending(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        input,
+    )?;
+    replay_pending_event_if_present(&project_id, session_id, pending, vault)
+}
+
+pub(crate) fn checkpoint_recovered_observed_command_session(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: RecoveredObservedCommandCheckpointInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    let (project_id, pending) = recovered_observed_command_pending(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        input,
+    )?;
     mutate_session(&project_id, session_id, pending, vault)
 }
 
@@ -1407,6 +1454,8 @@ fn recovered_unresolved_pending(
                     binding_fingerprint,
                     evidence_record_ids,
                     record_bindings: Vec::new(),
+                    source_event_id: None,
+                    source_tool_observation_kind: None,
                 },
             }),
             schema_version: SESSION_RECOVERY_SCHEMA_VERSION,
@@ -1525,6 +1574,8 @@ fn recovered_structured_pending(
                     binding_fingerprint,
                     evidence_record_ids,
                     record_bindings: Vec::new(),
+                    source_event_id: None,
+                    source_tool_observation_kind: None,
                 },
             }),
             schema_version: SESSION_TYPED_RECOVERY_SCHEMA_VERSION,
@@ -1626,6 +1677,8 @@ fn recovered_task_pending(
                     binding_fingerprint,
                     evidence_record_ids,
                     record_bindings: Vec::new(),
+                    source_event_id: None,
+                    source_tool_observation_kind: None,
                 },
             }),
             schema_version: SESSION_TASK_RECOVERY_SCHEMA_VERSION,
@@ -1724,9 +1777,108 @@ fn recovered_plan_pending(
                     binding_fingerprint,
                     evidence_record_ids,
                     record_bindings: Vec::new(),
+                    source_event_id: None,
+                    source_tool_observation_kind: None,
                 },
             }),
             schema_version: SESSION_PLAN_RECOVERY_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(input.expected_event_count),
+        },
+    ))
+}
+
+fn recovered_observed_command_pending(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: RecoveredObservedCommandCheckpointInput,
+) -> Result<(String, PendingEvent), LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    if !is_sha256(&input.candidate_fingerprint) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "observed Command recovery candidate fingerprint must be sha256".to_owned(),
+        ));
+    }
+    if !valid_prefixed_hex(&input.source_record_id, "toe_", 32) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "observed Command recovery sourceRecordId must be a toe_ identifier".to_owned(),
+        ));
+    }
+    if !valid_prefixed_hex(&input.source_event_id, "evt_", 64) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "observed Command recovery source event ID is invalid".to_owned(),
+        ));
+    }
+
+    let diagnostic = diagnose_project(project_start)?;
+    let memory = load_project_memory(&diagnostic.root, vault)?;
+    let event_id = deterministic_id(
+        "evt",
+        &format!(
+            "{session_id}:{}:recovery-checkpoint-recorded",
+            input.request_id
+        ),
+        64,
+    );
+    let recorded_at = unix_time_ms();
+    let checkpoint_input = CheckpointInput {
+        request_id: input.request_id.clone(),
+        summary: crate::memory_transition::OBSERVED_COMMAND_CANDIDATE_SUMMARY.to_owned(),
+        plan: Vec::new(),
+        decisions: Vec::new(),
+        tasks: Vec::new(),
+        problems: Vec::new(),
+        touched_artifacts: Vec::new(),
+        commands: vec![CommandInput {
+            command: input.command,
+            exit_code: None,
+            summary: crate::memory_transition::OBSERVED_COMMAND_CANDIDATE_SUMMARY.to_owned(),
+        }],
+        verification: Vec::new(),
+        unresolved: Vec::new(),
+    };
+    let (checkpoint, redactions) =
+        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let command = observed_command_recovery_checkpoint_claim(&checkpoint).ok_or_else(|| {
+        LeyCoreError::InvalidSessionRequest(
+            "observed Command recovery normalization produced an unsupported shape".to_owned(),
+        )
+    })?;
+    let evidence_record_ids = vec![input.source_record_id.clone()];
+    let record_bindings = vec![RecoveryRecordBinding {
+        record_id: command.id.clone(),
+        evidence_record_ids: evidence_record_ids.clone(),
+    }];
+    let binding_fingerprint = recovery_binding_fingerprint_v8(
+        session_id,
+        input.expected_event_count,
+        &input.candidate_fingerprint,
+        &input.source_event_id,
+        input.observation_kind,
+        &checkpoint,
+        &record_bindings,
+    );
+    Ok((
+        diagnostic.identity.project_id,
+        PendingEvent {
+            event_id,
+            request_id: input.request_id,
+            redactions,
+            payload: SessionEventPayload::RecoveryCheckpointRecorded(RecoveryCheckpointEvent {
+                checkpoint: Box::new(checkpoint),
+                provenance: RecoveryCheckpointProvenance {
+                    expected_event_count: input.expected_event_count,
+                    candidate_fingerprint: input.candidate_fingerprint,
+                    binding_fingerprint,
+                    evidence_record_ids,
+                    record_bindings,
+                    source_event_id: Some(input.source_event_id),
+                    source_tool_observation_kind: Some(input.observation_kind),
+                },
+            }),
+            schema_version: SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION,
             allow_create: false,
             expected_event_count: Some(input.expected_event_count),
         },
@@ -1924,6 +2076,8 @@ fn recovered_batch_pending(
                     binding_fingerprint,
                     evidence_record_ids,
                     record_bindings,
+                    source_event_id: None,
+                    source_tool_observation_kind: None,
                 },
             }),
             schema_version: SESSION_BATCH_RECOVERY_SCHEMA_VERSION,
@@ -2067,6 +2221,8 @@ fn recovered_rich_problem_pending(
                     binding_fingerprint,
                     evidence_record_ids,
                     record_bindings,
+                    source_event_id: None,
+                    source_tool_observation_kind: None,
                 },
             }),
             schema_version: SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION,
@@ -2358,6 +2514,8 @@ fn recovered_composite_pending(
                     binding_fingerprint,
                     evidence_record_ids,
                     record_bindings,
+                    source_event_id: None,
+                    source_tool_observation_kind: None,
                 },
             }),
             schema_version: SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION,
@@ -2956,6 +3114,7 @@ pub(crate) fn read_recovery_derivation_origin(
                 SESSION_BATCH_RECOVERY_SCHEMA_VERSION
                     | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
                     | SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
+                    | SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION
             ) && record_id != recovery.checkpoint.id
             {
                 recovery
@@ -3872,23 +4031,25 @@ fn validate_pending_recovery_window(
             "recovery checkpoint event count changed; reverify before saving".to_owned(),
         ));
     }
-    let mut recovery_window = Vec::new();
-    for event in existing {
-        match &event.payload {
-            SessionEventPayload::CheckpointRecorded(_)
-            | SessionEventPayload::RecoveryCheckpointRecorded(_) => recovery_window.clear(),
-            SessionEventPayload::UserPromptObserved(evidence)
-            | SessionEventPayload::AssistantResponseObserved(evidence) => {
-                recovery_window.push(evidence.record_id.clone());
+    if schema_version != SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION {
+        let mut recovery_window = Vec::new();
+        for event in existing {
+            match &event.payload {
+                SessionEventPayload::CheckpointRecorded(_)
+                | SessionEventPayload::RecoveryCheckpointRecorded(_) => recovery_window.clear(),
+                SessionEventPayload::UserPromptObserved(evidence)
+                | SessionEventPayload::AssistantResponseObserved(evidence) => {
+                    recovery_window.push(evidence.record_id.clone());
+                }
+                _ => {}
             }
-            _ => {}
         }
-    }
-    recovery_window.sort();
-    if recovery_window != recovery.provenance.evidence_record_ids {
-        return Err(LeyCoreError::InvalidSessionRequest(
-            "recovery evidence window changed; recompile and reverify before saving".to_owned(),
-        ));
+        recovery_window.sort();
+        if recovery_window != recovery.provenance.evidence_record_ids {
+            return Err(LeyCoreError::InvalidSessionRequest(
+                "recovery evidence window changed; recompile and reverify before saving".to_owned(),
+            ));
+        }
     }
     let normalized_candidate_fingerprint = match schema_version {
         SESSION_RECOVERY_SCHEMA_VERSION => {
@@ -4072,6 +4233,51 @@ fn validate_pending_recovery_window(
             {
                 return Err(LeyCoreError::InvalidSessionRequest(
                     "composite recovery commit no longer verifies as review-required under the session writer lock; recompile and reverify"
+                        .to_owned(),
+                ));
+            }
+            verification.candidate_fingerprint
+        }
+        SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION => {
+            let source_record_id = recovery
+                .provenance
+                .evidence_record_ids
+                .first()
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidSessionRequest(
+                        "observed Command recovery lost its source evidence".to_owned(),
+                    )
+                })?
+                .clone();
+            let boundary_sequence = existing
+                .iter()
+                .rev()
+                .find_map(|event| {
+                    matches!(
+                        &event.payload,
+                        SessionEventPayload::CheckpointRecorded(_)
+                            | SessionEventPayload::RecoveryCheckpointRecorded(_)
+                    )
+                    .then_some(event.sequence)
+                })
+                .unwrap_or(0);
+            let session = replay_events(existing, project_id, session_id)?;
+            let verification =
+                crate::memory_transition::verify_observed_command_memory_transition_against_session(
+                    &session,
+                    boundary_sequence,
+                    session_id,
+                    crate::memory_transition::ObservedCommandMemoryTransitionInput {
+                        expected_event_count: recovery.provenance.expected_event_count,
+                        source_record_id,
+                    },
+                );
+            if verification.state
+                != crate::memory_transition::ObservedCommandTransitionState::ReviewRequired
+                || !verification.candidate_binding_allowed
+            {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "observed Command recovery no longer has an isolated current tool-evidence window under the session writer lock; recompile and reverify"
                         .to_owned(),
                 ));
             }
@@ -4596,7 +4802,9 @@ fn normalize_payload_recorded_at(payload: &mut SessionEventPayload, minimum: u64
 }
 
 fn projection_file_name(session: &AgentSession) -> &'static str {
-    if session.schema_version >= SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION {
+    if session.schema_version >= SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION {
+        SESSION_V16_FILE
+    } else if session.schema_version >= SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION {
         SESSION_V15_FILE
     } else if session.schema_version >= SESSION_TOOL_EVIDENCE_SCHEMA_VERSION {
         SESSION_V14_FILE
@@ -4951,6 +5159,7 @@ fn replay_events(
         finish: None,
     };
     let mut recovery_window = Vec::new();
+    let mut tool_recovery_window = Vec::new();
     for (offset, event) in events[1..].iter().enumerate() {
         let event_index = offset + 1;
         if session.status != SessionStatus::Active
@@ -4973,13 +5182,20 @@ fn replay_events(
             SessionEventPayload::CheckpointRecorded(checkpoint) => {
                 session.checkpoints.push(checkpoint.as_ref().clone());
                 recovery_window.clear();
+                tool_recovery_window.clear();
             }
             SessionEventPayload::RecoveryCheckpointRecorded(recovery) => {
-                validate_recovery_checkpoint_history(event, recovery, &recovery_window)?;
+                validate_recovery_checkpoint_history(
+                    event,
+                    recovery,
+                    &recovery_window,
+                    &tool_recovery_window,
+                )?;
                 session
                     .checkpoints
                     .push(recovery.checkpoint.as_ref().clone());
                 recovery_window.clear();
+                tool_recovery_window.clear();
             }
             SessionEventPayload::SessionFinished(finish) => {
                 session.status = finish.status;
@@ -5009,6 +5225,7 @@ fn replay_events(
                 session.responses.push(evidence.clone());
             }
             SessionEventPayload::ToolObserved(observation) => {
+                tool_recovery_window.push(observation.record_id.clone());
                 session.tool_observations.push(observation.clone());
             }
         }
@@ -5024,13 +5241,24 @@ fn validate_recovery_checkpoint_history(
     event: &SessionEvent,
     recovery: &RecoveryCheckpointEvent,
     recovery_window: &[String],
+    tool_recovery_window: &[String],
 ) -> Result<(), LeyCoreError> {
     if recovery.provenance.expected_event_count != event.sequence.saturating_sub(1) {
         return invalid_session_store(
             "recovery checkpoint expected event count does not match its sequence",
         );
     }
-    let mut expected_evidence = recovery_window.to_vec();
+    let mut expected_evidence =
+        if event.schema_version == SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION {
+            if !recovery_window.is_empty() {
+                return invalid_session_store(
+                    "schema-v16 observed Command recovery cannot close over current turn evidence",
+                );
+            }
+            tool_recovery_window.to_vec()
+        } else {
+            recovery_window.to_vec()
+        };
     expected_evidence.sort();
     if expected_evidence != recovery.provenance.evidence_record_ids {
         return invalid_session_store(
@@ -5153,6 +5381,7 @@ fn validate_event(
             | SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
             | SESSION_TOOL_EVIDENCE_SCHEMA_VERSION
             | SESSION_CONTEXT_UTILITY_APPLICATION_SCHEMA_VERSION
+            | SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.session_id != session_id
         || event.sequence == 0
@@ -5429,6 +5658,13 @@ fn validate_event_payload(event: &SessionEvent) -> Result<(), LeyCoreError> {
             "claimed procedure applications require session event schema version 15",
         );
     }
+    if event.schema_version == SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION
+        && !is_recovery_checkpoint
+    {
+        return invalid_session_store(
+            "schema version 16 is reserved for bound observed Command recovery checkpoints",
+        );
+    }
     if event.schema_version == SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION
         && !is_verification_evidence_checkpoint
     {
@@ -5699,6 +5935,7 @@ fn validate_recovery_checkpoint_event(
         SESSION_BATCH_RECOVERY_SCHEMA_VERSION
             | SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION
             | SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION
+            | SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION
     ) {
         if recovery.provenance.record_bindings.is_empty() {
             return invalid_session_store(
@@ -5708,6 +5945,21 @@ fn validate_recovery_checkpoint_event(
     } else if !recovery.provenance.record_bindings.is_empty() {
         return invalid_session_store(
             "legacy recovery checkpoint schemas cannot carry per-record evidence bindings",
+        );
+    }
+    if event.schema_version == SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION {
+        if recovery.provenance.source_event_id.is_none()
+            || recovery.provenance.source_tool_observation_kind.is_none()
+        {
+            return invalid_session_store(
+                "schema-v16 observed Command recovery requires source tool provenance",
+            );
+        }
+    } else if recovery.provenance.source_event_id.is_some()
+        || recovery.provenance.source_tool_observation_kind.is_some()
+    {
+        return invalid_session_store(
+            "legacy recovery checkpoint schemas cannot carry source tool provenance",
         );
     }
     match event.schema_version {
@@ -5773,6 +6025,18 @@ fn validate_recovery_checkpoint_event(
                 recovery.provenance.expected_event_count,
             )?;
         }
+        SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION => {
+            if observed_command_recovery_checkpoint_claim(checkpoint).is_none() {
+                return invalid_session_store(
+                    "schema-v16 observed Command recovery checkpoint must contain exactly one outcome-unproven Command and no other records",
+                );
+            }
+            if recovery.provenance.record_bindings.len() != 1 {
+                return invalid_session_store(
+                    "schema-v16 observed Command recovery requires exactly one record binding",
+                );
+            }
+        }
         _ => return invalid_session_store("bound recovery checkpoint schema version is invalid"),
     }
     if recovery.provenance.expected_event_count != event.sequence.saturating_sub(1) {
@@ -5789,7 +6053,31 @@ fn validate_recovery_checkpoint_event(
     if evidence.is_empty() || evidence.len() > SESSION_RECOVERY_BINDING_EVIDENCE_LIMIT {
         return invalid_session_store("recovery checkpoint evidence set is invalid");
     }
-    if evidence
+    if event.schema_version == SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION {
+        if evidence.len() != 1 || !valid_prefixed_hex(&evidence[0], "toe_", 32) {
+            return invalid_session_store(
+                "schema-v16 observed Command recovery evidence must be exactly one toe_ identifier",
+            );
+        }
+        let source_event_id = recovery
+            .provenance
+            .source_event_id
+            .as_deref()
+            .expect("schema-v16 source event checked above");
+        if !valid_prefixed_hex(source_event_id, "evt_", 64) {
+            return invalid_session_store(
+                "schema-v16 observed Command recovery source event ID is invalid",
+            );
+        }
+        let command = observed_command_recovery_checkpoint_claim(checkpoint)
+            .expect("schema-v16 command shape checked above");
+        let binding = &recovery.provenance.record_bindings[0];
+        if binding.record_id != command.id || binding.evidence_record_ids != *evidence {
+            return invalid_session_store(
+                "schema-v16 observed Command recovery record binding is invalid",
+            );
+        }
+    } else if evidence
         .iter()
         .any(|record_id| !valid_prefixed_hex(record_id, "tev_", 32))
         || evidence.windows(2).any(|window| window[0] >= window[1])
@@ -5883,6 +6171,22 @@ fn validate_recovery_checkpoint_event(
                 recovery.provenance.expected_event_count,
             )?;
             crate::memory_transition::composite_candidate_fingerprint(&event.session_id, &composite)
+        }
+        SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION => {
+            let command = observed_command_recovery_checkpoint_claim(checkpoint)
+                .expect("schema-v16 command shape checked above");
+            crate::memory_transition::observed_command_candidate_fingerprint(
+                &event.session_id,
+                recovery.provenance.expected_event_count,
+                &evidence[0],
+                recovery
+                    .provenance
+                    .source_event_id
+                    .as_deref()
+                    .expect("schema-v16 source event checked above"),
+                recovery.provenance.source_tool_observation_kind,
+                &command.command,
+            )
         }
         _ => unreachable!("recovery schema checked above"),
     };
@@ -6809,6 +7113,55 @@ fn recovery_binding_fingerprint_v7(
     format!("sha256:{:x}", hasher.finalize())
 }
 
+fn recovery_binding_fingerprint_v8(
+    session_id: &str,
+    expected_event_count: u64,
+    candidate_fingerprint: &str,
+    source_event_id: &str,
+    observation_kind: ToolObservationKind,
+    checkpoint: &SessionCheckpoint,
+    record_bindings: &[RecoveryRecordBinding],
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"ley-recovery-checkpoint-binding-v8-observed-command");
+    hasher.update([0]);
+    hasher.update(session_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(expected_event_count.to_le_bytes());
+    hasher.update([0]);
+    hasher.update(candidate_fingerprint.as_bytes());
+    hasher.update([0]);
+    hasher.update(source_event_id.as_bytes());
+    hasher.update([0]);
+    hasher.update(match observation_kind {
+        ToolObservationKind::Returned => b"returned".as_slice(),
+        ToolObservationKind::ExplicitFailure => b"explicit-failure".as_slice(),
+    });
+    hasher.update([0]);
+    hasher.update(checkpoint.summary.as_bytes());
+    if let Some(command) = checkpoint.commands.first() {
+        hasher.update([0xf9]);
+        hasher.update(command.id.as_bytes());
+        hasher.update([0]);
+        hasher.update(command.command.as_bytes());
+        hasher.update([0]);
+        hasher.update(command.summary.as_bytes());
+        hasher.update([0]);
+        hasher.update(command.exit_code.unwrap_or_default().to_le_bytes());
+        hasher.update([u8::from(command.exit_code.is_some())]);
+    }
+    for binding in record_bindings {
+        hasher.update([0xfd]);
+        hasher.update(binding.record_id.as_bytes());
+        for record_id in &binding.evidence_record_ids {
+            hasher.update([0]);
+            hasher.update(record_id.as_bytes());
+        }
+        hasher.update([0xff]);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
 fn rich_problem_recovery_transition_input(
     checkpoint: &SessionCheckpoint,
     record_bindings: &[RecoveryRecordBinding],
@@ -7384,6 +7737,30 @@ fn plan_recovery_checkpoint_claim(checkpoint: &SessionCheckpoint) -> Option<(&st
     Some((plan.text.as_str(), plan.status))
 }
 
+fn observed_command_recovery_checkpoint_claim(
+    checkpoint: &SessionCheckpoint,
+) -> Option<&CommandRecord> {
+    if !checkpoint.plan.is_empty()
+        || !checkpoint.decisions.is_empty()
+        || !checkpoint.tasks.is_empty()
+        || !checkpoint.problems.is_empty()
+        || !checkpoint.touched_artifacts.is_empty()
+        || checkpoint.commands.len() != 1
+        || !checkpoint.verification.is_empty()
+        || !checkpoint.unresolved.is_empty()
+    {
+        return None;
+    }
+    let command = &checkpoint.commands[0];
+    if checkpoint.summary != crate::memory_transition::OBSERVED_COMMAND_CANDIDATE_SUMMARY
+        || command.summary != crate::memory_transition::OBSERVED_COMMAND_CANDIDATE_SUMMARY
+        || command.exit_code.is_some()
+    {
+        return None;
+    }
+    Some(command)
+}
+
 fn recovery_memory_candidate_kind(
     kind: RecoveredStructuredKind,
 ) -> crate::memory_transition::MemoryCandidateKind {
@@ -7486,6 +7863,36 @@ fn recovery_binding_fingerprint_for_event(
             &recovery.checkpoint,
             &recovery.provenance.record_bindings,
         )),
+        SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION => {
+            let source_event_id =
+                recovery
+                    .provenance
+                    .source_event_id
+                    .as_deref()
+                    .ok_or_else(|| {
+                        LeyCoreError::InvalidSessionStore(
+                            "schema-v16 observed Command recovery source event is missing"
+                                .to_owned(),
+                        )
+                    })?;
+            let observation_kind = recovery
+                .provenance
+                .source_tool_observation_kind
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidSessionStore(
+                        "schema-v16 observed Command recovery kind is missing".to_owned(),
+                    )
+                })?;
+            Ok(recovery_binding_fingerprint_v8(
+                &event.session_id,
+                recovery.provenance.expected_event_count,
+                &recovery.provenance.candidate_fingerprint,
+                source_event_id,
+                observation_kind,
+                &recovery.checkpoint,
+                &recovery.provenance.record_bindings,
+            ))
+        }
         _ => invalid_session_store("recovery checkpoint schema version is invalid"),
     }
 }

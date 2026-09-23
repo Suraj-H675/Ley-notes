@@ -1,15 +1,18 @@
 use crate::session::{
     checkpoint_recovered_batch_session, checkpoint_recovered_composite_session,
-    checkpoint_recovered_plan_session, checkpoint_recovered_rich_problem_session,
-    checkpoint_recovered_structured_session, checkpoint_recovered_task_session,
-    checkpoint_recovered_unresolved_session, read_session_for_memory_compiler,
-    replay_recovered_batch_session_if_present, replay_recovered_composite_session_if_present,
-    replay_recovered_plan_session_if_present, replay_recovered_rich_problem_session_if_present,
+    checkpoint_recovered_observed_command_session, checkpoint_recovered_plan_session,
+    checkpoint_recovered_rich_problem_session, checkpoint_recovered_structured_session,
+    checkpoint_recovered_task_session, checkpoint_recovered_unresolved_session,
+    read_session_for_memory_compiler, replay_recovered_batch_session_if_present,
+    replay_recovered_composite_session_if_present,
+    replay_recovered_observed_command_session_if_present, replay_recovered_plan_session_if_present,
+    replay_recovered_rich_problem_session_if_present,
     replay_recovered_structured_session_if_present, replay_recovered_task_session_if_present,
     replay_recovered_unresolved_session_if_present, RecoveredBatchCheckpointInput,
-    RecoveredCompositeCheckpointInput, RecoveredPlanCheckpointInput,
-    RecoveredRichProblemCheckpointInput, RecoveredStructuredCheckpointInput,
-    RecoveredStructuredKind, RecoveredTaskCheckpointInput, RecoveredUnresolvedCheckpointInput,
+    RecoveredCompositeCheckpointInput, RecoveredObservedCommandCheckpointInput,
+    RecoveredPlanCheckpointInput, RecoveredRichProblemCheckpointInput,
+    RecoveredStructuredCheckpointInput, RecoveredStructuredKind, RecoveredTaskCheckpointInput,
+    RecoveredUnresolvedCheckpointInput,
 };
 use crate::{
     AgentSession, AttemptOutcome, LeyCoreError, PlanStatus, ProblemRecord, SessionMutation,
@@ -38,7 +41,7 @@ const FAITHFULNESS_NOTICE: &str = "Ley verified evidence accounting and determin
 pub const OBSERVED_COMMAND_CANDIDATE_SUMMARY: &str =
     "Observed Bash invocation; exit code, command success, test success, and verification outcome are unknown.";
 const OBSERVED_COMMAND_SOURCE_BOUNDARY: &str = "untrusted-derived-command-candidate";
-const OBSERVED_COMMAND_VERIFICATION_NOTICE: &str = "Ley verified only that this candidate still points to one complete retained post-checkpoint Bash observation in the same session. It does not prove execution success, failure, test status, semantic importance, or permission to persist the Command.";
+const OBSERVED_COMMAND_VERIFICATION_NOTICE: &str = "Ley verified only that this candidate still points to one complete retained post-checkpoint Bash observation in the same session. candidateBindingAllowed means only that the dedicated observed-Command recovery writer may bind this exact isolated source without stranding current turn or sibling tool evidence; automaticWriteAllowed remains false. This does not prove execution success, failure, test status, or semantic importance.";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MemoryCandidateKind {
@@ -91,6 +94,15 @@ pub struct ObservedCommandMemoryTransitionInput {
     pub source_record_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitObservedCommandMemoryTransitionInput {
+    pub request_id: String,
+    pub expected_event_count: u64,
+    pub candidate_fingerprint: String,
+    pub source_record_id: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObservedCommandTransitionIssue {
@@ -118,6 +130,9 @@ pub struct ObservedCommandTransitionVerification {
     pub exit_code: Option<i32>,
     pub summary: &'static str,
     pub matching_existing_command_record_ids: Vec<String>,
+    pub current_turn_evidence_count: usize,
+    pub current_tool_evidence_count: usize,
+    pub other_current_tool_evidence_count: usize,
     pub issues: Vec<ObservedCommandTransitionIssue>,
     pub candidate_fingerprint: String,
     pub persisted: bool,
@@ -480,6 +495,20 @@ pub fn verify_observed_command_memory_transition(
     session_id: &str,
     input: ObservedCommandMemoryTransitionInput,
 ) -> Result<ObservedCommandTransitionVerification, LeyCoreError> {
+    validate_observed_command_input(&input)?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler(project_start, vault, session_id)?;
+    Ok(verify_observed_command_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        input,
+    ))
+}
+
+fn validate_observed_command_input(
+    input: &ObservedCommandMemoryTransitionInput,
+) -> Result<(), LeyCoreError> {
     if input.expected_event_count == 0 {
         return Err(LeyCoreError::InvalidSessionRequest(
             "observed Command verification expectedEventCount must be at least 1".to_owned(),
@@ -490,10 +519,15 @@ pub fn verify_observed_command_memory_transition(
             "observed Command verification sourceRecordId must be a toe_ identifier".to_owned(),
         ));
     }
+    Ok(())
+}
 
-    let (session, latest_checkpoint_sequence) =
-        read_session_for_memory_compiler(project_start, vault, session_id)?;
-    let boundary_sequence = latest_checkpoint_sequence.unwrap_or(0);
+pub(crate) fn verify_observed_command_memory_transition_against_session(
+    session: &AgentSession,
+    boundary_sequence: u64,
+    session_id: &str,
+    input: ObservedCommandMemoryTransitionInput,
+) -> ObservedCommandTransitionVerification {
     let stale = input.expected_event_count != session.event_count;
     let mut issues = Vec::new();
     if stale {
@@ -512,6 +546,18 @@ pub fn verify_observed_command_memory_transition(
     let mut observation_kind = None;
     let mut command = None;
     let mut matching_existing_command_record_ids = Vec::new();
+    let current_turn_evidence_count = session
+        .prompts
+        .iter()
+        .chain(session.responses.iter())
+        .filter(|record| record.sequence > boundary_sequence)
+        .count();
+    let current_tool_evidence_count = session
+        .tool_observations
+        .iter()
+        .filter(|record| record.sequence > boundary_sequence)
+        .count();
+    let mut source_is_current = false;
 
     match observation {
         None => issues.push(ObservedCommandTransitionIssue {
@@ -529,6 +575,8 @@ pub fn verify_observed_command_memory_transition(
                         "tool observation is at or before the latest checkpoint and is not a current automatic Command candidate source"
                             .to_owned(),
                 });
+            } else {
+                source_is_current = true;
             }
             if observation.tool_name != "Bash" {
                 issues.push(ObservedCommandTransitionIssue {
@@ -583,6 +631,11 @@ pub fn verify_observed_command_memory_transition(
     } else {
         ObservedCommandTransitionState::NeedsRevision
     };
+    let other_current_tool_evidence_count =
+        current_tool_evidence_count.saturating_sub(usize::from(source_is_current));
+    let candidate_binding_allowed = state == ObservedCommandTransitionState::ReviewRequired
+        && current_turn_evidence_count == 0
+        && other_current_tool_evidence_count == 0;
     let candidate_fingerprint = observed_command_candidate_fingerprint(
         session_id,
         input.expected_event_count,
@@ -592,9 +645,9 @@ pub fn verify_observed_command_memory_transition(
         command.as_deref().unwrap_or(""),
     );
 
-    Ok(ObservedCommandTransitionVerification {
-        project_id: session.project_id,
-        session_id: session.session_id,
+    ObservedCommandTransitionVerification {
+        project_id: session.project_id.clone(),
+        session_id: session.session_id.clone(),
         session_status: session.status,
         expected_event_count: input.expected_event_count,
         actual_event_count: session.event_count,
@@ -607,10 +660,13 @@ pub fn verify_observed_command_memory_transition(
         exit_code: None,
         summary: OBSERVED_COMMAND_CANDIDATE_SUMMARY,
         matching_existing_command_record_ids,
+        current_turn_evidence_count,
+        current_tool_evidence_count,
+        other_current_tool_evidence_count,
         issues,
         candidate_fingerprint,
         persisted: false,
-        candidate_binding_allowed: false,
+        candidate_binding_allowed,
         automatic_write_allowed: false,
         verification_claimed: false,
         outcome_proven: false,
@@ -618,7 +674,80 @@ pub fn verify_observed_command_memory_transition(
         live_source_checked: false,
         source_boundary: OBSERVED_COMMAND_SOURCE_BOUNDARY,
         verification_notice: OBSERVED_COMMAND_VERIFICATION_NOTICE,
-    })
+    }
+}
+
+pub fn commit_observed_command_memory_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    session_id: &str,
+    input: CommitObservedCommandMemoryTransitionInput,
+) -> Result<SessionMutation, LeyCoreError> {
+    validate_observed_command_input(&ObservedCommandMemoryTransitionInput {
+        expected_event_count: input.expected_event_count,
+        source_record_id: input.source_record_id.clone(),
+    })?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler(project_start.as_ref(), vault.as_ref(), session_id)?;
+    let observation = session
+        .tool_observations
+        .iter()
+        .find(|observation| observation.record_id == input.source_record_id)
+        .ok_or_else(|| {
+            LeyCoreError::InvalidSessionRequest(
+                "bound observed Command sourceRecordId is not retained in this session".to_owned(),
+            )
+        })?;
+    let command = observation
+        .command
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            LeyCoreError::InvalidSessionRequest(
+                "bound observed Command source has no retained command".to_owned(),
+            )
+        })?;
+    let bound_input = RecoveredObservedCommandCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        source_record_id: input.source_record_id.clone(),
+        source_event_id: observation.event_id.clone(),
+        observation_kind: observation.observation_kind,
+        command: command.to_owned(),
+    };
+    if let Some(replayed) = replay_recovered_observed_command_session_if_present(
+        project_start.as_ref(),
+        vault.as_ref(),
+        session_id,
+        bound_input.clone(),
+    )? {
+        return Ok(replayed);
+    }
+    let verification = verify_observed_command_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        ObservedCommandMemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            source_record_id: input.source_record_id,
+        },
+    );
+    if verification.state != ObservedCommandTransitionState::ReviewRequired
+        || !verification.candidate_binding_allowed
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "bound observed Command recovery requires one current review-required Bash observation with no current turn evidence or sibling tool observations"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "observed Command candidate fingerprint does not match the current verified transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_observed_command_session(project_start, vault, session_id, bound_input)
 }
 
 pub fn verify_typed_memory_transition(
@@ -6995,12 +7124,262 @@ mod tests {
         assert!(verification.candidate_fingerprint.starts_with("sha256:"));
         assert!(verification.issues.is_empty());
         assert!(!verification.persisted);
-        assert!(!verification.candidate_binding_allowed);
+        assert_eq!(verification.current_turn_evidence_count, 0);
+        assert_eq!(verification.current_tool_evidence_count, 1);
+        assert_eq!(verification.other_current_tool_evidence_count, 0);
+        assert!(verification.candidate_binding_allowed);
         assert!(!verification.automatic_write_allowed);
         assert!(!verification.verification_claimed);
         assert!(!verification.outcome_proven);
         assert!(!verification.semantic_faithfulness_proven);
         assert!(!verification.live_source_checked);
+    }
+
+    #[test]
+    fn observed_command_bound_writer_persists_isolated_source_and_replays() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let tool = record_session_tool_observation(
+            &project,
+            &vault,
+            &session_id,
+            ToolObservationInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                host: "codex".to_owned(),
+                turn_correlation_material: None,
+                tool_call_correlation_material: "isolated-observed-command".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test -p ley-core isolated_command".to_owned(),
+                result: "process returned".to_owned(),
+            },
+        )
+        .unwrap();
+        let source_record_id = tool.session.tool_observations[0].record_id.clone();
+        let expected_event_count = tool.session.event_count;
+        let verification = verify_observed_command_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            ObservedCommandMemoryTransitionInput {
+                expected_event_count,
+                source_record_id: source_record_id.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            verification.state,
+            ObservedCommandTransitionState::ReviewRequired
+        );
+        assert!(verification.candidate_binding_allowed);
+
+        let commit_input = CommitObservedCommandMemoryTransitionInput {
+            request_id: format!("req_{}", "3".repeat(32)),
+            expected_event_count,
+            candidate_fingerprint: verification.candidate_fingerprint.clone(),
+            source_record_id: source_record_id.clone(),
+        };
+        let committed = commit_observed_command_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            commit_input.clone(),
+        )
+        .unwrap();
+        assert!(!committed.replayed);
+        assert_eq!(
+            committed.session.schema_version,
+            crate::SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION
+        );
+        assert!(committed.session_path.ends_with("session-v16.json"));
+        assert_eq!(committed.session.event_count, expected_event_count + 1);
+        assert_eq!(committed.session.checkpoints.len(), 1);
+        assert_eq!(committed.session.checkpoints[0].commands.len(), 1);
+        let command = &committed.session.checkpoints[0].commands[0];
+        assert_eq!(command.command, "cargo test -p ley-core isolated_command");
+        assert_eq!(command.exit_code, None);
+        assert_eq!(command.summary, OBSERVED_COMMAND_CANDIDATE_SUMMARY);
+        let origin = crate::session::read_recovery_derivation_origin(
+            &project,
+            &vault,
+            &session_id,
+            &committed.session.checkpoints[0].event_id,
+            &command.id,
+        )
+        .unwrap()
+        .expect("schema-v16 Command has bound derivation provenance");
+        assert_eq!(
+            origin.candidate_fingerprint,
+            verification.candidate_fingerprint
+        );
+        assert_eq!(origin.evidence_record_ids, vec![source_record_id.clone()]);
+
+        let compiled = crate::compile_session_memory(
+            &project,
+            &vault,
+            &session_id,
+            crate::DEFAULT_MEMORY_COMPILE_RESULTS,
+            crate::DEFAULT_MEMORY_COMPILE_CHARACTERS,
+        )
+        .unwrap();
+        assert!(compiled.automatic_command_candidates.is_empty());
+        assert!(compiled.supporting_tool_evidence.is_empty());
+
+        let replayed =
+            commit_observed_command_memory_transition(&project, &vault, &session_id, commit_input)
+                .unwrap();
+        assert!(replayed.replayed);
+        assert_eq!(replayed.session.event_count, expected_event_count + 1);
+        assert_eq!(replayed.session.checkpoints.len(), 1);
+
+        let reloaded = crate::read_session(&project, &vault, &session_id).unwrap();
+        assert_eq!(
+            reloaded.schema_version,
+            crate::SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION
+        );
+        assert_eq!(reloaded.event_count, expected_event_count + 1);
+        assert_eq!(reloaded.checkpoints[0].commands.len(), 1);
+        assert_eq!(reloaded.checkpoints[0].commands[0].command, command.command);
+    }
+
+    #[test]
+    fn observed_command_bound_writer_rejects_current_turn_evidence() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        prompt(
+            &project,
+            &vault,
+            &session_id,
+            '2',
+            "turn-before-tool",
+            "Keep this turn unconsolidated",
+        );
+        let tool = record_session_tool_observation(
+            &project,
+            &vault,
+            &session_id,
+            ToolObservationInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                host: "codex".to_owned(),
+                turn_correlation_material: Some("turn-before-tool".to_owned()),
+                tool_call_correlation_material: "command-with-current-turn".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test current_turn".to_owned(),
+                result: String::new(),
+            },
+        )
+        .unwrap();
+        let source_record_id = tool.session.tool_observations[0].record_id.clone();
+        let verification = verify_observed_command_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            ObservedCommandMemoryTransitionInput {
+                expected_event_count: tool.session.event_count,
+                source_record_id: source_record_id.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            verification.state,
+            ObservedCommandTransitionState::ReviewRequired
+        );
+        assert_eq!(verification.current_turn_evidence_count, 1);
+        assert!(!verification.candidate_binding_allowed);
+
+        let error = commit_observed_command_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CommitObservedCommandMemoryTransitionInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                expected_event_count: tool.session.event_count,
+                candidate_fingerprint: verification.candidate_fingerprint,
+                source_record_id,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("no current turn evidence")
+        ));
+        let current = crate::read_session(&project, &vault, &session_id).unwrap();
+        assert!(current.checkpoints.is_empty());
+    }
+
+    #[test]
+    fn observed_command_bound_writer_rejects_sibling_tool_evidence() {
+        let (_base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        let first = record_session_tool_observation(
+            &project,
+            &vault,
+            &session_id,
+            ToolObservationInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                host: "codex".to_owned(),
+                turn_correlation_material: None,
+                tool_call_correlation_material: "first-current-tool".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test first".to_owned(),
+                result: String::new(),
+            },
+        )
+        .unwrap();
+        let source_record_id = first.session.tool_observations[0].record_id.clone();
+        let second = record_session_tool_observation(
+            &project,
+            &vault,
+            &session_id,
+            ToolObservationInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                host: "codex".to_owned(),
+                turn_correlation_material: None,
+                tool_call_correlation_material: "second-current-tool".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test second".to_owned(),
+                result: String::new(),
+            },
+        )
+        .unwrap();
+        let verification = verify_observed_command_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            ObservedCommandMemoryTransitionInput {
+                expected_event_count: second.session.event_count,
+                source_record_id: source_record_id.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            verification.state,
+            ObservedCommandTransitionState::ReviewRequired
+        );
+        assert_eq!(verification.current_tool_evidence_count, 2);
+        assert_eq!(verification.other_current_tool_evidence_count, 1);
+        assert!(!verification.candidate_binding_allowed);
+
+        let error = commit_observed_command_memory_transition(
+            &project,
+            &vault,
+            &session_id,
+            CommitObservedCommandMemoryTransitionInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                expected_event_count: second.session.event_count,
+                candidate_fingerprint: verification.candidate_fingerprint,
+                source_record_id,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            LeyCoreError::InvalidSessionRequest(message)
+                if message.contains("sibling tool observations")
+        ));
+        let current = crate::read_session(&project, &vault, &session_id).unwrap();
+        assert!(current.checkpoints.is_empty());
     }
 
     #[test]

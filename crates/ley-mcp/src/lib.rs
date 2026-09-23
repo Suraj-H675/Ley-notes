@@ -2,16 +2,17 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use ley_core::{
     bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
     commit_batch_memory_transition, commit_composite_memory_transition,
-    commit_plan_memory_transition, commit_rich_problem_memory_transition,
-    commit_structured_memory_transition, commit_task_memory_transition,
-    commit_unresolved_memory_transition, compile_agent_legibility_map,
-    compile_bootstrap_context_with_registries, compile_project_context_for_agent_with_registries,
-    compile_session_memory, compile_topic_dossier, consolidation_inbox,
-    current_project_state_with_specification_authority, diagnose_project, evaluate_agent_egress,
-    find_project_context, find_project_graph_path, finish_session, inspect_context_pack,
-    list_learning_contexts, memory_health_report, project_activity_view, project_memory_overview,
-    project_resume_context, propose_learning, read_external_connector_snapshot_with_registry,
-    read_learning_context, read_project_cited_media, read_project_evidence, read_session_context,
+    commit_observed_command_memory_transition, commit_plan_memory_transition,
+    commit_rich_problem_memory_transition, commit_structured_memory_transition,
+    commit_task_memory_transition, commit_unresolved_memory_transition,
+    compile_agent_legibility_map, compile_bootstrap_context_with_registries,
+    compile_project_context_for_agent_with_registries, compile_session_memory,
+    compile_topic_dossier, consolidation_inbox, current_project_state_with_specification_authority,
+    diagnose_project, evaluate_agent_egress, find_project_context, find_project_graph_path,
+    finish_session, inspect_context_pack, list_learning_contexts, memory_health_report,
+    project_activity_view, project_memory_overview, project_resume_context, propose_learning,
+    read_external_connector_snapshot_with_registry, read_learning_context,
+    read_project_cited_media, read_project_evidence, read_session_context,
     read_session_turns_context, record_context_utility_observation,
     replay_context_utility_binding_if_present,
     review_acceptance_criterion_verification_with_method, search_project_memory, start_session,
@@ -22,17 +23,18 @@ use ley_core::{
     AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits, AttemptInput, AttemptOutcome,
     BatchMemoryCandidateClaim, BatchMemoryTransitionInput, BootstrapSpecificationRegistry,
     CheckpointInput, CommandInput, CommitBatchMemoryTransitionInput,
-    CommitCompositeMemoryTransitionInput, CommitPlanMemoryTransitionInput,
-    CommitRichProblemMemoryTransitionInput, CommitStructuredMemoryTransitionInput,
-    CommitTaskMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
-    CompositeMemoryTransitionInput, ConsolidationInboxLimits, ContextCompileLimits,
-    ContextMountRegistry, ContextUtilityBindingInput, ContextUtilityObservationInput,
-    CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, ExternalConnector,
-    ExternalConnectorRegistry, FinishSessionInput, GraphDirection, GraphEdgeKind,
-    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningKind, LearningListScope,
-    LearningMutation, LearningProvenance, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
-    MemoryHealthLimits, MemoryTransitionInput, ObservedCommandMemoryTransitionInput, PlanItemInput,
-    PlanStatus, PolicyBundleRegistry, ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope,
+    CommitCompositeMemoryTransitionInput, CommitObservedCommandMemoryTransitionInput,
+    CommitPlanMemoryTransitionInput, CommitRichProblemMemoryTransitionInput,
+    CommitStructuredMemoryTransitionInput, CommitTaskMemoryTransitionInput,
+    CommitUnresolvedMemoryTransitionInput, CompositeMemoryTransitionInput,
+    ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry,
+    ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
+    DecisionInput, EgressPolicyRegistry, ExternalConnector, ExternalConnectorRegistry,
+    FinishSessionInput, GraphDirection, GraphEdgeKind, KnowledgeScopeRegistry, LearningActor,
+    LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
+    LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits,
+    MemoryTransitionInput, ObservedCommandMemoryTransitionInput, PlanItemInput, PlanStatus,
+    PolicyBundleRegistry, ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope,
     ProposeLearningInput, ResolutionInput, RetrievalLimits, RevisionCompatibility,
     RichProblemAttemptCandidate, RichProblemMemoryCandidate, RichProblemMemoryTransitionInput,
     RichProblemResolutionCandidate, SessionMutation, SessionSource, SessionSourceKind,
@@ -168,14 +170,16 @@ remain historical context. The live Git beacon reads metadata only and does not 
 session reports post-checkpoint evidence, inspect only that bounded recovery window with \
 ley_session_memory_compile. Its `evidence` `tev_` records are the current candidate-bound recovery anchors; \
 schema-v14 `supportingToolEvidence` rows are untrusted supporting provenance only, `returned` is not proof \
-that a command or test succeeded, and `toe_` records must not be used as verifier/writer evidence IDs. \
+that a command or test succeeded, and `toe_` records must not be used as evidence IDs for the generic/typed/batch/rich/composite recovery routes. \
 When a returned tool row says `automaticCommandCandidateEligibility: eligible`, the pack may also expose \
 a matching read-only `automaticCommandCandidates` row that points back to that exact `toe_` record, \
 sets `exitCode` to null, and carries a deterministic candidate fingerprint. Re-check that exact candidate \
 with `ley_session_memory_verify_observed_command` before relying on it after any session mutation. A \
 `review-required` verifier result proves only that the same complete retained post-checkpoint Bash \
-observation still matches; the candidate remains unpersisted, unavailable to recovery writers, \
-non-write-authorized, and not Verification evidence, and it proves no outcome. \
+observation still matches and proves no outcome. `candidateBindingAllowed: true` additionally means the \
+exact source is the sole current tool observation and there is no current turn evidence, so a separately \
+write-enabled server may use only `ley_session_memory_commit_observed_command`; the candidate is still \
+unpersisted until that explicit call, `automaticWriteAllowed` remains false, and it is never Verification evidence. \
 Before writing reconstructed structure, check unresolved/Decision/minimal-Problem \
 candidates with ley_session_memory_verify, Plan/Task candidates with ley_session_memory_verify_typed, \
 and one evidence-complete Problem episode with ordered Attempts and optional Resolution using \
@@ -209,7 +213,11 @@ If ley_session_memory_verify_batch was required because several supported candid
 window and it returns review-required with no deferred evidence, use exactly one \
 ley_session_memory_commit_batch with the exact batch fingerprint, checkpoint summary, and candidate \
 set; do not commit one candidate first and discard the others. Standalone Attempt/Resolution updates, \
-Command, Verification, and Summary remain review-only. \
+Verification, Summary, and general/mixed-window Command recovery remain review-only. For exactly one \
+observed Command whose verifier reports `candidateBindingAllowed: true`, use \
+ley_session_memory_commit_observed_command with the exact source `toe_`, event count, and candidate \
+fingerprint. Ley derives one schema-v16 Command with `exitCode: null`, re-checks isolation under the \
+writer lock, preserves exact tool provenance, and replays an exact retry; do not infer command/test outcome. \
 Do not substitute the generic checkpoint route for any bound recovery flow and \
 do not invent Task status or details. Store concise structure, \
 project-relative touched artifacts, and observed outcomes rather than transcripts or full tool \
@@ -982,6 +990,21 @@ pub struct VerifyObservedCommandSessionMemoryParams {
     pub session_id: String,
     #[schemars(range(min = 1))]
     pub expected_event_count: u64,
+    #[schemars(regex(pattern = "^toe_[0-9a-f]{32}$"))]
+    pub source_record_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommitObservedCommandSessionMemoryParams {
+    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
+    pub session_id: String,
+    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
+    pub request_id: String,
+    #[schemars(range(min = 1))]
+    pub expected_event_count: u64,
+    #[schemars(regex(pattern = "^sha256:[0-9a-f]{64}$"))]
+    pub candidate_fingerprint: String,
     #[schemars(regex(pattern = "^toe_[0-9a-f]{32}$"))]
     pub source_record_id: String,
 }
@@ -1958,6 +1981,7 @@ impl LeyMcpServer {
             tool_router.disable_route("ley_session_checkpoint");
             tool_router.disable_route("ley_session_memory_commit_batch");
             tool_router.disable_route("ley_session_memory_commit_composite");
+            tool_router.disable_route("ley_session_memory_commit_observed_command");
             tool_router.disable_route("ley_session_memory_commit_plan");
             tool_router.disable_route("ley_session_memory_commit_problem");
             tool_router.disable_route("ley_session_memory_commit_structured");
@@ -3093,6 +3117,39 @@ impl LeyMcpServer {
                 &params.session_id,
                 ObservedCommandMemoryTransitionInput {
                     expected_event_count: params.expected_event_count,
+                    source_record_id: params.source_record_id,
+                },
+            )
+        }))
+    }
+
+    /// Commit one verifier-approved observed Bash Command only when it is the sole current
+    /// tool observation and no post-checkpoint turn evidence remains. Ley revalidates the exact
+    /// retained `toe_` source under the session writer lock and persists one schema-v16 Command
+    /// with `exitCode: null`; this does not prove execution success or verification outcome.
+    #[tool(
+        name = "ley_session_memory_commit_observed_command",
+        annotations(
+            title = "Commit an isolated observed Ley Command candidate",
+            read_only_hint = false,
+            destructive_hint = false,
+            idempotent_hint = true,
+            open_world_hint = false
+        )
+    )]
+    pub async fn session_memory_commit_observed_command(
+        &self,
+        Parameters(params): Parameters<CommitObservedCommandSessionMemoryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(self.gated_session_write_result(|| {
+            commit_observed_command_memory_transition(
+                self.project.as_path(),
+                self.vault.as_path(),
+                &params.session_id,
+                CommitObservedCommandMemoryTransitionInput {
+                    request_id: params.request_id,
+                    expected_event_count: params.expected_event_count,
+                    candidate_fingerprint: params.candidate_fingerprint,
                     source_record_id: params.source_record_id,
                 },
             )
@@ -5268,6 +5325,7 @@ mod tests {
                 "ley_session_get",
                 "ley_session_memory_commit_batch",
                 "ley_session_memory_commit_composite",
+                "ley_session_memory_commit_observed_command",
                 "ley_session_memory_commit_plan",
                 "ley_session_memory_commit_problem",
                 "ley_session_memory_commit_structured",
@@ -5301,6 +5359,22 @@ mod tests {
         assert!(checkpoint_schema
             .to_string()
             .contains("evidenceArtifactPaths"));
+        let observed_command_commit_schema = serde_json::to_value(
+            &tools
+                .iter()
+                .find(|tool| tool.name.as_ref() == "ley_session_memory_commit_observed_command")
+                .unwrap()
+                .input_schema,
+        )
+        .unwrap();
+        assert_eq!(
+            observed_command_commit_schema["properties"]["expectedEventCount"]["minimum"],
+            1
+        );
+        let observed_command_commit_text = observed_command_commit_schema.to_string();
+        assert!(observed_command_commit_text.contains("toe_"));
+        assert!(observed_command_commit_text.contains("sha256:"));
+        assert!(!observed_command_commit_text.contains("command\""));
         let utility_bind_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -5573,6 +5647,7 @@ mod tests {
                     | "ley_session_checkpoint"
                     | "ley_session_memory_commit_batch"
                     | "ley_session_memory_commit_composite"
+                    | "ley_session_memory_commit_observed_command"
                     | "ley_session_memory_commit_plan"
                     | "ley_session_memory_commit_problem"
                     | "ley_session_memory_commit_structured"
@@ -7783,6 +7858,9 @@ mod tests {
         );
         assert!(verified["exitCode"].is_null());
         assert_eq!(verified["persisted"], false);
+        assert_eq!(verified["currentTurnEvidenceCount"], 1);
+        assert_eq!(verified["currentToolEvidenceCount"], 1);
+        assert_eq!(verified["otherCurrentToolEvidenceCount"], 0);
         assert_eq!(verified["candidateBindingAllowed"], false);
         assert_eq!(verified["automaticWriteAllowed"], false);
         assert_eq!(verified["verificationClaimed"], false);
@@ -7812,6 +7890,137 @@ mod tests {
         assert!(!serialized.contains("mcp-tool-secret"));
         assert!(!serialized.contains("mcp-result-secret"));
         assert!(!serialized.contains("raw-mcp-tool-call-id"));
+    }
+
+    #[tokio::test]
+    async fn mcp_commits_isolated_observed_command_once_and_replays() {
+        let (_temporary, project, vault, _) = fixture();
+        let write_server =
+            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1a".repeat(16)),
+                name: "Observed Command recovery".to_owned(),
+                goal: "Persist one isolated observed Bash invocation".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
+        let observed = record_session_tool_observation(
+            &project,
+            &vault,
+            &session_id,
+            ToolObservationInput {
+                request_id: format!("req_{}", "2a".repeat(16)),
+                host: "codex".to_owned(),
+                turn_correlation_material: None,
+                tool_call_correlation_material: "mcp-isolated-command".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test -p ley-core mcp_isolated".to_owned(),
+                result: "process returned".to_owned(),
+            },
+        )
+        .unwrap();
+        let source_record_id = observed.session.tool_observations[0].record_id.clone();
+        let expected_event_count = observed.session.event_count;
+
+        let verified = write_server
+            .session_memory_verify_observed_command(Parameters(
+                VerifyObservedCommandSessionMemoryParams {
+                    session_id: session_id.clone(),
+                    expected_event_count,
+                    source_record_id: source_record_id.clone(),
+                },
+            ))
+            .await
+            .unwrap();
+        assert_eq!(verified.is_error, Some(false));
+        let verified = verified.structured_content.unwrap();
+        assert_eq!(verified["state"], "review-required");
+        assert_eq!(verified["candidateBindingAllowed"], true);
+        assert_eq!(verified["automaticWriteAllowed"], false);
+        assert_eq!(verified["currentTurnEvidenceCount"], 0);
+        assert_eq!(verified["currentToolEvidenceCount"], 1);
+        assert_eq!(verified["otherCurrentToolEvidenceCount"], 0);
+        let candidate_fingerprint = verified["candidateFingerprint"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let request_id = format!("req_{}", "3a".repeat(16));
+
+        let committed = write_server
+            .session_memory_commit_observed_command(Parameters(
+                CommitObservedCommandSessionMemoryParams {
+                    session_id: session_id.clone(),
+                    request_id: request_id.clone(),
+                    expected_event_count,
+                    candidate_fingerprint: candidate_fingerprint.clone(),
+                    source_record_id: source_record_id.clone(),
+                },
+            ))
+            .await
+            .unwrap();
+        assert_eq!(committed.is_error, Some(false));
+        let committed = committed.structured_content.unwrap();
+        assert_eq!(committed["eventCount"], expected_event_count + 1);
+        assert_eq!(committed["replayed"], false);
+
+        let retry = write_server
+            .session_memory_commit_observed_command(Parameters(
+                CommitObservedCommandSessionMemoryParams {
+                    session_id: session_id.clone(),
+                    request_id,
+                    expected_event_count,
+                    candidate_fingerprint,
+                    source_record_id,
+                },
+            ))
+            .await
+            .unwrap();
+        assert_eq!(retry.is_error, Some(false));
+        assert_eq!(
+            retry.structured_content.as_ref().unwrap()["eventCount"],
+            expected_event_count + 1
+        );
+        assert_eq!(retry.structured_content.as_ref().unwrap()["replayed"], true);
+
+        let session = write_server
+            .session_get(Parameters(SessionContextParams {
+                session_id: session_id.clone(),
+                max_checkpoints: Some(5),
+                max_characters: Some(8_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(session["schemaVersion"], 16);
+        assert_eq!(session["eventCount"], expected_event_count + 1);
+        let checkpoints = session["checkpoints"].as_array().unwrap();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0]["commands"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            checkpoints[0]["commands"][0]["command"],
+            "cargo test -p ley-core mcp_isolated"
+        );
+        assert!(checkpoints[0]["commands"][0]["exitCode"].is_null());
+
+        let after = write_server
+            .session_memory_compile(Parameters(CompileSessionMemoryParams {
+                session_id,
+                max_results: Some(20),
+                max_characters: Some(4_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(after["returnedAutomaticCommandCandidates"], 0);
+        assert_eq!(after["returnedSupportingToolEvidence"], 0);
     }
 
     #[tokio::test]
@@ -9564,6 +9773,10 @@ mod tests {
             compiled_learning["learningOriginSummary"]["capturedArtifacts"],
             1
         );
+        assert_eq!(
+            compiled_learning["learningOriginSummary"]["toolEvidence"],
+            0
+        );
         let compiled_serialized = compiled.to_string();
         assert!(!compiled_serialized.contains(project.to_str().unwrap()));
         assert!(!compiled_serialized.contains(vault.to_str().unwrap()));
@@ -10135,7 +10348,7 @@ mod tests {
             .unwrap()
             .structured_content
             .unwrap();
-        assert_eq!(learning["schemaVersion"], 2);
+        assert_eq!(learning["schemaVersion"], 3);
         assert_eq!(learning["projectionSchemaVersion"], 1);
         assert_eq!(learning["eventCount"], 2);
         assert_eq!(learning["state"], "verified");

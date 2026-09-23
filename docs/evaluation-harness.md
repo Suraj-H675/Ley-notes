@@ -263,7 +263,7 @@ for inspection while refusing to launder its authority:
 - provenance readers keep durable ledger schema identity separate from read-projection identity:
   ordinary utility Session Context reports ledger schema v5 plus projection v1, Procedure-claim
   Session Context reports ledger schema v15 plus projection v1, and Learning Context reports durable
-  learning schema v2 plus projection v1;
+  learning schema v3 plus projection v1;
 - low-level Memory Search may return the proposed learning, but labels it
   `trustSignal: unverified` / `trustedForReuse: false`;
 - the Context Compiler must emit an admission-stage `unverified-learning` exclusion for that exact

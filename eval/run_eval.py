@@ -7584,7 +7584,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             learning_id.startswith("lrn_")
             and proposed.get("eventCount") == 1
             and reviewed_event_count == 2
-            and final_learning.get("schemaVersion") == 2
+            and final_learning.get("schemaVersion") == 3
             and final_learning.get("projectionSchemaVersion") == 1
             and final_learning.get("eventCount") == 2
             and final_learning.get("state") == "verified"
@@ -12319,14 +12319,102 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                                 "sourceRecordId": tool_record_id,
                             },
                         )
+                        tool_commit_request_id = "req_" + ("de" * 16)
+                        tool_commit = mcp_call(
+                            project,
+                            "ley_session_memory_commit_observed_command",
+                            {
+                                "sessionId": session_id,
+                                "requestId": tool_commit_request_id,
+                                "expectedEventCount": int(
+                                    tool_compiled.get("sessionEventCount", 0)
+                                ),
+                                "candidateFingerprint": str(
+                                    tool_verification.get("candidateFingerprint", "")
+                                ),
+                                "sourceRecordId": tool_record_id,
+                            },
+                            WRITE_FLAGS,
+                        )
+                        tool_commit_retry = mcp_call(
+                            project,
+                            "ley_session_memory_commit_observed_command",
+                            {
+                                "sessionId": session_id,
+                                "requestId": tool_commit_request_id,
+                                "expectedEventCount": int(
+                                    tool_compiled.get("sessionEventCount", 0)
+                                ),
+                                "candidateFingerprint": str(
+                                    tool_verification.get("candidateFingerprint", "")
+                                ),
+                                "sourceRecordId": tool_record_id,
+                            },
+                            WRITE_FLAGS,
+                        )
+                        tool_after = mcp_call(
+                            project,
+                            "ley_session_memory_compile",
+                            {
+                                "sessionId": session_id,
+                                "maxResults": 20,
+                                "maxCharacters": 8_000,
+                            },
+                        )
+                        tool_session = mcp_call(
+                            project,
+                            "ley_session_get",
+                            {
+                                "sessionId": session_id,
+                                "maxCheckpoints": 20,
+                                "maxCharacters": 16_000,
+                            },
+                        )
+                        v16_projection = {}
+                        v16_projection_path = (
+                            vault
+                            / ".ley"
+                            / "agent-memory"
+                            / "projects"
+                            / tool_project_id
+                            / "sessions"
+                            / session_id
+                            / "session-v16.json"
+                        )
+                        if tool_project_id and v16_projection_path.is_file():
+                            loaded_v16_projection = json.loads(
+                                v16_projection_path.read_text(encoding="utf-8")
+                            )
+                            if isinstance(loaded_v16_projection, dict):
+                                v16_projection = loaded_v16_projection
                         durable_checkpoint_count = len(
                             tool_projection.get("checkpoints", [])
                             if isinstance(tool_projection, dict)
                             else []
                         )
                         tool_payload_text = serialized(
-                            [tool_compiled, tool_history, tool_projection or {}]
+                            [
+                                tool_compiled,
+                                tool_history,
+                                tool_projection or {},
+                                tool_verification,
+                                tool_commit,
+                                tool_commit_retry,
+                                tool_after,
+                                tool_session,
+                                v16_projection,
+                            ]
                         )
+                        tool_session_checkpoints = tool_session.get("checkpoints", [])
+                        tool_command_checkpoint = (
+                            tool_session_checkpoints[-1]
+                            if isinstance(tool_session_checkpoints, list)
+                            and tool_session_checkpoints
+                            and isinstance(tool_session_checkpoints[-1], dict)
+                            else {}
+                        )
+                        tool_checkpoint_commands = tool_command_checkpoint.get("commands", [])
+                        durable_v16_tool_rows = v16_projection.get("toolObservations", [])
                         tool_checks = {
                             "compiler-state": tool_compiled.get("state")
                             == "no-unconsolidated-evidence",
@@ -12442,6 +12530,22 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             "candidate-verifier-null-exit": "exitCode"
                             in tool_verification
                             and tool_verification.get("exitCode") is None,
+                            "candidate-verifier-bindable": tool_verification.get(
+                                "candidateBindingAllowed"
+                            )
+                            is True,
+                            "candidate-verifier-no-current-turns": tool_verification.get(
+                                "currentTurnEvidenceCount"
+                            )
+                            == 0,
+                            "candidate-verifier-one-current-tool": tool_verification.get(
+                                "currentToolEvidenceCount"
+                            )
+                            == 1,
+                            "candidate-verifier-no-sibling-tools": tool_verification.get(
+                                "otherCurrentToolEvidenceCount"
+                            )
+                            == 0,
                             "candidate-verifier-no-write": tool_verification.get(
                                 "automaticWriteAllowed"
                             )
@@ -12458,13 +12562,64 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                                 "semanticFaithfulnessProven"
                             )
                             is False,
+                            "command-commit-event-count": tool_commit.get("eventCount")
+                            == int(tool_compiled.get("sessionEventCount", 0)) + 1,
+                            "command-commit-not-replay": tool_commit.get("replayed") is False,
+                            "command-commit-retry-event-count": tool_commit_retry.get(
+                                "eventCount"
+                            )
+                            == int(tool_compiled.get("sessionEventCount", 0)) + 1,
+                            "command-commit-retry-replayed": tool_commit_retry.get("replayed")
+                            is True,
+                            "command-session-schema-v16": tool_session.get("schemaVersion") == 16,
+                            "command-session-projection-v1": tool_session.get(
+                                "projectionSchemaVersion"
+                            )
+                            == 1,
+                            "command-checkpoint-added": isinstance(
+                                tool_session_checkpoints, list
+                            )
+                            and len(tool_session_checkpoints)
+                            == checkpoint_count_before_tool + 1,
+                            "command-checkpoint-one-command": isinstance(
+                                tool_checkpoint_commands, list
+                            )
+                            and len(tool_checkpoint_commands) == 1,
+                            "command-checkpoint-exact-command": isinstance(
+                                tool_checkpoint_commands, list
+                            )
+                            and len(tool_checkpoint_commands) == 1
+                            and tool_checkpoint_commands[0].get("command")
+                            == tool_row.get("command"),
+                            "command-checkpoint-null-exit": isinstance(
+                                tool_checkpoint_commands, list
+                            )
+                            and len(tool_checkpoint_commands) == 1
+                            and tool_checkpoint_commands[0].get("exitCode") is None,
+                            "command-after-no-candidate": tool_after.get(
+                                "returnedAutomaticCommandCandidates"
+                            )
+                            == 0,
+                            "command-after-no-current-tool": tool_after.get(
+                                "returnedSupportingToolEvidence"
+                            )
+                            == 0,
+                            "durable-schema-v16-file": v16_projection.get("schemaVersion") == 16,
+                            "durable-v16-preserves-tool": isinstance(
+                                durable_v16_tool_rows, list
+                            )
+                            and any(
+                                isinstance(row, dict)
+                                and row.get("recordId") == tool_record_id
+                                for row in durable_v16_tool_rows
+                            ),
                             "history-schema-v14": tool_history.get("schemaVersion") == 14,
                             "history-count": tool_history.get("toolObservationCount", 0) >= 1,
                             "history-record": history_row.get("recordId") == tool_record_id,
                             "history-kind": history_row.get("observationKind") == "returned",
                             "durable-record": durable_tool_row.get("recordId") == tool_record_id,
                             "durable-kind": durable_tool_row.get("observationKind") == "returned",
-                            "candidate-not-durable": "automaticCommandCandidates"
+                            "candidate-projection-not-durable": "automaticCommandCandidates"
                             not in (tool_projection or {}),
                             "no-checkpoint-authority": durable_checkpoint_count
                             == checkpoint_count_before_tool,
@@ -12477,7 +12632,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                                 label for label, passed in tool_checks.items() if not passed
                             ]
                             failures.append(
-                                "host Bash tool evidence did not preserve supporting-only schema-v14 provenance/privacy semantics: "
+                                "host Bash tool evidence / isolated schema-v16 Command recovery did not preserve provenance, isolation, replay, or privacy semantics: "
                                 + ", ".join(failed_tool_checks)
                             )
                     scores["memory_binding"] = (

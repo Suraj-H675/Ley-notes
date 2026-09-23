@@ -18,7 +18,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const LEARNING_SCHEMA_VERSION: u32 = 2;
+pub const LEARNING_SCHEMA_VERSION: u32 = 3;
+const PREVIOUS_LEARNING_SCHEMA_VERSION: u32 = 2;
 const LEGACY_LEARNING_SCHEMA_VERSION: u32 = 1;
 pub const MAX_LEARNING_ORIGIN_SOURCES: usize = 256;
 pub const LEARNING_EVENT_LIMIT_BYTES: u64 = 1_048_576;
@@ -191,6 +192,10 @@ pub enum LearningOriginSource {
         session_id: String,
         record_id: String,
     },
+    ToolEvidence {
+        session_id: String,
+        record_id: String,
+    },
     RecoveryCandidate {
         session_id: String,
         candidate_fingerprint: String,
@@ -218,6 +223,7 @@ pub struct LearningOriginSummary {
     pub session_records: usize,
     pub captured_artifacts: usize,
     pub turn_evidence: usize,
+    pub tool_evidence: usize,
     pub recovery_candidates: usize,
 }
 
@@ -232,6 +238,7 @@ impl From<&LearningOriginLineage> for LearningOriginSummary {
             session_records: 0,
             captured_artifacts: 0,
             turn_evidence: 0,
+            tool_evidence: 0,
             recovery_candidates: 0,
         };
         for source in &lineage.sources {
@@ -239,6 +246,7 @@ impl From<&LearningOriginLineage> for LearningOriginSummary {
                 LearningOriginSource::SessionRecord { .. } => summary.session_records += 1,
                 LearningOriginSource::CapturedArtifact { .. } => summary.captured_artifacts += 1,
                 LearningOriginSource::TurnEvidence { .. } => summary.turn_evidence += 1,
+                LearningOriginSource::ToolEvidence { .. } => summary.tool_evidence += 1,
                 LearningOriginSource::RecoveryCandidate { .. } => summary.recovery_candidates += 1,
             }
         }
@@ -783,10 +791,21 @@ fn resolve_evidence(
                     candidate_fingerprint: recovery.candidate_fingerprint,
                 });
                 for record_id in recovery.evidence_record_ids {
-                    lineage.push(LearningOriginSource::TurnEvidence {
-                        session_id: session.session_id.clone(),
-                        record_id,
-                    });
+                    if record_id.starts_with("tev_") {
+                        lineage.push(LearningOriginSource::TurnEvidence {
+                            session_id: session.session_id.clone(),
+                            record_id,
+                        });
+                    } else if record_id.starts_with("toe_") {
+                        lineage.push(LearningOriginSource::ToolEvidence {
+                            session_id: session.session_id.clone(),
+                            record_id,
+                        });
+                    } else {
+                        return Err(LeyCoreError::InvalidLearningRequest(
+                            "recovery origin contains an unsupported evidence namespace".to_owned(),
+                        ));
+                    }
                 }
             }
         }
@@ -1701,7 +1720,11 @@ fn preserve_projected_freshness(
     let Ok(index) = serde_json::from_slice::<LearningIndex>(&bytes) else {
         return Ok(());
     };
-    if index.schema_version != LEARNING_SCHEMA_VERSION || index.project_id != project_id {
+    if !matches!(
+        index.schema_version,
+        PREVIOUS_LEARNING_SCHEMA_VERSION | LEARNING_SCHEMA_VERSION
+    ) || index.project_id != project_id
+    {
         return Ok(());
     }
     let freshness = index
@@ -1822,7 +1845,7 @@ fn render_review_markdown(index: &LearningIndex) -> String {
 fn validate_event(event: &LearningEvent, project_id: &str) -> Result<(), LeyCoreError> {
     if !matches!(
         event.schema_version,
-        LEGACY_LEARNING_SCHEMA_VERSION | LEARNING_SCHEMA_VERSION
+        LEGACY_LEARNING_SCHEMA_VERSION | PREVIOUS_LEARNING_SCHEMA_VERSION | LEARNING_SCHEMA_VERSION
     ) || event.project_id != project_id
         || event.sequence == 0
         || event.recorded_at_unix_ms == 0
@@ -2033,13 +2056,16 @@ fn validate_stored_origin_lineage(
                 "learning origin lineage must be sorted and unique".to_owned(),
             ));
         }
-        validate_origin_source(source)?;
+        validate_origin_source(schema_version, source)?;
         previous = Some(source);
     }
     Ok(())
 }
 
-fn validate_origin_source(source: &LearningOriginSource) -> Result<(), LeyCoreError> {
+fn validate_origin_source(
+    schema_version: u32,
+    source: &LearningOriginSource,
+) -> Result<(), LeyCoreError> {
     match source {
         LearningOriginSource::SessionRecord {
             session_id,
@@ -2086,6 +2112,19 @@ fn validate_origin_source(source: &LearningOriginSource) -> Result<(), LeyCoreEr
             {
                 return Err(LeyCoreError::InvalidLearningStore(
                     "turn-evidence origin identity is invalid".to_owned(),
+                ));
+            }
+        }
+        LearningOriginSource::ToolEvidence {
+            session_id,
+            record_id,
+        } => {
+            if schema_version < LEARNING_SCHEMA_VERSION
+                || !valid_prefixed_hex(session_id, "ses_", 32)
+                || !valid_prefixed_hex(record_id, "toe_", 32)
+            {
+                return Err(LeyCoreError::InvalidLearningStore(
+                    "tool-evidence origin identity is invalid for this learning schema".to_owned(),
                 ));
             }
         }
@@ -2573,19 +2612,22 @@ mod tests {
     use super::*;
     use crate::{
         checkpoint_session, commit_batch_memory_transition, commit_composite_memory_transition,
-        commit_rich_problem_memory_transition, commit_unresolved_memory_transition,
-        erase_session_memory, finish_session, ingest_project, initialize_project,
-        project_memory_overview, read_session, record_session_prompt, record_session_response,
-        start_session, verify_batch_memory_transition, verify_composite_memory_transition,
-        verify_rich_problem_memory_transition, AttemptInput, AttemptOutcome,
-        BatchMemoryCandidateClaim, BatchMemoryTransitionInput, CaptureMode, CheckpointInput,
-        CommitBatchMemoryTransitionInput, CommitCompositeMemoryTransitionInput,
+        commit_observed_command_memory_transition, commit_rich_problem_memory_transition,
+        commit_unresolved_memory_transition, erase_session_memory, finish_session, ingest_project,
+        initialize_project, project_memory_overview, read_session, record_session_prompt,
+        record_session_response, record_session_tool_observation, start_session,
+        verify_batch_memory_transition, verify_composite_memory_transition,
+        verify_observed_command_memory_transition, verify_rich_problem_memory_transition,
+        AttemptInput, AttemptOutcome, BatchMemoryCandidateClaim, BatchMemoryTransitionInput,
+        CaptureMode, CheckpointInput, CommitBatchMemoryTransitionInput,
+        CommitCompositeMemoryTransitionInput, CommitObservedCommandMemoryTransitionInput,
         CommitRichProblemMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
-        CompositeMemoryTransitionInput, EraseSessionMemoryInput, FinishSessionInput, ProblemInput,
-        ResolutionInput, RichProblemAttemptCandidate, RichProblemMemoryCandidate,
-        RichProblemMemoryTransitionInput, RichProblemResolutionCandidate, SessionSource,
-        SessionSourceKind, SessionStatus, StartSessionInput, TaskStatus, TurnEvidenceInput,
-        TurnEvidenceOrigin,
+        CompositeMemoryTransitionInput, EraseSessionMemoryInput, FinishSessionInput,
+        ObservedCommandMemoryTransitionInput, ProblemInput, ResolutionInput,
+        RichProblemAttemptCandidate, RichProblemMemoryCandidate, RichProblemMemoryTransitionInput,
+        RichProblemResolutionCandidate, SessionSource, SessionSourceKind, SessionStatus,
+        StartSessionInput, TaskStatus, ToolObservationInput, ToolObservationKind,
+        TurnEvidenceInput, TurnEvidenceOrigin,
     };
     use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
@@ -3020,6 +3062,105 @@ mod tests {
                     )
                 }));
         }
+    }
+
+    #[test]
+    fn observed_command_recovery_lineage_preserves_exact_tool_evidence_namespace() {
+        let (_base, project, vault, _session_id, _record_id) = setup_learning();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('a'),
+                name: "Observed Command derivation".to_owned(),
+                goal: "Preserve tool-origin provenance through reviewed learning".to_owned(),
+                source: SessionSource {
+                    kind: SessionSourceKind::HostHook,
+                    host: Some("codex".to_owned()),
+                    agent: Some("gpt-6-luna".to_owned()),
+                    source_reference: None,
+                },
+            },
+        )
+        .unwrap();
+        let observed = record_session_tool_observation(
+            &project,
+            &vault,
+            &started.session.session_id,
+            ToolObservationInput {
+                request_id: request_id('b'),
+                host: "codex".to_owned(),
+                turn_correlation_material: None,
+                tool_call_correlation_material: "learning-command-origin".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test -p ley-core lineage".to_owned(),
+                result: "process returned".to_owned(),
+            },
+        )
+        .unwrap();
+        let source_record_id = observed.session.tool_observations[0].record_id.clone();
+        let verification = verify_observed_command_memory_transition(
+            &project,
+            &vault,
+            &started.session.session_id,
+            ObservedCommandMemoryTransitionInput {
+                expected_event_count: observed.session.event_count,
+                source_record_id: source_record_id.clone(),
+            },
+        )
+        .unwrap();
+        assert!(verification.candidate_binding_allowed);
+        let candidate_fingerprint = verification.candidate_fingerprint.clone();
+        let committed = commit_observed_command_memory_transition(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CommitObservedCommandMemoryTransitionInput {
+                request_id: request_id('c'),
+                expected_event_count: observed.session.event_count,
+                candidate_fingerprint: candidate_fingerprint.clone(),
+                source_record_id: source_record_id.clone(),
+            },
+        )
+        .unwrap();
+        let command_id = committed.session.checkpoints[0].commands[0].id.clone();
+        let mut input = proposal(request_id('d'), &started.session.session_id, &command_id);
+        input.title = "Run the focused lineage check".to_owned();
+        input.guidance = "Use the recorded focused lineage command when this exact workflow is reviewed as applicable.".to_owned();
+        let proposed = propose_learning(&project, &vault, input).unwrap();
+
+        assert_eq!(proposed.learning.schema_version, LEARNING_SCHEMA_VERSION);
+        assert!(proposed.learning.origin_lineage.mechanically_resolved);
+        assert!(proposed.learning.origin_lineage.sources.iter().any(|source| {
+            matches!(
+                source,
+                LearningOriginSource::RecoveryCandidate {
+                    session_id,
+                    candidate_fingerprint: fingerprint,
+                } if session_id == &started.session.session_id && fingerprint == &candidate_fingerprint
+            )
+        }));
+        assert!(proposed.learning.origin_lineage.sources.iter().any(|source| {
+            matches!(
+                source,
+                LearningOriginSource::ToolEvidence { session_id, record_id }
+                    if session_id == &started.session.session_id && record_id == &source_record_id
+            )
+        }));
+        assert!(!proposed.learning.origin_lineage.sources.iter().any(|source| {
+            matches!(source, LearningOriginSource::TurnEvidence { record_id, .. } if record_id == &source_record_id)
+        }));
+        let summary = LearningOriginSummary::from(&proposed.learning.origin_lineage);
+        assert_eq!(summary.tool_evidence, 1);
+        assert_eq!(summary.turn_evidence, 0);
+
+        let reread = read_learning(&project, &vault, &proposed.learning.learning_id).unwrap();
+        assert_eq!(reread.schema_version, LEARNING_SCHEMA_VERSION);
+        assert!(reread.origin_lineage.sources.iter().any(|source| matches!(
+            source,
+            LearningOriginSource::ToolEvidence { record_id, .. } if record_id == &source_record_id
+        )));
     }
 
     #[test]
@@ -3912,6 +4053,45 @@ mod tests {
                 .automatic_authority_ceiling,
             LearningTrustState::ReviewRequired
         );
+    }
+
+    #[test]
+    fn previous_schema_v2_lineage_remains_readable() {
+        let (_base, project, vault, session_id, record_id) = setup_learning();
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('2'), &session_id, &record_id),
+        )
+        .unwrap();
+        let event_path = learning_directory(&project, &vault)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", proposed.event_id));
+        let mut event: LearningEvent =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        event.schema_version = PREVIOUS_LEARNING_SCHEMA_VERSION;
+        event.request_fingerprint = request_fingerprint(
+            &event.project_id,
+            &event.learning_id,
+            &event.request_id,
+            &event.payload,
+        )
+        .unwrap();
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&event).unwrap()).unwrap();
+
+        let previous = read_learning(&project, &vault, &proposed.learning.learning_id).unwrap();
+        assert_eq!(previous.schema_version, LEARNING_SCHEMA_VERSION);
+        assert!(previous.origin_lineage.mechanically_resolved);
+        assert!(previous
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(source, LearningOriginSource::SessionRecord { .. })));
+        assert!(!previous
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(source, LearningOriginSource::ToolEvidence { .. })));
     }
 
     #[test]
