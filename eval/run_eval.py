@@ -6127,6 +6127,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 marker in json.dumps(state.get("openWork", []), sort_keys=True)
                 for marker in open_markers
             )
+            and all(
+                not isinstance(item, dict)
+                or item.get("kind") != "unresolved"
+                or str(item.get("recordId", "")).startswith("unr_")
+                for item in state.get("openWork", [])
+            )
             and matching_decision is not None
             and matching_decision.get("authority") == "historical-project-memory"
             and matching_decision.get("currentStateProven") is False

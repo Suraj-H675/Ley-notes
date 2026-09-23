@@ -520,7 +520,7 @@ fn current_project_state_internal(
                 }
                 open_work.push(CurrentOpenWork {
                     kind: CurrentOpenWorkKind::Unresolved,
-                    record_id: format!("{}:unresolved:{index}", checkpoint.id),
+                    record_id: crate::session::unresolved_record_id(&checkpoint.event_id, index),
                     session_id: session.session_id.clone(),
                     checkpoint_id: checkpoint.id.clone(),
                     title: "Unresolved checkpoint item".to_owned(),
@@ -1027,6 +1027,13 @@ mod tests {
         assert!(first.open_work.iter().any(|item| {
             item.kind == CurrentOpenWorkKind::Unresolved
                 && item.details == "Verify rollback behavior."
+        }));
+        let source_session = read_session(&project, &vault, &session_id).unwrap();
+        let source_checkpoint = source_session.checkpoints.last().unwrap();
+        let unresolved_record_id =
+            crate::session::unresolved_record_id(&source_checkpoint.event_id, 0);
+        assert!(first.open_work.iter().any(|item| {
+            item.kind == CurrentOpenWorkKind::Unresolved && item.record_id == unresolved_record_id
         }));
         let decision = first
             .recent_decisions
