@@ -3161,6 +3161,25 @@ mod tests {
             source,
             LearningOriginSource::ToolEvidence { record_id, .. } if record_id == &source_record_id
         )));
+
+        let erased = erase_session_memory(
+            &project,
+            &vault,
+            &started.session.session_id,
+            EraseSessionMemoryInput {
+                expected_event_count: committed.session.event_count,
+                expected_name: committed.session.name.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            erased.erased_learning_ids,
+            vec![proposed.learning.learning_id.clone()]
+        );
+        assert!(matches!(
+            read_learning(&project, &vault, &proposed.learning.learning_id),
+            Err(LeyCoreError::LearningNotFound(_))
+        ));
     }
 
     #[test]

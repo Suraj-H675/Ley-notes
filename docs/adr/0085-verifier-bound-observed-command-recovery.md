@@ -141,6 +141,8 @@ Focused core/MCP/evaluation coverage must prove:
 - recovery derivation provenance resolves the Command to the exact source `toe_`;
 - a later Learning persists schema-v3 `ToolEvidence` plus the recovery candidate fingerprint and no
   fake `TurnEvidence` for the tool source;
+- erasing the source Ley session physically removes a Learning derived through that recovered Command,
+  so exact `ToolEvidence` lineage does not create deletion residue;
 - old schema-v2 Learning lineage remains readable;
 - the real crash/recovery evaluator exercises schema-v14 capture -> candidate -> verifier ->
   schema-v16 commit/replay with zero privacy-canary leakage.
