@@ -851,6 +851,8 @@ fn dedupe_commands(commands: &mut Vec<LegibilityCommand>) {
         seen.insert((
             command.category,
             command.source,
+            command.artifact_path.clone(),
+            command.declaration_name.clone(),
             normalize_content(&command.command),
         ))
     });
@@ -1250,6 +1252,44 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn command_dedupe_preserves_distinct_package_script_declarations() {
+        let mut commands = vec![
+            LegibilityCommand {
+                command: "vitest run".to_owned(),
+                category: LegibilityCommandCategory::Test,
+                source: LegibilityCommandSource::PackageScript,
+                declaration_name: Some("test".to_owned()),
+                artifact_path: Some("package.json".to_owned()),
+                session_id: None,
+                checkpoint_id: None,
+                record_id: None,
+                selection_basis: "captured-package-json-script",
+            },
+            LegibilityCommand {
+                command: "vitest  run".to_owned(),
+                category: LegibilityCommandCategory::Test,
+                source: LegibilityCommandSource::PackageScript,
+                declaration_name: Some("test:unit".to_owned()),
+                artifact_path: Some("package.json".to_owned()),
+                session_id: None,
+                checkpoint_id: None,
+                record_id: None,
+                selection_basis: "captured-package-json-script",
+            },
+        ];
+
+        dedupe_commands(&mut commands);
+
+        assert_eq!(commands.len(), 2);
+        assert!(commands
+            .iter()
+            .any(|command| command.declaration_name.as_deref() == Some("test")));
+        assert!(commands
+            .iter()
+            .any(|command| command.declaration_name.as_deref() == Some("test:unit")));
     }
 
     #[test]
