@@ -513,7 +513,7 @@ describe("Agent Memory workspace boundaries", () => {
     });
     api.readAgentLearning.mockResolvedValue({
       projectionSchemaVersion: 1,
-      schemaVersion: 2,
+      schemaVersion: 3,
       projectId: "prj_test",
       learningId: "lrn_test",
       kind: "procedure",
@@ -535,9 +535,14 @@ describe("Agent Memory workspace boundaries", () => {
             recordId: "ver_test",
             recordType: "verification",
           },
+          {
+            kind: "tool-evidence",
+            sessionId: "ses_test",
+            recordId: "toe_test",
+          },
         ],
       },
-      originSourceCount: 1,
+      originSourceCount: 2,
       omittedOriginSources: 0,
       confidencePercent: 88,
       freshness: "current",
@@ -1049,12 +1054,13 @@ describe("Agent Memory workspace boundaries", () => {
       name: "Verify the complete workspace",
     });
     expect(screen.getByText("2 immutable events")).toBeVisible();
-    expect(screen.getByText("Origin lineage · 1")).toBeVisible();
+    expect(screen.getByText("Origin lineage · 2")).toBeVisible();
     expect(screen.getByText("Mechanically resolved")).toBeVisible();
     expect(screen.getByText("Not proven")).toBeVisible();
     expect(
       screen.getByText(/ses_test.*verification.*ver_test/i),
     ).toBeVisible();
+    expect(screen.getByText(/ses_test.*toe_test/i)).toBeVisible();
     expect(
       screen.getByText("Procedure application history · 1"),
     ).toBeVisible();

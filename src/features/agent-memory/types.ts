@@ -992,6 +992,7 @@ export interface LearningContext {
           contentHash: string;
         }
       | { kind: "turn-evidence"; sessionId: string; recordId: string }
+      | { kind: "tool-evidence"; sessionId: string; recordId: string }
       | {
           kind: "recovery-candidate";
           sessionId: string;

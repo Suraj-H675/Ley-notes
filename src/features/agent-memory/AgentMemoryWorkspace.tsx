@@ -3172,6 +3172,8 @@ function learningOriginSourceKey(
       return `${source.kind}:${source.artifactSnapshotId}:${source.artifactPath}`;
     case "turn-evidence":
       return `${source.kind}:${source.sessionId}:${source.recordId}`;
+    case "tool-evidence":
+      return `${source.kind}:${source.sessionId}:${source.recordId}`;
     case "recovery-candidate":
       return `${source.kind}:${source.sessionId}:${source.candidateFingerprint}`;
     default:
@@ -3188,6 +3190,8 @@ function learningOriginSourceHandle(
     case "captured-artifact":
       return `${source.artifactPath} · ${source.artifactSnapshotId}`;
     case "turn-evidence":
+      return `${source.sessionId} · ${source.recordId}`;
+    case "tool-evidence":
       return `${source.sessionId} · ${source.recordId}`;
     case "recovery-candidate":
       return `${source.sessionId} · ${source.candidateFingerprint}`;
