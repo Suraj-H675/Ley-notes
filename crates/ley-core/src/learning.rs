@@ -4089,6 +4089,37 @@ mod tests {
         let mut event: LearningEvent =
             serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
         event.schema_version = PREVIOUS_LEARNING_SCHEMA_VERSION;
+        let artifact = proposed.learning.evidence[0].artifacts[0].clone();
+        if let LearningEventPayload::Proposed { origin_lineage, .. } = &mut event.payload {
+            *origin_lineage = Some(LearningOriginLineage {
+                mechanically_resolved: true,
+                causal_completeness_proven: false,
+                omitted_sources: 0,
+                automatic_authority_ceiling: LearningTrustState::ReviewRequired,
+                sources: vec![
+                    LearningOriginSource::SessionRecord {
+                        session_id: session_id.clone(),
+                        record_id: record_id.clone(),
+                        record_type: proposed.learning.evidence[0].record_type.clone(),
+                    },
+                    LearningOriginSource::CapturedArtifact {
+                        artifact_snapshot_id: artifact.artifact_snapshot_id,
+                        artifact_path: artifact.artifact_path,
+                        content_hash: artifact.content_hash,
+                    },
+                    LearningOriginSource::TurnEvidence {
+                        session_id: session_id.clone(),
+                        record_id: format!("tev_{}", "a".repeat(32)),
+                    },
+                    LearningOriginSource::RecoveryCandidate {
+                        session_id: session_id.clone(),
+                        candidate_fingerprint: format!("sha256:{}", "b".repeat(64)),
+                    },
+                ],
+            });
+        } else {
+            panic!("expected proposed event");
+        }
         event.request_fingerprint = request_fingerprint(
             &event.project_id,
             &event.learning_id,
@@ -4106,6 +4137,21 @@ mod tests {
             .sources
             .iter()
             .any(|source| matches!(source, LearningOriginSource::SessionRecord { .. })));
+        assert!(previous
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(source, LearningOriginSource::CapturedArtifact { .. })));
+        assert!(previous
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(source, LearningOriginSource::TurnEvidence { .. })));
+        assert!(previous
+            .origin_lineage
+            .sources
+            .iter()
+            .any(|source| matches!(source, LearningOriginSource::RecoveryCandidate { .. })));
         assert!(!previous
             .origin_lineage
             .sources
