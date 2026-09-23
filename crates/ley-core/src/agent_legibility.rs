@@ -846,14 +846,6 @@ fn classify_command(name: &str, command: &str) -> LegibilityCommandCategory {
 }
 
 fn dedupe_commands(commands: &mut Vec<LegibilityCommand>) {
-    commands.sort_by(|left, right| {
-        left.category
-            .cmp(&right.category)
-            .then_with(|| left.command.cmp(&right.command))
-            .then_with(|| left.source.cmp(&right.source))
-            .then_with(|| left.session_id.cmp(&right.session_id))
-            .then_with(|| left.record_id.cmp(&right.record_id))
-    });
     let mut seen = BTreeSet::new();
     commands.retain(|command| {
         seen.insert((
@@ -861,6 +853,14 @@ fn dedupe_commands(commands: &mut Vec<LegibilityCommand>) {
             command.source,
             normalize_content(&command.command),
         ))
+    });
+    commands.sort_by(|left, right| {
+        left.category
+            .cmp(&right.category)
+            .then_with(|| left.command.cmp(&right.command))
+            .then_with(|| left.source.cmp(&right.source))
+            .then_with(|| left.session_id.cmp(&right.session_id))
+            .then_with(|| left.record_id.cmp(&right.record_id))
     });
 }
 
@@ -1197,9 +1197,9 @@ mod tests {
                 source: LegibilityCommandSource::ObservedCheckpoint,
                 declaration_name: None,
                 artifact_path: None,
-                session_id: Some("ses_checkpoint".to_owned()),
-                checkpoint_id: Some("ckp_checkpoint".to_owned()),
-                record_id: Some("cmd_checkpoint".to_owned()),
+                session_id: Some("ses_z_newer".to_owned()),
+                checkpoint_id: Some("ckp_newer".to_owned()),
+                record_id: Some("cmd_newer".to_owned()),
                 selection_basis: "latest-inspected-checkpoint-observed-command",
             },
             LegibilityCommand {
@@ -1208,9 +1208,9 @@ mod tests {
                 source: LegibilityCommandSource::ObservedCheckpoint,
                 declaration_name: None,
                 artifact_path: None,
-                session_id: Some("ses_duplicate".to_owned()),
-                checkpoint_id: Some("ckp_duplicate".to_owned()),
-                record_id: Some("cmd_duplicate".to_owned()),
+                session_id: Some("ses_a_older".to_owned()),
+                checkpoint_id: Some("ckp_older".to_owned()),
+                record_id: Some("cmd_older".to_owned()),
                 selection_basis: "latest-inspected-checkpoint-observed-command",
             },
             LegibilityCommand {
@@ -1236,6 +1236,13 @@ mod tests {
                 .count(),
             1
         );
+        let checkpoint = commands
+            .iter()
+            .find(|command| command.source == LegibilityCommandSource::ObservedCheckpoint)
+            .unwrap();
+        assert_eq!(checkpoint.session_id.as_deref(), Some("ses_z_newer"));
+        assert_eq!(checkpoint.checkpoint_id.as_deref(), Some("ckp_newer"));
+        assert_eq!(checkpoint.record_id.as_deref(), Some("cmd_newer"));
         assert_eq!(
             commands
                 .iter()
