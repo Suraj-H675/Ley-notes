@@ -82,6 +82,14 @@ session inspection must show its own canary and never the other agent's canary. 
 the Context Compiler must report `conflicting-state` and withhold both historical Decisions from
 task-supporting context rather than choosing a winner by host or recency.
 
+That pre-review conflicting pack is also one of the deterministic explainable-failure diagnostic
+representatives. `ley_context_pack_inspect` must reproduce the exact compiled `contextPackId`, preserve
+both stable Decision IDs as admission-stage `conflicting-memory` exclusions, and expose a conflict row
+that names those same two IDs while the premise remains `conflicting-state`. The Inspector coverage
+must report `searchTruncated: false`, so the conflict condition is not conflated with bounded retrieval
+loss. `conflict_failure_attribution` therefore proves an explicit historical-memory conflict diagnostic;
+it does not claim that conflict was the causal reason for an arbitrary downstream model failure.
+
 The evaluator then proposes one new project-level learning that cites the two exact session/checkpoint
 pairs, explicitly reviews it as the local user, and re-reads every surface. The learning must be
 verified/trusted/current, corroborated by both sessions, retain a review-required automatic authority
