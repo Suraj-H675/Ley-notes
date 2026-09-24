@@ -70,6 +70,7 @@ METRIC_NAMES = (
     "agent_legibility",
     "reviewed_runbook",
     "verification_evidence_links",
+    "live_source_honesty",
     "branch_worktree_controls",
     "graph_relation_retrieval",
     "trace_to_code_retrieval",
@@ -6773,8 +6774,128 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             ),
             None,
         )
+        host_external_session_id = f"{scenario['id']}-live-source-host"
+        host_startup = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": host_external_session_id,
+            },
+        )
+        host_ley_session_id = hook_ley_session_id(host_startup)
+        if not host_ley_session_id:
+            raise RuntimeError(
+                "verification evidence live-source fixture did not resolve the host Ley session"
+            )
+        host_prompt = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": host_external_session_id,
+                "turn_id": "verification-live-source-turn",
+                "prompt": (
+                    f"Inspect the current {evidence_path} before any consequential edit."
+                ),
+            },
+        )
+        host_task_context = automatic_hook_context(host_prompt)
+        live_read_command = f"cat -- {evidence_path}"
+        live_read = subprocess.run(
+            ["cat", "--", evidence_path],
+            cwd=project,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if live_read.returncode != 0:
+            raise RuntimeError(
+                "verification evidence live-source fixture could not read the current workspace file: "
+                + live_read.stderr.strip()
+            )
+        live_read_output = live_read.stdout
+        hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "PostToolUse",
+                "session_id": host_external_session_id,
+                "turn_id": "verification-live-source-turn",
+                "tool_name": "Bash",
+                "tool_use_id": "verification-live-source-read",
+                "tool_input": {"command": live_read_command},
+                "tool_response": {
+                    "output": live_read_output,
+                    "metadata": {"exit_code": live_read.returncode},
+                },
+            },
+        )
+        host_turns = mcp_call(
+            project,
+            "ley_session_turns_get",
+            {
+                "sessionId": host_ley_session_id,
+                "maxResults": 20,
+                "maxCharacters": 16_000,
+            },
+        )
+        host_session = mcp_call(
+            project,
+            "ley_session_get",
+            {
+                "sessionId": host_ley_session_id,
+                "maxCheckpoints": 5,
+                "maxCharacters": 8_000,
+            },
+        )
+        matching_host_tool_rows = [
+            item
+            for item in host_turns.get("toolObservations", [])
+            if isinstance(item, dict)
+            and item.get("toolName") == "Bash"
+            and item.get("command") == live_read_command
+        ]
+        host_tool_row = (
+            matching_host_tool_rows[0]
+            if len(matching_host_tool_rows) == 1
+            else None
+        )
+        expected_tool_result = (
+            f"metadata.exit_code: {live_read.returncode}\noutput: {live_read_output}"
+        ).strip()
         session_text = json.dumps(session_context, sort_keys=True)
         state_text = json.dumps(state, sort_keys=True)
+        host_context_lower = host_task_context.lower()
+        live_host_honesty_ok = (
+            host_ley_session_id.startswith("ses_")
+            and host_task_context.startswith("# Ley task context (automatic)")
+            and "live source checked: false." in host_context_lower
+            and "live-source-unchecked" in host_context_lower
+            and "inspect live source before consequential" in host_context_lower
+            and (not live_mutation_marker or live_mutation_marker not in host_task_context)
+            and live_read.returncode == 0
+            and (not live_mutation_marker or live_mutation_marker in live_read_output)
+            and hashlib.sha256(live_read_output.encode("utf-8")).hexdigest()
+            == live_hash.removeprefix("sha256:")
+            and len(matching_host_tool_rows) == 1
+            and isinstance(host_tool_row, dict)
+            and host_tool_row.get("observationKind") == "returned"
+            and host_tool_row.get("command") == live_read_command
+            and host_tool_row.get("result") == expected_tool_result
+            and host_tool_row.get("commandTruncatedAtCapture") is False
+            and host_tool_row.get("resultTruncatedAtCapture") is False
+            and host_tool_row.get("commandTruncatedForContext") is False
+            and host_tool_row.get("resultTruncatedForContext") is False
+            and host_turns.get("liveSourceChecked") is False
+            and host_session.get("checkpointCount") == 0
+            and not host_session.get("checkpoints")
+            and host_session.get("liveSourceChecked") is False
+            and str(project) not in host_task_context
+            and str(vault) not in host_task_context
+            and str(project) not in json.dumps(host_turns, sort_keys=True)
+            and str(vault) not in json.dumps(host_turns, sort_keys=True)
+        )
         verification_evidence_ok = (
             matching is not None
             and citation is not None
@@ -6793,18 +6914,26 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and str(vault) not in session_text
             and str(project) not in state_text
             and str(vault) not in state_text
+            and live_host_honesty_ok
         )
         scores["verification_evidence_links"] = verification_evidence_ok
+        scores["live_source_honesty"] = live_host_honesty_ok
         privacy_canaries = [str(project), str(vault)]
         if live_mutation_marker:
             privacy_canaries.append(live_mutation_marker)
         scores["privacy_violation_rate"] = privacy_violation_rate(
-            privacy_canaries, [session_context, state]
+            privacy_canaries, [session_context, state, host_task_context]
         )
-        evidence_text.extend([session_context, state])
+        evidence_text.extend(
+            [session_context, state, host_startup, host_prompt, host_turns, host_session]
+        )
         if not verification_evidence_ok:
             failures.append(
-                "verification evidence links did not remain bound to the captured snapshot/hash across live-source drift and derived state"
+                "verification evidence links/live-source host handoff did not preserve immutable historical provenance plus non-authoritative current workspace observation; "
+                f"liveHost={live_host_honesty_ok}, "
+                f"matchingRows={len(matching_host_tool_rows)}, "
+                f"hostToolRow={json.dumps(host_tool_row, sort_keys=True) if isinstance(host_tool_row, dict) else host_tool_row}, "
+                f"expectedToolResult={expected_tool_result!r}"
             )
 
     multimodal_expectation = scenario.get("expected_multimodal_evidence")
