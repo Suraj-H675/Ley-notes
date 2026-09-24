@@ -101,10 +101,16 @@ It serializes only task-supporting context bodies and excludes the task/query te
 cannot satisfy its own required marker merely by asking for that marker. A contract passes only when
 the assembled context contains all declared required evidence and excludes every declared distractor.
 
-The budgeted-quality scenario compares a 500-token Context Compiler result with a bounded recent-resume
-baseline. The compiler passes only when its returned context bodies satisfy that downstream contract
-and remain inside the requested budget. The resume baseline uses a character budget chosen as an
-approximate four-characters-per-token equivalent.
+The budgeted-quality scenario compares a 500-token Context Compiler result with two deterministic
+baselines. The first is the bounded recent-resume projection; the second enumerates **all retained
+sessions** through `ley_sessions_list` and reads every exact Session Context through `ley_session_get`.
+The compiler passes only when its returned context bodies satisfy the downstream contract and remain
+inside the requested budget. The recent-resume arm still uses a character budget chosen as an
+approximate four-characters-per-token equivalent. The all-history arm must be complete/non-truncated,
+retain the same required evidence, expose the deliberately irrelevant distractor markers that raw
+history carries, and serialize to a larger approximate four-characters-per-token text footprint than
+the compiler's reported estimate. `budget_full_history_efficiency` therefore measures deterministic
+evidence selection/size efficiency, not model reasoning quality or an exact tokenizer-equivalent cost.
 
 The P0 matrix also uses this same independent contract where a feature has a distinct downstream-use
 surface:
@@ -617,8 +623,8 @@ likewise configuration-enforced; diagnostic/inspection surfaces such as Memory H
 Inspector keep their native metrics rather than being forced into an artificial task-content benchmark.
 The listed P2 reusable-context capabilities are configuration-enforced in the same way.
 The Context Compiler regression cell is additionally bound to the retrieval fallback/budget-ladder
-scenario rather than the older single-500-token truncation check; that older fixture remains in the
-full corpus as a narrower regression.
+scenario rather than the older fixed-500-token quality fixture; that fixture remains in the full
+corpus as a narrower selection-efficiency regression with both recent-resume and all-history baselines.
 
 The crash-recovery representative exercises the supported candidate-bound recovery writers through the
 real MCP server. It first verifies and idempotently commits one unresolved claim through the legacy

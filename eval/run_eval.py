@@ -59,6 +59,7 @@ METRIC_NAMES = (
     "host_portability",
     "downstream_task_contract",
     "budget_baseline_advantage",
+    "budget_full_history_efficiency",
     "retrieval_robustness",
     "privacy_violation_rate",
     "topic_dossier",
@@ -9467,6 +9468,28 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "maxCharacters": resume_characters,
             },
         )
+        session_list = mcp_call(
+            project,
+            "ley_sessions_list",
+            {"maxResults": 50},
+        )
+        listed_sessions = [
+            item
+            for item in session_list.get("sessions", [])
+            if isinstance(item, dict) and isinstance(item.get("sessionId"), str)
+        ]
+        raw_session_contexts = [
+            mcp_call(
+                project,
+                "ley_session_get",
+                {
+                    "sessionId": str(item["sessionId"]),
+                    "maxCheckpoints": 5,
+                    "maxCharacters": 8_000,
+                },
+            )
+            for item in listed_sessions
+        ]
         compiler_success = (
             task_contract_success(compiler, required, forbidden)
             and int(compiler.get("estimatedTokens", 0)) <= max_tokens
@@ -9481,12 +9504,55 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         baseline_success = all(marker.lower() in resume_text for marker in required) and all(
             marker.lower() not in resume_text for marker in forbidden
         )
-        scores["downstream_task_contract"] = compiler_success
-        scores["budget_baseline_advantage"] = compiler_success and not baseline_success
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)], [compiler, resume]
+        raw_history_text = json.dumps(raw_session_contexts, sort_keys=True).lower()
+        compiler_contract_text = context_contract_text(compiler).lower()
+        raw_required_count = sum(
+            marker.lower() in raw_history_text for marker in required
         )
-        evidence_text.extend([compiler, resume])
+        compiler_required_count = sum(
+            marker.lower() in compiler_contract_text for marker in required
+        )
+        raw_forbidden_count = sum(
+            marker.lower() in raw_history_text for marker in forbidden
+        )
+        compiler_forbidden_count = sum(
+            marker.lower() in compiler_contract_text for marker in forbidden
+        )
+        raw_history_estimated_tokens = max(
+            1,
+            (len(raw_history_text) + 3) // 4,
+        )
+        compiler_estimated_tokens = int(compiler.get("estimatedTokens", 0))
+        expected_session_count = 1 + len(distractors)
+        full_history_complete = (
+            session_list.get("totalSessions") == expected_session_count
+            and session_list.get("omittedSessions") == 0
+            and len(listed_sessions) == expected_session_count
+            and len(raw_session_contexts) == expected_session_count
+            and all(
+                context.get("truncated") is False
+                for context in raw_session_contexts
+            )
+        )
+        full_history_efficiency = (
+            full_history_complete
+            and raw_required_count == len(required)
+            and compiler_required_count >= raw_required_count
+            and raw_forbidden_count == len(forbidden)
+            and compiler_forbidden_count <= raw_forbidden_count
+            and compiler_forbidden_count == 0
+            and compiler_estimated_tokens < raw_history_estimated_tokens
+        )
+        scores["downstream_task_contract"] = compiler_success
+        scores["budget_baseline_advantage"] = (
+            compiler_success and not baseline_success and full_history_efficiency
+        )
+        scores["budget_full_history_efficiency"] = full_history_efficiency
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)],
+            [compiler, resume, session_list, *raw_session_contexts],
+        )
+        evidence_text.extend([compiler, resume, session_list, *raw_session_contexts])
         if not compiler_success:
             failures.append(
                 "500-token Context Compiler failed the deterministic downstream evidence contract"
@@ -9494,6 +9560,14 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if baseline_success:
             failures.append(
                 "bounded recent-resume baseline unexpectedly satisfied the older task-specific evidence contract"
+            )
+        if not full_history_efficiency:
+            failures.append(
+                "500-token Context Compiler did not preserve equal-or-better required/distractor evidence selection at a smaller approximate text budget than all retained session history: "
+                f"fullHistoryComplete={full_history_complete}, "
+                f"required={compiler_required_count}/{raw_required_count}, "
+                f"distractors={compiler_forbidden_count}/{raw_forbidden_count}, "
+                f"tokens={compiler_estimated_tokens}/{raw_history_estimated_tokens}"
             )
 
     retrieval_expectation = scenario.get("expected_retrieval_robustness")
