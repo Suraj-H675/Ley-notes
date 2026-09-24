@@ -64,6 +64,7 @@ METRIC_NAMES = (
     "topic_dossier",
     "current_project_state",
     "context_pack_inspector",
+    "failure_attribution",
     "memory_health",
     "agent_legibility",
     "reviewed_runbook",
@@ -7991,6 +7992,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and str(vault) not in inspection_text
         )
         scores["context_pack_inspector"] = inspector_ok
+        scores["failure_attribution"] = search_loss_ok
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)], [inspection, mismatch]
         )
@@ -10937,13 +10939,31 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "ley_compile_context",
             {"task": stale_task, "maxResults": 8, "maxTokens": 1_500},
         )
+        stale_pack_id = str(compiled.get("contextPackId", ""))
+        stale_inspection = mcp_call(
+            project,
+            "ley_context_pack_inspect",
+            {
+                "task": stale_task,
+                "maxResults": 8,
+                "maxTokens": 1_500,
+                "expectedContextPackId": stale_pack_id,
+            },
+        )
         health = mcp_call(
             project,
             "ley_memory_health",
             {"maxSignals": 100, "maxSessions": 20, "maxCharacters": 16_000},
         )
         evidence_text.extend(
-            [all_learnings, trusted_learnings, stale_search, compiled, health]
+            [
+                all_learnings,
+                trusted_learnings,
+                stale_search,
+                compiled,
+                stale_inspection,
+                health,
+            ]
         )
 
         all_learning = next(
@@ -10984,6 +11004,41 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and stale_result.get("trustedForReuse") is False
         )
         compiled_suppressed_ok = stale_guidance not in serialized([compiled])
+        stale_exclusions = [
+            item
+            for item in stale_inspection.get("activeProjectExclusions", [])
+            if isinstance(item, dict)
+        ]
+        stale_premise = stale_inspection.get("premiseAdjudication", {})
+        stale_warnings = (
+            stale_premise.get("warnings", [])
+            if isinstance(stale_premise, dict)
+            else []
+        )
+        stale_coverage = stale_inspection.get("coverage", {})
+        stale_failure_attribution_ok = (
+            stale_pack_id.startswith("cpk_")
+            and stale_inspection.get("contextPackId") == stale_pack_id
+            and stale_inspection.get("matchesExpectedContextPack") is True
+            and any(
+                item.get("entityId") == stale_use_time_learning_id
+                and item.get("stage") == "admission"
+                and item.get("reason") == "stale-learning"
+                and item.get("trustSignal") == "stale"
+                for item in stale_exclusions
+            )
+            and isinstance(stale_premise, dict)
+            and stale_premise.get("state") == "uncertain-state"
+            and any(
+                isinstance(warning, dict)
+                and warning.get("kind") == "stale-learning"
+                and stale_use_time_learning_id in warning.get("learningIds", [])
+                for warning in stale_warnings
+            )
+            and isinstance(stale_coverage, dict)
+            and stale_coverage.get("searchTruncated") is False
+            and stale_inspection.get("liveSourceChecked") is False
+        )
         health_signal_ok = any(
             isinstance(signal, dict)
             and signal.get("kind") in {"source-changed-learning", "stale-learning"}
@@ -10995,9 +11050,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and trusted_suppressed_ok
             and search_marks_stale_ok
             and compiled_suppressed_ok
+            and stale_failure_attribution_ok
             and health_signal_ok
         )
         scores["stale_learning_recovery"] = stale_recovery_ok
+        scores["failure_attribution"] = stale_failure_attribution_ok
         if not stale_recovery_ok:
             failures.append(
                 "stale-learning recovery incomplete: "
@@ -11005,6 +11062,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 f"trustedSuppressed={trusted_suppressed_ok}, "
                 f"searchStale={search_marks_stale_ok}, "
                 f"compiledSuppressed={compiled_suppressed_ok}, "
+                f"failureAttribution={stale_failure_attribution_ok}, "
                 f"healthAttention={health_signal_ok}"
             )
 

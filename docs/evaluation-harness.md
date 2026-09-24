@@ -394,6 +394,19 @@ that old entry-point claim relevant. Memory Health must additionally return a `s
 or `stale-learning` signal tied to the same learning ID. This proves review recovery without silently
 deleting the historical claim or treating a source rename as automatic semantic correction.
 
+The same journey now also provides a second deterministic diagnostic-attribution case. After source
+drift, `ley_context_pack_inspect` must reproduce the compiled pack ID and attribute the withheld trusted
+guidance to an **admission-stage `stale-learning` exclusion for that exact learning ID**, with a
+`stale-learning` premise warning and `uncertain-state`. Its search coverage must simultaneously report
+`searchTruncated: false`. This is intentionally contrasted with
+`context-pack-inspector-attribution`, whose `failure_attribution` metric proves only that bounded
+retrieval/source search loss occurred; the accompanying Inspector coverage payload must expose at least
+one concrete truncation indicator such as `sourceTruncated` or a nonzero omitted/truncated counter. The oversized search
+fixture does **not** claim that the omitted candidates were uniquely required for the task or that the
+truncation caused a downstream task failure. Together the two fixtures prove that Ley can distinguish
+these two observed diagnostic conditions; they do not claim to classify arbitrary model-reasoning
+failures, prove downstream causation from search loss, or cover every possible failure cause.
+
 ## Ten-session changing-requirement continuity
 
 `ten-session-changing-requirements-handoff` exercises the long-horizon coding-continuity case from
