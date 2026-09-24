@@ -7879,6 +7879,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         max_results = int(inspector_expectation.get("max_results", 8))
         max_tokens = int(inspector_expectation.get("max_tokens", 1_500))
         hidden_marker = str(inspector_expectation.get("hidden_marker", ""))
+        if inspector_expectation.get("require_search_loss") is not True:
+            raise RuntimeError(
+                "Context Pack Inspector fixture requires require_search_loss=true"
+            )
+        require_search_loss = True
         compiled = mcp_call(
             project,
             "ley_compile_context",
@@ -7911,6 +7916,28 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         compiled_text = json.dumps(compiled, sort_keys=True)
         inspection_text = json.dumps(inspection, sort_keys=True)
+        compiled_coverage = compiled.get("coverage", {})
+        inspection_coverage = inspection.get("coverage", {})
+        concrete_search_loss = (
+            isinstance(inspection_coverage, dict)
+            and (
+                inspection_coverage.get("sourceTruncated") is True
+                or int(inspection_coverage.get("searchOmittedCandidates", 0)) > 0
+                or int(inspection_coverage.get("searchOmittedResults", 0)) > 0
+                or int(inspection_coverage.get("searchOmittedConflicts", 0)) > 0
+                or int(inspection_coverage.get("searchTruncatedResultContent", 0)) > 0
+            )
+        )
+        search_loss_ok = (
+            not require_search_loss
+            or (
+                isinstance(compiled_coverage, dict)
+                and isinstance(inspection_coverage, dict)
+                and inspection_coverage.get("searchTruncated") is True
+                and concrete_search_loss
+                and inspection.get("budget", {}).get("omittedOrTruncated") is True
+            )
+        )
         inspector_ok = (
             pack_id.startswith("cpk_")
             and len(pack_id) == 68
@@ -7927,6 +7954,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and inspection.get("budget", {}).get("maxTokens") == max_tokens
             and inspection.get("budget", {}).get("estimatedTokens")
             == compiled.get("estimatedTokens")
+            and inspection_coverage == compiled_coverage
             and int(inspection.get("coverage", {}).get("searchCandidateLimit", 0)) > 0
             and int(
                 inspection.get("coverage", {}).get("searchCollectedCandidates", 0)
@@ -7949,6 +7977,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             >= 0
             and inspection.get("liveSourceChecked") is False
+            and search_loss_ok
             and (
                 not hidden_marker
                 or (
@@ -7967,8 +7996,17 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         evidence_text.extend([compiled, inspection, mismatch])
         if not inspector_ok:
+            diagnostic = ""
+            if require_search_loss:
+                diagnostic = (
+                    f"; compiledCoverage={json.dumps(compiled_coverage, sort_keys=True)}, "
+                    f"inspectionCoverage={json.dumps(inspection_coverage, sort_keys=True)}, "
+                    f"budget={json.dumps(inspection.get('budget', {}), sort_keys=True)}, "
+                    f"searchLossOk={search_loss_ok}"
+                )
             failures.append(
                 "Context Pack Inspector did not preserve pack identity, attribution, body omission, mismatch honesty, or privacy"
+                + diagnostic
             )
 
     health_expectation = scenario.get("expected_memory_health")
