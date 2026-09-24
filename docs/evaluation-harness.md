@@ -1,5 +1,10 @@
 # Ley end-to-end evaluation harness
 
+Empirical status for the broader research questions in `LEY.md` §36 is tracked separately in
+[`docs/research/open-validation-register.md`](research/open-validation-register.md). The register treats
+this deterministic corpus as evidence, not as automatic proof that comparative UX/model questions are
+closed.
+
 Ley's executable acceptance corpus lives in `eval/fixtures/scenarios.jsonl` and is driven by
 `eval/run_eval.py`. The harness exercises the real `ley` CLI, stdio MCP server, and lifecycle-hook
 surfaces against isolated temporary projects/vaults. It is intentionally deterministic: unit tests
