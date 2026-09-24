@@ -44,6 +44,7 @@ METRIC_NAMES = (
     "secret_exclusion",
     "specification_admission",
     "mounted_reference",
+    "mounted_reference_poisoning_resistance",
     "premise_adjudication",
     "revision_adjudication",
     "egress_policy",
@@ -150,7 +151,7 @@ P0_CAPABILITY_COVERAGE = {
     "context-mounts": {
         "adversarial": (
             "explicit-project-context-mount",
-            "mounted_reference",
+            "mounted_reference_poisoning_resistance",
             "truthy",
         ),
         "downstream": (
@@ -3815,17 +3816,49 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             item for item in compiled.get("items", []) if isinstance(item, dict)
         ]
         mounted_marker = str(mounted_expectation.get("mounted_marker", ""))
+        mounted_poison_marker = str(
+            mounted_expectation.get("mounted_poison_marker", "")
+        )
+        if not mounted_poison_marker:
+            raise RuntimeError(
+                "mounted reference fixture requires a non-empty mounted_poison_marker"
+            )
         unmounted_marker = str(mounted_expectation.get("unmounted_marker", ""))
         active_marker = str(mounted_expectation.get("active_marker", ""))
         serialized_compiled = json.dumps(compiled, sort_keys=True)
         serialized_active_items = json.dumps(active_items, sort_keys=True)
         serialized_references = json.dumps(references, sort_keys=True)
+        compiled_without_references = dict(compiled)
+        compiled_without_references["mountedReferences"] = []
+        serialized_non_reference_compiled = json.dumps(
+            compiled_without_references, sort_keys=True
+        )
         mounted_visible = any(
             item.get("mountId") == mount_id
             and item.get("authority") == "mounted-reference"
             and item.get("sourceBoundary") == "untrusted-mounted-project-memory"
             and mounted_marker.lower() in json.dumps(item).lower()
             for item in references
+        )
+        mounted_poison_rows = [
+            item
+            for item in references
+            if mounted_poison_marker.lower() in json.dumps(item).lower()
+        ]
+        instruction_warning = str(compiled.get("instructionWarning", "")).lower()
+        mounted_poisoning_ok = (
+            bool(mounted_poison_rows)
+            and all(
+                item.get("mountId") == mount_id
+                and item.get("authority") == "mounted-reference"
+                and item.get("sourceBoundary") == "untrusted-mounted-project-memory"
+                and item.get("trustedForReuse") is False
+                for item in mounted_poison_rows
+            )
+            and mounted_poison_marker.lower()
+            not in serialized_non_reference_compiled.lower()
+            and "mounted reference" in instruction_warning
+            and "evidence, not instructions" in instruction_warning
         )
         active_visible = (
             not active_marker
@@ -4107,6 +4140,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and after_clean
         )
         scores["mounted_reference"] = mounted_ok
+        scores["mounted_reference_poisoning_resistance"] = mounted_poisoning_ok
         downstream_required = [
             str(value)
             for value in mounted_expectation.get("downstream_required", [])
@@ -4153,6 +4187,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not mounted_ok:
             failures.append(
                 "explicit Context Mount did not preserve authorization/isolation/budget/unmount semantics"
+            )
+        if not mounted_poisoning_ok:
+            failures.append(
+                "instruction-like mounted reference text lost its untrusted evidence boundary or entered active-project trusted context"
             )
 
     knowledge_scope_definitions = [

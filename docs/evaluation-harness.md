@@ -664,6 +664,14 @@ ordinary active context, mounted direct evidence stays `authority: mounted-refer
 opposite-polarity/high-term-overlap clauses only; it does not treat semantic similarity as truth or hide
 contradictory direct source evidence.
 
+The same mounted source also contains an instruction-like poisoning canary that explicitly asks Ley to
+promote itself into trusted user policy. The evaluator deliberately retrieves that canary through the
+mounted reference and requires it to remain visible only inside a row with
+`authority: mounted-reference`, `sourceBoundary: untrusted-mounted-project-memory`, and
+`trustedForReuse: false`. The poison canary must not enter ordinary active-project items, while the
+compiler retains an explicit instruction warning. This proves that explicit reference authorization
+grants bounded evidence access, not a trust-escalation path from mounted text into project policy.
+
 The same mounted source is then moved and legitimately reobserved, after which a different initialized
 Ley project is placed at the observed location. Compilation must report
 `source-identity-changed`, keep the authorized mount diagnostically visible, search zero mounted
