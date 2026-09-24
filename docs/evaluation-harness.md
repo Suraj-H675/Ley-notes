@@ -424,7 +424,9 @@ final offline-local behavior.
 The evaluator requires all ten sessions to remain independently addressable and completed with exactly
 one checkpoint plus one finish event. A bounded `ley_project_resume` request for three sessions must
 report `totalSessions: 10`, `omittedSessions: 7`, and return the three latest completed handoffs in
-order, including the final continuation marker. Separate project-activity search must still recover all
+order, including the final continuation marker. The tenth checkpoint/finish also carries one explicit
+unresolved live-source follow-up; that unresolved marker must survive into resume rather than being
+silently treated as completed work. Separate project-activity search must still recover all
 ten requirement decisions, including markers from early Redis/cloud/remote phases. This proves bounded
 resume is a progressive-disclosure handoff rather than destructive compaction of older experience.
 
@@ -443,6 +445,26 @@ discipline, not automatic semantic rewriting of ten sessions into one supposedly
 The downstream contract therefore requires the approved current requirement and final bounded handoff,
 forbids only the explicitly contradictory Redis marker from task-supporting context, and still requires
 zero project/vault path leakage.
+
+The same fixture now composes that long-horizon resume with the live-source boundary in one fresh-host
+continuation. After the ten historical sessions are complete, the evaluator mutates `docs/runtime.md`,
+starts a new Codex lifecycle session, and requires SessionStart to recover both the final handoff and the
+explicit unresolved live-inspection marker while still declaring the resume snapshot non-live. Because
+this history is intentionally large, the automatic `UserPromptSubmit` projection is allowed to hit the
+real 3,500-byte host-injection guard; when it does, it must fail closed with Ley's truthful overflow
+notice and instruct the host to call `ley_compile_context` rather than inject a partial pack. The
+fallback compiler call for the same task must then recover the approved current Specification, remain
+`liveSourceChecked: false`, and expose the `live-source-unchecked` instruction without leaking the new
+live marker.
+
+Finally, the evaluator executes a real project-relative `cat` of the mutated file and forwards that
+exact command/result through Codex `PostToolUse`. The fresh continuation must retain exactly one
+untruncated `observationKind: returned` row with the normalized live result, while creating no checkpoint
+or Verification authority and continuing to report `liveSourceChecked: false`. The
+`weeks_later_continuation` metric therefore proves the deterministic composition of durable handoff,
+unresolved-work recovery, current-authority selection, honest host-overflow fallback, and explicit live
+workspace observation. It remains a deterministic proxy: it does not simulate elapsed wall-clock weeks
+or prove that a model independently chooses the correct edit after reading the live file.
 
 ## Opt-in real-agent downstream evaluation
 

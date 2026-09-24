@@ -53,6 +53,7 @@ METRIC_NAMES = (
     "parallel_session_reconciliation",
     "cross_surface_staleness",
     "long_horizon_continuity",
+    "weeks_later_continuation",
     "deletion_fidelity",
     "forgetting_residue_rate",
     "inactive_workspace_clean",
@@ -1971,6 +1972,7 @@ def create_structured_session(
     summary: str,
     decisions: list[dict[str, str]] | None = None,
     touched_artifacts: list[str] | None = None,
+    unresolved: list[str] | None = None,
     host: str = "codex",
 ) -> tuple[str, dict[str, object]]:
     started = mcp_call(
@@ -1994,6 +1996,8 @@ def create_structured_session(
         checkpoint["decisions"] = decisions
     if touched_artifacts:
         checkpoint["touchedArtifacts"] = touched_artifacts
+    if unresolved:
+        checkpoint["unresolved"] = unresolved
     receipt = mcp_call(
         project,
         "ley_session_checkpoint",
@@ -8951,6 +8955,16 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "",
             )
         )
+        final_unresolved_marker = str(
+            long_horizon_expectation.get(
+                "final_unresolved_marker",
+                "",
+            )
+        )
+        live_path = str(long_horizon_expectation.get("live_path", ""))
+        live_mutation_marker = str(
+            long_horizon_expectation.get("live_mutation_marker", "")
+        )
         if (
             len(iterations) != 10
             or not query
@@ -8958,9 +8972,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             or not current_requirement_marker
             or not legacy_markers
             or not final_handoff_marker
+            or not final_unresolved_marker
+            or not live_path
+            or not live_mutation_marker
         ):
             raise RuntimeError(
-                "long-horizon continuity fixture requires exactly ten iterations, current/legacy markers, query, and final handoff"
+                "long-horizon continuity fixture requires exactly ten iterations, current/legacy markers, query, final handoff/unresolved markers, and live-source path/marker"
             )
 
         session_ids: list[str] = []
@@ -8988,6 +9005,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             decision = str(iteration.get("decision", ""))
             handoff = str(iteration.get("handoff", ""))
+            unresolved = [
+                str(value)
+                for value in iteration.get("unresolved", [])
+            ]
             result_summary = str(
                 iteration.get(
                     "result_summary",
@@ -9015,6 +9036,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                         ),
                     }
                 ],
+                unresolved=unresolved,
                 host="codex" if index % 2 else "claude-code",
             )
             mcp_call(
@@ -9029,7 +9051,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "summary": result_summary,
                     "handoff": handoff,
                     "finalResponse": "",
-                    "unresolved": [],
+                    "unresolved": unresolved,
                 },
                 WRITE_FLAGS,
             )
@@ -9180,6 +9202,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 ),
             "latest-handoff-visible":
                 final_handoff_marker in all_handoffs,
+            "latest-unresolved-visible":
+                final_unresolved_marker in json.dumps(resume, sort_keys=True),
             "history-inspectable":
                 activity.get("totalSessions") == 10
                 and activity.get("totalMatchingDecisions") == 10
@@ -9212,8 +9236,193 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 and activity.get("liveSourceChecked") is False
                 and compiled.get("liveSourceChecked") is False,
         }
-        long_horizon_ok = all(long_horizon_checks.values())
+        base_long_horizon_ok = all(long_horizon_checks.values())
+
+        live_relative = Path(live_path)
+        if live_relative.is_absolute() or ".." in live_relative.parts:
+            raise RuntimeError("long-horizon live_path must be a safe project-relative path")
+        live_target = project / live_relative
+        if not live_target.is_file():
+            raise RuntimeError("long-horizon live_path does not exist in the project")
+        live_target.write_text(
+            f"{live_mutation_marker}\nCurrent runtime source changed after the captured ten-session history.\n",
+            encoding="utf-8",
+        )
+        live_hash = "sha256:" + hashlib.sha256(live_target.read_bytes()).hexdigest()
+
+        continuation_external_id = f"{scenario['id']}-fresh-continuation-host"
+        continuation_startup = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": continuation_external_id,
+            },
+        )
+        continuation_session_id = hook_ley_session_id(continuation_startup)
+        if not continuation_session_id:
+            raise RuntimeError(
+                "long-horizon continuation fixture did not resolve the fresh host Ley session"
+            )
+        continuation_startup_context = hook_additional_context(continuation_startup)
+        continuation_prompt = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": continuation_external_id,
+                "turn_id": "long-horizon-live-continuation-turn",
+                "prompt": (
+                    "Continue the approved offline startup requirement and inspect the current "
+                    f"{live_path} before any consequential edit."
+                ),
+            },
+        )
+        continuation_task_context = automatic_hook_context(continuation_prompt)
+        continuation_fallback = mcp_call(
+            project,
+            "ley_compile_context",
+            {
+                "task": (
+                    "Continue the approved offline startup requirement and inspect the current "
+                    f"{live_path} before any consequential edit."
+                ),
+                "maxResults": 12,
+                "maxTokens": 3_000,
+            },
+        )
+
+        live_read_command = f"cat -- {live_path}"
+        live_read = subprocess.run(
+            ["cat", "--", live_path],
+            cwd=project,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if live_read.returncode != 0:
+            raise RuntimeError(
+                "long-horizon continuation could not read the current workspace file: "
+                + live_read.stderr.strip()
+            )
+        live_read_output = live_read.stdout
+        hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "PostToolUse",
+                "session_id": continuation_external_id,
+                "turn_id": "long-horizon-live-continuation-turn",
+                "tool_name": "Bash",
+                "tool_use_id": "long-horizon-live-source-read",
+                "tool_input": {"command": live_read_command},
+                "tool_response": {
+                    "output": live_read_output,
+                    "metadata": {"exit_code": live_read.returncode},
+                },
+            },
+        )
+        continuation_turns = mcp_call(
+            project,
+            "ley_session_turns_get",
+            {
+                "sessionId": continuation_session_id,
+                "maxResults": 20,
+                "maxCharacters": 16_000,
+            },
+        )
+        continuation_session = mcp_call(
+            project,
+            "ley_session_get",
+            {
+                "sessionId": continuation_session_id,
+                "maxCheckpoints": 5,
+                "maxCharacters": 8_000,
+            },
+        )
+        matching_live_rows = [
+            item
+            for item in continuation_turns.get("toolObservations", [])
+            if isinstance(item, dict)
+            and item.get("toolName") == "Bash"
+            and item.get("command") == live_read_command
+        ]
+        live_tool_row = matching_live_rows[0] if len(matching_live_rows) == 1 else None
+        expected_live_result = (
+            f"metadata.exit_code: {live_read.returncode}\noutput: {live_read_output}"
+        ).strip()
+        startup_lower = continuation_startup_context.lower()
+        task_lower = continuation_task_context.lower()
+        fallback_text = context_contract_text(continuation_fallback)
+        fallback_gaps_text = json.dumps(
+            continuation_fallback.get("gaps", []),
+            sort_keys=True,
+        ).lower()
+        continuation_turns_text = json.dumps(continuation_turns, sort_keys=True)
+        continuation_live_checks = {
+            "host-session": continuation_session_id.startswith("ses_"),
+            "resume-handoff": final_handoff_marker in continuation_startup_context,
+            "resume-unresolved": final_unresolved_marker in continuation_startup_context,
+            "resume-non-live": "live source checked: no." in startup_lower,
+            "resume-live-inspection-instruction":
+                "inspect live source before editing" in startup_lower,
+            "resume-no-live-marker":
+                live_mutation_marker not in continuation_startup_context,
+            "automatic-pack": continuation_task_context.startswith(
+                "# Ley task context (automatic)"
+            ),
+            "automatic-overflow-honest":
+                "compact host projection exceeded ley's 3500-byte injection bound"
+                in task_lower
+                and "call `ley_compile_context`" in continuation_task_context,
+            "automatic-no-live-marker":
+                live_mutation_marker not in continuation_task_context,
+            "fallback-current-spec":
+                current_requirement_marker.lower() in fallback_text.lower(),
+            "fallback-non-live": continuation_fallback.get("liveSourceChecked") is False,
+            "fallback-live-gap": "live-source-unchecked" in fallback_gaps_text,
+            "fallback-live-instruction":
+                "inspect live source before consequential" in fallback_gaps_text,
+            "fallback-no-live-marker":
+                live_mutation_marker not in json.dumps(continuation_fallback, sort_keys=True),
+            "live-read-success": live_read.returncode == 0,
+            "live-read-current-marker": live_mutation_marker in live_read_output,
+            "live-read-current-hash":
+                "sha256:"
+                + hashlib.sha256(live_read_output.encode("utf-8")).hexdigest()
+                == live_hash,
+            "one-live-tool-row": len(matching_live_rows) == 1,
+            "tool-row-returned":
+                isinstance(live_tool_row, dict)
+                and live_tool_row.get("observationKind") == "returned",
+            "tool-row-exact-result":
+                isinstance(live_tool_row, dict)
+                and live_tool_row.get("result") == expected_live_result,
+            "tool-row-untruncated":
+                isinstance(live_tool_row, dict)
+                and live_tool_row.get("commandTruncatedAtCapture") is False
+                and live_tool_row.get("resultTruncatedAtCapture") is False
+                and live_tool_row.get("commandTruncatedForContext") is False
+                and live_tool_row.get("resultTruncatedForContext") is False,
+            "tool-history-non-live": continuation_turns.get("liveSourceChecked") is False,
+            "no-checkpoint-authority":
+                continuation_session.get("checkpointCount") == 0
+                and not continuation_session.get("checkpoints"),
+            "session-non-live": continuation_session.get("liveSourceChecked") is False,
+            "startup-path-private":
+                str(project) not in continuation_startup_context
+                and str(vault) not in continuation_startup_context,
+            "task-path-private":
+                str(project) not in continuation_task_context
+                and str(vault) not in continuation_task_context,
+            "tool-history-path-private":
+                str(project) not in continuation_turns_text
+                and str(vault) not in continuation_turns_text,
+        }
+        continuation_live_ok = all(continuation_live_checks.values())
+        long_horizon_ok = base_long_horizon_ok and continuation_live_ok
         scores["long_horizon_continuity"] = long_horizon_ok
+        scores["weeks_later_continuation"] = long_horizon_ok
         record_downstream_task_contract(
             scores,
             failures,
@@ -9231,6 +9440,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             activity,
             compiled,
             *session_contexts,
+            continuation_startup,
+            continuation_prompt,
+            continuation_fallback,
+            continuation_turns,
+            continuation_session,
         ]
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault)],
@@ -9243,6 +9457,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 for label, passed in long_horizon_checks.items()
                 if not passed
             ]
+            if not continuation_live_ok:
+                failed_long_horizon_checks.extend(
+                    "fresh-host-" + label
+                    for label, passed in continuation_live_checks.items()
+                    if not passed
+                )
             failures.append(
                 "ten-session changing-requirement continuity failed: "
                 + ", ".join(failed_long_horizon_checks)
