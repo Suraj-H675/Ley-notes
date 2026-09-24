@@ -35,6 +35,7 @@ METRIC_NAMES = (
     "capture_recovery",
     "memory_recovery",
     "memory_transition",
+    "transition_verifier_challenge",
     "memory_binding",
     "origin_lineage",
     "idempotency",
@@ -111,8 +112,8 @@ P0_CAPABILITY_COVERAGE = {
     },
     "memory-compiler": {
         "adversarial": (
-            "crash-before-session-end-resume",
-            "memory_transition",
+            "transition-verifier-challenge-matrix",
+            "transition_verifier_challenge",
             "truthy",
         ),
         "downstream": (
@@ -2140,6 +2141,248 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 {"sessionId": session_id, "maxResults": 20, "maxCharacters": 8000},
             )
         )
+
+    transition_challenge = scenario.get("expected_transition_verifier_challenge")
+    if isinstance(transition_challenge, dict):
+        challenge_prompt = str(transition_challenge.get("prompt", ""))
+        challenge_response = str(transition_challenge.get("response", ""))
+        challenge_subject = str(transition_challenge.get("subject", ""))
+        aligned_statement = str(transition_challenge.get("aligned_statement", ""))
+        contradicted_statement = str(
+            transition_challenge.get("contradicted_statement", "")
+        )
+        if not all(
+            (
+                challenge_prompt,
+                challenge_response,
+                challenge_subject,
+                aligned_statement,
+                contradicted_statement,
+            )
+        ):
+            raise RuntimeError(
+                "transition-verifier challenge fixture requires prompt/response/subject/aligned/contradicted text"
+            )
+        if aligned_statement == contradicted_statement:
+            raise RuntimeError(
+                "transition-verifier challenge requires distinct aligned and contradicted statements"
+            )
+
+        external_session_id = f"{scenario['id']}-host"
+        challenge_start = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": external_session_id,
+            },
+        )
+        challenge_prompt_result = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": external_session_id,
+                "turn_id": "transition-verifier-challenge-turn",
+                "prompt": challenge_prompt,
+            },
+        )
+        challenge_session_id = hook_ley_session_id(challenge_start) or hook_ley_session_id(
+            challenge_prompt_result
+        )
+        if not challenge_session_id:
+            raise RuntimeError(
+                "transition-verifier challenge did not resolve the Ley host session"
+            )
+        challenge_stop = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "Stop",
+                "session_id": external_session_id,
+                "turn_id": "transition-verifier-challenge-turn",
+                "last_assistant_message": challenge_response,
+            },
+        )
+        challenge_compiled = mcp_call(
+            project,
+            "ley_session_memory_compile",
+            {
+                "sessionId": challenge_session_id,
+                "maxResults": 20,
+                "maxCharacters": 8_000,
+            },
+        )
+        challenge_evidence = [
+            item
+            for item in challenge_compiled.get("evidence", [])
+            if isinstance(item, dict) and isinstance(item.get("recordId"), str)
+        ]
+        prompt_record = next(
+            (
+                item
+                for item in challenge_evidence
+                if item.get("kind") == "user-prompt"
+            ),
+            None,
+        )
+        response_record = next(
+            (
+                item
+                for item in challenge_evidence
+                if item.get("kind") == "assistant-response"
+            ),
+            None,
+        )
+        if not isinstance(prompt_record, dict) or not isinstance(response_record, dict):
+            raise RuntimeError(
+                "transition-verifier challenge did not retain one prompt and one response record"
+            )
+        prompt_record_id = str(prompt_record["recordId"])
+        response_record_id = str(response_record["recordId"])
+        event_count = int(challenge_compiled.get("sessionEventCount", 0))
+        if event_count <= 1:
+            raise RuntimeError(
+                "transition-verifier challenge returned an invalid session event count"
+            )
+        retained_text = "\n".join(
+            str(item.get("text", "")) for item in (prompt_record, response_record)
+        )
+        if challenge_prompt not in retained_text or challenge_response not in retained_text:
+            raise RuntimeError(
+                "transition-verifier challenge could not prove the controlled semantic oracle survived capture"
+            )
+
+        def verify_transition_challenge(
+            statement: str,
+            evidence_ids: list[str],
+            *,
+            expected_count: int = event_count,
+        ) -> dict[str, object]:
+            return mcp_call(
+                project,
+                "ley_session_memory_verify",
+                {
+                    "sessionId": challenge_session_id,
+                    "expectedEventCount": expected_count,
+                    "claims": [
+                        {
+                            "kind": "decision",
+                            "subject": challenge_subject,
+                            "statement": statement,
+                            "evidenceRecordIds": evidence_ids,
+                        }
+                    ],
+                    "deferredEvidenceRecordIds": [],
+                },
+            )
+
+        all_evidence_ids = [prompt_record_id, response_record_id]
+        aligned = verify_transition_challenge(aligned_statement, all_evidence_ids)
+        contradicted = verify_transition_challenge(
+            contradicted_statement, all_evidence_ids
+        )
+        omitted = verify_transition_challenge(
+            aligned_statement, [prompt_record_id]
+        )
+        duplicated = verify_transition_challenge(
+            aligned_statement,
+            [prompt_record_id, prompt_record_id, response_record_id],
+        )
+        invalid = verify_transition_challenge(
+            aligned_statement,
+            [prompt_record_id, response_record_id, f"tev_{'f' * 32}"],
+        )
+        stale = verify_transition_challenge(
+            aligned_statement,
+            all_evidence_ids,
+            expected_count=event_count - 1,
+        )
+
+        def issue_kinds(payload: dict[str, object]) -> set[str]:
+            return {
+                str(issue.get("kind", ""))
+                for issue in payload.get("issues", [])
+                if isinstance(issue, dict)
+            }
+
+        aligned_structurally_reviewable = (
+            aligned.get("state") == "review-required"
+            and aligned.get("semanticFaithfulnessProven") is False
+            and aligned.get("liveSourceChecked") is False
+            and aligned.get("issues") == []
+            and aligned.get("coverage", {}).get("coverageComplete") is True
+            and str(aligned.get("candidateFingerprint", "")).startswith("sha256:")
+            and "semantic faithfulness" in str(aligned.get("faithfulnessNotice", "")).lower()
+        )
+        contradicted_structurally_reviewable = (
+            contradicted.get("state") == "review-required"
+            and contradicted.get("semanticFaithfulnessProven") is False
+            and contradicted.get("liveSourceChecked") is False
+            and contradicted.get("issues") == []
+            and contradicted.get("coverage", {}).get("coverageComplete") is True
+            and str(contradicted.get("candidateFingerprint", "")).startswith("sha256:")
+            and contradicted.get("candidateFingerprint")
+            != aligned.get("candidateFingerprint")
+            and "semantic faithfulness"
+            in str(contradicted.get("faithfulnessNotice", "")).lower()
+        )
+        omitted_detected = (
+            omitted.get("state") == "needs-revision"
+            and "uncovered-evidence" in issue_kinds(omitted)
+            and omitted.get("coverage", {}).get("coverageComplete") is False
+        )
+        duplicate_detected = (
+            duplicated.get("state") == "needs-revision"
+            and "duplicate-evidence-reference" in issue_kinds(duplicated)
+        )
+        invalid_detected = (
+            invalid.get("state") == "needs-revision"
+            and "invalid-evidence-reference" in issue_kinds(invalid)
+            and invalid.get("coverage", {}).get("coverageComplete") is False
+        )
+        stale_detected = (
+            stale.get("state") == "stale"
+            and stale.get("stale") is True
+            and "stale-event-count" in issue_kinds(stale)
+        )
+        structural_detection_ok = all(
+            (omitted_detected, duplicate_detected, invalid_detected, stale_detected)
+        )
+        semantic_boundary_ok = (
+            aligned_structurally_reviewable
+            and contradicted_structurally_reviewable
+        )
+        transition_verifier_challenge_ok = (
+            structural_detection_ok and semantic_boundary_ok
+        )
+        scores["transition_verifier_challenge"] = transition_verifier_challenge_ok
+        evidence_text.extend(
+            [
+                challenge_start,
+                challenge_prompt_result,
+                challenge_stop,
+                challenge_compiled,
+                aligned,
+                contradicted,
+                omitted,
+                duplicated,
+                invalid,
+                stale,
+            ]
+        )
+        scores["privacy_violation_rate"] = privacy_violation_rate(
+            [str(project), str(vault)],
+            [aligned, contradicted, omitted, duplicated, invalid, stale],
+        )
+        if not transition_verifier_challenge_ok:
+            failures.append(
+                "transition verifier challenge did not preserve the structural-vs-semantic boundary: "
+                f"aligned={aligned_structurally_reviewable}, "
+                f"contradicted={contradicted_structurally_reviewable}, "
+                f"omitted={omitted_detected}, duplicate={duplicate_detected}, "
+                f"invalid={invalid_detected}, stale={stale_detected}"
+            )
 
     premise_expectation = scenario.get("expected_premise_adjudication")
     if isinstance(premise_expectation, dict):

@@ -708,6 +708,28 @@ privacy leakage and keeps rich/composite/tool-evidence behavior inside the exist
 Memory Compiler, memory-binding, and origin-lineage gates rather than introducing weaker standalone
 metrics.
 
+`transition-verifier-challenge-matrix` separately measures the deterministic verifier's detection
+boundary through evaluator-supplied Codex lifecycle payloads processed by Ley's real hook adapter,
+followed by real MCP verifier calls, without committing any candidate memory. One
+captured prompt/response window states that offline startup must not require Redis and uses SQLite.
+The evaluator then submits six `ley_session_memory_verify` probes against the same evidence window:
+
+- a semantically aligned Decision;
+- an explicitly opposite Redis-required / no-SQLite Decision using the same complete evidence;
+- an omitted-evidence candidate;
+- a duplicated-evidence-reference candidate;
+- a candidate containing an out-of-window evidence ID; and
+- a stale-event-count candidate.
+
+The omitted, duplicate, invalid-ID, and stale probes must fail with their exact structural diagnostics.
+Both the aligned and deliberately contradicted complete candidates are expected to remain
+`review-required`, with complete evidence accounting, distinct fingerprints, no verifier issues, and
+`semanticFaithfulnessProven: false`. This is the point of the challenge: Ley's deterministic verifier
+strongly detects structural corruption/coverage/staleness problems, but it does **not** claim textual
+entailment or semantic truth. The fixture's contradiction label is an external evaluation oracle, not
+input to the verifier. `transition_verifier_challenge` therefore proves the boundary that any future
+semantic judge must improve rather than duplicating existing structural checks.
+
 The Context Mount representative also exercises reference precedence, current-state conflict
 adjudication, and the complete public fail-closed availability lifecycle. Its active project carries a
 user-reviewed current Constraint that says not to use Redis for startup state, while the explicitly

@@ -34,7 +34,7 @@ regressions, recorded runtime verification, and the separate opt-in model-depend
 | Which bounded runtime evidence types provide the most debugging value without turning Ley into a log store? | **Partial** | Ley now has evidence-backed slices for structured Verification artifact links, supported Bash tool observations, exact Procedure-application outcomes, context-utility bindings/outcomes, and observed-command recovery. These remain bounded, typed, provenance-linked, and explicitly do not convert ordinary tool returns into success authority. | There is no comparative downstream study ranking which evidence types most improve real debugging. Additional runtime/log capture should not be added until a blinded task benchmark demonstrates incremental value over the existing bounded set. |
 | How should a context pack expose inclusion/exclusion reasons without consuming excessive agent context itself? | **Evidence-backed direction** | Current design keeps the task pack compact while exposing detailed reasoning through the on-demand Context Pack Inspector. Inspector v4 reproduces exact pack identity, included-record metadata, exclusions, conflicts, retrieval/revision coverage, budget composition, and follow-ups without copying included bodies. Deterministic scenarios distinguish bounded search loss, stale-memory exclusion, and historical conflict diagnostics. | The exact rendering can still be tuned, but current evidence supports the architectural split: compact task-facing diagnostics plus deeper on-demand inspection rather than embedding a full explanation manifest into every prompt. |
 | How should deferred Memory Compiler consolidation be scheduled so it improves capture without creating noisy micro-memories or surprising background work? | **Partial** | The current P2 step establishes an evaluated no-surprise baseline: `ley_consolidation_inbox` is an on-demand, body-free, non-persistent review surface over meaningful terminal-session evidence and can feed the separately authorized review-required learning proposal flow. | Background scheduling, batching thresholds, deduplication, idle/resource policy, notification/review UX, and benefit vs noise remain intentionally unproven. A scheduling experiment must compare any candidate background policy against this on-demand/manual baseline before a daemon/job is added. |
-| Which transition verifier can detect omission/corruption/hallucination reliably enough without requiring an expensive judge on every update? | **Partial** | Ley has increasingly strict deterministic verifiers for unresolved/minimal/typed/rich/composite recovery and observed commands: exact evidence IDs, event-count/fingerprint binding, complete-window accounting, stale/deferred/metadata-only rejection, idempotent retry, and writer-lock revalidation. These strongly detect structural omission/corruption and stale writes without a judge. | Deterministic structural verification does not prove semantic faithfulness or detect every hallucinated interpretation. A model/judge should be added only if a reproducible benchmark shows semantic errors that deterministic evidence binding cannot catch at acceptable false-positive/cost rates. |
+| Which transition verifier can detect omission/corruption/hallucination reliably enough without requiring an expensive judge on every update? | **Partial** | Ley has strict deterministic verifiers for unresolved/minimal/typed/rich/composite recovery and observed commands. The new `transition-verifier-challenge-matrix` confirms through the real MCP path that omitted evidence, duplicated references, out-of-window IDs, and stale event counts are rejected, while complete evidence accounting remains reproducible. It also deliberately shows the residual boundary: a semantically opposite claim over the same complete retained evidence still reaches `review-required`, with `semanticFaithfulnessProven: false`, exactly like the aligned claim. | The benchmark now proves where deterministic verification stops. The next question is whether a semantic reviewer/judge can reliably distinguish the controlled contradicted claim from the aligned claim at acceptable false-positive, latency, privacy, and cost levels. Do not add a judge merely to repeat structural checks the deterministic verifier already catches. |
 | How should parallel-agent conflicts be summarized before project-level consolidation without privileging the last writer? | **Evidence-backed direction** | `parallel-agent-session-separation` preserves independent agent sessions/Decisions, compiles the pre-review state as `conflicting-state`, withholds both Decisions, and Inspector attribution names both stable Decision IDs without retrieval-truncation ambiguity. Reconciliation creates a separately reviewed project-level learning citing both exact checkpoints while leaving both histories unchanged. | Future summarization UI/text can improve presentation, but current evidence supports the core rule: preserve both histories/conflict first; only explicit reviewed synthesis becomes reusable current knowledge. |
 | What derivation-dependency representation is sufficient for full-pipeline erasure without overcomplicating every record? | **Partial** | Ley already proves important dependency paths: reviewed session erasure cascades through cited/supersession-dependent learnings; whole-project Agent Memory erasure removes the private namespace while preserving user-owned Markdown/Canvas/project files; rebuildable dossiers/state/Inspector/graph projections do not require durable dependency rows; deletion-fidelity scenarios require zero residue. | There is no single universal derivation DAG covering every future persisted derivative. Any new persistent derivative/background cache must still declare invalidation/erasure dependencies explicitly. More complexity is justified only when a non-rebuildable derivative actually needs it. |
 | When is explicit user-wide reusable knowledge worth adding beyond mounted notes/specs, and how do we avoid hidden profile inference? | **Partial** | Ley has taken an explicit-scope route instead of inferred profiling: Context Mounts, Bootstrap References, reusable team/organization Knowledge Scopes, and Policy Bundles are all opt-in authority with provenance/egress/non-laundering evaluation. No ambient whole-vault/user-profile inference is introduced. | A generic user-wide knowledge layer is still unproven. It should require a concrete cross-project task benchmark showing material value beyond explicit scopes/mounts, plus UX/privacy evidence that users can inspect and revoke exactly what became reusable. |
@@ -90,26 +90,19 @@ can read before/after mount, scope attachment, egress restriction, and detach. C
 actual Inspector/compiler result. Measure correctness and identify wording/control states that cause
 wrong mental models. This informs §36 questions 4 and 5 without weakening the current authority model.
 
-### 3. Blinded transition-verifier challenge set
+### 3. Direct no-model Codex / Claude ↔ Ley MCP negotiation probe
 
-Build a fixture set that deliberately includes:
+The transition-verifier challenge is now implemented; it demonstrates the residual semantic boundary
+rather than merely hypothesizing it. The next inexpensive validation target is MCP host parity.
 
-- omitted evidence;
-- duplicated evidence;
-- stale event counts / fingerprints;
-- corrupted or mismatched evidence IDs;
-- structurally complete but semantically unsupported candidate claims.
+Use isolated temporary host configuration and a disposable Ley project/server to make the installed
+Codex and Claude Code binaries perform a real MCP `initialize` plus one harmless read-only operation
+(`tools/list` is sufficient for protocol/capability negotiation; a bounded Ley read can additionally
+confirm normal operation). Record the client/server protocol versions and success/failure without
+invoking an LLM or mutating the user's normal host configuration. This is required because embedded
+protocol strings do not prove negotiated compatibility.
 
-Score deterministic verifier detection separately from expert-rated semantic faithfulness and false
-positives. This directly tests whether Ley's current evidence/fingerprint verifiers already cover the
-high-value failure modes and identifies the narrow residual where an expensive model/judge might add
-value. Do not introduce a judge until the benchmark demonstrates a semantic gap that deterministic
-verification cannot catch reliably.
-
-The MCP host-parity question has useful dated evidence below but is **not closed**. Embedded version
-strings do not prove negotiation or successful Ley operation. A direct no-model host↔Ley handshake /
-operation probe remains required before changing the protocol pin, and should be repeated after relevant
-host/SDK updates.
+Repeat the probe after relevant host/SDK updates and before changing Ley's protocol pin.
 
 ## Dated MCP compatibility evidence — 2026-09-24
 
