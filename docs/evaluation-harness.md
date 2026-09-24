@@ -364,13 +364,17 @@ tentative memory, whereas high-consequence learning trust remains a version-guar
 for a previously solved failure rather than passing on nearby keywords alone. The fixture records one
 structured watcher-startup Problem with an exact dead-end restart attempt, a successful event-loop
 initialization attempt, explicit root cause/change/verification fields, and a snapshot-bound citation to
-`src/watcher.py`. Task-facing `ley_search_memory` must return the same stable Problem/session handles as
-`ley_search_activity`; the activity projection must preserve both ordered attempts and their typed
-outcomes, the verified Resolution, and the immutable captured-source citation.
+`src/watcher.py`. An exact-title lookup first cross-checks `ley_search_memory` against
+`ley_search_activity` for the same stable Problem/session handles. The actual reuse contract then uses a
+separate incident description that is not the stored Problem title. That paraphrased Memory Search must
+recover the same durable Problem/session IDs; following the returned `sessionId` through
+`ley_session_get` must expose the same Problem ID, both ordered attempts and typed outcomes, the verified
+Resolution, and the immutable captured-source citation.
 
 The evaluator then proposes a Procedure from that exact recovered Problem record, confirms it through
-the explicit local user-review route, and requires task-facing project Memory Search to return the same
-learning as verified/trusted/current reusable guidance with its exact reviewed text. This proves the
+the explicit local user-review route, and requires both the Procedure-specific query and the same
+paraphrased incident description to return the learning as verified/trusted/current reusable guidance
+with its exact reviewed text while the incident query still returns the original Problem. This proves the
 known-failure journey as evidence -> structured debugging episode -> reviewed reusable procedure; it
 does not claim that semantic similarity alone proves a new failure has the same cause.
 

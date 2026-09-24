@@ -10545,6 +10545,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     known_failure = scenario.get("expected_known_failure_reuse")
     if isinstance(known_failure, dict):
         query = str(known_failure.get("query", ""))
+        incident_query = str(known_failure.get("incident_query", ""))
         expected_title = str(known_failure.get("problem_title", ""))
         expected_failed = known_failure.get("failed_attempt", {})
         expected_successful = known_failure.get("successful_attempt", {})
@@ -10553,6 +10554,23 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         expected_verification = str(known_failure.get("verification", ""))
         expected_citation = str(known_failure.get("citation", ""))
         procedure_spec = known_failure.get("procedure")
+        normalized_incident_query = incident_query.strip().lower()
+        normalized_problem_title = expected_title.strip().lower()
+        normalized_baseline_query = query.strip().lower()
+        if (
+            not normalized_incident_query
+            or (
+                normalized_problem_title
+                and normalized_problem_title in normalized_incident_query
+            )
+            or (
+                normalized_baseline_query
+                and normalized_baseline_query in normalized_incident_query
+            )
+        ):
+            raise RuntimeError(
+                "known-failure reuse fixture requires an incident_query that does not embed the stored Problem title/baseline query"
+            )
 
         memory_search = mcp_call(
             project,
@@ -10564,9 +10582,20 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "ley_search_activity",
             {"query": query, "maxResults": K},
         )
-        evidence_text.extend([memory_search, activity_search])
+        incident_memory_search = mcp_call(
+            project,
+            "ley_search_memory",
+            {"query": incident_query, "maxResults": K, "maxTokens": 1_500},
+        )
+        evidence_text.extend(
+            [
+                memory_search,
+                activity_search,
+                incident_memory_search,
+            ]
+        )
 
-        memory_problem = next(
+        baseline_memory_problem = next(
             (
                 result
                 for result in memory_search.get("results", [])
@@ -10576,7 +10605,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             ),
             None,
         )
-        activity_problem = next(
+        baseline_activity_problem = next(
             (
                 problem
                 for problem in activity_search.get("problems", [])
@@ -10584,34 +10613,91 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             ),
             None,
         )
+        memory_problem = next(
+            (
+                result
+                for result in incident_memory_search.get("results", [])
+                if isinstance(result, dict)
+                and result.get("kind") == "problem"
+                and result.get("title") == expected_title
+            ),
+            None,
+        )
+        incident_session = (
+            mcp_call(
+                project,
+                "ley_session_get",
+                {
+                    "sessionId": str(memory_problem.get("sessionId", "")),
+                    "maxCheckpoints": 10,
+                    "maxCharacters": 12_000,
+                },
+            )
+            if isinstance(memory_problem, dict)
+            else {}
+        )
+        evidence_text.append(incident_session)
+        incident_checkpoint = next(
+            (
+                checkpoint
+                for checkpoint in incident_session.get("checkpoints", [])
+                if isinstance(checkpoint, dict)
+                and any(
+                    isinstance(problem, dict)
+                    and problem.get("id") == memory_problem.get("entityId")
+                    for problem in checkpoint.get("problems", [])
+                )
+            ),
+            None,
+        )
+        session_problem = next(
+            (
+                problem
+                for problem in (
+                    incident_checkpoint.get("problems", [])
+                    if isinstance(incident_checkpoint, dict)
+                    else []
+                )
+                if isinstance(problem, dict)
+                and problem.get("id") == memory_problem.get("entityId")
+                and problem.get("title") == expected_title
+            ),
+            None,
+        )
 
-        def expected_attempt_present(
-            problem: dict[str, object] | None, expected: object
-        ) -> bool:
-            if not isinstance(problem, dict) or not isinstance(expected, dict):
-                return False
-            return any(
+        def attempt_matches(attempt: object, expected: object) -> bool:
+            return (
                 isinstance(attempt, dict)
+                and isinstance(expected, dict)
                 and attempt.get("action") == expected.get("action")
                 and attempt.get("outcome") == expected.get("outcome")
-                for attempt in problem.get("attempts", [])
             )
 
         resolution = (
-            activity_problem.get("resolution")
-            if isinstance(activity_problem, dict)
+            session_problem.get("resolutionDetail")
+            if isinstance(session_problem, dict)
             else None
         )
         citations = (
-            activity_problem.get("artifactCitations", [])
-            if isinstance(activity_problem, dict)
+            incident_checkpoint.get("touchedArtifacts", [])
+            if isinstance(incident_checkpoint, dict)
             else []
         )
         stable_handle_ok = (
-            isinstance(memory_problem, dict)
-            and isinstance(activity_problem, dict)
-            and memory_problem.get("entityId") == activity_problem.get("recordId")
-            and memory_problem.get("sessionId") == activity_problem.get("sessionId")
+            isinstance(baseline_memory_problem, dict)
+            and isinstance(baseline_activity_problem, dict)
+            and isinstance(memory_problem, dict)
+            and isinstance(session_problem, dict)
+            and baseline_memory_problem.get("entityId")
+            == baseline_activity_problem.get("recordId")
+            and baseline_memory_problem.get("sessionId")
+            == baseline_activity_problem.get("sessionId")
+            and session_problem.get("id") == memory_problem.get("entityId")
+            and incident_session.get("sessionId") == memory_problem.get("sessionId")
+            and memory_problem.get("entityId")
+            == baseline_memory_problem.get("entityId")
+            and memory_problem.get("sessionId")
+            == baseline_memory_problem.get("sessionId")
         )
         resolution_ok = (
             isinstance(resolution, dict)
@@ -10623,20 +10709,48 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             isinstance(citation, dict)
             and citation.get("artifactPath") == expected_citation
             and isinstance(citation.get("artifactSnapshotId"), str)
+            and len(citation["artifactSnapshotId"]) == 68
+            and citation["artifactSnapshotId"].startswith("snp_")
+            and all(
+                character in "0123456789abcdef"
+                for character in citation["artifactSnapshotId"][4:]
+            )
             and isinstance(citation.get("contentHash"), str)
+            and len(citation["contentHash"]) == 71
+            and citation["contentHash"].startswith("sha256:")
+            and all(
+                character in "0123456789abcdef"
+                for character in citation["contentHash"][7:]
+            )
             for citation in citations
         )
-        failed_attempt_ok = expected_attempt_present(activity_problem, expected_failed)
-        successful_attempt_ok = expected_attempt_present(
-            activity_problem, expected_successful
+        raw_problem_attempts = (
+            session_problem.get("attempts", [])
+            if isinstance(session_problem, dict)
+            else []
+        )
+        problem_attempts = (
+            raw_problem_attempts
+            if isinstance(raw_problem_attempts, list)
+            and len(raw_problem_attempts) == 2
+            and all(isinstance(attempt, dict) for attempt in raw_problem_attempts)
+            else []
+        )
+        failed_attempt_ok = (
+            len(problem_attempts) == 2
+            and attempt_matches(problem_attempts[0], expected_failed)
+        )
+        successful_attempt_ok = (
+            len(problem_attempts) == 2
+            and attempt_matches(problem_attempts[1], expected_successful)
         )
         procedure_ok = procedure_spec is None
-        if isinstance(procedure_spec, dict) and isinstance(activity_problem, dict):
+        if isinstance(procedure_spec, dict) and isinstance(session_problem, dict):
             procedure_title = str(procedure_spec.get("title", ""))
             procedure_guidance = str(procedure_spec.get("guidance", ""))
             procedure_query = str(procedure_spec.get("query", ""))
-            problem_session_id = str(activity_problem.get("sessionId", ""))
-            problem_record_id = str(activity_problem.get("recordId", ""))
+            problem_session_id = str(memory_problem.get("sessionId", ""))
+            problem_record_id = str(session_problem.get("id", ""))
             proposal = mcp_call(
                 project,
                 "ley_learning_propose",
@@ -10686,7 +10800,18 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "maxTokens": 1_500,
                 },
             )
-            evidence_text.extend([proposal, reviewed, procedure_search])
+            incident_reuse_search = mcp_call(
+                project,
+                "ley_search_memory",
+                {
+                    "query": incident_query,
+                    "maxResults": K,
+                    "maxTokens": 1_500,
+                },
+            )
+            evidence_text.extend(
+                [proposal, reviewed, procedure_search, incident_reuse_search]
+            )
             reviewed_learning = (
                 reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
             )
@@ -10701,12 +10826,43 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 ),
                 None,
             )
+            incident_procedure_result = next(
+                (
+                    result
+                    for result in incident_reuse_search.get("results", [])
+                    if isinstance(result, dict)
+                    and result.get("kind") == "learning"
+                    and result.get("learningId") == procedure_learning_id
+                    and result.get("title") == procedure_title
+                ),
+                None,
+            )
+            incident_problem_result = next(
+                (
+                    result
+                    for result in incident_reuse_search.get("results", [])
+                    if isinstance(result, dict)
+                    and result.get("kind") == "problem"
+                    and isinstance(memory_problem, dict)
+                    and result.get("entityId") == memory_problem.get("entityId")
+                    and result.get("sessionId") == memory_problem.get("sessionId")
+                    and result.get("title") == expected_title
+                ),
+                None,
+            )
             procedure_ok = (
                 reviewed_learning.get("state") == "verified"
                 and reviewed_learning.get("trustState") == "trusted"
+                and reviewed_learning.get("freshness") == "current"
                 and isinstance(procedure_result, dict)
                 and procedure_result.get("trustedForReuse") is True
+                and procedure_result.get("trustSignal") == "trusted-current"
                 and procedure_result.get("excerpt") == procedure_guidance
+                and isinstance(incident_procedure_result, dict)
+                and incident_procedure_result.get("trustedForReuse") is True
+                and incident_procedure_result.get("trustSignal") == "trusted-current"
+                and incident_procedure_result.get("excerpt") == procedure_guidance
+                and isinstance(incident_problem_result, dict)
             )
         known_failure_ok = (
             stable_handle_ok
@@ -10718,6 +10874,23 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         scores["known_failure_reuse"] = known_failure_ok
         if not known_failure_ok:
+            incident_memory_summary = [
+                {
+                    "kind": item.get("kind"),
+                    "title": item.get("title"),
+                    "entityId": item.get("entityId"),
+                }
+                for item in incident_memory_search.get("results", [])
+                if isinstance(item, dict)
+            ]
+            incident_session_summary = {
+                "sessionId": incident_session.get("sessionId"),
+                "problemId": (
+                    session_problem.get("id")
+                    if isinstance(session_problem, dict)
+                    else None
+                ),
+            }
             failures.append(
                 "known-failure reuse incomplete: "
                 f"stableHandle={stable_handle_ok}, "
@@ -10725,7 +10898,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 f"successfulAttempt={successful_attempt_ok}, "
                 f"resolution={resolution_ok}, "
                 f"citation={citation_ok}, "
-                f"procedure={procedure_ok}"
+                f"procedure={procedure_ok}; "
+                f"incidentMemory={json.dumps(incident_memory_summary, sort_keys=True)}, "
+                f"incidentSession={json.dumps(incident_session_summary, sort_keys=True)}"
             )
 
     if scenario.get("expected_stale_learning"):
