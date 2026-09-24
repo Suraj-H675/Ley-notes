@@ -2,7 +2,7 @@
 
 Ley is a local-first knowledge workspace for durable Markdown notes, wiki links, backlinks, search, and visual graph exploration. It runs as a native desktop application and as an installable web app.
 
-Knowledge data stays on the user's device. Ley has no note backend, mandatory account, analytics, or telemetry. Context is shared with a cloud agent only when the user intentionally asks that agent to retrieve it. See [Local storage and data boundaries](docs/privacy-and-storage.md).
+Knowledge data stays on the user's device. Ley has no note backend, mandatory account, analytics, or telemetry. Agent context leaves the device only through a user-installed/configured integration and its explicit egress authority: the user may request context directly, and supported host integrations may also inject bounded task context automatically after that authority is configured. See [Local storage and data boundaries](docs/privacy-and-storage.md).
 
 The desktop app and supported browsers open a real folder as a vault. Markdown files remain the source of truth; the local database is a rebuildable index for search, links, tags, graph data, and recovery snapshots.
 
@@ -54,7 +54,7 @@ The desktop app and supported browsers open a real folder as a vault. Markdown f
 ```
 
 See [docs/architecture.md](docs/architecture.md) for boundaries and persistence guarantees.
-See [docs/evaluation-harness.md](docs/evaluation-harness.md) for the deterministic end-to-end acceptance corpus, focused-run commands, privacy/deletion metrics, and P0 coverage matrix.
+See [docs/evaluation-harness.md](docs/evaluation-harness.md) for the deterministic end-to-end acceptance corpus, focused-run commands, privacy/deletion metrics, P0/P1/P2 capability coverage matrices, and the separate opt-in model-dependent downstream comparison runner.
 
 ## Development
 
