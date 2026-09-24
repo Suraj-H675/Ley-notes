@@ -39,7 +39,7 @@ regressions, recorded runtime verification, and the separate opt-in model-depend
 | What derivation-dependency representation is sufficient for full-pipeline erasure without overcomplicating every record? | **Partial** | Ley already proves important dependency paths: reviewed session erasure cascades through cited/supersession-dependent learnings; whole-project Agent Memory erasure removes the private namespace while preserving user-owned Markdown/Canvas/project files; rebuildable dossiers/state/Inspector/graph projections do not require durable dependency rows; deletion-fidelity scenarios require zero residue. | There is no single universal derivation DAG covering every future persisted derivative. Any new persistent derivative/background cache must still declare invalidation/erasure dependencies explicitly. More complexity is justified only when a non-rebuildable derivative actually needs it. |
 | When is explicit user-wide reusable knowledge worth adding beyond mounted notes/specs, and how do we avoid hidden profile inference? | **Partial** | Ley has taken an explicit-scope route instead of inferred profiling: Context Mounts, Bootstrap References, reusable team/organization Knowledge Scopes, and Policy Bundles are all opt-in authority with provenance/egress/non-laundering evaluation. No ambient whole-vault/user-profile inference is introduced. | A generic user-wide knowledge layer is still unproven. It should require a concrete cross-project task benchmark showing material value beyond explicit scopes/mounts, plus UX/privacy evidence that users can inspect and revoke exactly what became reusable. |
 | Which multimodal evidence types justify first-class support and which should remain ordinary user attachments? | **Partial** | The first evaluated slice supports bounded original PNG/JPEG/WebP evidence under explicit Full Evidence capture. Citations preserve media type and immutable snapshot/hash; readers return original historical bytes; no OCR/vision description or live-source claim is invented. P2 and focused core/MCP/desktop tests cover this boundary. | Audio, video, PDF/document rendering, OCR, generated descriptions, embeddings, and other modalities have no evidence-backed first-class case yet. Each should remain an ordinary attachment until a task benchmark demonstrates value that cannot be obtained from existing portable files/citations. |
-| When should Ley adopt MCP `2026-07-28` or later, given actual Codex/Claude host support? | **Open / external-validation-dependent** | As of 2026-09-24, the MCP specification's current final version is `2026-07-28`. Installed Codex `0.156.1` embeds `CODEX_MCP_PROTOCOL_VERSION` with an explicit `2026-07-28` expectation. Installed Claude Code `2.1.217` embeds MCP SDK default `2025-11-25` and older supported protocol dates, with no `2026-07-28` support string. Ley currently pins `ProtocolVersion::V_2025_11_25`. These are useful dated compatibility clues, not proof that the exact host binaries and Ley server successfully negotiate or operate together at either version. | Keep Ley's current pin unchanged until direct no-model host↔Ley handshake/operation probes establish the real compatibility intersection. Re-run those probes after relevant host/SDK updates, then run the packaged integration acceptance suite before changing the server protocol pin. Do not infer readiness from embedded version strings or the specification version alone. |
+| When should Ley adopt MCP `2026-07-28` or later, given actual Codex/Claude host support? | **Evidence-backed direction** | As of 2026-09-24, direct no-model probes against the installed hosts succeed with Ley's current server: Codex `0.156.1` actually sends MCP `2025-06-18`, Ley negotiates/responds `2025-06-18`, then Codex inventories 32 tools plus the project resource; Claude Code `2.1.217` sends `2025-11-25`, Ley responds `2025-11-25`, and Claude reports the server connected after `tools/list`. Ley currently pins `ProtocolVersion::V_2025_11_25`, and the server successfully negotiates the older Codex version rather than requiring every client to send the same version. | Keep the current server pin while these supported hosts interoperate. Re-run `eval/run_mcp_host_compat_eval.py --require-all` after relevant Codex/Claude/SDK upgrades and before any protocol-pin change. Move to `2026-07-28` only after the actual supported host paths negotiate/operate successfully there and the packaged integration acceptance gates remain green; do not upgrade merely because the specification is newer or a binary embeds a newer version string. |
 | Which compiler features still help as frontier models improve, and which should be deleted because the model/harness no longer needs them? | **Open / external-validation-dependent** | The deterministic harness proves safety/selection invariants and the opt-in `eval/run_agent_task_eval.py` provides blinded baseline-vs-Ley downstream tasks with context-utility recording. `--validate` proves fixture isolation/retrieval without model spend. | The repo does not currently contain repeated frontier-model comparison results sufficient to remove or retain features based on model capability trends. This needs periodic fixed-fixture model runs across baseline vs Ley (and ideally ablations) with version/cost/latency recorded. Safety/authority features should not be removed merely because one model succeeds without them. |
 
 ## Questions whose current wording is now partly stale
@@ -90,41 +90,43 @@ can read before/after mount, scope attachment, egress restriction, and detach. C
 actual Inspector/compiler result. Measure correctness and identify wording/control states that cause
 wrong mental models. This informs §36 questions 4 and 5 without weakening the current authority model.
 
-### 3. Direct no-model Codex / Claude ↔ Ley MCP negotiation probe
+### 3. Git revision-compatibility portability and cost matrix
 
-The transition-verifier challenge is now implemented; it demonstrates the residual semantic boundary
-rather than merely hypothesizing it. The next inexpensive validation target is MCP host parity.
-
-Use isolated temporary host configuration and a disposable Ley project/server to make the installed
-Codex and Claude Code binaries perform a real MCP `initialize` plus one harmless read-only operation
-(`tools/list` is sufficient for protocol/capability negotiation; a bounded Ley read can additionally
-confirm normal operation). Record the client/server protocol versions and success/failure without
-invoking an LLM or mutating the user's normal host configuration. This is required because embedded
-protocol strings do not prove negotiated compatibility.
-
-Repeat the probe after relevant host/SDK updates and before changing Ley's protocol pin.
+The current five-state Git relation set is behaviorally evaluated, but §36 still asks whether it is
+cheap and portable enough at query time. Build a bounded matrix covering ordinary repositories,
+shallow clones, missing/rewritten refs, detached worktrees, merged/divergent branches, and deliberately
+unavailable Git metadata. Record relation result, fallback-to-`unknown` behavior, command count, and
+latency. Run the same fixture on every supported CI operating system before upgrading the Git question
+beyond **Partial**. The experiment must not read live file contents or turn Git failure into stronger
+authority.
 
 ## Dated MCP compatibility evidence — 2026-09-24
 
 - The [official MCP specification](https://modelcontextprotocol.io/specification/2026-07-28) lists
   `2026-07-28` as the current final protocol version.
 - [OpenAI's current Codex MCP documentation](https://developers.openai.com/codex/mcp) confirms local
-  Codex clients support stdio and Streamable
-  HTTP MCP servers, OAuth, and server instructions, but does not itself publish a protocol-version
-  guarantee. The installed Codex `0.156.1` binary contains `CODEX_MCP_PROTOCOL_VERSION`, an explicit
-  `expected 2026-07-28` stdio-server error string, and the `MCP-Protocol-Version: 2026-07-28` header.
+  Codex clients support stdio and Streamable HTTP MCP servers, OAuth, and server instructions, but does
+  not itself publish a protocol-version guarantee. The direct no-model `codex app-server`
+  `mcpServerStatus/list` probe with Codex `0.156.1` is stronger evidence: its real MCP client sends
+  `initialize.protocolVersion = 2025-06-18`; Ley responds `2025-06-18`; Codex then completes
+  `tools/list`, `resources/list`, and `resources/templates/list` and inventories 32 Ley tools plus one
+  project resource.
 - [Anthropic's Claude Code MCP documentation](https://docs.anthropic.com/en/docs/claude-code/mcp)
-  confirms local/remote MCP support but likewise does not
-  publish a protocol-version guarantee. The installed Claude Code `2.1.217` binary embeds MCP SDK
-  default `2025-11-25` plus supported older dates (`2024-11-05`, `2025-03-26`, `2025-06-18`) and does
-  not embed `2026-07-28`.
+  confirms local/remote MCP support but likewise does not publish a protocol-version guarantee. The
+  direct no-model `claude mcp get` health check with Claude Code `2.1.217` sends
+  `initialize.protocolVersion = 2025-11-25`; Ley responds `2025-11-25`; Claude completes `tools/list`
+  and reports the disposable Ley server as connected with 32 tools.
 - `crates/ley-mcp/src/lib.rs` pins all Ley MCP server modes to
-  `ProtocolVersion::V_2025_11_25`. This is the current Ley choice, not yet a proven negotiated shared
-  denominator for the exact installed Codex and Claude Code binaries.
+  `ProtocolVersion::V_2025_11_25`. The direct probes show the current server interoperates with both
+  installed hosts: exact `2025-11-25` negotiation for Claude Code and negotiated `2025-06-18` for
+  Codex.
+- `eval/run_mcp_host_compat_eval.py --require-all` reproduces both probes with a disposable Ley
+  project and isolated temporary Codex/Claude configuration, records only the negotiated/inventory
+  evidence, invokes no model turn, and removes its temporary state on exit.
 
-The binary inspection is local runtime evidence for these exact installed versions, not a handshake
-result and not a promise about future Codex/Claude releases. Re-check through a real no-model
-initialize/tool-list operation after host upgrades and before any protocol-pin change.
+This is host-version-sensitive runtime evidence for the exact installed versions, not a promise about
+future Codex/Claude releases. Re-run the no-model evaluator after host upgrades and before any
+protocol-pin change.
 
 ## Maintenance rule
 

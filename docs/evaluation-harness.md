@@ -10,6 +10,13 @@ Ley's executable acceptance corpus lives in `eval/fixtures/scenarios.jsonl` and 
 surfaces against isolated temporary projects/vaults. It is intentionally deterministic: unit tests
 prove local invariants, while these scenarios prove multi-surface product behavior.
 
+Host-version-sensitive MCP negotiation is validated separately by
+`eval/run_mcp_host_compat_eval.py`. That lane creates a disposable Ley project and isolated temporary
+Codex/Claude configuration, then uses the installed hosts' real no-model MCP status/health-check paths
+to capture `initialize` negotiation and successful inventory. It does not start an LLM/model turn and
+is not a deterministic CI contract because installed host versions are external moving dependencies.
+Use `--require-all` when both supported host CLIs are expected to be installed.
+
 Each run also owns private temporary `XDG_CONFIG_HOME` **and** `XDG_CACHE_HOME` roots. This prevents a
 developer's real Ley configuration or locally installed semantic model from silently changing which
 retrieval system an acceptance scenario exercises. Deterministic scenarios therefore start with no
