@@ -3060,14 +3060,35 @@ mod tests {
         })
         .unwrap();
 
-        // Backends differ in registration latency. macOS FSEvents in
-        // particular may need a brief warmup before the first mutation is
-        // observable even though watcher construction succeeded.
-        std::thread::sleep(Duration::from_millis(250));
-
-        fs::write(root.join("External.md"), "# Changed outside Ley").unwrap();
-        let paths = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(paths.contains(&"External.md".to_string()));
+        // Native watcher construction does not guarantee that every backend's
+        // event stream is observable synchronously. Probe bounded readiness by
+        // repeating one harmless visible mutation until the callback sees it,
+        // instead of baking an arbitrary startup sleep into the test.
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut attempt = 0_u32;
+        let mut observed = false;
+        while Instant::now() < deadline {
+            fs::write(
+                root.join("External.md"),
+                format!("# Changed outside Ley {attempt}"),
+            )
+            .unwrap();
+            match receiver.recv_timeout(Duration::from_millis(250)) {
+                Ok(paths) if paths.contains(&"External.md".to_string()) => {
+                    observed = true;
+                    break;
+                }
+                Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    panic!("vault watcher callback channel disconnected")
+                }
+            }
+            attempt += 1;
+        }
+        assert!(
+            observed,
+            "native watcher never became observable before deadline"
+        );
         assert!(relevant_change_path(&root, &root.join(".trash/Hidden.md")).is_none());
         assert!(relevant_change_path(&root, &root.join("image.png")).is_none());
 

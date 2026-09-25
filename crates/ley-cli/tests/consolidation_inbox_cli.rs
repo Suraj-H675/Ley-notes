@@ -199,7 +199,7 @@ fn cli_consolidation_inbox_is_read_only_and_feeds_review_required_learning() {
             "--json",
         ],
     ));
-    assert_eq!(inbox["schemaVersion"], 1);
+    assert_eq!(inbox["schemaVersion"], 2);
     assert_eq!(inbox["persisted"], false);
     assert_eq!(inbox["modelInvoked"], false);
     assert_eq!(inbox["backgroundWorkStarted"], false);
