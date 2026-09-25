@@ -514,6 +514,79 @@ class AgentTaskEvalTests(unittest.TestCase):
             ("minimal",),
         )
 
+    def test_task_schedule_rotates_each_task_across_repetitions_independent_of_suite_size(self) -> None:
+        starts = []
+        for repetition in range(1, 5):
+            schedule_index = agent_eval.comparison_schedule_index(1, repetition)
+            starts.append(
+                agent_eval.variants_for_repetition(
+                    "all", "baseline", schedule_index
+                )[0]
+            )
+        self.assertEqual(starts, ["baseline", "handoff", "minimal", "ley"])
+
+        fourth_task_starts = []
+        for repetition in range(1, 5):
+            schedule_index = agent_eval.comparison_schedule_index(4, repetition)
+            fourth_task_starts.append(
+                agent_eval.variants_for_repetition(
+                    "all", "baseline", schedule_index
+                )[0]
+            )
+        self.assertEqual(
+            fourth_task_starts,
+            ["ley", "baseline", "handoff", "minimal"],
+        )
+
+    def test_select_fixtures_preserves_requested_order_and_validation_default(self) -> None:
+        fixtures = [
+            {"id": "alpha"},
+            {"id": "beta"},
+            {"id": "gamma"},
+        ]
+        self.assertEqual(
+            [item["id"] for item in agent_eval.select_fixtures(
+                fixtures,
+                ["gamma", "alpha"],
+                False,
+                default_all=False,
+            )],
+            ["gamma", "alpha"],
+        )
+        self.assertEqual(
+            [item["id"] for item in agent_eval.select_fixtures(
+                fixtures,
+                [],
+                False,
+                default_all=True,
+            )],
+            ["alpha", "beta", "gamma"],
+        )
+
+    def test_select_fixtures_rejects_ambiguous_or_duplicate_selection(self) -> None:
+        fixtures = [{"id": "alpha"}, {"id": "beta"}]
+        with self.assertRaisesRegex(RuntimeError, "cannot be combined"):
+            agent_eval.select_fixtures(
+                fixtures,
+                ["alpha"],
+                True,
+                default_all=False,
+            )
+        with self.assertRaisesRegex(RuntimeError, "duplicate"):
+            agent_eval.select_fixtures(
+                fixtures,
+                ["alpha", "alpha"],
+                False,
+                default_all=False,
+            )
+        with self.assertRaisesRegex(RuntimeError, "unknown agent task"):
+            agent_eval.select_fixtures(
+                fixtures,
+                ["missing"],
+                False,
+                default_all=False,
+            )
+
     def test_simple_context_baselines_preserve_required_historical_markers(self) -> None:
         seed = bytes.fromhex("45" * 32)
         for raw in agent_eval.load_fixtures():
@@ -634,10 +707,18 @@ class AgentTaskEvalTests(unittest.TestCase):
             destination = Path(temporary) / "audit"
             agent_eval.write_audit_bundle(
                 destination,
-                fixture,
+                [fixture],
                 ["runner", "--flag"],
                 report,
-                [{"repetition": 1, "variant": "ley", "payload": payload}],
+                [
+                    {
+                        "taskId": fixture["id"],
+                        "taskFamily": fixture["task_family"],
+                        "repetition": 1,
+                        "variant": "ley",
+                        "payload": payload,
+                    }
+                ],
             )
             self.assertTrue((destination / "materialized-fixture.json").is_file())
             self.assertTrue((destination / "runner-command.json").is_file())
@@ -656,6 +737,236 @@ class AgentTaskEvalTests(unittest.TestCase):
                 "constraint-details.json",
             ):
                 self.assertTrue((run_dir / name).is_file(), name)
+
+    def test_multi_task_audit_bundle_uses_numbered_task_directories(self) -> None:
+        seed = bytes.fromhex("4b" * 32)
+        fixtures = [
+            agent_eval.materialize_fixture(
+                self.fixture("changed-display-name-requirement"), seed
+            ),
+            agent_eval.materialize_fixture(
+                self.fixture("resume-cache-key-migration"), seed
+            ),
+        ]
+        payload = {
+            "prompt": "prompt\n",
+            "context": "",
+            "runnerStdout": b"",
+            "runnerStderr": b"",
+            "oracleStdout": "",
+            "oracleStderr": "",
+            "diffMaterial": b"diff",
+            "projectSnapshot": b"snapshot",
+            "changedFiles": [],
+            "constraintDetails": {"passed": True},
+        }
+        records = [
+            {
+                "taskId": fixtures[0]["id"],
+                "taskFamily": fixtures[0]["task_family"],
+                "repetition": 1,
+                "variant": "baseline",
+                "payload": payload,
+            },
+            {
+                "taskId": fixtures[1]["id"],
+                "taskFamily": fixtures[1]["task_family"],
+                "repetition": 1,
+                "variant": "baseline",
+                "payload": payload,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "audit"
+            agent_eval.write_audit_bundle(
+                destination,
+                fixtures,
+                ["runner"],
+                {"schemaVersion": 3},
+                records,
+            )
+            self.assertTrue((destination / "materialized-fixtures.json").is_file())
+            for index, fixture in enumerate(fixtures, start=1):
+                task_dir = destination / f"task-{index:03d}"
+                self.assertEqual(
+                    (task_dir / "task-id.txt").read_text(encoding="utf-8").strip(),
+                    fixture["id"],
+                )
+                self.assertTrue(
+                    (task_dir / "repetition-001-baseline" / "prompt.txt").is_file()
+                )
+
+    def test_grouped_summaries_expose_family_regressions(self) -> None:
+        results = [
+            {
+                "taskId": "stale-1",
+                "taskFamily": "stale-memory",
+                "variant": "baseline",
+                "taskPassed": True,
+                "hiddenOracleStatus": "passed",
+                "runner": {"seconds": 1.0},
+                "context": None,
+            },
+            {
+                "taskId": "stale-1",
+                "taskFamily": "stale-memory",
+                "variant": "ley",
+                "taskPassed": False,
+                "hiddenOracleStatus": "failed",
+                "runner": {"seconds": 1.5},
+                "context": {"contextCharacters": 120},
+            },
+            {
+                "taskId": "resume-1",
+                "taskFamily": "resume",
+                "variant": "baseline",
+                "taskPassed": False,
+                "hiddenOracleStatus": "failed",
+                "runner": {"seconds": 2.0},
+                "context": None,
+            },
+            {
+                "taskId": "resume-1",
+                "taskFamily": "resume",
+                "variant": "ley",
+                "taskPassed": True,
+                "hiddenOracleStatus": "passed",
+                "runner": {"seconds": 1.0},
+                "context": {"contextCharacters": 80},
+            },
+        ]
+        per_family = agent_eval.grouped_variant_summaries(results, "taskFamily")
+        self.assertEqual(agent_eval.regressed_groups(per_family), ["stale-memory"])
+        self.assertEqual(per_family["resume"]["ley"]["taskPassRate"], 1.0)
+        self.assertEqual(per_family["resume"]["baseline"]["taskPassRate"], 0.0)
+
+    def test_ley_advantage_requires_beating_every_included_simpler_arm(self) -> None:
+        summaries = {
+            variant: agent_eval.summarize_variant_results([])
+            for variant in agent_eval.COMPARISON_VARIANTS
+        }
+        summaries["baseline"]["taskPassRate"] = 0.25
+        summaries["handoff"]["taskPassRate"] = 0.5
+        summaries["minimal"]["taskPassRate"] = 0.75
+        summaries["ley"]["taskPassRate"] = 1.0
+        self.assertTrue(agent_eval.ley_advantage_observed(summaries))
+
+        summaries["handoff"]["taskPassRate"] = 1.0
+        self.assertFalse(agent_eval.ley_advantage_observed(summaries))
+
+    def test_ley_advantage_assertion_rejects_hidden_task_or_family_regression(self) -> None:
+        summaries = {
+            variant: agent_eval.summarize_variant_results([])
+            for variant in agent_eval.COMPARISON_VARIANTS
+        }
+        summaries["baseline"]["taskPassRate"] = 0.25
+        summaries["handoff"]["taskPassRate"] = 0.5
+        summaries["minimal"]["taskPassRate"] = 0.5
+        summaries["ley"]["taskPassRate"] = 0.75
+        self.assertTrue(
+            agent_eval.ley_advantage_assertion_passed(summaries, [], [])
+        )
+        self.assertFalse(
+            agent_eval.ley_advantage_assertion_passed(
+                summaries,
+                ["one-regressed-task"],
+                [],
+            )
+        )
+        self.assertFalse(
+            agent_eval.ley_advantage_assertion_passed(
+                summaries,
+                [],
+                ["stale-memory"],
+            )
+        )
+
+    def test_main_runs_selected_multi_task_suite_with_balanced_arm_rotation(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def fake_execute(
+            fixture,
+            root,
+            command,
+            inherited_env_names,
+            read_only_mounts,
+            variant,
+            timeout_seconds,
+            max_results,
+            max_tokens,
+            capture_audit,
+        ):
+            del root, command, inherited_env_names, read_only_mounts
+            del timeout_seconds, max_results, max_tokens, capture_audit
+            calls.append((str(fixture["id"]), variant))
+            return {
+                "variant": variant,
+                "taskPassed": variant == "ley",
+                "hiddenOracleAttempted": True,
+                "hiddenOracleStatus": "passed" if variant == "ley" else "failed",
+                "hiddenOraclePassed": variant == "ley",
+                "hiddenOracleExitCode": 0 if variant == "ley" else 1,
+                "postCheckTreeStable": True,
+                "runner": {"completed": True, "seconds": 0.01},
+                "constraints": {"passed": True},
+                "changedFileCount": 1,
+                "changedPathsSha256": "0" * 64,
+                "diffBytes": 1,
+                "diffSha256": "1" * 64,
+                "promptSha256": "2" * 64,
+                "promptCharacters": 10,
+                "context": (
+                    {"contextCharacters": 50}
+                    if variant != "baseline"
+                    else None
+                ),
+                "utilityObservation": None,
+            }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "report.json"
+            with mock.patch.object(agent_eval, "execute_variant", side_effect=fake_execute):
+                exit_code = agent_eval.main(
+                    [
+                        "--task",
+                        "changed-display-name-requirement",
+                        "--task",
+                        "resume-cache-key-migration",
+                        "--runner-command",
+                        "fake-runner",
+                        "--output",
+                        str(output),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                calls,
+                [
+                    ("changed-display-name-requirement", "baseline"),
+                    ("changed-display-name-requirement", "handoff"),
+                    ("changed-display-name-requirement", "minimal"),
+                    ("changed-display-name-requirement", "ley"),
+                    ("resume-cache-key-migration", "handoff"),
+                    ("resume-cache-key-migration", "minimal"),
+                    ("resume-cache-key-migration", "ley"),
+                    ("resume-cache-key-migration", "baseline"),
+                ],
+            )
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["schemaVersion"], 3)
+            self.assertEqual(report["selectedTaskCount"], 2)
+            self.assertEqual(report["plannedAgentAttempts"], 8)
+            self.assertEqual(
+                report["taskIds"],
+                ["changed-display-name-requirement", "resume-cache-key-migration"],
+            )
+            self.assertIsNone(report["taskId"])
+            self.assertEqual(len(report["results"]), 8)
+            self.assertIn(
+                "changed-requirement-vs-stale-memory",
+                report["comparison"]["perFamily"],
+            )
+            self.assertTrue(report["comparison"]["leyTaskAdvantageObserved"])
 
     def test_private_ley_state_is_removed_before_external_runner(self) -> None:
         fixture = agent_eval.materialize_fixture(

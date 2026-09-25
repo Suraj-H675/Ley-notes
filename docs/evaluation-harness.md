@@ -685,12 +685,15 @@ IDs, revalidation state, and utility projection. That observation must continue 
 
 The evaluator never turns a model-dependent success into memory authority or ranking changes.
 
-Repeated four-arm runs rotate arm order across repetitions to reduce simple order effects. A result is
-not a product claim merely because `leyTaskAdvantageObserved` is true. Before using an external-agent result
-to justify additional product complexity, reproduce it across multiple runs and preferably multiple
-task fixtures/runners, report the exact non-secret runner label and task IDs, retain negative/no-
-advantage results, and distinguish “Ley context was present before a passing outcome” from “Ley caused
-the outcome.”
+Repeated four-arm runs rotate arm order across **task × repetition** so a particular task family is not
+systematically coupled to the same first arm. A suite report aggregates the same attempts overall,
+per-task, and per-family; it also records any task IDs/families where Ley's pass rate is below at least
+one simpler arm. Aggregate improvement must therefore never be used to hide stale-memory harm in a
+specific family. A result is not a product claim merely because `leyTaskAdvantageObserved` is true.
+Before using an external-agent result to justify additional product complexity, reproduce it across
+multiple runs and preferably multiple task fixtures/runners, report the exact non-secret runner label
+and task IDs, retain negative/no-advantage results, and distinguish “Ley context was present before a
+passing outcome” from “Ley caused the outcome.”
 
 Validate all real-agent fixtures without invoking a model:
 
@@ -708,15 +711,33 @@ python eval/run_agent_task_eval.py \
   --runner-command 'codex exec --ignore-user-config --ignore-rules --ephemeral -s workspace-write -m <pinned-model> -'
 ```
 
+Run a selected suite by repeating `--task`. Task order is preserved, duplicate selectors are rejected,
+and the runner prints the total planned external-agent attempt count before the first model call:
+
+```text
+python eval/run_agent_task_eval.py \
+  --task changed-display-name-requirement \
+  --task avoid-naive-csv-split \
+  --task resume-cache-key-migration \
+  --runner-label pinned-runner-model \
+  --runner-command '<runner command>'
+```
+
+The full checked-in corpus is intentionally **not** the implicit real-agent default. Use
+`--all-tasks` explicitly when you actually intend to pay for every selected arm/repetition. By contrast,
+`--validate` with no task selector still validates the full corpus because it makes no model calls.
+
 The Codex example exposes only `auth.json` read-only inside the isolated runner home. Do not mount the
 whole real home directory merely for convenience. Other runners should use the same minimum-exposure
 pattern for their authentication material.
 
 `--require-ley-advantage` is a local experiment assertion on the **overall task pass rate**, not the
-hidden-oracle pass rate. In a four-arm run it requires Ley to be strictly above every simpler arm that
-was included; in legacy `both` mode it compares baseline and Ley only. Normal reports expose per-variant
-task rates, hidden-oracle attempted/passed/failed/skipped counts, mean runner time, and mean supplied
-context characters while retaining the older baseline/Ley summary fields for compatibility. A hidden
+hidden-oracle pass rate. In a four-arm run Ley must be strictly above every simpler included arm **and**
+must not regress on any reported task or task family; in legacy `both` mode it compares baseline and Ley
+under the same no-regression rule. Normal schema-v3 reports expose overall/per-task/per-family variant
+summaries, hidden-oracle attempted/passed/failed/skipped counts, mean runner time, mean supplied context
+characters, regression lists, selected task IDs/families, and planned attempt count while retaining the
+older baseline/Ley summary fields and single-task `taskId`/`taskFamily` fields for compatibility. A hidden
 oracle that was not run because an earlier gate failed is recorded as `skipped`, never as `failed`.
 Do not add this assertion to deterministic CI or reinterpret one failed simpler arm / passed Ley arm as
 causal proof.

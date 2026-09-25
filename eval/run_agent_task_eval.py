@@ -1611,6 +1611,12 @@ def variants_for_repetition(
     return tuple(ordered[offset:] + ordered[:offset])
 
 
+def comparison_schedule_index(task_index: int, repetition: int) -> int:
+    if task_index < 1 or repetition < 1:
+        raise RuntimeError("task index and repetition must be positive")
+    return task_index + repetition - 1
+
+
 def summarize_hidden_oracles(
     results: list[dict[str, object]],
 ) -> dict[str, object]:
@@ -1660,6 +1666,101 @@ def summarize_variant_results(results: list[dict[str, object]]) -> dict[str, obj
             else 0
         ),
     }
+
+
+def variant_summaries(results: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    return {
+        variant: summarize_variant_results(
+            [item for item in results if item.get("variant") == variant]
+        )
+        for variant in COMPARISON_VARIANTS
+    }
+
+
+def ley_advantage_observed(
+    summaries: dict[str, dict[str, object]],
+) -> bool | None:
+    ley_rate = summaries["ley"].get("taskPassRate")
+    simpler_rates = [
+        summaries[variant].get("taskPassRate")
+        for variant in SIMPLER_VARIANTS
+        if summaries[variant].get("taskPassRate") is not None
+    ]
+    if ley_rate is None or not simpler_rates:
+        return None
+    return all(float(ley_rate) > float(rate) for rate in simpler_rates)
+
+
+def grouped_variant_summaries(
+    results: list[dict[str, object]],
+    key: str,
+) -> dict[str, dict[str, dict[str, object]]]:
+    groups: dict[str, list[dict[str, object]]] = {}
+    for item in results:
+        value = item.get(key)
+        if not isinstance(value, str) or not value:
+            raise RuntimeError(f"result is missing grouping key {key!r}")
+        groups.setdefault(value, []).append(item)
+    return {
+        group: variant_summaries(items)
+        for group, items in sorted(groups.items())
+    }
+
+
+def regressed_groups(
+    grouped: dict[str, dict[str, dict[str, object]]],
+) -> list[str]:
+    regressions: list[str] = []
+    for group, summaries in grouped.items():
+        ley_rate = summaries["ley"].get("taskPassRate")
+        if ley_rate is None:
+            continue
+        simpler = [
+            summaries[variant].get("taskPassRate")
+            for variant in SIMPLER_VARIANTS
+            if summaries[variant].get("taskPassRate") is not None
+        ]
+        if simpler and any(float(ley_rate) < float(rate) for rate in simpler):
+            regressions.append(group)
+    return regressions
+
+
+def ley_advantage_assertion_passed(
+    summaries: dict[str, dict[str, object]],
+    regressed_task_ids: list[str],
+    regressed_families: list[str],
+) -> bool:
+    return bool(
+        ley_advantage_observed(summaries) is True
+        and not regressed_task_ids
+        and not regressed_families
+    )
+
+
+def select_fixtures(
+    fixtures: list[dict[str, object]],
+    requested_ids: list[str],
+    all_tasks: bool,
+    *,
+    default_all: bool,
+) -> list[dict[str, object]]:
+    if all_tasks and requested_ids:
+        raise RuntimeError("--all-tasks cannot be combined with --task")
+    if len(set(requested_ids)) != len(requested_ids):
+        raise RuntimeError("duplicate --task selectors are not allowed")
+    if all_tasks or (default_all and not requested_ids):
+        return list(fixtures)
+    if not requested_ids:
+        return []
+    by_id = {str(item["id"]): item for item in fixtures}
+    unknown = [task_id for task_id in requested_ids if task_id not in by_id]
+    if unknown:
+        available = ", ".join(sorted(by_id))
+        raise RuntimeError(
+            f"unknown agent task(s) {', '.join(repr(value) for value in unknown)}; "
+            f"available: {available}"
+        )
+    return [by_id[task_id] for task_id in requested_ids]
 
 
 def task_attempt_passed(
@@ -1879,11 +1980,13 @@ def execute_variant(
 
 def write_audit_bundle(
     destination: Path,
-    fixture: dict[str, object],
+    fixtures: list[dict[str, object]],
     command: list[str],
     report: dict[str, object],
     audit_records: list[dict[str, object]],
 ) -> None:
+    if not fixtures:
+        raise RuntimeError("audit bundle requires at least one materialized fixture")
     try:
         destination.mkdir(parents=True, mode=0o700)
     except FileExistsError as error:
@@ -1893,18 +1996,41 @@ def write_audit_bundle(
             json.dumps(command, indent=2) + "\n",
             encoding="utf-8",
         )
-        (destination / "materialized-fixture.json").write_text(
-            json.dumps(fixture, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        if len(fixtures) == 1:
+            (destination / "materialized-fixture.json").write_text(
+                json.dumps(fixtures[0], indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            (destination / "materialized-fixtures.json").write_text(
+                json.dumps(fixtures, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         (destination / "report.json").write_text(
             json.dumps(report, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        task_order = {
+            str(fixture["id"]): index
+            for index, fixture in enumerate(fixtures, start=1)
+        }
+        created_task_dirs: set[str] = set()
         for record in audit_records:
             repetition = int(record["repetition"])
             variant = str(record["variant"])
-            run_dir = destination / f"repetition-{repetition:03d}-{variant}"
+            task_id = str(record["taskId"])
+            if task_id not in task_order:
+                raise RuntimeError("audit record references an unknown task")
+            if len(fixtures) == 1:
+                task_dir = destination
+            else:
+                task_dir = destination / f"task-{task_order[task_id]:03d}"
+                task_key = str(task_dir)
+                if task_key not in created_task_dirs:
+                    task_dir.mkdir(mode=0o700)
+                    (task_dir / "task-id.txt").write_text(task_id + "\n", encoding="utf-8")
+                    created_task_dirs.add(task_key)
+            run_dir = task_dir / f"repetition-{repetition:03d}-{variant}"
             run_dir.mkdir(mode=0o700)
             payload = record["payload"]
             if not isinstance(payload, dict):
@@ -1956,7 +2082,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Validate fixture isolation and Ley context retrieval without invoking an external agent",
     )
-    parser.add_argument("--task", help="Exact agent task fixture id")
+    parser.add_argument(
+        "--task",
+        action="append",
+        default=[],
+        metavar="ID",
+        help=(
+            "Exact agent task fixture id. Repeat to run a selected suite. "
+            "Real-agent runs require at least one --task unless --all-tasks is explicit."
+        ),
+    )
+    parser.add_argument(
+        "--all-tasks",
+        action="store_true",
+        help=(
+            "Explicitly run the full checked-in task corpus. This may multiply external-agent cost."
+        ),
+    )
     parser.add_argument(
         "--runner-command",
         help=(
@@ -2058,14 +2200,15 @@ def main(argv: list[str] | None = None) -> int:
         for fixture in raw_fixtures
     ]
     if args.validate:
-        selected = (
-            fixtures
-            if not args.task
-            else [item for item in fixtures if item["id"] == args.task]
-        )
-        if not selected:
-            available = ", ".join(str(item["id"]) for item in fixtures)
-            raise SystemExit(f"unknown agent task {args.task!r}; available: {available}")
+        try:
+            selected = select_fixtures(
+                fixtures,
+                list(args.task),
+                args.all_tasks,
+                default_all=True,
+            )
+        except RuntimeError as error:
+            raise SystemExit(str(error)) from error
         summaries: list[dict[str, object]] = []
         with tempfile.TemporaryDirectory(prefix="ley-real-agent-validate-") as temporary:
             temp = Path(temporary)
@@ -2083,12 +2226,19 @@ def main(argv: list[str] | None = None) -> int:
         if args.write_fixture_seed:
             write_master_seed(args.write_fixture_seed, master_seed)
         return 0
-    if not args.task:
-        raise SystemExit("--task is required unless --list is used")
-    fixture = next((item for item in fixtures if item["id"] == args.task), None)
-    if fixture is None:
-        available = ", ".join(str(item["id"]) for item in fixtures)
-        raise SystemExit(f"unknown agent task {args.task!r}; available: {available}")
+    try:
+        selected = select_fixtures(
+            fixtures,
+            list(args.task),
+            args.all_tasks,
+            default_all=False,
+        )
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
+    if not selected:
+        raise SystemExit(
+            "real-agent runs require at least one --task ID or explicit --all-tasks"
+        )
     if not args.runner_command:
         raise SystemExit("--runner-command is required for a real-agent run")
     if args.repetitions < 1 or args.repetitions > MAX_REPETITIONS:
@@ -2123,83 +2273,114 @@ def main(argv: list[str] | None = None) -> int:
         ]
     except RuntimeError as error:
         raise SystemExit(str(error)) from error
-    validate_fixture_does_not_leak_context(fixture)
+    for fixture in selected:
+        validate_fixture_does_not_leak_context(fixture)
+
+    planned_attempts = 0
+    for repetition in range(1, args.repetitions + 1):
+        for task_index, _fixture in enumerate(selected, start=1):
+            schedule_index = comparison_schedule_index(task_index, repetition)
+            planned_attempts += len(
+                variants_for_repetition(
+                    args.variant,
+                    args.first_variant,
+                    schedule_index,
+                )
+            )
+    print(
+        f"Selected {len(selected)} task(s); planned external-agent attempts: {planned_attempts}",
+        flush=True,
+    )
 
     results: list[dict[str, object]] = []
     audit_records: list[dict[str, object]] = []
+    completed_attempts = 0
     with tempfile.TemporaryDirectory(prefix="ley-real-agent-config-") as temporary:
         temp = Path(temporary)
         EVAL_ENV["XDG_CONFIG_HOME"] = str(temp / "config")
         for repetition in range(1, args.repetitions + 1):
-            variants = variants_for_repetition(
-                args.variant,
-                args.first_variant,
-                repetition,
-            )
-            for variant in variants:
-                print(
-                    f"[{repetition}/{args.repetitions}] {fixture['id']} {variant}: running",
-                    flush=True,
+            for task_index, fixture in enumerate(selected, start=1):
+                schedule_index = comparison_schedule_index(task_index, repetition)
+                variants = variants_for_repetition(
+                    args.variant,
+                    args.first_variant,
+                    schedule_index,
                 )
-                with tempfile.TemporaryDirectory(
-                    prefix="ley-real-agent-workspace-"
-                ) as run_temporary:
-                    result = execute_variant(
-                        fixture,
-                        Path(run_temporary),
-                        command,
-                        list(args.runner_env),
-                        runner_read_only_mounts,
-                        variant,
-                        args.timeout_seconds,
-                        args.max_results,
-                        args.max_tokens,
-                        args.audit_dir is not None,
+                for variant in variants:
+                    completed_attempts += 1
+                    print(
+                        f"[{completed_attempts}/{planned_attempts}] "
+                        f"rep={repetition}/{args.repetitions} {fixture['id']} {variant}: running",
+                        flush=True,
                     )
-                audit_payload = result.pop("_audit", None)
-                result["repetition"] = repetition
-                if audit_payload is not None:
-                    audit_records.append(
-                        {
-                            "repetition": repetition,
-                            "variant": variant,
-                            "payload": audit_payload,
-                        }
+                    with tempfile.TemporaryDirectory(
+                        prefix="ley-real-agent-workspace-"
+                    ) as run_temporary:
+                        result = execute_variant(
+                            fixture,
+                            Path(run_temporary),
+                            command,
+                            list(args.runner_env),
+                            runner_read_only_mounts,
+                            variant,
+                            args.timeout_seconds,
+                            args.max_results,
+                            args.max_tokens,
+                            args.audit_dir is not None,
+                        )
+                    audit_payload = result.pop("_audit", None)
+                    result["taskId"] = fixture["id"]
+                    result["taskFamily"] = fixture["task_family"]
+                    result["repetition"] = repetition
+                    if audit_payload is not None:
+                        audit_records.append(
+                            {
+                                "taskId": fixture["id"],
+                                "taskFamily": fixture["task_family"],
+                                "repetition": repetition,
+                                "variant": variant,
+                                "payload": audit_payload,
+                            }
+                        )
+                    results.append(result)
+                    print(
+                        f"  task={'PASS' if result['taskPassed'] else 'FAIL'} "
+                        f"runner_seconds={result['runner']['seconds']}",
+                        flush=True,
                     )
-                results.append(result)
-                print(
-                    f"  task={'PASS' if result['taskPassed'] else 'FAIL'} "
-                    f"runner_seconds={result['runner']['seconds']}",
-                    flush=True,
-                )
 
-    results_by_variant = {
-        variant: [item for item in results if item["variant"] == variant]
-        for variant in COMPARISON_VARIANTS
-    }
-    summaries = {
-        variant: summarize_variant_results(items)
-        for variant, items in results_by_variant.items()
-    }
+    summaries = variant_summaries(results)
+    per_task = grouped_variant_summaries(results, "taskId")
+    per_family = grouped_variant_summaries(results, "taskFamily")
     baseline_task_rate = summaries["baseline"]["taskPassRate"]
     handoff_task_rate = summaries["handoff"]["taskPassRate"]
     minimal_task_rate = summaries["minimal"]["taskPassRate"]
     ley_task_rate = summaries["ley"]["taskPassRate"]
-    simpler_rates = [
-        summaries[variant]["taskPassRate"]
-        for variant in SIMPLER_VARIANTS
-        if summaries[variant]["taskPassRate"] is not None
-    ]
-    task_advantage = (
-        ley_task_rate is not None
-        and bool(simpler_rates)
-        and all(ley_task_rate > rate for rate in simpler_rates)
+    task_advantage = ley_advantage_observed(summaries)
+    regressed_task_ids = regressed_groups(per_task)
+    regressed_families = regressed_groups(per_family)
+    advantage_assertion = ley_advantage_assertion_passed(
+        summaries,
+        regressed_task_ids,
+        regressed_families,
     )
+    single_fixture = selected[0] if len(selected) == 1 else None
     report = {
-        "schemaVersion": 2,
-        "taskId": fixture["id"],
-        "taskFamily": fixture.get("task_family"),
-        "fixtureSecretCommitment": fixture.get("_secret_commitment"),
+        "schemaVersion": 3,
+        "taskId": single_fixture["id"] if single_fixture else None,
+        "taskFamily": single_fixture["task_family"] if single_fixture else None,
+        "taskIds": [fixture["id"] for fixture in selected],
+        "taskFamilies": sorted({str(fixture["task_family"]) for fixture in selected}),
+        "selectedTaskCount": len(selected),
+        "plannedAgentAttempts": planned_attempts,
+        "fixtureSecretCommitment": (
+            single_fixture.get("_secret_commitment") if single_fixture else None
+        ),
+        "fixtureSecretCommitments": {
+            str(fixture["id"]): fixture["_secret_commitment"]
+            for fixture in selected
+            if fixture.get("_secret_commitment") is not None
+        },
         "runner": {
             "executable": Path(command[0]).name,
             "label": args.runner_label,
@@ -2218,11 +2399,16 @@ def main(argv: list[str] | None = None) -> int:
         "results": results,
         "comparison": {
             "variantSummaries": summaries,
+            "perTask": per_task,
+            "perFamily": per_family,
             "baselineTaskPassRate": baseline_task_rate,
             "handoffTaskPassRate": handoff_task_rate,
             "minimalTaskPassRate": minimal_task_rate,
             "leyTaskPassRate": ley_task_rate,
             "leyTaskAdvantageObserved": task_advantage,
+            "leyAdvantageAssertionPassed": advantage_assertion,
+            "leyRegressedTaskIds": regressed_task_ids,
+            "leyRegressedFamilies": regressed_families,
             "baselineHiddenOracle": summaries["baseline"]["hiddenOracle"],
             "handoffHiddenOracle": summaries["handoff"]["hiddenOracle"],
             "minimalHiddenOracle": summaries["minimal"]["hiddenOracle"],
@@ -2242,7 +2428,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.audit_dir:
         write_audit_bundle(
             args.audit_dir,
-            fixture,
+            selected,
             command,
             report,
             audit_records,
@@ -2252,7 +2438,7 @@ def main(argv: list[str] | None = None) -> int:
         args.output.write_text(encoded + "\n", encoding="utf-8")
     if args.write_fixture_seed:
         write_master_seed(args.write_fixture_seed, master_seed)
-    if args.require_ley_advantage and not task_advantage:
+    if args.require_ley_advantage and not advantage_assertion:
         return 1
     return 0
 
