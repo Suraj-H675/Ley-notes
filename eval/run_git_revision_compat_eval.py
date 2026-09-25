@@ -215,6 +215,15 @@ def validate_windows_acl_payload(payload: dict[str, Any], current_sid: str) -> N
             raise RuntimeError(
                 "Windows evaluation private root contains a denied or inherited access rule"
             )
+        inheritance = str(rule.get("inheritance", ""))
+        if "ContainerInherit" not in inheritance or "ObjectInherit" not in inheritance:
+            raise RuntimeError(
+                "Windows evaluation private root access rule is not inheritable by files and directories"
+            )
+        if str(rule.get("propagation", "")) != "None":
+            raise RuntimeError(
+                "Windows evaluation private root access rule has unexpected propagation flags"
+            )
         if "FullControl" in str(rule.get("rights", "")):
             full_control = True
     if not full_control:
@@ -231,10 +240,23 @@ def harden_windows_private_tree(paths: list[Path]) -> bool:
     )
     if not current_sid.startswith("S-"):
         raise RuntimeError("failed to resolve the current Windows user SID")
-    icacls = shutil.which("icacls.exe") or shutil.which("icacls")
-    if not icacls:
-        raise RuntimeError("Windows evaluation private-root hardening requires icacls")
 
+    harden_script = r'''
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.SecurityIdentifier]::new($env:LEY_EVAL_ACL_SID)
+$acl = [System.Security.AccessControl.DirectorySecurity]::new()
+$acl.SetOwner($sid)
+$acl.SetAccessRuleProtection($true, $false)
+$rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+    $sid,
+    [System.Security.AccessControl.FileSystemRights]::FullControl,
+    [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit,
+    [System.Security.AccessControl.PropagationFlags]::None,
+    [System.Security.AccessControl.AccessControlType]::Allow
+)
+[void]$acl.AddAccessRule($rule)
+Set-Acl -LiteralPath $env:LEY_EVAL_ACL_PATH -AclObject $acl
+'''
     inspect_script = r'''
 $acl = Get-Acl -LiteralPath $env:LEY_EVAL_ACL_PATH
 $rules = @($acl.Access | ForEach-Object {
@@ -247,6 +269,8 @@ $rules = @($acl.Access | ForEach-Object {
         sid = $sid
         type = $_.AccessControlType.ToString()
         rights = $_.FileSystemRights.ToString()
+        inheritance = $_.InheritanceFlags.ToString()
+        propagation = $_.PropagationFlags.ToString()
         inherited = $_.IsInherited
     }
 })
@@ -256,24 +280,10 @@ $rules = @($acl.Access | ForEach-Object {
 } | ConvertTo-Json -Depth 4 -Compress
 '''
     for path in paths:
-        result = subprocess.run(
-            [
-                icacls,
-                str(path),
-                "/inheritancelevel:r",
-                "/grant:r",
-                f"*{current_sid}:(OI)(CI)F",
-                "/Q",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip()
-            raise RuntimeError(f"failed to harden Windows ACL for {path}: {detail}")
         probe_env = os.environ.copy()
         probe_env["LEY_EVAL_ACL_PATH"] = str(path)
+        probe_env["LEY_EVAL_ACL_SID"] = current_sid
+        powershell_output(harden_script, probe_env)
         raw = powershell_output(inspect_script, probe_env)
         try:
             payload = json.loads(raw)
