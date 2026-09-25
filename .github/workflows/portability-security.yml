@@ -65,7 +65,7 @@ jobs:
             librsvg2-dev
 
       - name: Verify native vault confinement
-        run: cargo test --locked -p ley-notes -- --nocapture
+        run: cargo test --locked -p ley-notes vault_confinement_ -- --nocapture
 
       - name: Verify cross-process private registry contention
         run: cargo test --locked -p ley-core --test binding_process_contention

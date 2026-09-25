@@ -2795,7 +2795,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn targeted_vault_io_rejects_symlink_parent_escape() {
+    fn vault_confinement_rejects_symlink_parent_escape() {
         use std::os::unix::fs::symlink;
 
         let root = std::env::temp_dir().join(format!(
@@ -2840,7 +2840,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn targeted_vault_io_rejects_windows_junction_parent_escape() {
+    fn vault_confinement_rejects_windows_junction_parent_escape() {
         let root = std::env::temp_dir().join(format!(
             "ley-vault-junction-parent-test-{}",
             std::process::id()
@@ -2888,7 +2888,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn targeted_vault_io_rejects_final_symlink_without_touching_target() {
+    fn vault_confinement_rejects_final_symlink_without_touching_target() {
         use std::os::unix::fs::symlink;
 
         let root = std::env::temp_dir().join(format!(
@@ -2928,7 +2928,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn reserved_vault_directories_cannot_be_symlinked_outside() {
+    fn vault_confinement_rejects_reserved_symlink_directories() {
         use std::os::unix::fs::symlink;
 
         for reserved in ["attachments", "canvases", ".trash"] {
@@ -2984,7 +2984,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn reserved_vault_directories_cannot_be_windows_junctions() {
+    fn vault_confinement_rejects_reserved_windows_junctions() {
         for reserved in ["attachments", "canvases", ".trash"] {
             let root = std::env::temp_dir().join(format!(
                 "ley-vault-reserved-junction-{reserved}-{}",
