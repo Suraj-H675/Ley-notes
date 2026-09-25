@@ -606,7 +606,10 @@ receives the complete task/context prompt on stdin, and runs inside a Linux `bwr
 disposable project as `/workspace`. Each arm receives its own randomly named temporary workspace, and
 that workspace is deleted before the next arm begins. `/usr` is read-only, the project alone is
 writable, `/tmp` is private, the process runs in its own PID namespace, and the host home/repository are
-not mounted. Network is intentionally retained because remote model APIs need it.
+not mounted. Network is intentionally retained because remote model APIs need it. The sandbox mounts
+only common **public CA trust material** needed for TLS (`/etc/ssl/certs`, public CA-bundle targets, and
+common extracted/cert directories when present); it does not mount broad `/etc/ssl` or `/etc/pki` trees,
+which may contain host private-key material on some Linux distributions.
 
 That network allowance is an important benchmark limitation. The outer Bubblewrap boundary proves that
 the runner cannot read the host checkout/fixture/oracle files from the local filesystem, but it cannot

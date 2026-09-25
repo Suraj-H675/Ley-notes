@@ -464,6 +464,29 @@ class AgentTaskEvalTests(unittest.TestCase):
             self.assertFalse(result["completed"])
             self.assertTrue(result["outputLimitExceeded"])
 
+    def test_external_runner_sandbox_mounts_only_public_tls_trust_material(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            command, _ = agent_eval.runner_sandbox_command(
+                ["python3", "-c", "pass"],
+                Path(temporary),
+                [],
+                [],
+            )
+        joined = "\n".join(command)
+        for path in (
+            "/etc/ssl/certs",
+            "/etc/ssl/cert.pem",
+            "/etc/ca-certificates/extracted",
+            "/etc/pki/ca-trust/extracted",
+            "/etc/pki/tls/certs",
+        ):
+            self.assertIn(f"--ro-bind-try\n{path}\n{path}", joined)
+        for broad_path in ("/etc/ssl", "/etc/ca-certificates", "/etc/pki"):
+            self.assertNotIn(
+                f"--ro-bind-try\n{broad_path}\n{broad_path}",
+                joined,
+            )
+
     def test_snapshot_does_not_follow_directory_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
