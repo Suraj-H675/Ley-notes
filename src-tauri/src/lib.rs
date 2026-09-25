@@ -1,4 +1,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, OpenOptions};
 #[cfg(test)]
 use ley_core::initialize_project;
 use ley_core::{
@@ -44,14 +47,17 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
+    ffi::{OsStr, OsString},
     fs,
-    io::Write,
+    io::{ErrorKind, Read, Write},
     path::{Component, Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, State};
-use walkdir::{DirEntry, WalkDir};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1568,6 +1574,15 @@ fn canonical_vault(vault_path: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+static VAULT_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+fn vault_capability(vault_path: &str) -> Result<(PathBuf, Dir), String> {
+    let root = canonical_vault(vault_path)?;
+    let directory = Dir::open_ambient_dir(&root, ambient_authority())
+        .map_err(|error| format!("Cannot open vault capability: {error}"))?;
+    Ok((root, directory))
+}
+
 fn safe_relative(relative_path: &str) -> Result<PathBuf, String> {
     let path = Path::new(relative_path);
     if path.as_os_str().is_empty() || path.is_absolute() {
@@ -1582,15 +1597,189 @@ fn safe_relative(relative_path: &str) -> Result<PathBuf, String> {
     Ok(path.to_path_buf())
 }
 
-fn markdown_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+fn relative_parent_nofollow(
+    root: &Dir,
+    relative: &Path,
+    create_missing: bool,
+    label: &str,
+) -> Result<(Dir, OsString), String> {
+    let name = relative
+        .file_name()
+        .ok_or_else(|| format!("The {label} has no filename"))?
+        .to_os_string();
+    let mut directory = root
+        .try_clone()
+        .map_err(|error| format!("Cannot clone vault capability: {error}"))?;
+    if let Some(parent) = relative.parent() {
+        for component in parent.components() {
+            let Component::Normal(part) = component else {
+                return Err(format!("The {label} contains an unsafe folder segment"));
+            };
+            directory = match directory.open_dir_nofollow(part) {
+                Ok(next) => next,
+                Err(error) if create_missing && error.kind() == ErrorKind::NotFound => {
+                    match directory.create_dir(part) {
+                        Ok(()) => {}
+                        Err(create_error) if create_error.kind() == ErrorKind::AlreadyExists => {}
+                        Err(create_error) => {
+                            return Err(format!("Cannot create {label} folder: {create_error}"));
+                        }
+                    }
+                    directory.open_dir_nofollow(part).map_err(|open_error| {
+                        format!("Cannot safely open {label} folder: {open_error}")
+                    })?
+                }
+                Err(error) => {
+                    return Err(format!("Cannot safely open {label} folder: {error}"));
+                }
+            };
+        }
+    }
+    Ok((directory, name))
+}
+
+fn require_regular_entry(parent: &Dir, name: &OsStr, label: &str) -> Result<(), String> {
+    let metadata = parent
+        .symlink_metadata(name)
+        .map_err(|error| format!("Cannot inspect {label}: {error}"))?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(format!("The {label} cannot be a symbolic link"));
+    }
+    if !file_type.is_file() {
+        return Err(format!("The {label} is not a regular file"));
+    }
+    Ok(())
+}
+
+fn reject_unsafe_existing_target(parent: &Dir, name: &OsStr, label: &str) -> Result<(), String> {
+    match parent.symlink_metadata(name) {
+        Ok(metadata) => {
+            let file_type = metadata.file_type();
+            if file_type.is_symlink() {
+                Err(format!("The {label} cannot be a symbolic link"))
+            } else if file_type.is_file() {
+                Ok(())
+            } else {
+                Err(format!("The {label} is not a regular file"))
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Cannot inspect {label}: {error}")),
+    }
+}
+
+fn entry_exists_nofollow(parent: &Dir, name: &OsStr, label: &str) -> Result<bool, String> {
+    match parent.symlink_metadata(name) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("Cannot inspect {label}: {error}")),
+    }
+}
+
+fn open_regular_nofollow(
+    parent: &Dir,
+    name: &OsStr,
+    label: &str,
+) -> Result<cap_std::fs::File, String> {
+    require_regular_entry(parent, name, label)?;
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    parent
+        .open_with(name, &options)
+        .map_err(|error| format!("Cannot open {label}: {error}"))
+}
+
+fn read_relative_bytes(root: &Dir, relative: &Path, label: &str) -> Result<Vec<u8>, String> {
+    let (parent, name) = relative_parent_nofollow(root, relative, false, label)?;
+    let mut file = open_regular_nofollow(&parent, &name, label)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| format!("Cannot read {label}: {error}"))?;
+    Ok(bytes)
+}
+
+fn read_relative_text(root: &Dir, relative: &Path, label: &str) -> Result<String, String> {
+    let bytes = read_relative_bytes(root, relative, label)?;
+    String::from_utf8(bytes).map_err(|_| format!("The {label} is not valid UTF-8 text"))
+}
+
+fn atomic_write_relative(
+    root: &Dir,
+    relative: &Path,
+    bytes: &[u8],
+    label: &str,
+) -> Result<(), String> {
+    let (parent, name) = relative_parent_nofollow(root, relative, true, label)?;
+    reject_unsafe_existing_target(&parent, &name, label)?;
+
+    for _ in 0..32 {
+        let sequence = VAULT_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let mut temp_name = OsString::from(".");
+        temp_name.push(&name);
+        temp_name.push(format!(".ley-write-{}-{sequence}", std::process::id()));
+
+        let mut options = OpenOptions::new();
+        options
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        let mut file = match parent.open_with(&temp_name, &options) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Cannot stage {label}: {error}")),
+        };
+        if let Err(error) = file.write_all(bytes) {
+            let _ = parent.remove_file(&temp_name);
+            return Err(format!("Cannot write {label}: {error}"));
+        }
+        if let Err(error) = file.sync_all() {
+            let _ = parent.remove_file(&temp_name);
+            return Err(format!("Cannot flush {label}: {error}"));
+        }
+        drop(file);
+
+        match parent.rename(&temp_name, &parent, &name) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let _ = parent.remove_file(&temp_name);
+                return Err(format!("Cannot replace {label}: {error}"));
+            }
+        }
+    }
+    Err(format!(
+        "Could not allocate a safe temporary file for {label}"
+    ))
+}
+
+fn rename_relative(
+    root: &Dir,
+    from: &Path,
+    to: &Path,
+    create_destination_parent: bool,
+    label: &str,
+) -> Result<(), String> {
+    let (source_parent, source_name) = relative_parent_nofollow(root, from, false, label)?;
+    require_regular_entry(&source_parent, &source_name, label)?;
+    let (destination_parent, destination_name) =
+        relative_parent_nofollow(root, to, create_destination_parent, label)?;
+    if entry_exists_nofollow(&destination_parent, &destination_name, label)? {
+        return Err(format!("A {label} already exists at {}", to.display()));
+    }
+    source_parent
+        .rename(&source_name, &destination_parent, &destination_name)
+        .map_err(|error| format!("Cannot move {label}: {error}"))
+}
+
+fn markdown_relative(relative_path: &str) -> Result<PathBuf, String> {
     let relative = safe_relative(relative_path)?;
     if relative.extension().and_then(|part| part.to_str()) != Some("md") {
         return Err("Ley can only mutate Markdown notes".into());
     }
-    Ok(root.join(relative))
+    Ok(relative)
 }
 
-fn attachment_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+fn attachment_relative(relative_path: &str) -> Result<PathBuf, String> {
     let relative = safe_relative(relative_path)?;
     if relative
         .components()
@@ -1611,10 +1800,10 @@ fn attachment_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> 
     if !allowed.contains(&extension.as_str()) {
         return Err(format!("Unsupported attachment type: {extension}"));
     }
-    Ok(root.join(relative))
+    Ok(relative)
 }
 
-fn canvas_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+fn canvas_relative(relative_path: &str) -> Result<PathBuf, String> {
     let relative = safe_relative(relative_path)?;
     if relative
         .components()
@@ -1625,15 +1814,71 @@ fn canvas_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
     {
         return Err("Canvas files must use canvases/*.canvas".into());
     }
-    Ok(root.join(relative))
+    Ok(relative)
 }
 
-fn visible_entry(entry: &DirEntry) -> bool {
-    let name = entry.file_name().to_string_lossy();
-    if entry.depth() == 0 {
-        return true;
+struct CapabilityTextFile {
+    relative: PathBuf,
+    content: String,
+    created_at: u64,
+    updated_at: u64,
+}
+
+fn collect_text_files_nofollow(
+    directory: &Dir,
+    prefix: &Path,
+    extension: &str,
+    skip_hidden: bool,
+    label: &str,
+    out: &mut Vec<CapabilityTextFile>,
+) -> Result<(), String> {
+    let entries = directory
+        .entries()
+        .map_err(|error| format!("Cannot list {label}: {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("Cannot inspect {label}: {error}"))?;
+        let name = entry.file_name();
+        let name_text = name.to_string_lossy();
+        if skip_hidden && (name_text.starts_with('.') || name_text == "node_modules") {
+            continue;
+        }
+
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Cannot inspect {label} entry: {error}"))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            let child = directory.open_dir_nofollow(&name).map_err(|error| {
+                format!("Cannot safely descend into {label} directory {name_text}: {error}")
+            })?;
+            let child_prefix = prefix.join(&name);
+            collect_text_files_nofollow(&child, &child_prefix, extension, skip_hidden, label, out)?;
+            continue;
+        }
+        if !file_type.is_file()
+            || Path::new(&name).extension().and_then(|part| part.to_str()) != Some(extension)
+        {
+            continue;
+        }
+
+        let relative = prefix.join(&name);
+        let mut file = open_regular_nofollow(directory, &name, label)?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("Cannot inspect {}: {error}", relative.display()))?;
+        let mut content = String::new();
+        file.read_to_string(&mut content)
+            .map_err(|error| format!("Cannot read {}: {error}", relative.display()))?;
+        out.push(CapabilityTextFile {
+            relative,
+            content,
+            created_at: unix_millis(metadata.created().map(|time| time.into_std())),
+            updated_at: unix_millis(metadata.modified().map(|time| time.into_std())),
+        });
     }
-    !name.starts_with('.') && name != "node_modules"
+    Ok(())
 }
 
 fn relevant_change_path(root: &Path, path: &Path) -> Option<String> {
@@ -1815,38 +2060,18 @@ fn stop_watching_vault(
 
 #[tauri::command]
 fn scan_vault(vault_path: String) -> Result<Vec<VaultFile>, String> {
-    let root = canonical_vault(&vault_path)?;
-    let mut files = Vec::new();
-
-    for entry in WalkDir::new(&root)
-        .follow_links(false)
+    let (_, directory) = vault_capability(&vault_path)?;
+    let mut scanned = Vec::new();
+    collect_text_files_nofollow(&directory, Path::new(""), "md", true, "vault", &mut scanned)?;
+    let mut files = scanned
         .into_iter()
-        .filter_entry(visible_entry)
-    {
-        let entry = entry.map_err(|error| format!("Failed to scan vault: {error}"))?;
-        let path = entry.path();
-        if !entry.file_type().is_file()
-            || path.extension().and_then(|part| part.to_str()) != Some("md")
-        {
-            continue;
-        }
-        let relative = path
-            .strip_prefix(&root)
-            .map_err(|_| "A scanned file escaped the vault root")?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let metadata = entry
-            .metadata()
-            .map_err(|error| format!("Cannot inspect {relative}: {error}"))?;
-        let content =
-            fs::read_to_string(path).map_err(|error| format!("Cannot read {relative}: {error}"))?;
-        files.push(VaultFile {
-            path: relative,
-            content,
-            created_at: unix_millis(metadata.created()),
-            updated_at: unix_millis(metadata.modified()),
-        });
-    }
+        .map(|file| VaultFile {
+            path: file.relative.to_string_lossy().replace('\\', "/"),
+            content: file.content,
+            created_at: file.created_at,
+            updated_at: file.updated_at,
+        })
+        .collect::<Vec<_>>();
 
     files.sort_by_cached_key(|file| file.path.to_lowercase());
     Ok(files)
@@ -1854,38 +2079,30 @@ fn scan_vault(vault_path: String) -> Result<Vec<VaultFile>, String> {
 
 #[tauri::command]
 fn scan_trashed_vault_files(vault_path: String) -> Result<Vec<VaultFile>, String> {
-    let root = canonical_vault(&vault_path)?;
-    let trash = root.join(".trash");
-    if !trash.is_dir() {
-        return Ok(Vec::new());
-    }
-
-    let mut files = Vec::new();
-    for entry in WalkDir::new(&trash).follow_links(false) {
-        let entry = entry.map_err(|error| format!("Failed to scan trash: {error}"))?;
-        if !entry.file_type().is_file()
-            || entry.path().extension().and_then(|part| part.to_str()) != Some("md")
-        {
-            continue;
-        }
-        let relative = entry
-            .path()
-            .strip_prefix(&root)
-            .map_err(|_| "A trashed file escaped the vault root")?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let metadata = entry
-            .metadata()
-            .map_err(|error| format!("Cannot inspect {relative}: {error}"))?;
-        let content = fs::read_to_string(entry.path())
-            .map_err(|error| format!("Cannot read {relative}: {error}"))?;
-        files.push(VaultFile {
-            path: relative,
-            content,
-            created_at: unix_millis(metadata.created()),
-            updated_at: unix_millis(metadata.modified()),
-        });
-    }
+    let (_, directory) = vault_capability(&vault_path)?;
+    let trash = match directory.open_dir_nofollow(".trash") {
+        Ok(trash) => trash,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("Cannot safely open .trash: {error}")),
+    };
+    let mut scanned = Vec::new();
+    collect_text_files_nofollow(
+        &trash,
+        Path::new(".trash"),
+        "md",
+        false,
+        "trash",
+        &mut scanned,
+    )?;
+    let mut files = scanned
+        .into_iter()
+        .map(|file| VaultFile {
+            path: file.relative.to_string_lossy().replace('\\', "/"),
+            content: file.content,
+            created_at: file.created_at,
+            updated_at: file.updated_at,
+        })
+        .collect::<Vec<_>>();
 
     files.sort_by_cached_key(|file| file.path.to_lowercase());
     Ok(files)
@@ -1893,36 +2110,29 @@ fn scan_trashed_vault_files(vault_path: String) -> Result<Vec<VaultFile>, String
 
 #[tauri::command]
 fn scan_canvases(vault_path: String) -> Result<Vec<CanvasFile>, String> {
-    let root = canonical_vault(&vault_path)?;
-    let canvas_root = root.join("canvases");
-    if !canvas_root.exists() {
-        return Ok(Vec::new());
-    }
-    let mut files = Vec::new();
-    for entry in WalkDir::new(&canvas_root).follow_links(false) {
-        let entry = entry.map_err(|error| format!("Failed to scan canvases: {error}"))?;
-        if !entry.file_type().is_file()
-            || entry.path().extension().and_then(|part| part.to_str()) != Some("canvas")
-        {
-            continue;
-        }
-        let relative = entry
-            .path()
-            .strip_prefix(&root)
-            .map_err(|_| "A canvas escaped the vault root")?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let metadata = entry
-            .metadata()
-            .map_err(|error| format!("Cannot inspect {relative}: {error}"))?;
-        let content = fs::read_to_string(entry.path())
-            .map_err(|error| format!("Cannot read {relative}: {error}"))?;
-        files.push(CanvasFile {
-            path: relative,
-            content,
-            updated_at: unix_millis(metadata.modified()),
-        });
-    }
+    let (_, directory) = vault_capability(&vault_path)?;
+    let canvas_root = match directory.open_dir_nofollow("canvases") {
+        Ok(canvas_root) => canvas_root,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("Cannot safely open canvases: {error}")),
+    };
+    let mut scanned = Vec::new();
+    collect_text_files_nofollow(
+        &canvas_root,
+        Path::new("canvases"),
+        "canvas",
+        false,
+        "canvases",
+        &mut scanned,
+    )?;
+    let mut files = scanned
+        .into_iter()
+        .map(|file| CanvasFile {
+            path: file.relative.to_string_lossy().replace('\\', "/"),
+            content: file.content,
+            updated_at: file.updated_at,
+        })
+        .collect::<Vec<_>>();
     files.sort_by_cached_key(|file| file.path.to_lowercase());
     Ok(files)
 }
@@ -1935,52 +2145,50 @@ fn write_canvas_file(
 ) -> Result<(), String> {
     serde_json::from_str::<serde_json::Value>(&content)
         .map_err(|error| format!("Canvas JSON is invalid: {error}"))?;
-    let root = canonical_vault(&vault_path)?;
-    let target = canvas_path(&root, &relative_path)?;
-    let parent = target.parent().ok_or("The canvas has no parent folder")?;
-    fs::create_dir_all(parent).map_err(|error| format!("Cannot create canvas folder: {error}"))?;
-    let temp = parent.join(format!(
-        ".{}.ley-write",
-        target.file_name().unwrap_or_default().to_string_lossy()
-    ));
-    let mut file =
-        fs::File::create(&temp).map_err(|error| format!("Cannot stage canvas: {error}"))?;
-    file.write_all(content.as_bytes())
-        .map_err(|error| format!("Cannot write canvas: {error}"))?;
-    file.sync_all()
-        .map_err(|error| format!("Cannot flush canvas: {error}"))?;
-    fs::rename(temp, &target).map_err(|error| format!("Cannot replace canvas: {error}"))?;
-    suppress_current_change(&target);
+    let (root, directory) = vault_capability(&vault_path)?;
+    let relative = canvas_relative(&relative_path)?;
+    atomic_write_relative(&directory, &relative, content.as_bytes(), "canvas")?;
+    suppress_current_change(&root.join(relative));
     Ok(())
 }
 
 #[tauri::command]
 fn trash_canvas_file(vault_path: String, relative_path: String) -> Result<(), String> {
-    let root = canonical_vault(&vault_path)?;
-    let source = canvas_path(&root, &relative_path)?;
-    if !source.exists() {
+    let (root, directory) = vault_capability(&vault_path)?;
+    let relative = canvas_relative(&relative_path)?;
+    if matches!(directory.symlink_metadata(&relative), Err(error) if error.kind() == ErrorKind::NotFound)
+    {
         return Ok(());
     }
-    let trash = root.join(".trash");
-    fs::create_dir_all(&trash).map_err(|error| format!("Cannot create .trash: {error}"))?;
-    let original = source
+    let (source_parent, source_name) =
+        relative_parent_nofollow(&directory, &relative, false, "canvas")?;
+    require_regular_entry(&source_parent, &source_name, "canvas")?;
+
+    let original = relative
         .file_name()
         .ok_or("The canvas has no filename")?
-        .to_string_lossy();
-    let mut candidate = trash.join(original.as_ref());
+        .to_os_string();
+    let mut candidate = PathBuf::from(".trash").join(&original);
     let mut suffix = 2;
-    while candidate.exists() {
-        let stem = Path::new(original.as_ref())
+    loop {
+        let (destination_parent, destination_name) =
+            relative_parent_nofollow(&directory, &candidate, true, "canvas trash")?;
+        if !entry_exists_nofollow(&destination_parent, &destination_name, "canvas trash entry")? {
+            source_parent
+                .rename(&source_name, &destination_parent, &destination_name)
+                .map_err(|error| format!("Cannot move canvas to .trash: {error}"))?;
+            break;
+        }
+        let stem = Path::new(&original)
             .file_stem()
             .unwrap_or_default()
-            .to_string_lossy();
-        candidate = trash.join(format!("{stem} {suffix}.canvas"));
+            .to_string_lossy()
+            .into_owned();
+        candidate = PathBuf::from(".trash").join(format!("{stem} {suffix}.canvas"));
         suffix += 1;
     }
-    fs::rename(&source, &candidate)
-        .map_err(|error| format!("Cannot move canvas to .trash: {error}"))?;
-    suppress_current_change(&source);
-    suppress_current_change(&candidate);
+    suppress_current_change(&root.join(&relative));
+    suppress_current_change(&root.join(&candidate));
     Ok(())
 }
 
@@ -1990,32 +2198,18 @@ fn write_vault_file(
     relative_path: String,
     content: String,
 ) -> Result<(), String> {
-    let root = canonical_vault(&vault_path)?;
-    let target = markdown_path(&root, &relative_path)?;
-    let parent = target.parent().ok_or("The note has no parent folder")?;
-    fs::create_dir_all(parent).map_err(|error| format!("Cannot create note folder: {error}"))?;
-
-    let temp_name = format!(
-        ".{}.ley-write",
-        target.file_name().unwrap_or_default().to_string_lossy()
-    );
-    let temp = parent.join(temp_name);
-    let mut file =
-        fs::File::create(&temp).map_err(|error| format!("Cannot stage note: {error}"))?;
-    file.write_all(content.as_bytes())
-        .map_err(|error| format!("Cannot write note: {error}"))?;
-    file.sync_all()
-        .map_err(|error| format!("Cannot flush note: {error}"))?;
-    fs::rename(&temp, &target).map_err(|error| format!("Cannot replace note: {error}"))?;
-    suppress_current_change(&target);
+    let (root, directory) = vault_capability(&vault_path)?;
+    let relative = markdown_relative(&relative_path)?;
+    atomic_write_relative(&directory, &relative, content.as_bytes(), "note")?;
+    suppress_current_change(&root.join(relative));
     Ok(())
 }
 
 #[tauri::command]
 fn read_vault_file(vault_path: String, relative_path: String) -> Result<String, String> {
-    let root = canonical_vault(&vault_path)?;
-    let target = markdown_path(&root, &relative_path)?;
-    fs::read_to_string(target).map_err(|error| format!("Cannot read note: {error}"))
+    let (_, directory) = vault_capability(&vault_path)?;
+    let relative = markdown_relative(&relative_path)?;
+    read_relative_text(&directory, &relative, "note")
 }
 
 #[tauri::command]
@@ -2027,92 +2221,63 @@ fn write_vault_attachment(
     if bytes.len() > 50 * 1024 * 1024 {
         return Err("Attachments larger than 50 MB are not supported yet".into());
     }
-    let root = canonical_vault(&vault_path)?;
-    let target = attachment_path(&root, &relative_path)?;
-    let parent = target
-        .parent()
-        .ok_or("The attachment has no parent folder")?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("Cannot create attachment folder: {error}"))?;
-
-    let temp_name = format!(
-        ".{}.ley-write",
-        target.file_name().unwrap_or_default().to_string_lossy()
-    );
-    let temp = parent.join(temp_name);
-    let mut file =
-        fs::File::create(&temp).map_err(|error| format!("Cannot stage attachment: {error}"))?;
-    file.write_all(&bytes)
-        .map_err(|error| format!("Cannot write attachment: {error}"))?;
-    file.sync_all()
-        .map_err(|error| format!("Cannot flush attachment: {error}"))?;
-    fs::rename(&temp, &target).map_err(|error| format!("Cannot replace attachment: {error}"))
+    let (_, directory) = vault_capability(&vault_path)?;
+    let relative = attachment_relative(&relative_path)?;
+    atomic_write_relative(&directory, &relative, &bytes, "attachment")
 }
 
 #[tauri::command]
 fn read_vault_attachment(vault_path: String, relative_path: String) -> Result<Vec<u8>, String> {
-    let root = canonical_vault(&vault_path)?;
-    let target = attachment_path(&root, &relative_path)?;
-    fs::read(target).map_err(|error| format!("Cannot read attachment: {error}"))
+    let (_, directory) = vault_capability(&vault_path)?;
+    let relative = attachment_relative(&relative_path)?;
+    read_relative_bytes(&directory, &relative, "attachment")
 }
 
 #[tauri::command]
 fn rename_vault_file(vault_path: String, from: String, to: String) -> Result<(), String> {
-    let root = canonical_vault(&vault_path)?;
-    let source = markdown_path(&root, &from)?;
-    let target = markdown_path(&root, &to)?;
-    if target.exists() {
-        return Err(format!("A note already exists at {to}"));
-    }
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Cannot create destination folder: {error}"))?;
-    }
-    fs::rename(&source, &target).map_err(|error| format!("Cannot rename note: {error}"))?;
-    suppress_current_change(&source);
-    suppress_current_change(&target);
+    let (root, directory) = vault_capability(&vault_path)?;
+    let source = markdown_relative(&from)?;
+    let target = markdown_relative(&to)?;
+    rename_relative(&directory, &source, &target, true, "note")?;
+    suppress_current_change(&root.join(source));
+    suppress_current_change(&root.join(target));
     Ok(())
 }
 
 #[tauri::command]
 fn trash_vault_file(vault_path: String, relative_path: String) -> Result<String, String> {
-    let root = canonical_vault(&vault_path)?;
-    let source = markdown_path(&root, &relative_path)?;
-    if !source.exists() {
-        return Err("The note no longer exists".into());
-    }
-    let trash = root.join(".trash");
-    fs::create_dir_all(&trash).map_err(|error| format!("Cannot create .trash: {error}"))?;
-    let relative = safe_relative(&relative_path)?;
-    let mut candidate = trash.join(&relative);
-    if let Some(parent) = candidate.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Cannot create trash folder: {error}"))?;
-    }
+    let (root, directory) = vault_capability(&vault_path)?;
+    let relative = markdown_relative(&relative_path)?;
+    let (source_parent, source_name) =
+        relative_parent_nofollow(&directory, &relative, false, "note")?;
+    require_regular_entry(&source_parent, &source_name, "note")?;
+    let mut candidate = PathBuf::from(".trash").join(&relative);
     let mut suffix = 2;
-    while candidate.exists() {
-        let stem = source.file_stem().unwrap_or_default().to_string_lossy();
+    loop {
+        let (destination_parent, destination_name) =
+            relative_parent_nofollow(&directory, &candidate, true, "trash")?;
+        if !entry_exists_nofollow(&destination_parent, &destination_name, "trash entry")? {
+            source_parent
+                .rename(&source_name, &destination_parent, &destination_name)
+                .map_err(|error| format!("Cannot move note to .trash: {error}"))?;
+            break;
+        }
+        let stem = relative.file_stem().unwrap_or_default().to_string_lossy();
         candidate = candidate
             .parent()
-            .unwrap_or(&trash)
+            .unwrap_or_else(|| Path::new(".trash"))
             .join(format!("{stem} {suffix}.md"));
         suffix += 1;
     }
-    fs::rename(&source, &candidate)
-        .map_err(|error| format!("Cannot move note to .trash: {error}"))?;
-    suppress_current_change(&source);
-    suppress_current_change(&candidate);
-    Ok(candidate
-        .strip_prefix(&root)
-        .unwrap_or(&candidate)
-        .to_string_lossy()
-        .replace('\\', "/"))
+    suppress_current_change(&root.join(&relative));
+    suppress_current_change(&root.join(&candidate));
+    Ok(candidate.to_string_lossy().replace('\\', "/"))
 }
 
 #[tauri::command]
 fn restore_trashed_vault_file(vault_path: String, trashed_path: String) -> Result<String, String> {
-    let root = canonical_vault(&vault_path)?;
-    let relative = safe_relative(&trashed_path)?;
+    let (root, directory) = vault_capability(&vault_path)?;
+    let relative = markdown_relative(&trashed_path)?;
     if relative
         .components()
         .next()
@@ -2121,29 +2286,32 @@ fn restore_trashed_vault_file(vault_path: String, trashed_path: String) -> Resul
     {
         return Err("Only files inside .trash can be restored".into());
     }
-    let source = markdown_path(&root, &trashed_path)?;
-    if !source.is_file() {
-        return Err("That trashed note no longer exists".into());
-    }
+    let (source_parent, source_name) =
+        relative_parent_nofollow(&directory, &relative, false, "trashed note")?;
+    require_regular_entry(&source_parent, &source_name, "trashed note")?;
 
-    let original_name = source
+    let original_name = relative
         .file_name()
         .ok_or("The trashed note has no filename")?
-        .to_string_lossy()
-        .to_string();
-    let relative_segments: Vec<_> = relative.components().skip(1).collect();
-    let mut destination = if relative_segments.len() > 1 {
-        let folder = relative_segments[..relative_segments.len() - 1]
-            .iter()
-            .fold(root.clone(), |current, segment| current.join(segment));
-        fs::create_dir_all(&folder)
-            .map_err(|error| format!("Cannot restore note folder: {error}"))?;
-        folder.join(&original_name)
-    } else {
-        root.join(&original_name)
-    };
+        .to_os_string();
+    let mut destination = relative.components().skip(1).collect::<PathBuf>();
+    if destination.as_os_str().is_empty() {
+        return Err("The trashed note has no restore destination".into());
+    }
     let mut suffix = 2;
-    while destination.exists() {
+    loop {
+        let (destination_parent, destination_name) =
+            relative_parent_nofollow(&directory, &destination, true, "restored note")?;
+        if !entry_exists_nofollow(
+            &destination_parent,
+            &destination_name,
+            "restore destination",
+        )? {
+            source_parent
+                .rename(&source_name, &destination_parent, &destination_name)
+                .map_err(|error| format!("Cannot restore note: {error}"))?;
+            break;
+        }
         let stem = Path::new(&original_name)
             .file_stem()
             .unwrap_or_default()
@@ -2151,20 +2319,13 @@ fn restore_trashed_vault_file(vault_path: String, trashed_path: String) -> Resul
             .to_string();
         destination = destination
             .parent()
-            .unwrap_or(&root)
+            .unwrap_or_else(|| Path::new(""))
             .join(format!("{stem} {suffix}.md"));
         suffix += 1;
     }
-
-    let restored_relative = destination
-        .strip_prefix(&root)
-        .map_err(|_| "A restored file escaped the vault root")?
-        .to_string_lossy()
-        .replace('\\', "/");
-    fs::rename(&source, &destination).map_err(|error| format!("Cannot restore note: {error}"))?;
-    suppress_current_change(&source);
-    suppress_current_change(&destination);
-    Ok(restored_relative)
+    suppress_current_change(&root.join(&relative));
+    suppress_current_change(&root.join(&destination));
+    Ok(destination.to_string_lossy().replace('\\', "/"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2630,6 +2791,193 @@ mod tests {
         assert!(scan_canvases(vault.clone()).unwrap().is_empty());
         assert!(write_canvas_file(vault, "../escape.canvas".into(), "{}".into()).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn targeted_vault_io_rejects_symlink_parent_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "ley-vault-symlink-parent-test-{}",
+            std::process::id()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "ley-vault-symlink-parent-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.md"), "outside-secret").unwrap();
+        symlink(&outside, root.join("linked")).unwrap();
+        let vault = root.to_string_lossy().into_owned();
+
+        assert!(
+            write_vault_file(vault.clone(), "linked/escape.md".into(), "escape".into()).is_err()
+        );
+        assert!(!outside.join("escape.md").exists());
+        assert!(read_vault_file(vault.clone(), "linked/secret.md".into()).is_err());
+
+        write_vault_file(vault.clone(), "inside.md".into(), "inside".into()).unwrap();
+        assert!(rename_vault_file(
+            vault.clone(),
+            "inside.md".into(),
+            "linked/renamed.md".into()
+        )
+        .is_err());
+        assert!(root.join("inside.md").is_file());
+        assert!(!outside.join("renamed.md").exists());
+
+        assert_eq!(
+            fs::read_to_string(outside.join("secret.md")).unwrap(),
+            "outside-secret"
+        );
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn targeted_vault_io_rejects_windows_junction_parent_escape() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-vault-junction-parent-test-{}",
+            std::process::id()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "ley-vault-junction-parent-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.md"), "outside-secret").unwrap();
+        let junction = root.join("linked");
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "could not create Windows junction: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let vault = root.to_string_lossy().into_owned();
+
+        assert!(
+            write_vault_file(vault.clone(), "linked/escape.md".into(), "escape".into()).is_err()
+        );
+        assert!(!outside.join("escape.md").exists());
+        assert!(read_vault_file(vault.clone(), "linked/secret.md".into()).is_err());
+        assert!(scan_vault(vault).is_err());
+        assert_eq!(
+            fs::read_to_string(outside.join("secret.md")).unwrap(),
+            "outside-secret"
+        );
+
+        fs::remove_dir(&junction).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn targeted_vault_io_rejects_final_symlink_without_touching_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "ley-vault-final-symlink-test-{}",
+            std::process::id()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "ley-vault-final-symlink-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let external_target = outside.join("target.md");
+        fs::write(&external_target, "outside-original").unwrap();
+        symlink(&external_target, root.join("linked.md")).unwrap();
+        let vault = root.to_string_lossy().into_owned();
+
+        assert!(read_vault_file(vault.clone(), "linked.md".into()).is_err());
+        assert!(write_vault_file(vault.clone(), "linked.md".into(), "replacement".into()).is_err());
+        assert!(trash_vault_file(vault, "linked.md".into()).is_err());
+        assert_eq!(
+            fs::read_to_string(external_target).unwrap(),
+            "outside-original"
+        );
+        assert!(root
+            .join("linked.md")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reserved_vault_directories_cannot_be_symlinked_outside() {
+        use std::os::unix::fs::symlink;
+
+        for reserved in ["attachments", "canvases", ".trash"] {
+            let root = std::env::temp_dir().join(format!(
+                "ley-vault-reserved-symlink-{reserved}-{}",
+                std::process::id()
+            ));
+            let outside = std::env::temp_dir().join(format!(
+                "ley-vault-reserved-outside-{reserved}-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&root);
+            let _ = fs::remove_dir_all(&outside);
+            fs::create_dir_all(&root).unwrap();
+            fs::create_dir_all(&outside).unwrap();
+            symlink(&outside, root.join(reserved)).unwrap();
+            let vault = root.to_string_lossy().into_owned();
+
+            match reserved {
+                "attachments" => {
+                    assert!(write_vault_attachment(
+                        vault,
+                        "attachments/escape.png".into(),
+                        vec![1, 2, 3]
+                    )
+                    .is_err());
+                    assert!(!outside.join("escape.png").exists());
+                }
+                "canvases" => {
+                    assert!(write_canvas_file(
+                        vault.clone(),
+                        "canvases/escape.canvas".into(),
+                        "{\"nodes\":[],\"edges\":[]}".into()
+                    )
+                    .is_err());
+                    assert!(scan_canvases(vault).is_err());
+                    assert!(!outside.join("escape.canvas").exists());
+                }
+                ".trash" => {
+                    write_vault_file(vault.clone(), "safe.md".into(), "safe".into()).unwrap();
+                    assert!(trash_vault_file(vault.clone(), "safe.md".into()).is_err());
+                    assert!(scan_trashed_vault_files(vault).is_err());
+                    assert_eq!(fs::read_to_string(root.join("safe.md")).unwrap(), "safe");
+                    assert!(fs::read_dir(&outside).unwrap().next().is_none());
+                }
+                _ => unreachable!(),
+            }
+
+            fs::remove_dir_all(root).unwrap();
+            fs::remove_dir_all(outside).unwrap();
+        }
     }
 
     #[test]

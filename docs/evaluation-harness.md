@@ -36,7 +36,7 @@ matching the optimized ancestry/divergence path; the higher hard ceiling exists 
 diagnostic overrides.
 
 The repository includes a manual-only GitHub Actions workflow,
-`.github/workflows/revision-portability.yml`, for the portability experiment. It runs the same matrix
+`.github/workflows/portability-security.yml`, for portability and security evidence. It runs the same matrix
 on six fixed standard runner labels: Ubuntu 24.04 x64/ARM64, macOS 15 Intel/Apple Silicon, and Windows
 2025 x64 / Windows 11 ARM64. This keeps architecture coverage explicit without turning the experiment
 into an every-push CI requirement. The workflow records the actual runner OS/architecture/image,
@@ -44,6 +44,17 @@ Git/Python/Rust/Cargo toolchain, Rust host target, and PowerShell version on Win
 matrix. That workflow deliberately builds the CLI
 with the non-default `eval-private-root` feature; ordinary Ley builds do not accept evaluation path
 redirection.
+
+The same manual workflow also carries focused native/private-state gates. First, the Tauri command layer
+tests capability-confined vault reads/writes/renames/trash operations, including Unix symlink and Windows
+junction escape attempts. Second, `binding_process_contention` launches independent OS processes against
+one binding/project-catalog pair and requires every concurrent mutation to survive. Third, Linux/macOS lanes build the ordinary
+CLI before the eval-feature rebuild and run `eval/run_private_config_permissions_eval.py` with umask
+`0000`; the fresh OS-native application directory must still be `0700` and the binding/project-catalog
+JSON and lock files must still be `0600`. Run `36121570078` passed the contention and
+production-permission gates on all applicable x64 and ARM64 lanes, including both macOS architectures.
+The native-vault confinement gate was added afterward and requires its own hosted six-lane evidence
+before it is claimed.
 
 Each run also owns private temporary `XDG_CONFIG_HOME` **and** `XDG_CACHE_HOME` roots. This prevents a
 developer's real Ley configuration or locally installed semantic model from silently changing which

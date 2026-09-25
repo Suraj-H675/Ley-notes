@@ -1,4 +1,4 @@
-name: Revision portability matrix
+name: Portability and security matrix
 
 on:
   workflow_dispatch:
@@ -7,8 +7,8 @@ permissions:
   contents: read
 
 jobs:
-  revision-portability:
-    name: revision portability (${{ matrix.os }})
+  portability-security:
+    name: portability + security (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -48,6 +48,26 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: pwsh --version
+
+      - name: Install Tauri compile prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Verify native vault confinement
+        run: |
+          cargo test --locked -p ley-notes targeted_vault_io -- --nocapture
+          cargo test --locked -p ley-notes reserved_vault_directories_cannot_be_symlinked_outside -- --nocapture
 
       - name: Verify cross-process private registry contention
         run: cargo test --locked -p ley-core --test binding_process_contention
