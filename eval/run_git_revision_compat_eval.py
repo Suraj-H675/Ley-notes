@@ -318,6 +318,29 @@ def prepare_detached_ancestor(case_dir: Path) -> tuple[Path, str]:
     return project, session
 
 
+def prepare_linked_worktree_ancestor(case_dir: Path) -> tuple[Path, str]:
+    repository = case_dir / "repository"
+    project = case_dir / "linked-worktree"
+    vault = case_dir / "vault"
+    repository.mkdir(parents=True)
+    vault.mkdir(parents=True)
+    fixture_git(repository, ["init", "-b", "main"])
+    (repository / "README.md").write_text(
+        "# linked-worktree-ancestor\n", encoding="utf-8"
+    )
+    fixture_commit_all(repository, "base")
+    fixture_git(
+        repository,
+        ["worktree", "add", "-b", "worktree-probe", str(project), "HEAD"],
+    )
+    if not (project / ".git").is_file():
+        raise RuntimeError("linked-worktree probe did not create Git file indirection")
+    harness.init_project(project, "linked-worktree-ancestor", vault)
+    session = capture_session(project, "linked-worktree-ancestor")
+    commit_file(project, "next.txt", "linked descendant\n", "linked descendant")
+    return project, session
+
+
 def prepare_divergent_common(
     case_dir: Path, name: str
 ) -> tuple[Path, str, str, str]:
@@ -384,6 +407,7 @@ CASE_PREPARERS: list[
     ("current-lineage", "current-lineage", True, prepare_current),
     ("ancestor", "ancestor", True, prepare_ancestor),
     ("detached-ancestor", "ancestor", True, prepare_detached_ancestor),
+    ("linked-worktree-ancestor", "ancestor", True, prepare_linked_worktree_ancestor),
     ("divergent", "divergent", True, prepare_divergent),
     ("merged", "merged", True, prepare_merged),
     ("shallow-unknown", "unknown", True, prepare_shallow_unknown),
