@@ -11,13 +11,14 @@ import base64
 import hashlib
 import json
 import os
-import select
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
+from typing import TextIO
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -719,6 +720,32 @@ BOOTSTRAP_UNSUPPORTED_MARKER = (
 )
 
 
+def read_process_line_with_timeout(
+    stream: TextIO,
+    timeout_seconds: float,
+    *,
+    timeout_message: str,
+) -> str:
+    """Read one text line from a subprocess pipe with a cross-platform timeout."""
+    result: list[str] = []
+    errors: list[Exception] = []
+
+    def read_line() -> None:
+        try:
+            result.append(stream.readline())
+        except Exception as error:  # propagate pipe/decoder failures to the caller
+            errors.append(error)
+
+    reader = threading.Thread(target=read_line, daemon=True)
+    reader.start()
+    reader.join(timeout_seconds)
+    if reader.is_alive():
+        raise RuntimeError(timeout_message)
+    if errors:
+        raise RuntimeError("failed reading subprocess output") from errors[0]
+    return result[0] if result else ""
+
+
 class BootstrapScenarioUnsupported(RuntimeError):
     pass
 
@@ -917,12 +944,11 @@ def mcp_call_result(
                 )
             if proc.stdout is None:
                 raise RuntimeError("MCP stdout was not available")
-            ready, _, _ = select.select([proc.stdout], [], [], remaining)
-            if not ready:
-                raise RuntimeError(
-                    f"MCP call {name} timed out waiting for id {expected_id}"
-                )
-            line = proc.stdout.readline()
+            line = read_process_line_with_timeout(
+                proc.stdout,
+                remaining,
+                timeout_message=f"MCP call {name} timed out waiting for id {expected_id}",
+            )
             if not line:
                 raise RuntimeError(
                     f"MCP call {name} returned no result before stdout closed: {responses!r}"
@@ -1049,10 +1075,11 @@ def mcp_tools_list(project: Path, flags: tuple[str, ...] = ()) -> list[dict[str,
                 raise RuntimeError(f"MCP tools/list timed out waiting for id {expected_id}")
             if proc.stdout is None:
                 raise RuntimeError("MCP stdout was not available")
-            ready, _, _ = select.select([proc.stdout], [], [], remaining)
-            if not ready:
-                raise RuntimeError(f"MCP tools/list timed out waiting for id {expected_id}")
-            line = proc.stdout.readline()
+            line = read_process_line_with_timeout(
+                proc.stdout,
+                remaining,
+                timeout_message=f"MCP tools/list timed out waiting for id {expected_id}",
+            )
             if not line:
                 raise RuntimeError("MCP tools/list returned no response before stdout closed")
             if not line.strip():

@@ -244,7 +244,9 @@ pub(crate) fn project_captured_git_state(
     Ok(load_project_memory(project_start, vault)?.graph.git)
 }
 
-pub(crate) fn validate_project_memory(
+/// Validate the bound captured manifest/graph store and immutable snapshot bindings without
+/// consulting live Git freshness.
+pub fn validate_project_memory(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<(), LeyCoreError> {

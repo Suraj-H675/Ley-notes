@@ -288,11 +288,11 @@ pub use retrieval::{
     find_project_context, find_project_graph_path, find_project_hybrid_context,
     project_memory_overview, read_project_cited_evidence, read_project_cited_media,
     read_project_evidence, read_project_graph_evidence, read_verification_media_evidence,
-    traverse_project_graph, ContextItem, ContextItemKind, ContextPack, EvidenceExcerpt,
-    GraphDirection, GraphPath, GraphTraversal, HybridConflictProjection, HybridContextPack,
-    HybridRetrievalMetadata, MediaEvidence, MemoryOverview, RetrievalLimits, RetrievalMode,
-    DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
-    MAX_MEDIA_EVIDENCE_BYTES,
+    traverse_project_graph, validate_project_memory, ContextItem, ContextItemKind, ContextPack,
+    EvidenceExcerpt, GraphDirection, GraphPath, GraphTraversal, HybridConflictProjection,
+    HybridContextPack, HybridRetrievalMetadata, MediaEvidence, MemoryOverview, RetrievalLimits,
+    RetrievalMode, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS,
+    MAX_CONTEXT_TOKENS, MAX_MEDIA_EVIDENCE_BYTES,
 };
 pub use revision::{ProjectRevisionFreshness, RevisionApplicability, RevisionCompatibility};
 pub use runbook::{

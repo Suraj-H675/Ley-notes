@@ -16,25 +16,25 @@ use ley_core::{
     read_session_turns_context, record_context_utility_observation,
     replay_context_utility_binding_if_present,
     review_acceptance_criterion_verification_with_method, search_project_memory, start_session,
-    traverse_project_graph, verify_batch_memory_transition, verify_composite_memory_transition,
-    verify_memory_transition, verify_observed_command_memory_transition,
-    verify_rich_problem_memory_transition, verify_typed_memory_transition,
-    AcceptanceCriterionVerificationReviewInput, AgentContextAuthorities, AgentEgressBlockReason,
-    AgentEgressPolicy, AgentEgressTarget, AgentLegibilityLimits, AttemptInput, AttemptOutcome,
-    BatchMemoryCandidateClaim, BatchMemoryTransitionInput, BootstrapSpecificationRegistry,
-    CheckpointInput, CommandInput, CommitBatchMemoryTransitionInput,
-    CommitCompositeMemoryTransitionInput, CommitObservedCommandMemoryTransitionInput,
-    CommitPlanMemoryTransitionInput, CommitRichProblemMemoryTransitionInput,
-    CommitStructuredMemoryTransitionInput, CommitTaskMemoryTransitionInput,
-    CommitUnresolvedMemoryTransitionInput, CompositeMemoryTransitionInput,
-    ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry,
-    ContextUtilityBindingInput, ContextUtilityObservationInput, CurrentProjectStateLimits,
-    DecisionInput, EgressPolicyRegistry, ExternalConnector, ExternalConnectorRegistry,
-    FinishSessionInput, GraphDirection, GraphEdgeKind, KnowledgeScopeRegistry, LearningActor,
-    LearningEvidenceInput, LearningKind, LearningListScope, LearningMutation, LearningProvenance,
-    LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind, MemoryHealthLimits,
-    MemoryTransitionInput, ObservedCommandMemoryTransitionInput, PlanItemInput, PlanStatus,
-    PolicyBundleRegistry, ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope,
+    traverse_project_graph, validate_project_memory, verify_batch_memory_transition,
+    verify_composite_memory_transition, verify_memory_transition,
+    verify_observed_command_memory_transition, verify_rich_problem_memory_transition,
+    verify_typed_memory_transition, AcceptanceCriterionVerificationReviewInput,
+    AgentContextAuthorities, AgentEgressBlockReason, AgentEgressPolicy, AgentEgressTarget,
+    AgentLegibilityLimits, AttemptInput, AttemptOutcome, BatchMemoryCandidateClaim,
+    BatchMemoryTransitionInput, BootstrapSpecificationRegistry, CheckpointInput, CommandInput,
+    CommitBatchMemoryTransitionInput, CommitCompositeMemoryTransitionInput,
+    CommitObservedCommandMemoryTransitionInput, CommitPlanMemoryTransitionInput,
+    CommitRichProblemMemoryTransitionInput, CommitStructuredMemoryTransitionInput,
+    CommitTaskMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
+    CompositeMemoryTransitionInput, ConsolidationInboxLimits, ContextCompileLimits,
+    ContextMountRegistry, ContextUtilityBindingInput, ContextUtilityObservationInput,
+    CurrentProjectStateLimits, DecisionInput, EgressPolicyRegistry, ExternalConnector,
+    ExternalConnectorRegistry, FinishSessionInput, GraphDirection, GraphEdgeKind,
+    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningKind, LearningListScope,
+    LearningMutation, LearningProvenance, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
+    MemoryHealthLimits, MemoryTransitionInput, ObservedCommandMemoryTransitionInput, PlanItemInput,
+    PlanStatus, PolicyBundleRegistry, ProblemInput, ProjectMemorySearchLimits, ProjectProblemScope,
     ProposeLearningInput, ResolutionInput, RetrievalLimits, RevisionCompatibility,
     RichProblemAttemptCandidate, RichProblemMemoryCandidate, RichProblemMemoryTransitionInput,
     RichProblemResolutionCandidate, SessionMutation, SessionSource, SessionSourceKind,
@@ -1971,8 +1971,11 @@ impl LeyMcpServer {
     ) -> Result<Self, LeyCoreError> {
         let egress_policy_registry = EgressPolicyRegistry::system_default()?;
         egress_policy_registry.with_project_egress_locked(&project, egress_target, || Ok(()))?;
-        let overview = project_memory_overview(&project, &vault)?;
-        let overview_uri = format!("ley://project/{}/overview", overview.project_id);
+        let diagnostic = diagnose_project(&project)?;
+        validate_project_memory(&diagnostic.root, &vault)?;
+        let project_id = diagnostic.identity.project_id.clone();
+        let project_name = diagnostic.identity.name.clone();
+        let overview_uri = format!("ley://project/{project_id}/overview");
         let specification_registry = SpecificationRegistry::system_default()?;
         let context_mount_registry = ContextMountRegistry::system_default()?;
         let policy_bundle_registry = PolicyBundleRegistry::system_default()?;
@@ -2009,7 +2012,7 @@ impl LeyMcpServer {
         Ok(Self {
             project: Arc::new(project),
             vault: Arc::new(vault),
-            project_name: Arc::from(overview.project_name),
+            project_name: Arc::from(project_name),
             overview_uri: Arc::from(overview_uri),
             instructions: Arc::from(instructions),
             session_writes_enabled,
@@ -7469,6 +7472,38 @@ mod tests {
         let serialized = json.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));
+    }
+
+    #[test]
+    fn server_construction_rejects_corrupt_captured_project_memory() {
+        let temporary = tempdir().unwrap();
+        let project = temporary.path().join("project");
+        let vault = temporary.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(project.join("lib.rs"), "pub fn stable() {}\n").unwrap();
+        initialize_project(
+            &project,
+            Some("Corrupt MCP fixture"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let overview = ley_core::project_memory_overview(&project, &vault).unwrap();
+        let snapshot = vault
+            .join(".ley")
+            .join("agent-memory")
+            .join("projects")
+            .join(&overview.project_id)
+            .join("graph")
+            .join("snapshots")
+            .join(format!("{}.json", overview.graph_snapshot_id));
+        fs::write(snapshot, "{}\n").unwrap();
+
+        assert!(matches!(
+            LeyMcpServer::new(project, vault),
+            Err(LeyCoreError::InvalidProjectGraph(_))
+        ));
     }
 
     #[tokio::test]

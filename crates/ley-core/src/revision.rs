@@ -96,6 +96,13 @@ impl RevisionResolver {
             current_branch.as_deref(),
             shallow_repository,
         );
+        let mut cache = BTreeMap::new();
+        if let Some(captured_head) = captured_head.clone() {
+            cache.insert(
+                (captured_head, captured_branch.clone()),
+                capture_compatibility,
+            );
+        }
         let captured_head_matches_current =
             captured_head.is_some() && captured_head == current_head;
         let captured_branch_matches_current = match (&captured_branch, &current_branch) {
@@ -117,7 +124,7 @@ impl RevisionResolver {
             project_root: diagnostic.root,
             current,
             shallow_repository,
-            cache: BTreeMap::new(),
+            cache,
             freshness,
         })
     }

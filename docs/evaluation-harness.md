@@ -17,6 +17,22 @@ to capture `initialize` negotiation and successful inventory. It does not start 
 is not a deterministic CI contract because installed host versions are external moving dependencies.
 Use `--require-all` when both supported host CLIs are expected to be installed.
 
+Git revision portability/cost is measured separately by `eval/run_git_revision_compat_eval.py`. That
+runner creates disposable repository shapes, puts a temporary logging `git` shim only in Ley's child
+process `PATH`, and records the exact metadata commands/latency used by real session retrieval. Its
+classification and command-policy checks are deterministic; wall-clock timing is environment-sensitive
+evidence. The shim is an executable Python launcher on Unix-like hosts and a temporary native
+`git.exe` launcher built with `rustc` on Windows, so bare `Command::new("git")` can be instrumented
+without relying on shell-command aliasing. The shared MCP evaluation transport uses thread-backed
+subprocess-pipe reads rather than Unix-only `select()` pipe readiness, so the matrix does not depend on
+that platform-specific I/O behavior. Actual macOS/Windows execution remains an explicit portability
+validation item in the open-validation register. Use `--require-all` for the full
+correctness/command-bound gate. Normal matrix cases must also observe at least one command through the
+temporary Git instrumentation shim, so a bypassed/broken logger cannot satisfy the upper-bound check
+with a vacuous zero-command result. The default command bound is three subprocesses per measured query,
+matching the optimized ancestry/divergence path; the higher hard ceiling exists only for explicit
+diagnostic overrides.
+
 Each run also owns private temporary `XDG_CONFIG_HOME` **and** `XDG_CACHE_HOME` roots. This prevents a
 developer's real Ley configuration or locally installed semantic model from silently changing which
 retrieval system an acceptance scenario exercises. Deterministic scenarios therefore start with no

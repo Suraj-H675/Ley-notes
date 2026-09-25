@@ -2695,6 +2695,27 @@ mod tests {
     }
 
     #[test]
+    fn project_memory_validation_rejects_immutable_graph_snapshot_corruption() {
+        let (_base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(project.join("main.py"), "def recall():\n    return True\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let graph_path = graph_path(&project, &vault);
+        let graph: ProjectGraph =
+            serde_json::from_str(&std::fs::read_to_string(&graph_path).unwrap()).unwrap();
+        let snapshot_path = graph_path
+            .parent()
+            .unwrap()
+            .join(SNAPSHOTS_DIRECTORY)
+            .join(format!("{}.json", graph.graph_snapshot_id));
+        std::fs::write(snapshot_path, "{}\n").unwrap();
+
+        assert!(matches!(
+            crate::retrieval::validate_project_memory(&project, &vault),
+            Err(LeyCoreError::InvalidProjectGraph(_))
+        ));
+    }
+
+    #[test]
     fn graph_reads_detect_current_and_immutable_snapshot_corruption() {
         let (_base, project, vault) = setup_project(CaptureMode::Structured);
         std::fs::write(project.join("main.py"), "def recall():\n    return True\n").unwrap();
