@@ -141,6 +141,12 @@ export function App() {
         }
         dispose = stop;
         setWatcherStatus('watching');
+        // Close the initial scan -> watcher-registration gap. A native backend
+        // may become observable shortly after registration returns, so one
+        // bounded authoritative refresh catches any change that landed during
+        // startup without relying on the first filesystem event.
+        refreshPending = true;
+        scheduleRefresh();
       })
       .catch((error) => {
         console.error('[vault] Could not start filesystem watcher', error);

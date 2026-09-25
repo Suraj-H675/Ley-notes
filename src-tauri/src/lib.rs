@@ -3050,7 +3050,7 @@ mod tests {
     }
 
     #[test]
-    fn native_watcher_reports_external_markdown_changes_and_ignores_hidden_files() {
+    fn portability_native_watcher_reports_external_markdown_changes_and_ignores_hidden_files() {
         let root = std::env::temp_dir().join(format!("ley-watcher-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join(".trash")).unwrap();
@@ -3060,8 +3060,13 @@ mod tests {
         })
         .unwrap();
 
+        // Backends differ in registration latency. macOS FSEvents in
+        // particular may need a brief warmup before the first mutation is
+        // observable even though watcher construction succeeded.
+        std::thread::sleep(Duration::from_millis(250));
+
         fs::write(root.join("External.md"), "# Changed outside Ley").unwrap();
-        let paths = receiver.recv_timeout(Duration::from_secs(3)).unwrap();
+        let paths = receiver.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(paths.contains(&"External.md".to_string()));
         assert!(relevant_change_path(&root, &root.join(".trash/Hidden.md")).is_none());
         assert!(relevant_change_path(&root, &root.join("image.png")).is_none());
@@ -3229,7 +3234,7 @@ mod tests {
     }
 
     #[test]
-    fn project_catalog_summarizes_ready_unbound_and_unavailable_projects() {
+    fn portability_project_catalog_summarizes_ready_unbound_and_unavailable_projects() {
         let root =
             std::env::temp_dir().join(format!("ley-project-catalog-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -3273,6 +3278,7 @@ mod tests {
         registry.bind(&disconnected, &moved_vault).unwrap();
         catalog.observe(&unbound).unwrap();
         catalog.observe(&unavailable).unwrap();
+        let unavailable_canonical = unavailable.canonicalize().unwrap();
         fs::remove_dir_all(&unavailable).unwrap();
         fs::rename(&moved_vault, root.join("vault-after-move")).unwrap();
 
@@ -3300,7 +3306,7 @@ mod tests {
         }));
         assert!(view.projects.iter().any(|project| {
             project.state == AgentProjectCatalogState::ProjectUnavailable
-                && project.project_path == unavailable.canonicalize().unwrap_or(unavailable.clone())
+                && project.project_path == unavailable_canonical
         }));
 
         fs::remove_dir_all(root).unwrap();
