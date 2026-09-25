@@ -26,8 +26,9 @@ evidence. The shim is an executable Python launcher on Unix-like hosts and a tem
 `git.exe` launcher built with `rustc` on Windows, so bare `Command::new("git")` can be instrumented
 without relying on shell-command aliasing. The shared MCP evaluation transport uses thread-backed
 subprocess-pipe reads rather than Unix-only `select()` pipe readiness, so the matrix does not depend on
-that platform-specific I/O behavior. Actual macOS/Windows execution remains an explicit portability
-validation item in the open-validation register. Use `--require-all` for the full
+that platform-specific I/O behavior. The full matrix passed on GitHub-hosted Linux, macOS Intel, and
+Windows 2025 runners on 2026-09-25; the dated evidence and exact toolchains are recorded in the
+open-validation register. Use `--require-all` for the full
 correctness/command-bound gate. Normal matrix cases must also observe at least one command through the
 temporary Git instrumentation shim, so a bypassed/broken logger cannot satisfy the upper-bound check
 with a vacuous zero-command result. The default command bound is three subprocesses per measured query,

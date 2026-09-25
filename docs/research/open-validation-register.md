@@ -28,7 +28,7 @@ regressions, recorded runtime verification, and the separate opt-in model-depend
 | What is the minimum useful Specification metadata needed beyond ordinary Markdown? | **Partial** | Current direction is deliberately small: portable Markdown/YAML plus stable Specification identity, exact approved revision/hash, and read-only Acceptance-criteria / Verification-method projections. `specification-authority-context` and bootstrap Specification scenarios prove exact revision binding, authority precedence, and non-interpretation of criterion/method status. | “Minimum” has not been established by an ablation/usability study. It is still unknown whether any current metadata can be removed without harming reliable authority/revision handling, or whether another small portable field materially improves authoring/reuse. |
 | What Context Mount UX is understandable enough that users can predict exactly what an agent can access? | **Partial** | The authority semantics are strongly evaluated: explicit mount identity, source-project egress, lower authority, no ambient project enumeration, poisoning resistance, detach/non-laundering, and Inspector attribution. | There is no user-comprehension study proving people can predict the access boundary from the current controls/wording. This needs a task-based UX test (for example: predict which of several project facts an agent can read before and after mount/detach), not another retrieval unit test. |
 | What egress-policy vocabulary is simple enough for ordinary users while remaining enforceable through derivatives? | **Partial** | The current four-state vocabulary (`agent-ok`, `confirm-per-use`, `local-model-only`, `never-send`) is enforced through project and narrower authority scopes, including retained derivative ancestry/non-laundering. P0/P2 egress scenarios prove fail-closed enforcement. | Simplicity/comprehension is unvalidated, and `confirm-per-use` intentionally remains fail-closed until a real local confirmation flow exists. A UX study should test whether users can correctly predict cloud/local behavior and derivative blocking from the labels. |
-| Which Git lineage/worktree relations can be determined cheaply and portably enough for query-time revision compatibility? | **Partial** | Ley currently uses bounded local Git evidence to classify `current-lineage`, `ancestor`, `merged`, `divergent`, or `unknown`. The divergent-branch journey proves applicability changes without rewriting historical memory. `eval/run_git_revision_compat_eval.py` now exercises eight disposable shapes through real `ley_session_get`: current-lineage, ancestor, detached-head ancestor, divergent, merged, shallow→unknown, missing Git metadata→unknown, and missing Git binary→unknown. On 2026-09-24 Linux/Git 2.55.0, all shapes passed and Ley used only metadata commands (`status`, `rev-parse`, `merge-base`) with optional locks/lazy fetch disabled; the optimized matrix was rechecked successfully on 2026-09-25 with the stricter default three-command gate. The matrix first exposed duplicated MCP-startup/revision work (maximum observed 4 same-head / 7 ancestry-class Git subprocesses per measured query); an evidence-backed optimization removed startup live-Git freshness and seeded the resolver with its already-computed captured relation. The optimized matrix observes maxima of 2 subprocesses for same-head, 3 for ancestry/divergent/merged/shallow, 1 for missing metadata, and 0 when Git is unavailable, with identical compatibility results. | The relation semantics and local Linux command bound are now measured and optimized, but “portable enough” remains open until the same runner executes on macOS/Windows supported CI paths. Timing is environment-sensitive and must not be treated as a universal threshold. |
+| Which Git lineage/worktree relations can be determined cheaply and portably enough for query-time revision compatibility? | **Evidence-backed direction** | Ley currently uses bounded local Git evidence to classify `current-lineage`, `ancestor`, `merged`, `divergent`, or `unknown`. The divergent-branch journey proves applicability changes without rewriting historical memory. `eval/run_git_revision_compat_eval.py` exercises eight disposable shapes through real `ley_session_get`: current-lineage, ancestor, detached-head ancestor, divergent, merged, shallow→unknown, missing Git metadata→unknown, and missing Git binary→unknown. The matrix first exposed duplicated MCP-startup/revision work (maximum observed 4 same-head / 7 ancestry-class Git subprocesses per measured query); an evidence-backed optimization removed startup live-Git freshness and seeded the resolver with its already-computed captured relation. On 2026-09-25 the optimized matrix passed on GitHub-hosted `ubuntu-24.04`, `macos-15-intel`, and `windows-2025` using Git 2.55.x / Python 3.14.7, with identical classifications, metadata-only commands (`status`, `rev-parse`, `merge-base`), optional locks/lazy fetch disabled, and the same maxima: 2 subprocesses for same-head, 3 for ancestry/divergent/merged/shallow, 1 for missing metadata, and 0 when Git is unavailable. The Windows lane additionally caught and drove fixes for evaluator-private state isolation, native Git-shim stdout passthrough, CRLF-safe shallow detection, and malformed shallow-output fail-closed behavior before final green run `36114468607`. | Current evidence is strong enough for the present bounded five-state relation model on supported x64 Linux/macOS/Windows hosted paths. Continue to treat wall time as environment-sensitive rather than a universal threshold, and rerun the matrix after material Git/runner/process-launch changes or when adding broader repository/worktree shapes. Windows DACL inspection for the evaluation-only private root remains a separate security-validation gap, not a revision-classification portability blocker. |
 | When should Topic Dossiers be consolidated/rebuilt, and how can their maintenance cost be bounded? | **Evidence-backed direction** | The current P1 answer avoids hidden maintenance entirely: Topic Dossiers are on-demand, non-authoritative derived projections with bounded source-search/coverage disclosure, deterministic rebuild behavior, privacy gates, and erasure regression coverage. ADR 0039 explicitly rejects a persisted dossier cache for this evaluated slice. | A future persisted/background dossier would require a separate experiment on invalidation frequency, storage/latency cost, erasure dependencies, and whether caching materially improves outcomes. Current evidence supports rebuild-on-demand as the baseline. |
 | Which project-graph relationships provide measurable downstream value beyond the current deterministic set? | **Partial** | Current evaluated additions are deliberately narrow: captured relative JS/TS imports, source-bearing re-exports, literal dynamic imports, Python relative imports, exact captured-path resolution, one-hop dependent lookup, and transitive ripple retrieval. The graph scenarios require downstream evidence contracts rather than graph-shape novelty alone. | Additional relations should be added only through the same extraction + downstream comparison discipline. The repo does not establish that broader call/type/runtime/dependency inference would improve agent outcomes enough to justify ambiguity or cost. |
 | Which bounded runtime evidence types provide the most debugging value without turning Ley into a log store? | **Partial** | Ley now has evidence-backed slices for structured Verification artifact links, supported Bash tool observations, exact Procedure-application outcomes, context-utility bindings/outcomes, and observed-command recovery. These remain bounded, typed, provenance-linked, and explicitly do not convert ordinary tool returns into success authority. | There is no comparative downstream study ranking which evidence types most improve real debugging. Additional runtime/log capture should not be added until a blinded task benchmark demonstrates incremental value over the existing bounded set. |
@@ -48,8 +48,8 @@ Some §36 questions remain useful, but the repository has already selected and e
 direction. Future experiments should compare against that baseline rather than restarting from zero:
 
 - **Git lineage/worktree relations:** the current five-state bounded relation set is implemented and
-  evaluated; the remaining question has narrowed to portability/cost at additional repository shapes
-  and platforms.
+  evaluated across supported x64 Linux/macOS/Windows hosted paths; the remaining question has narrowed
+  to additional repository/worktree shapes, future Git/runner versions, and environment-sensitive cost.
 - **Context-pack explanations:** the on-demand Context Pack Inspector is now the evidence-backed baseline
   for rich reasoning without bloating every task pack.
 - **Parallel-agent conflicts:** the current baseline preserves both conflicting histories and requires
@@ -90,18 +90,34 @@ can read before/after mount, scope attachment, egress restriction, and detach. C
 actual Inspector/compiler result. Measure correctness and identify wording/control states that cause
 wrong mental models. This informs §36 questions 4 and 5 without weakening the current authority model.
 
-### 3. Run the Git revision matrix on macOS/Windows
+### 3. Transition-verifier semantic faithfulness challenge
 
-`eval/run_git_revision_compat_eval.py` now provides the local Linux baseline. Run the same matrix on
-the supported macOS/Windows CI paths and compare relation results, fail-soft `unknown` behavior,
-metadata-only command policy, Git subprocess counts, and environment-sensitive wall time. Do not set a
-single cross-platform latency threshold from the Linux laptop measurement.
+The deterministic transition-verifier challenge matrix now proves structural completeness while also
+showing its deliberate semantic boundary: aligned and semantically opposite claims over the same
+complete retained evidence both reach `review-required` with `semanticFaithfulnessProven: false`.
+The next experiment should compare one narrowly scoped semantic reviewer/judge against that controlled
+pair and additional paraphrase/negation variants. Measure false positives/negatives, abstention,
+latency, privacy/egress requirements, and cost. Do not add a model judge merely to repeat deterministic
+omission/ID/window checks that are already enforced locally.
 
-The local resolver-cost experiment is already complete: the matrix caught duplicated startup/revision
-work, and the optimized path reduced the maximum observed per-query count from 4→2 Git subprocesses for
-same-head and 7→3 for nontrivial ancestry/divergence/merge/shallow while preserving every
-classification. Cross-platform execution—not another local command-count optimization—is now the
-missing evidence.
+This experiment is intentionally opt-in/model-dependent. The default product remains deterministic and
+fail-closed until repeated evidence shows that a semantic reviewer adds enough value to justify its
+privacy, latency, and operational cost.
+
+## Dated Git revision portability evidence — 2026-09-25
+
+- GitHub Actions run `36114468607` passed the full eight-shape matrix on `ubuntu-24.04`,
+  `macos-15-intel`, and `windows-2025`.
+- Ubuntu: Linux x86_64, Git 2.55.0, Python 3.14.7, Rust/Cargo 1.98.1.
+- macOS: Darwin x86_64 (`macos-15-intel`), Git 2.55.0, Python 3.14.7, Rust/Cargo 1.98.0.
+- Windows: Windows 2025 Server AMD64, Git 2.55.0.windows.5, Python 3.14.7, Rust/Cargo 1.98.1.
+- Every lane preserved the optimized per-query maxima: 2 Git subprocesses for same-head, 3 for
+  ancestry/divergent/merged/shallow, 1 for missing Git metadata, and 0 for missing Git binary.
+- The runner uses only `status`, `rev-parse`, and `merge-base`, disables optional locks/lazy fetch,
+  verifies that the temporary Git shim preserves real Git stdout before measuring cases, and requires
+  all normal cases to observe the instrumentation shim.
+- This is runtime evidence for those fixed hosted runner families/toolchains, not a universal timing or
+  all-Git-version guarantee. Re-run after material runner/Git/process-launch changes.
 
 ## Dated MCP compatibility evidence — 2026-09-24
 
