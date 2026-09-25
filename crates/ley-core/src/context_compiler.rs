@@ -2645,6 +2645,17 @@ fn mounted_reference_tokens(candidate: &MountedAdmittedCandidate) -> usize {
         .saturating_add(provenance_characters.div_ceil(4))
 }
 
+fn is_branch_bound_historical_memory(kind: ProjectMemoryResultKind) -> bool {
+    matches!(
+        kind,
+        ProjectMemoryResultKind::Session
+            | ProjectMemoryResultKind::Revision
+            | ProjectMemoryResultKind::Decision
+            | ProjectMemoryResultKind::Problem
+            | ProjectMemoryResultKind::Learning
+    )
+}
+
 fn admit_candidate(
     item: ProjectMemorySearchResult,
     conflicting_entities: &BTreeSet<String>,
@@ -2702,15 +2713,11 @@ fn admit_candidate(
         }
     }
 
-    if matches!(
-        item.kind,
-        ProjectMemoryResultKind::Decision
-            | ProjectMemoryResultKind::Revision
-            | ProjectMemoryResultKind::Learning
-    ) && item
-        .revision_applicability
-        .as_ref()
-        .is_some_and(|revision| revision.compatibility == RevisionCompatibility::Divergent)
+    if is_branch_bound_historical_memory(item.kind)
+        && item
+            .revision_applicability
+            .as_ref()
+            .is_some_and(|revision| revision.compatibility == RevisionCompatibility::Divergent)
     {
         return Err(admission_exclusion(
             &item,
@@ -3144,12 +3151,7 @@ fn adjudicate_premise(
 
     for item in &search.results {
         if relevance_basis(item).is_none()
-            || !matches!(
-                item.kind,
-                ProjectMemoryResultKind::Decision
-                    | ProjectMemoryResultKind::Revision
-                    | ProjectMemoryResultKind::Learning
-            )
+            || !is_branch_bound_historical_memory(item.kind)
             || !item
                 .revision_applicability
                 .as_ref()
@@ -4037,36 +4039,45 @@ mod tests {
     }
 
     #[test]
-    fn trusted_learning_from_divergent_captured_revision_is_withheld() {
-        let mut candidate = result(
-            ProjectMemoryResultKind::Learning,
-            "divergent_learning",
-            Some(1),
-            Some(0.90),
-            Some(ProjectMemoryTrustSignal::TrustedCurrent),
-        );
-        candidate.revision_applicability = Some(RevisionApplicability {
-            compatibility: RevisionCompatibility::Divergent,
-            captured_head: Some("a".repeat(40)),
-            captured_branch: Some("experiment".to_owned()),
-        });
-        let pack = compile_search_result(
-            search_result(vec![candidate], Vec::new()),
-            ContextCompileLimits::default(),
-        );
-        assert!(pack.items.is_empty());
-        assert!(pack.exclusions.iter().any(|exclusion| {
-            exclusion.entity_id == "divergent_learning"
-                && exclusion.reason == ContextExclusionReason::DivergentRevision
-        }));
-        assert_eq!(
-            pack.premise_adjudication.state,
-            ContextPremiseState::UncertainState
-        );
-        assert!(pack.premise_adjudication.warnings.iter().any(|warning| {
-            warning.kind == ContextPremiseWarningKind::DivergentRevision
-                && warning.entity_ids == vec!["divergent_learning"]
-        }));
+    fn divergent_branch_bound_historical_memory_is_withheld() {
+        for (kind, id) in [
+            (ProjectMemoryResultKind::Session, "divergent_session"),
+            (ProjectMemoryResultKind::Revision, "divergent_revision"),
+            (ProjectMemoryResultKind::Decision, "divergent_decision"),
+            (ProjectMemoryResultKind::Problem, "divergent_problem"),
+            (ProjectMemoryResultKind::Learning, "divergent_learning"),
+        ] {
+            let mut candidate = result(
+                kind,
+                id,
+                Some(1),
+                Some(0.90),
+                (kind == ProjectMemoryResultKind::Learning)
+                    .then_some(ProjectMemoryTrustSignal::TrustedCurrent),
+            );
+            candidate.revision_applicability = Some(RevisionApplicability {
+                compatibility: RevisionCompatibility::Divergent,
+                captured_head: Some("a".repeat(40)),
+                captured_branch: Some("experiment".to_owned()),
+            });
+            let pack = compile_search_result(
+                search_result(vec![candidate], Vec::new()),
+                ContextCompileLimits::default(),
+            );
+            assert!(pack.items.is_empty(), "{kind:?} should be withheld");
+            assert!(pack.exclusions.iter().any(|exclusion| {
+                exclusion.entity_id == id
+                    && exclusion.reason == ContextExclusionReason::DivergentRevision
+            }));
+            assert_eq!(
+                pack.premise_adjudication.state,
+                ContextPremiseState::UncertainState
+            );
+            assert!(pack.premise_adjudication.warnings.iter().any(|warning| {
+                warning.kind == ContextPremiseWarningKind::DivergentRevision
+                    && warning.entity_ids == vec![id.to_owned()]
+            }));
+        }
     }
 
     #[test]

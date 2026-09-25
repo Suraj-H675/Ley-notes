@@ -559,8 +559,9 @@ runner/task invocation rather than a reproducible product claim.
 
 The runner uses only synthetic task fixtures from `eval/fixtures/agent_tasks.jsonl`. Each fixture
 contains a tiny disposable repository, one prior Ley session/Decision that represents information a
-returning teammate could know, a task-family label, explicit context markers, allowed changed files, a
-visible-test command, and a hidden executable oracle. Fixtures can also declare a runtime-secret contract. For those fixtures the
+returning teammate could know, a task-family label, explicit required/forbidden context markers, allowed
+changed files, a visible-test command, and a hidden executable oracle. Fixtures can also declare a
+runtime-secret contract. For those fixtures the
 consequential answer does **not** exist in the checked-in fixture or oracle source: a fresh 32-byte
 master seed is generated in the evaluator process, the hidden contract is derived from it, and only a
 SHA-256 commitment is written to the normal report.
@@ -569,7 +570,9 @@ Fixture validation rejects unsafe or malformed schema fields/paths, invalid chan
 outside the Context Compiler query bound, and historical markers already visible in the task/live
 project files. `--validate` initializes the synthetic Ley project, seeds the materialized prior memory,
 compiles the real 500-token context pack by default, and requires the minimum task-relevant historical
-markers to be genuinely admitted before any model spend. Script-oracle fixtures additionally carry an
+markers to be genuinely admitted while any explicitly forbidden stale markers remain absent before any
+model spend. Required and forbidden markers must both originate in the prior-memory fixture and must not
+already be exposed through the task/live project surface. Script-oracle fixtures additionally carry an
 evaluator-only reference solution: validation proves the buggy initial repository **fails** the hidden
 oracle and the reference solution **passes** it. This catches vacuous or broken hidden tests before an
 external model is invoked. The runtime-secret retry fixture still uses a seeded legacy probe, so its
@@ -658,11 +661,25 @@ A task passes only when all of these are true:
 - the post-agent hidden oracle passes; and
 - the project tree remains unchanged while evaluator-controlled tests/oracle execute.
 
-The current corpus contains five fixtures: two exact-prior-contract tasks plus changed-requirement-vs-
-stale-memory, avoid-known-failed-attempt, and interrupted-implementation-resume tasks. A pass remains
-evidence for that fixture's task contract only. Divergent/merged branch continuation, crash/missing-
-checkpoint recovery, verified-vs-claimed state, and explicit cross-project isolation still require
-richer fixture setup and are not yet covered by this runner corpus.
+The current corpus contains six fixtures: two exact-prior-contract tasks plus changed-requirement-vs-
+stale-memory, avoid-known-failed-attempt, interrupted-implementation-resume, and divergent-branch stale-
+memory suppression. The divergent fixture uses one narrow typed setup rather than arbitrary fixture
+scripting: Ley is ingested on an experimental empty commit, prior structured memory is captured there,
+the repository returns to `main` and receives a distinct empty commit, and pre-model validation requires
+the prior checkpoint to read back as `revisionApplicability=divergent`. The underlying task files and
+typed branch topology are common across arms; only the designated context-delivery surface differs.
+The handoff arm intentionally adds one `HANDOFF.md` context file, the minimal arm injects a prompt brief,
+and the Ley arm keeps its structured historical state private from the external workspace.
+A first end-to-end validation of this fixture exposed a compiler admission bug: divergent Decision,
+Revision, and Learning candidates were already withheld, but divergent Session/Problem historical memory
+could still enter active task context. The compiler now applies the same fail-closed divergent-revision
+rule to every branch-bound historical semantic kind (`Session`, `Revision`, `Decision`, `Problem`, and
+`Learning`) while leaving direct Artifact/Symbol/Dependency evidence under its separate authority model.
+Focused core coverage preserves the existing post-merge behavior: once Git proves the branch landed, the
+previously divergent decision becomes eligible historical context again.
+A pass remains evidence for that fixture's task contract only. Crash/missing-checkpoint recovery,
+verified-vs-claimed state, explicit cross-project isolation, and a downstream post-merge branch task still
+require richer fixture setup and are not yet covered by this runner corpus.
 
 Runner stdout/stderr are captured through anonymous temporary file descriptors and discarded after
 their byte counts/hashes are computed. Normal reports retain no raw model output, no full context body,

@@ -35,6 +35,7 @@ from run_eval import (
     init_project,
     mcp_call,
     request_id,
+    run,
     write_project_files,
 )
 
@@ -137,15 +138,34 @@ def validate_fixture_schema(fixture: dict[str, object], line_number: int) -> Non
         raise RuntimeError(f"{prefix} requires complete string prior_memory fields")
 
     markers = fixture.get("context_markers")
-    if not isinstance(markers, list) or not markers or not all(
+    if not isinstance(markers, list) or not all(
         isinstance(value, str) and value for value in markers
     ):
-        raise RuntimeError(f"{prefix} requires non-empty string context_markers")
+        raise RuntimeError(f"{prefix} context_markers must be a string array")
+    forbidden_markers = fixture.get("forbidden_context_markers", [])
+    if not isinstance(forbidden_markers, list) or not all(
+        isinstance(value, str) and value for value in forbidden_markers
+    ):
+        raise RuntimeError(f"{prefix} forbidden_context_markers must be a string array")
+    if not markers and not forbidden_markers:
+        raise RuntimeError(f"{prefix} requires at least one required or forbidden context marker")
+    if set(markers) & set(forbidden_markers):
+        raise RuntimeError(f"{prefix} context markers cannot be both required and forbidden")
     prior_text = json.dumps(prior, sort_keys=True).lower()
-    missing_prior_markers = [marker for marker in markers if marker.lower() not in prior_text]
+    missing_prior_markers = [
+        marker
+        for marker in [*markers, *forbidden_markers]
+        if marker.lower() not in prior_text
+    ]
     if missing_prior_markers:
         raise RuntimeError(
             f"{prefix} context markers are absent from prior_memory: {missing_prior_markers}"
+        )
+
+    prior_revision_state = fixture.get("prior_revision_state", "current")
+    if prior_revision_state not in {"current", "divergent"}:
+        raise RuntimeError(
+            f"{prefix} prior_revision_state must be 'current' or 'divergent'"
         )
 
     oracle_probe = fixture.get("oracle_probe")
@@ -575,6 +595,10 @@ def materialize_fixture(
         materialized["context_markers"] = replace_fixture_placeholders(
             materialized["context_markers"], replacements
         )
+        if "forbidden_context_markers" in materialized:
+            materialized["forbidden_context_markers"] = replace_fixture_placeholders(
+                materialized["forbidden_context_markers"], replacements
+            )
         materialized["_oracle_expected"] = [
             [],
             schedule[:1],
@@ -1267,7 +1291,12 @@ def validate_fixture_does_not_leak_context(
 ) -> None:
     project_files = fixture.get("project_files", {})
     markers = fixture.get("context_markers", [])
-    if not isinstance(project_files, dict) or not isinstance(markers, list):
+    forbidden_markers = fixture.get("forbidden_context_markers", [])
+    if (
+        not isinstance(project_files, dict)
+        or not isinstance(markers, list)
+        or not isinstance(forbidden_markers, list)
+    ):
         raise RuntimeError("agent task fixture has invalid project_files/context_markers")
     task = str(fixture.get("task", ""))
     if not task or len(task) > 256:
@@ -1281,12 +1310,55 @@ def validate_fixture_does_not_leak_context(
         + "\n"
         + "\n".join(str(value) for value in fixture.get("allowed_changed_files", []))
     ).lower()
-    leaked = [str(marker) for marker in markers if str(marker).lower() in visible]
+    leaked = [
+        str(marker)
+        for marker in [*markers, *forbidden_markers]
+        if str(marker).lower() in visible
+    ]
     if leaked:
         raise RuntimeError(
             f"agent task fixture exposes {len(leaked)} historical context marker(s) "
             "through the task/live project surface"
         )
+
+
+def prepare_fixture_git_state(project: Path, fixture: dict[str, object]) -> None:
+    revision_state = str(fixture.get("prior_revision_state", "current"))
+    if revision_state == "current":
+        return
+    if revision_state != "divergent":
+        raise RuntimeError(f"unsupported prior revision state: {revision_state!r}")
+    current_branch = git_run(project, ["branch", "--show-current"])
+    if not current_branch:
+        raise RuntimeError("divergent fixture requires an attached Git branch")
+    git_run(project, ["checkout", "-b", "ley-eval-prior-divergent"])
+    git_run(
+        project,
+        [
+            "-c",
+            "user.name=Ley Eval",
+            "-c",
+            "user.email=ley-eval@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "agent-eval divergent prior history",
+        ],
+    )
+    git_run(project, ["checkout", current_branch])
+    git_run(
+        project,
+        [
+            "-c",
+            "user.name=Ley Eval",
+            "-c",
+            "user.email=ley-eval@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "agent-eval current mainline",
+        ],
+    )
 
 
 def validate_compiled_fixture(
@@ -1309,6 +1381,7 @@ def validate_compiled_fixture(
     write_project_files(project, {str(path): str(body) for path, body in files.items()})
     git_run(project, ["init", "-b", "main"])
     git_commit_all(project, "agent-eval fixture")
+    prepare_fixture_git_state(project, fixture)
     try:
         oracle_reference = validate_script_oracle_reference(
             fixture,
@@ -1343,38 +1416,73 @@ def validate_compiled_fixture(
 def seed_prior_memory(
     project: Path,
     fixture: dict[str, object],
-) -> None:
+) -> str:
     prior = fixture.get("prior_memory")
     if not isinstance(prior, dict):
         raise RuntimeError("agent task fixture requires prior_memory")
-    session_id, _ = create_structured_session(
-        project,
-        seed=f"{fixture['id']}:prior",
-        name=str(prior["name"]),
-        goal=str(prior["goal"]),
-        summary=str(prior["summary"]),
-        decisions=[
+    revision_state = str(fixture.get("prior_revision_state", "current"))
+    original_branch = ""
+    if revision_state == "divergent":
+        original_branch = git_run(project, ["branch", "--show-current"])
+        if not original_branch:
+            raise RuntimeError("divergent prior-memory fixture requires an attached Git branch")
+        git_run(project, ["checkout", "ley-eval-prior-divergent"])
+        run(["ingest", str(project), "--json"])
+    try:
+        session_id, _ = create_structured_session(
+            project,
+            seed=f"{fixture['id']}:prior",
+            name=str(prior["name"]),
+            goal=str(prior["goal"]),
+            summary=str(prior["summary"]),
+            decisions=[
+                {
+                    "title": str(prior["decision_title"]),
+                    "decision": str(prior["decision"]),
+                    "rationale": str(prior.get("rationale", "")),
+                }
+            ],
+        )
+        mcp_call(
+            project,
+            "ley_session_finish",
             {
-                "title": str(prior["decision_title"]),
-                "decision": str(prior["decision"]),
-                "rationale": str(prior.get("rationale", "")),
-            }
-        ],
-    )
-    mcp_call(
-        project,
-        "ley_session_finish",
-        {
-            "sessionId": session_id,
-            "requestId": request_id(f"{fixture['id']}:prior:finish"),
-            "status": "completed",
-            "summary": str(prior["summary"]),
-            "finalResponse": "The prior contract was recorded and verified for handoff.",
-            "handoff": "Use the recorded prior contract when this topic is revisited.",
-            "unresolved": [],
-        },
-        WRITE_FLAGS,
-    )
+                "sessionId": session_id,
+                "requestId": request_id(f"{fixture['id']}:prior:finish"),
+                "status": "completed",
+                "summary": str(prior["summary"]),
+                "finalResponse": "The prior contract was recorded and verified for handoff.",
+                "handoff": "Use the recorded prior contract when this topic is revisited.",
+                "unresolved": [],
+            },
+            WRITE_FLAGS,
+        )
+    finally:
+        if revision_state == "divergent" and original_branch:
+            git_run(project, ["checkout", original_branch])
+
+    if revision_state == "divergent":
+        payload = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
+        )
+        checkpoints = [
+            item for item in payload.get("checkpoints", []) if isinstance(item, dict)
+        ]
+        if not checkpoints:
+            raise RuntimeError("divergent prior-memory fixture produced no checkpoint")
+        applicability = checkpoints[-1].get("revisionApplicability", {})
+        compatibility = (
+            str(applicability.get("compatibility", ""))
+            if isinstance(applicability, dict)
+            else ""
+        )
+        if compatibility != "divergent":
+            raise RuntimeError(
+                "divergent prior-memory fixture did not classify captured history as divergent"
+            )
+    return session_id
 
 
 def prepare_ley_context(
@@ -1410,6 +1518,16 @@ def prepare_ley_context(
     if missing:
         raise RuntimeError(
             f"Ley context omitted {len(missing)} required benchmark evidence marker(s)"
+        )
+    forbidden_markers = [
+        str(value) for value in fixture.get("forbidden_context_markers", [])
+    ]
+    leaked = [
+        marker for marker in forbidden_markers if marker.lower() in rendered.lower()
+    ]
+    if leaked:
+        raise RuntimeError(
+            f"Ley context exposed {len(leaked)} forbidden benchmark evidence marker(s)"
         )
     bound = mcp_call(
         project,
@@ -1822,6 +1940,7 @@ def execute_variant(
 
     git_run(project, ["init", "-b", "main"])
     git_commit_all(project, "agent-eval fixture")
+    prepare_fixture_git_state(project, fixture)
     initial_snapshot = snapshot_project_tree(project)
 
     utility: dict[str, object] | None = None

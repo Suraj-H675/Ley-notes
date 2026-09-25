@@ -79,6 +79,44 @@ class AgentTaskEvalTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "task_family"):
             agent_eval.validate_fixture_schema(fixture, 1)
 
+    def test_fixture_schema_rejects_invalid_revision_state_or_marker_overlap(self) -> None:
+        fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
+        fixture["prior_revision_state"] = "future"
+        with self.assertRaisesRegex(RuntimeError, "prior_revision_state"):
+            agent_eval.validate_fixture_schema(fixture, 1)
+
+        fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
+        marker = fixture["context_markers"][0]
+        fixture["forbidden_context_markers"] = [marker]
+        with self.assertRaisesRegex(RuntimeError, "both required and forbidden"):
+            agent_eval.validate_fixture_schema(fixture, 1)
+
+    def test_divergent_fixture_git_state_is_two_sided_without_source_changes(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("divergent-feature-flag-contract"),
+            bytes.fromhex("4c" * 32),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            write_project_files(project, fixture["project_files"])
+            agent_eval.git_run(project, ["init", "-b", "main"])
+            base = agent_eval.git_commit_all(project, "fixture")
+            before = agent_eval.snapshot_project_tree(project)
+
+            agent_eval.prepare_fixture_git_state(project, fixture)
+
+            self.assertEqual(agent_eval.git_run(project, ["branch", "--show-current"]), "main")
+            main = agent_eval.git_run(project, ["rev-parse", "main"])
+            experiment = agent_eval.git_run(
+                project, ["rev-parse", "ley-eval-prior-divergent"]
+            )
+            self.assertNotEqual(main, experiment)
+            self.assertEqual(
+                agent_eval.git_run(project, ["merge-base", main, experiment]),
+                base,
+            )
+            self.assertEqual(agent_eval.snapshot_project_tree(project), before)
+
     def test_fixture_schema_requires_exactly_one_hidden_oracle_mode(self) -> None:
         fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
         fixture["oracle_script"] = "raise SystemExit(0)\n"
@@ -593,11 +631,27 @@ class AgentTaskEvalTests(unittest.TestCase):
             fixture = agent_eval.materialize_fixture(raw, seed)
             with self.subTest(task=fixture["id"]):
                 markers = [str(value) for value in fixture["context_markers"]]
+                forbidden = [
+                    str(value)
+                    for value in fixture.get("forbidden_context_markers", [])
+                ]
                 handoff = agent_eval.render_handoff(fixture)
                 minimal = agent_eval.render_minimal_brief(fixture)
                 for marker in markers:
                     self.assertIn(marker.lower(), handoff.lower())
                     self.assertIn(marker.lower(), minimal.lower())
+                for marker in forbidden:
+                    self.assertTrue(
+                        marker.lower() in handoff.lower()
+                        or marker.lower() in minimal.lower()
+                    )
+                if forbidden:
+                    self.assertTrue(
+                        any(marker.lower() in handoff.lower() for marker in forbidden)
+                    )
+                    self.assertTrue(
+                        any(marker.lower() in minimal.lower() for marker in forbidden)
+                    )
                 self.assertIn("human handoff", handoff.lower())
                 self.assertIn("benchmark baseline", minimal.lower())
                 self.assertLessEqual(len(minimal), len(handoff))
