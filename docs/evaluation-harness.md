@@ -37,9 +37,11 @@ diagnostic overrides.
 
 The repository includes a manual-only GitHub Actions workflow,
 `.github/workflows/revision-portability.yml`, for the portability experiment. It runs the same matrix
-on fixed standard runner labels (`ubuntu-24.04`, `macos-15-intel`, and `windows-2025`) without turning
-the experiment into an every-push CI requirement. The workflow records the actual Git/Python/Rust
-toolchain versions in its logs before running the matrix. That workflow deliberately builds the CLI
+on six fixed standard runner labels: Ubuntu 24.04 x64/ARM64, macOS 15 Intel/Apple Silicon, and Windows
+2025 x64 / Windows 11 ARM64. This keeps architecture coverage explicit without turning the experiment
+into an every-push CI requirement. The workflow records the actual runner OS/architecture/image,
+Git/Python/Rust/Cargo toolchain, Rust host target, and PowerShell version on Windows before running the
+matrix. That workflow deliberately builds the CLI
 with the non-default `eval-private-root` feature; ordinary Ley builds do not accept evaluation path
 redirection.
 

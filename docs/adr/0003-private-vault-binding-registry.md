@@ -23,8 +23,10 @@ evaluation-private directory containing pre-created `config/` and `cache/` child
 application configuration directory from `<root>/config` and the semantic-model cache from
 `<root>/cache`. The root and children must be ordinary directories rather than symlinks/reparse-point
 redirects; invalid values fail closed. On Unix, Ley additionally requires owner-only directory modes.
-On Windows, this slice relies on the evaluator's per-user temporary-directory ACL plus reparse-point
-rejection; explicit DACL inspection remains open validation rather than a claimed core guarantee.
+On Windows, the evaluation-only private-root slice additionally constructs and re-reads a protected
+current-user-only inheritable DACL before Ley starts; this passed on hosted x64 and ARM64 Windows on
+2026-09-25. That validation belongs to the explicit eval override only and is not a claimed general
+core guarantee for ordinary production config directories.
 Builds without the feature reject a set variable instead of silently ignoring it. This is an
 evaluation-isolation boundary, not an alternative production configuration mechanism; ordinary builds
 continue to use the operating-system locations above.
