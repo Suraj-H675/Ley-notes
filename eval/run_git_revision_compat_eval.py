@@ -180,7 +180,12 @@ def verify_git_wrapper_passthrough(wrapper: Path, env: dict[str, str], log: Path
 
 
 def powershell_output(script: str, env: dict[str, str] | None = None) -> str:
-    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    powershell = (
+        shutil.which("pwsh.exe")
+        or shutil.which("pwsh")
+        or shutil.which("powershell.exe")
+        or shutil.which("powershell")
+    )
     if not powershell:
         raise RuntimeError("Windows private-root ACL verification requires PowerShell")
     result = subprocess.run(
@@ -243,6 +248,7 @@ def harden_windows_private_tree(paths: list[Path]) -> bool:
 
     harden_script = r'''
 $ErrorActionPreference = 'Stop'
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $sid = [System.Security.Principal.SecurityIdentifier]::new($env:LEY_EVAL_ACL_SID)
 $acl = [System.Security.AccessControl.DirectorySecurity]::new()
 $acl.SetOwner($sid)
@@ -258,6 +264,7 @@ $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
 Set-Acl -LiteralPath $env:LEY_EVAL_ACL_PATH -AclObject $acl
 '''
     inspect_script = r'''
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 $acl = Get-Acl -LiteralPath $env:LEY_EVAL_ACL_PATH
 $rules = @($acl.Access | ForEach-Object {
     $sid = try {

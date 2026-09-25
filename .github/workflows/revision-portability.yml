@@ -16,8 +16,11 @@ jobs:
       matrix:
         os:
           - ubuntu-24.04
+          - ubuntu-24.04-arm
           - macos-15-intel
+          - macos-15
           - windows-2025
+          - windows-11-arm
 
     steps:
       - name: Check out repository
@@ -32,10 +35,19 @@ jobs:
 
       - name: Report toolchain
         run: |
+          echo "runner.os=${{ runner.os }}"
+          echo "runner.arch=${{ runner.arch }}"
+          python -c "import os; print('runner.image.os=' + os.environ.get('ImageOS', 'unknown')); print('runner.image.version=' + os.environ.get('ImageVersion', 'unknown'))"
           git --version
           python --version
           rustc --version
+          rustc -vV
           cargo --version
+
+      - name: Report PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh --version
 
       - name: Build Ley CLI
         run: cargo build --locked -p ley-cli --features eval-private-root
