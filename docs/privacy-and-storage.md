@@ -83,7 +83,7 @@ The SQLite migration must prove:
 
 ## Native filesystem safety
 
-While the legacy note workspace remains runnable, native relative-path operations must stay inside the selected vault even in the presence of symlinks/reparse points. Textual `..` rejection alone is not a sufficient confinement boundary; exposed legacy commands must use a no-follow/canonical containment strategy or be retired before release.
+While the legacy note workspace remains runnable, native relative-path operations stay inside the selected vault through capability-rooted no-follow traversal rather than textual `..` rejection alone. Targeted reads/writes/renames/trash operations and recursive scans refuse or skip symlink/reparse redirection, including the reserved `attachments`, `canvases`, and `.trash` roots. Hosted run `36151215222` passed these confinement attacks on Linux/macOS/Windows x64+ARM64, including real Windows directory junctions. That is evidence for the tested hosted filesystems/reparse shapes, not a universal guarantee for every filesystem implementation.
 
 ## Website boundary
 

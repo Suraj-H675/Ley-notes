@@ -53,8 +53,10 @@ CLI before the eval-feature rebuild and run `eval/run_private_config_permissions
 `0000`; the fresh OS-native application directory must still be `0700` and the binding/project-catalog
 JSON and lock files must still be `0600`. Run `36121570078` passed the contention and
 production-permission gates on all applicable x64 and ARM64 lanes, including both macOS architectures.
-The native-vault confinement gate was added afterward and requires its own hosted six-lane evidence
-before it is claimed.
+Follow-up run `36151215222` passed the focused native-vault confinement gate on all six hosted lanes:
+Linux/macOS x64+ARM64 rejected final/parent/reserved-directory symlink escapes, while Windows
+x64+ARM64 rejected real `mklink /J` parent and reserved-directory junction escapes. The tests assert
+that external targets are not modified or surfaced through recursive vault scans.
 
 Each run also owns private temporary `XDG_CONFIG_HOME` **and** `XDG_CACHE_HOME` roots. This prevents a
 developer's real Ley configuration or locally installed semantic model from silently changing which

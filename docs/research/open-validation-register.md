@@ -126,6 +126,14 @@ privacy, latency, and operational cost.
   `app.leynotes.desktop` as `0700` and `bindings-v1.json`, `bindings-v1.lock`, `projects-v1.json`, and
   `projects-v1.lock` as `0600`. This closes fresh POSIX mode-bit creation evidence on hosted macOS but
   does not claim broader macOS ACL semantics or permission repair for pre-existing directories.
+- Follow-up run `36151215222` passed the native desktop-vault confinement gate on all six native lanes.
+  Linux/macOS x64+ARM64 passed no-follow attacks covering a symlinked parent directory, a symlinked
+  final Markdown target, and reserved `attachments`/`canvases`/`.trash` directories. Windows x64+ARM64
+  passed real directory-junction attacks created with `mklink /J` for both a parent escape and those
+  reserved directories. The targeted read/write/rename/trash paths and recursive vault scans therefore
+  have hosted evidence that they do not follow these tested link/reparse escape shapes outside the
+  selected vault. This remains evidence for the fixed hosted filesystems/runner families rather than a
+  proof covering every possible filesystem or reparse tag.
 - The runner uses only `status`, `rev-parse`, and `merge-base`, disables optional locks/lazy fetch,
   verifies that the temporary Git shim preserves real Git stdout before measuring cases, and requires
   all normal cases to observe the instrumentation shim.

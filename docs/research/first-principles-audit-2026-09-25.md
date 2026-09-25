@@ -366,6 +366,12 @@ The audit confirmed:
 If the legacy note app remains runnable during migration, the native symlink boundary is a security fix,
 not optional polish. The graph bug should either be fixed or disappear with graph retirement.
 
+**Resolved after this audit:** commit `bfd59ae` moved native targeted I/O and recursive scans onto
+capability-rooted no-follow traversal. Hosted run `36151215222` subsequently passed Unix symlink attacks
+on Linux/macOS x64+ARM64 and real Windows directory-junction attacks on x64+ARM64. This resolution does
+not change the historical finding above; it records that the exposed legacy boundary was hardened before
+the reset moved forward.
+
 ### 16. Evaluation is rigorous internally but underpowered where it matters most
 
 Ley has strong deterministic safety/regression coverage. The deterministic “downstream” checks mostly
