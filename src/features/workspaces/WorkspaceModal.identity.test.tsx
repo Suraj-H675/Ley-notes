@@ -2,7 +2,7 @@ import { act } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   markActiveDataKind,
-} from '@/infrastructure/database/browser-local-vault';
+} from '@/infrastructure/database/active-vault-state';
 import { db } from '@/infrastructure/database/db';
 import { resetDb } from '@/test/helpers';
 import type { NavigationLayout } from '@/core/vault/navigation-session';
@@ -32,7 +32,7 @@ vi.mock('@/shared/state/ui', () => ({
 describe('workspace layout vault identity', () => {
   beforeEach(async () => {
     await resetDb();
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
     await saveWorkspaceLayout('Local workspace', navigation, {
       sidebarOpen: true,
       rightDockOpen: false,
@@ -42,7 +42,7 @@ describe('workspace layout vault identity', () => {
   });
 
   it('isolates saved layouts under a new active identity', async () => {
-    const local = await db.settings.get(workspaceLayoutsDataKey('browser-local'));
+    const local = await db.settings.get(workspaceLayoutsDataKey('filesystem:/vault/default'));
     expect(local?.value).toHaveLength(1);
 
     await act(async () => markActiveDataKind('filesystem:/vault/next'));

@@ -5,6 +5,7 @@ node_modules/
 
 # Build outputs
 dist/
+dist-desktop/
 build/
 target/
 *.tsbuildinfo
@@ -72,9 +73,6 @@ dist-ssr
 /PROJECT_VISION.md
 /implementation_plan.md
 /task.md
-
-# Reference projects used as blueprints (not part of Ley)
-/ref/
 
 # Windows Zone.Identifier metadata
 *:Zone.Identifier

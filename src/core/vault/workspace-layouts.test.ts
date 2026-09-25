@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
+import { markActiveDataKind } from '@/infrastructure/database/active-vault-state';
 import { db } from '@/infrastructure/database/db';
 import { resetDb } from '@/test/helpers';
 import type { NavigationLayout } from './navigation-session';
@@ -34,7 +34,7 @@ const shell = { sidebarOpen: true, rightDockOpen: false, rightDockTab: 'outline'
 describe('named workspace layouts', () => {
   beforeEach(async () => {
     await resetDb();
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
   });
 
   it('creates a workspace and updates the same normalized name in place', async () => {

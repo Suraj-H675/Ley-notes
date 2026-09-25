@@ -20,6 +20,9 @@ export class LeyDB extends Dexie {
   assets!: Table<Asset, string>;
   revisions!: Table<Revision, string>;
   settings!: Table<Setting, string>;
+  // Legacy browser-app stores. The browser product is retired, but the stores
+  // remain readable until the SQLite migration has an explicit legacy-data
+  // import/export policy. No production code writes them anymore.
   browserLocalPages!: Table<Page, string>;
   browserLocalAssets!: Table<Asset, string>;
   browserLocalRevisions!: Table<Revision, string>;

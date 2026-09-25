@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/infrastructure/database/db';
-import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
+import { markActiveDataKind } from '@/infrastructure/database/active-vault-state';
 import { makePage, resetDb } from '@/test/helpers';
 import { addDestinationBookmark } from '@/core/vault/bookmarks';
 import { ensureMarkdownBlockReference } from '@/core/parser/destinations';
@@ -24,7 +24,7 @@ vi.mock('@/shared/state/ui', () => ({
 describe('BookmarksPane', () => {
   beforeEach(async () => {
     await resetDb();
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
   });
 
   it('shows note and anchor bookmarks with custom titles, availability, navigation, rename, and deletion', async () => {

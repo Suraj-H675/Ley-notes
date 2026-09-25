@@ -1,10 +1,17 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/infrastructure/database/db';
 import { resetDb } from '@/test/helpers';
-import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
+import { markActiveDataKind } from '@/infrastructure/database/active-vault-state';
 import { createPage, deletePage, renamePage } from './pages';
 import { applyNavigationLayout, captureNavigationLayout, restoreNavigationSession, saveNavigationSession, startNavigationSession, stopNavigationSession } from './navigation-session';
 import { useNavStore } from '@/shared/state/nav';
+
+vi.mock('@/infrastructure/vault/filesystem-vault', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/infrastructure/vault/filesystem-vault')>()),
+  writeActiveVaultFile: vi.fn(async () => undefined),
+  renameActiveVaultFile: vi.fn(async () => undefined),
+  trashActiveVaultFile: vi.fn(async () => undefined),
+}));
 
 describe('navigation sessions', () => {
   beforeEach(async () => {
@@ -14,7 +21,7 @@ describe('navigation sessions', () => {
   });
 
   it('flushes the current session before a vault reset', async () => {
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
     const first = await createPage({ title: 'First' });
     const second = await createPage({ title: 'Second' });
     await startNavigationSession();
@@ -26,7 +33,7 @@ describe('navigation sessions', () => {
   });
 
   it('restores tab order, active tab, and recents after a reload', async () => {
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
     const first = await createPage({ title: 'First' });
     const second = await createPage({ title: 'Second' });
     useNavStore.getState().hydrate({ openTabs: [first.id, second.id], activeTab: first.id, recentPages: [second.id, first.id] });
@@ -63,7 +70,7 @@ describe('navigation sessions', () => {
   });
 
   it('safely removes a deleted note from tabs, split panes, and recents', async () => {
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
     const source = await createPage({ title: 'Source' });
     const reference = await createPage({ title: 'Reference' });
     const keep = await createPage({ title: 'Keep' });
@@ -93,7 +100,7 @@ describe('navigation sessions', () => {
   });
 
   it('restores both sides of a split workspace and its focused pane', async () => {
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
     const source = await createPage({ title: 'Source' });
     const reference = await createPage({ title: 'Reference' });
     useNavStore.getState().hydrate({
@@ -124,7 +131,7 @@ describe('navigation sessions', () => {
   });
 
   it('survives internal renames by stable page id and drops deleted tabs', async () => {
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
     const keep = await createPage({ title: 'Keep' });
     const remove = await createPage({ title: 'Remove' });
     useNavStore.getState().hydrate({ openTabs: [keep.id, remove.id], activeTab: keep.id, recentPages: [remove.id, keep.id] });
@@ -228,7 +235,7 @@ describe('navigation sessions', () => {
   });
 
   it('preserves an externally deleted open tab for recovery after reload', async () => {
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
     const keep = await createPage({ title: 'Keep' });
     const recovery = await db.pages.get(keep.id);
     await db.pages.update(keep.id, { missingFromDisk: true });

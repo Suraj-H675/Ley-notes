@@ -1,6 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { db } from "@/infrastructure/database/db";
-import { resetDb } from "@/test/helpers";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addFileToCanvas,
   createCanvas,
@@ -15,10 +13,28 @@ import {
   saveCanvas,
 } from "./canvas";
 
-describe("JSON Canvas persistence", () => {
-  beforeEach(async () => resetDb());
+const canvasFiles = vi.hoisted(
+  () => new Map<string, { content: string; updatedAt: number }>(),
+);
 
-  it("creates and updates an interoperable browser-local canvas document", async () => {
+vi.mock("@/infrastructure/vault/filesystem-vault", () => ({
+  listActiveCanvasFiles: vi.fn(async () =>
+    [...canvasFiles.entries()].map(([path, value]) => ({ path, ...value })),
+  ),
+  writeActiveCanvasFile: vi.fn(async (path: string, content: string) => {
+    canvasFiles.set(path, { content, updatedAt: Date.now() });
+    return true;
+  }),
+  trashActiveCanvasFile: vi.fn(async (path: string) => {
+    canvasFiles.delete(path);
+    return true;
+  }),
+}));
+
+describe("JSON Canvas persistence", () => {
+  beforeEach(() => canvasFiles.clear());
+
+  it("creates and updates an interoperable filesystem canvas document", async () => {
     const canvas = await createCanvas("Research map");
     expect(canvas.path).toBe("canvases/research-map.canvas");
 
@@ -71,9 +87,9 @@ describe("JSON Canvas persistence", () => {
   });
 
   it("never overwrites malformed Canvas content through a file-card shortcut", async () => {
-    await db.settings.put({
-      key: "canvas:canvases/damaged.canvas",
-      value: { content: "{not json", updatedAt: 1 },
+    canvasFiles.set("canvases/damaged.canvas", {
+      content: "{not json",
+      updatedAt: 1,
     });
 
     await expect(
@@ -85,9 +101,10 @@ describe("JSON Canvas persistence", () => {
     await expect(createCanvas("Damaged")).rejects.toThrow(
       "not valid JSON Canvas",
     );
-    expect(
-      (await db.settings.get("canvas:canvases/damaged.canvas"))?.value,
-    ).toEqual({ content: "{not json", updatedAt: 1 });
+    expect(canvasFiles.get("canvases/damaged.canvas")).toEqual({
+      content: "{not json",
+      updatedAt: 1,
+    });
   });
 
   it("round-trips every JSON Canvas 1.0 node and edge field Ley supports", () => {

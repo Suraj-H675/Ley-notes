@@ -1,12 +1,31 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listCanvases } from "@/core/vault/canvas";
 import { listPages } from "@/core/vault/pages";
-import { db } from "@/infrastructure/database/db";
 import { resetDb } from "@/test/helpers";
 import {
   linkSessionToCanvas,
   type SessionCanvasLinkRequest,
 } from "./link-session-canvas";
+
+const canvasFiles = vi.hoisted(
+  () => new Map<string, { content: string; updatedAt: number }>(),
+);
+
+vi.mock("@/infrastructure/vault/filesystem-vault", async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/infrastructure/vault/filesystem-vault')>()),
+  writeActiveVaultFile: vi.fn(async () => undefined),
+  listActiveCanvasFiles: vi.fn(async () =>
+    [...canvasFiles.entries()].map(([path, value]) => ({ path, ...value })),
+  ),
+  writeActiveCanvasFile: vi.fn(async (path: string, content: string) => {
+    canvasFiles.set(path, { content, updatedAt: Date.now() });
+    return true;
+  }),
+  trashActiveCanvasFile: vi.fn(async (path: string) => {
+    canvasFiles.delete(path);
+    return true;
+  }),
+}));
 
 const request: SessionCanvasLinkRequest = {
   draft: {
@@ -25,7 +44,10 @@ const request: SessionCanvasLinkRequest = {
 };
 
 describe("session Canvas linking", () => {
-  beforeEach(() => resetDb());
+  beforeEach(async () => {
+    canvasFiles.clear();
+    await resetDb();
+  });
 
   it("creates an ordinary note and links it with a JSON Canvas file node", async () => {
     const result = await linkSessionToCanvas(request);
@@ -69,9 +91,9 @@ describe("session Canvas linking", () => {
   });
 
   it("does not create a note or overwrite a malformed destination", async () => {
-    await db.settings.put({
-      key: "canvas:canvases/damaged.canvas",
-      value: { content: "{not json", updatedAt: 1 },
+    canvasFiles.set("canvases/damaged.canvas", {
+      content: "{not json",
+      updatedAt: 1,
     });
     await expect(
       linkSessionToCanvas({
@@ -83,8 +105,9 @@ describe("session Canvas linking", () => {
       }),
     ).rejects.toThrow("not valid JSON Canvas");
     expect(await listPages()).toEqual([]);
-    expect(
-      (await db.settings.get("canvas:canvases/damaged.canvas"))?.value,
-    ).toEqual({ content: "{not json", updatedAt: 1 });
+    expect(canvasFiles.get("canvases/damaged.canvas")).toEqual({
+      content: "{not json",
+      updatedAt: 1,
+    });
   });
 });

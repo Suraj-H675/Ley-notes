@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPage, renamePage } from "@/core/vault/pages";
 import { resetDb } from "@/test/helpers";
 import { promoteSessionNote } from "./promote-session-note";
 import type { PromotedSessionNoteDraft } from "./types";
+
+vi.mock("@/infrastructure/vault/filesystem-vault", async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/infrastructure/vault/filesystem-vault')>()),
+  writeActiveVaultFile: vi.fn(async () => undefined),
+  renameActiveVaultFile: vi.fn(async () => undefined),
+}));
 
 const draft: PromotedSessionNoteDraft = {
   sessionId: "ses_test",

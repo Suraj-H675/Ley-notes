@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPage, listPages, renamePage } from "@/core/vault/pages";
 import { db } from "@/infrastructure/database/db";
 import { promoteLearningNote } from "./promote-learning-note";
 import type { PromotedLearningNoteDraft } from "./types";
+
+vi.mock("@/infrastructure/vault/filesystem-vault", async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/infrastructure/vault/filesystem-vault')>()),
+  writeActiveVaultFile: vi.fn(async () => undefined),
+  renameActiveVaultFile: vi.fn(async () => undefined),
+}));
 
 const draft: PromotedLearningNoteDraft = {
   learningId: "lrn_test",

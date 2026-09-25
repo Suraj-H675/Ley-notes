@@ -121,6 +121,11 @@ privacy, latency, and operational cost.
 - Both Windows lanes independently reported `windowsPrivateRootDaclVerified: true`; the evaluator
   constructs a protected current-user-only inheritable DACL and re-reads the persisted rules before
   starting Ley. This verifies the evaluation-only private root, not ordinary production config ACLs.
+- Follow-up run `36121570078` passed an eight-process private-registry contention test on all six lanes.
+  Its Linux/macOS x64+ARM64 lanes also ran the ordinary production CLI with umask `0000`; each created
+  `app.leynotes.desktop` as `0700` and `bindings-v1.json`, `bindings-v1.lock`, `projects-v1.json`, and
+  `projects-v1.lock` as `0600`. This closes fresh POSIX mode-bit creation evidence on hosted macOS but
+  does not claim broader macOS ACL semantics or permission repair for pre-existing directories.
 - The runner uses only `status`, `rev-parse`, and `merge-base`, disables optional locks/lazy fetch,
   verifies that the temporary Git shim preserves real Git stdout before measuring cases, and requires
   all normal cases to observe the instrumentation shim.

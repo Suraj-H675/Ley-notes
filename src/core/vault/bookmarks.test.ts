@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
+import { markActiveDataKind } from '@/infrastructure/database/active-vault-state';
 import { resetDb } from '@/test/helpers';
 import {
   addDestinationBookmark,
@@ -15,7 +15,7 @@ const heading = { kind: 'heading' as const, pageId: 'page-1', path: 'Notes/First
 describe('destination bookmarks', () => {
   beforeEach(async () => {
     await resetDb();
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
   });
 
   it('adds one resilient destination and deduplicates the same target', async () => {

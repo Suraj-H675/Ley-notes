@@ -1,7 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetDb } from '@/test/helpers';
 import { createPage } from './pages';
 import { applyTemplate, listVaultTemplates, templateFrontmatter } from './templates';
+
+vi.mock('@/infrastructure/vault/filesystem-vault', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/infrastructure/vault/filesystem-vault')>()),
+  writeActiveVaultFile: vi.fn(async () => undefined),
+}));
 
 describe('vault templates', () => {
   beforeEach(async () => resetDb());

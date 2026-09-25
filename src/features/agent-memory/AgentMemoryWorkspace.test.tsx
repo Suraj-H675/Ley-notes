@@ -171,33 +171,6 @@ describe("Agent Memory workspace boundaries", () => {
     api.verifyAgentProjectNoteVault.mockResolvedValue(undefined);
   });
 
-  it("explains why browser vaults cannot connect to local agents", () => {
-    render(
-      <AgentMemoryWorkspace
-        open
-        vaultMode="browser-folder"
-        vaultPath="browser-folder:test"
-        vaultName="Notes"
-        onClose={vi.fn()}
-        onPromoteLearning={vi.fn()}
-        onPromoteSession={vi.fn()}
-        onLinkSessionCanvas={vi.fn()}
-      />,
-    );
-
-    expect(
-      screen.getByRole("heading", {
-        name: "Agent Memory needs the desktop app",
-      }),
-    ).toBeVisible();
-    expect(
-      screen.getByText(/cannot safely read coding projects/i),
-    ).toBeVisible();
-    const scrollRoot = screen.getByRole("main");
-    expect(scrollRoot).toHaveClass("min-h-0", "overflow-y-auto");
-    expect(api.inspectAgentProject).not.toHaveBeenCalled();
-  });
-
   it("reviews first capture and requires fresh approval after initialization drift", async () => {
     api.listAgentProjects.mockResolvedValue({
       projects: [],
@@ -259,7 +232,6 @@ describe("Agent Memory workspace boundaries", () => {
     render(
       <AgentMemoryWorkspace
         open
-        vaultMode="desktop"
         vaultPath="/vault"
         vaultName="Private vault"
         onClose={vi.fn()}
@@ -963,7 +935,6 @@ describe("Agent Memory workspace boundaries", () => {
     render(
       <AgentMemoryWorkspace
         open
-        vaultMode="desktop"
         vaultPath="/vault"
         vaultName="Private vault"
         onClose={vi.fn()}

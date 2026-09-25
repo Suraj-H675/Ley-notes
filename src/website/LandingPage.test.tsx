@@ -10,4 +10,10 @@ describe('LandingPage', () => {
     expect(page).not.toHaveClass('h-full', 'overflow-y-auto');
     expect(screen.getByRole('contentinfo')).toHaveTextContent('Local-first by design.');
   });
+
+  it('never exposes the retired browser workspace', () => {
+    const { container } = render(<LandingPage />);
+    expect(container.querySelector('a[href="/app"]')).toBeNull();
+    expect(screen.getByText('One real app. One public website.')).toBeVisible();
+  });
 });

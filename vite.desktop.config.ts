@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 const configDir = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig({
+  root: path.resolve(configDir, 'desktop'),
+  publicDir: path.resolve(configDir, 'public'),
   plugins: [react()],
   resolve: {
     alias: {
@@ -15,14 +17,12 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: true,
-    open: true,
     fs: {
-      allow: ['..'],
+      allow: [configDir],
     },
   },
   build: {
-    rollupOptions: {
-      input: path.resolve(configDir, 'index.html'),
-    },
+    outDir: path.resolve(configDir, 'dist-desktop'),
+    emptyOutDir: true,
   },
 });

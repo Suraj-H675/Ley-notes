@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { activeDataKind } from '@/infrastructure/database/browser-local-vault';
+import { activeDataKind } from '@/infrastructure/database/active-vault-state';
 import { db } from '@/infrastructure/database/db';
 import { bookmarksDataKey, parseBookmarksSetting, type DestinationBookmark } from '@/core/vault/bookmarks';
 import type { Page } from '@/infrastructure/database/schema';

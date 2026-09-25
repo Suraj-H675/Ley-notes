@@ -1,7 +1,5 @@
-import { db } from '@/infrastructure/database/db';
 import { nanoid } from '@/shared/lib/nanoid';
 import {
-  getActiveVaultKind,
   readActiveVaultAttachment,
   writeActiveVaultAttachment,
 } from '@/infrastructure/vault/filesystem-vault';
@@ -19,7 +17,7 @@ export function attachmentInsertion(attachments: SavedAttachment[]): string {
   return `\n\n${attachments.map((attachment) => attachment.markdown).join('\n\n')}\n\n`;
 }
 
-export async function saveAttachment(pageId: string, file: File): Promise<SavedAttachment> {
+export async function saveAttachment(_pageId: string, file: File): Promise<SavedAttachment> {
   if (file.size > MAX_ATTACHMENT_BYTES) throw new Error('Attachments larger than 50 MB are not supported yet.');
   const extension = file.name.split('.').at(-1)?.toLowerCase() ?? '';
   if (!ALLOWED_EXTENSIONS.has(extension)) throw new Error(`.${extension || 'unknown'} files are not supported as attachments.`);
@@ -27,18 +25,7 @@ export async function saveAttachment(pageId: string, file: File): Promise<SavedA
   const filename = `${safeStem(file.name.replace(/\.[^.]+$/, ''))}-${nanoid().slice(0, 6)}.${extension}`;
   const path = `attachments/${filename}`;
   const data = await file.arrayBuffer();
-  const isFilesystemVault = await writeActiveVaultAttachment(path, data);
-
-  if (!isFilesystemVault) {
-    await db.assets.add({
-      id: nanoid(),
-      pageId,
-      filename: path,
-      mimeType: file.type || mimeTypeForPath(path),
-      blob: new Blob([data], { type: file.type || mimeTypeForPath(path) }),
-      createdAt: Date.now(),
-    });
-  }
+  await writeActiveVaultAttachment(path, data);
 
   const kind = isImagePath(path) ? 'image' : 'file';
   const label = escapeMarkdownLabel(file.name);
@@ -51,12 +38,10 @@ export async function saveAttachment(pageId: string, file: File): Promise<SavedA
 
 export async function attachmentObjectUrl(path: string): Promise<string | null> {
   if (!isSafeAttachmentPath(path)) return null;
-  if (getActiveVaultKind()) {
-    const data = await readActiveVaultAttachment(path);
-    return data ? URL.createObjectURL(new Blob([data], { type: mimeTypeForPath(path) })) : null;
-  }
-  const asset = await db.assets.filter((candidate) => candidate.filename === path).first();
-  return asset ? URL.createObjectURL(asset.blob) : null;
+  const data = await readActiveVaultAttachment(path);
+  return data
+    ? URL.createObjectURL(new Blob([data], { type: mimeTypeForPath(path) }))
+    : null;
 }
 
 export function isImagePath(path: string): boolean {

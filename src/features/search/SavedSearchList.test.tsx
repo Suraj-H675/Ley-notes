@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
+import { markActiveDataKind } from '@/infrastructure/database/active-vault-state';
 import { resetDb } from '@/test/helpers';
 import { saveSearch } from '@/core/vault/saved-searches';
 import { useSavedSearches } from './useSavedSearches';
@@ -14,7 +14,7 @@ function TestList() {
 describe('saved search rows', () => {
   beforeEach(async () => {
     await resetDb();
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
   });
 
   it('supports rename recovery and reactive deletion', async () => {

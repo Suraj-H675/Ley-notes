@@ -4,7 +4,6 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { createPage } from '@/core/vault/pages';
 import { useNavStore } from '@/shared/state/nav';
 import { Kbd } from '@/shared/components/Kbd';
-import { getActiveVaultKind } from '@/infrastructure/vault/filesystem-vault';
 import { applyTemplate, listVaultTemplates, templateFrontmatter } from '@/core/vault/templates';
 import * as Dialog from '@radix-ui/react-dialog';
 
@@ -89,7 +88,7 @@ export function NewNoteModal({
           {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-meta text-destructive">{error}</div>}
         </div>
         <div className="flex items-center justify-between border-t border-border px-4 py-3">
-          <span className="text-micro text-muted-foreground">{getActiveVaultKind() ? 'Creates a real Markdown file' : 'Saved in this browser vault'}</span>
+          <span className="text-micro text-muted-foreground">Creates a real Markdown file</span>
           <div className="flex items-center gap-2"><button type="button" onClick={onClose} className="rounded-sm px-3 py-1.5 text-meta text-muted-foreground hover:bg-surface-2">Cancel</button><button type="submit" disabled={busy} className="rounded-sm bg-primary px-3 py-1.5 text-meta font-semibold text-primary-foreground disabled:opacity-50">{busy ? 'Creating…' : 'Create note'} <Kbd>↵</Kbd></button></div>
         </div>
       </form>

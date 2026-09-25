@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDb } from '@/test/helpers';
-import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
+import { markActiveDataKind } from '@/infrastructure/database/active-vault-state';
 import { isPageBookmarked, listBookmarkedPageIds, setPageBookmarked, togglePageBookmark } from './note-bookmarks';
 
 describe('vault note bookmarks', () => {
   beforeEach(() => resetDb());
 
   it('adds, removes, and deduplicates bookmarked page ids', async () => {
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
     await setPageBookmarked('one', true);
     await setPageBookmarked('one', true);
     expect(await listBookmarkedPageIds()).toEqual(['one']);

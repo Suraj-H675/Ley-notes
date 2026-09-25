@@ -1,5 +1,5 @@
 import { db } from '@/infrastructure/database/db';
-import { activeDataKind } from '@/infrastructure/database/browser-local-vault';
+import { activeDataKind } from '@/infrastructure/database/active-vault-state';
 
 // Preserve the historical key so upgrading from the former “Favorites” UI
 // never strands a user's starred notes.

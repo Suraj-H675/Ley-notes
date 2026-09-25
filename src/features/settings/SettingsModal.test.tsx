@@ -15,9 +15,6 @@ vi.mock('@/infrastructure/vault/filesystem-vault', () => ({
 }));
 
 vi.mock('@/core/vault/pages', () => ({
-  listDeletedPages: vi.fn(async () => []),
-  restorePage: vi.fn(),
-  permanentlyDeletePage: vi.fn(),
   restoreTrashedFilesystemPage: vi.fn(async () => ({
     id: 'restored-id',
     title: 'Recovered note',
@@ -25,8 +22,7 @@ vi.mock('@/core/vault/pages', () => ({
   })),
 }));
 
-import { restorePage as restorePageMockImport, restoreTrashedFilesystemPage as restoreTrashedFilesystemPageMock } from '@/core/vault/pages';
-import { listDeletedPages } from '@/core/vault/pages';
+import { restoreTrashedFilesystemPage as restoreTrashedFilesystemPageMock } from '@/core/vault/pages';
 
 vi.mock('@/core/vault/templates', () => ({
   listVaultTemplates: vi.fn(async () => []),
@@ -34,14 +30,8 @@ vi.mock('@/core/vault/templates', () => ({
 
 vi.mock('dexie-react-hooks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('dexie-react-hooks')>()),
-  useLiveQuery: (query?: unknown, fallback?: unknown) => {
-    if (query === listDeletedPages) {
-      return [
-        { id: 'recycled-id', title: 'Recycled note', path: 'Recycled note.md', deletedAt: 1 },
-      ];
-    }
-    return fallback ?? [];
-  },
+  useLiveQuery: (_query?: unknown, _dependencies?: unknown, defaultResult?: unknown) =>
+    defaultResult,
 }));
 
 vi.mock('@/infrastructure/database/db', () => ({
@@ -55,7 +45,6 @@ vi.mock('@/infrastructure/database/db', () => ({
 describe('Settings filesystem trash restore', () => {
   beforeEach(() => {
     vi.mocked(restoreTrashedFilesystemPageMock).mockClear();
-    vi.mocked(restorePageMockImport).mockClear();
   });
 
   it('closes settings and opens the restored note without leaving a status behind the modal', async () => {
@@ -66,7 +55,6 @@ describe('Settings filesystem trash restore', () => {
     render(
       <SettingsModal
         open
-        vaultMode="desktop"
         vaultName="Vault"
         watcherStatus="watching"
         onRefreshVault={onRefreshVault}
@@ -86,41 +74,4 @@ describe('Settings filesystem trash restore', () => {
     expect(onRefreshVault).toHaveBeenCalled();
   });
 
-  it('returns to the editor after restoring a browser-local recycled note', async () => {
-    const onRefreshVault = vi.fn(async () => ({ noteCount: 1 }));
-    const onOpenNote = vi.fn();
-    const onClose = vi.fn();
-    vi.mocked(restorePageMockImport).mockResolvedValueOnce({
-      id: 'recycled-id',
-      lcTitle: 'recycled note',
-      title: 'Recycled note',
-      path: 'Recycled note.md',
-      content: '',
-      frontmatter: {},
-      aliases: [],
-      createdAt: 1,
-      updatedAt: 1,
-      deletedAt: null,
-    });
-
-    render(
-      <SettingsModal
-        open
-        vaultMode="browser-local"
-        vaultName="Local"
-        watcherStatus="inactive"
-        onRefreshVault={onRefreshVault}
-        onSwitchVault={vi.fn()}
-        onClose={onClose}
-        onOpenNote={onOpenNote}
-        launcherRef={{ current: null }}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'Restore Recycled note' }));
-
-    await waitFor(() => expect(restorePageMockImport).toHaveBeenCalledWith('recycled-id'));
-    expect(onOpenNote).toHaveBeenCalledWith('recycled-id');
-    expect(onClose).toHaveBeenCalled();
-  });
 });

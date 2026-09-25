@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
+import { markActiveDataKind } from '@/infrastructure/database/active-vault-state';
 import { resetDb } from '@/test/helpers';
 import { deleteSavedSearch, listSavedSearches, renameSavedSearch, saveSearch, updateSavedSearchTable } from './saved-searches';
 
 describe('saved searches', () => {
   beforeEach(async () => {
     await resetDb();
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
   });
 
   it('creates, updates duplicate queries, renames, and deletes searches', async () => {

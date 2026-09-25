@@ -1,173 +1,115 @@
 # Ley
 
-Ley is a local-first knowledge workspace for durable Markdown notes, wiki links, backlinks, search, and visual graph exploration. It runs as a native desktop application and as an installable web app.
+Ley is being rebuilt as a **local, trustworthy continuity and context layer for coding agents**.
 
-Knowledge data stays on the user's device. Ley has no note backend, mandatory account, analytics, or telemetry. Agent context leaves the device only through a user-installed/configured integration and its explicit egress authority: the user may request context directly, and supported host integrations may also inject bounded task context automatically after that authority is configured. See [Local storage and data boundaries](docs/privacy-and-storage.md).
+A repository tells an agent what exists now. Ley is for the information that usually disappears between sessions: what was decided, what was attempted, what failed, what was actually verified, what remains unresolved, and where that evidence came from.
 
-The desktop app and supported browsers open a real folder as a vault. Markdown files remain the source of truth; the local database is a rebuildable index for search, links, tags, graph data, and recovery snapshots.
+The 2026-09-25 first-principles reset is documented in [`docs/research/first-principles-audit-2026-09-25.md`](docs/research/first-principles-audit-2026-09-25.md). Existing ADRs and feature documents remain useful implementation history, but they are no longer automatically current requirements.
 
-## Product capabilities
+## Product surfaces
 
-- Real filesystem vaults on desktop, with atomic saves and a `.trash` folder
-- Native recursive change watching for external Markdown/Canvas edits, with explicit conflict resolution for unsaved notes
-- Browser folder vaults through the File System Access API, plus an explicit browser-local mode
-- Folder-aware file explorer with safe move, drag/drop, duplicate, rename, trash, and browser-local restore workflows
-- Safe vault switching and rescanning without mixing browser-local authority with filesystem cache data
-- Markdown editing and reading views with interactive tasks, `[[wiki links]]`, portable relative `[Markdown](note.md)` links, precise heading/block navigation, and properties
-- Keyboard and touch-accessible Markdown formatting with vault-aware completion for tags, notes, headings, and block references
-- First-class in-note find/replace with match navigation, case, regular-expression, and whole-word controls
-- Full and heading/block-scoped note embeds, pasted or dropped attachments, and safe vault-relative media rendering
-- Automatic backlinks and graph edges for wiki and relative Markdown links, plus outgoing links, unlinked mentions, tags, and ghost-link resolution
-- Full-text search with composable tag, path, title, YAML-property, Markdown task-state, quoted, and exclusion filters; quick switcher, command palette, daily notes, and keyboard navigation
-- Unified vault-scoped bookmarks for notes, headings, stable Markdown blocks, and saved searches, with rename/deletion and responsive sidebar access
-- Live query-backed property tables with typed sorting, configurable columns, inline YAML editing, split-note opening, and saved per-query layouts
-- Resizable side-by-side note panes with pane-local linking, responsive focus, and vault-scoped restoration of tabs, panes, focus, and recents
-- Named, vault-scoped workspace layouts that restore tabs, split panes, focus, sidebars, dock context, and divider width
-- Global and contextual knowledge graphs with deterministic layouts and community coloring
-- Interoperable JSON Canvas files with text, note, link, and group cards; resizing, colors, labeled directional connections, and trash recovery
-- Vault-native templates for new notes and daily notes
-- Sparse local revision snapshots with a user-facing recovery panel
-- Desktop Agent Memory workspace with an explicit multi-project catalog, local cross-project search across knowledge and captured revisions, capture/privacy controls, deterministic refresh, immutable graph time travel, semantic graph filters, captured-source inspection, complete session history, append-only user naming, reviewed per-session erasure, bounded continuity briefs, checkpoint/decision/problem/attempt/outcome inspection, navigable snapshot-pinned artifacts, trusted lessons, temporal provenance inspection, version-guarded corrections, vault-verified lesson and session handoff links into ordinary Markdown, user-directed session links into interoperable JSON Canvas, and append-only human review
-- Structured project-memory search across sessions, revisions, decisions, problems, lessons, artifacts, symbols, and dependencies, with deterministic ranking, trust/freshness signals, conflict disclosure, and an explicitly installed local semantic model for meaning-based recall
-- Installable Codex and Claude Code integrations that combine local MCP, stable lifecycle hooks, bounded redacted turn capture, and a portable structured-memory skill without scraping transcripts
-- An honest browser Agent Memory boundary: the PWA keeps notes usable but does not pretend a web page can serve external local agents or read arbitrary coding projects
-- Offline-capable PWA and a separate public website
+Ley now has exactly two intended surfaces:
+
+- **Ley Desktop** — the actual local application. It owns project access, local agent integrations, privacy controls, review, search/recall, evidence inspection, and the continuity workflow.
+- **Ley website** — a normal public marketing/showcase/documentation site. It does not run a reduced copy of Ley in the browser.
+
+The previous `/app` browser workspace, PWA, browser-folder mode, and browser-local notebook mode have been retired. A web page cannot provide the same local project/MCP boundary as the native product, and maintaining a parallel notebook implementation added substantial complexity without strengthening Ley's differentiated value.
+
+## Direction
+
+The target agent-facing contract is intentionally small:
+
+- **Brief** — the smallest cited continuity pack useful for the current task.
+- **Search** — explicit bounded historical recall.
+- **Evidence** — exact provenance/source drill-down.
+- **Checkpoint** — one structured durable write path for meaningful session state.
+
+The target human-facing desktop is a focused control center for project setup/status, integrations, brief preview, recall, session/handoff history, review/correction, evidence, privacy, export, and erasure.
+
+General-purpose note editing, backlinks, Canvas, daily notes, browser-local storage, and other notebook features still present in parts of the migration tree are being retired rather than expanded.
+
+## Important principles
+
+- current user intent and live project evidence outrank historical memory;
+- historical agent text is context/evidence, not instruction or truth;
+- durable memory preserves provenance;
+- project and cross-project scope must be explicit;
+- context is small and task-conditioned by default;
+- privacy, egress, erasure, and export remain inspectable;
+- Git revision/applicability stays lightweight and visible;
+- derived indexes/views are rebuildable;
+- advanced features must beat a simpler baseline in realistic agent-task evaluation before they earn their complexity.
+
+See [`LEY.md`](LEY.md) in a local development checkout for the current execution direction and [`docs/README.md`](docs/README.md) for documentation status.
 
 ## Repository map
 
 ```text
 .
-├── crates/               # Shared Rust core, `ley` CLI, and local stdio MCP server
-├── docs/                 # Architecture, decisions, security, and product research
-├── integrations/         # Installable Codex and Claude Code packages
-├── schemas/              # Versioned open agent-memory contracts
+├── crates/               # Rust core, CLI, MCP, and supporting adapters
+├── desktop/              # Dedicated native frontend HTML entry
+├── docs/                 # Current docs plus historical ADR/research evidence
+├── eval/                 # Deterministic and real-agent evaluation runners
+├── integrations/         # Codex and Claude Code packages
+├── schemas/              # Stable public/import-export payload contracts
 ├── src/
-│   ├── app/              # Application composition and workspace shell
-│   ├── core/             # Framework-free Markdown, graph, indexing, and vault domain logic
-│   ├── features/         # User-facing vertical slices (editor, search, graph, vault, ...)
-│   ├── infrastructure/   # IndexedDB and native/browser filesystem adapters
-│   ├── shared/           # Reusable UI, hooks, state, styles, and small utilities
-│   ├── test/             # Shared test setup and fixtures
+│   ├── app/              # Native desktop React composition
+│   ├── core/             # Legacy note domain + migration-era shared logic
+│   ├── features/         # Desktop feature slices
+│   ├── infrastructure/   # Desktop projection/cache adapters
+│   ├── shared/           # Reusable UI/state/utilities
 │   └── website/          # Public marketing site
-├── src-tauri/            # Rust desktop shell and confined filesystem commands
-└── ref/                  # Local reference projects; intentionally not committed
+└── src-tauri/            # Native shell and local filesystem/project commands
 ```
 
-See [docs/architecture.md](docs/architecture.md) for boundaries and persistence guarantees.
-See [docs/evaluation-harness.md](docs/evaluation-harness.md) for the deterministic end-to-end acceptance corpus, focused-run commands, privacy/deletion metrics, P0/P1/P2 capability coverage matrices, and the separate opt-in model-dependent downstream comparison runner.
+The website and desktop share reusable source code where useful, but they have **separate entrypoints and build artifacts**. A website deployment cannot expose the desktop application runtime.
 
 ## Development
 
-Requirements: Node.js 22+, Rust stable, and the Tauri 2 platform prerequisites for your operating system.
+Requirements today: Node.js 22+, Rust stable, and the Tauri 2 platform prerequisites for your operating system. Explicit checked-in toolchain pins are planned as part of the reset.
 
 ```bash
 npm install
-npm run dev              # website at / and browser app at /app
-npm run desktop          # native desktop development shell
+
+npm run dev:website       # public marketing/showcase site
+npm run build:website
+
+npm run desktop           # Tauri development app
+npm run build:desktop-ui  # desktop webview frontend only
+npm run desktop:build     # native application bundle
+
+npm run typecheck
 npm run lint
-npm run test
-npm run build            # web/PWA production build
-npm run desktop:build    # native application bundle
-cargo test --workspace   # local core, CLI, and desktop Rust tests
+npm test
+cargo check --locked --workspace
 ```
 
-No account, backend, or environment file is required.
+`npm run build` currently aliases the website production build.
 
-### Use Agent Memory
+## Migration status
 
-In Ley Desktop, open **Agent Memory** from the title bar or command palette and choose a project folder. For an uninitialized project, Ley first shows the proposed Structured capture boundary, eligible file/byte totals, bounded path samples, limits/exclusions, and destination vault **without creating `.ley`, a binding, or Agent Memory**. Only the explicit approval action initializes and captures; that approval is bound to the selected project and the exact reviewed capture plan, and the first ingestion rechecks it before private memory is opened. If later drift leaves setup initialized but unbound, Ley requires a fresh review before first connection/capture. Existing projects can then be explicitly connected or refreshed. Ley shows only engine-backed sessions and lessons and keeps review actions under user authority. The project graph can switch among immutable captures, filter nodes/relationships/provenance in the shared engine, and open the exact redacted source excerpt cited by a selected node, edge, session checkpoint, decision, or problem without reading today's working tree. Explicit Full Evidence capture can additionally retain bounded PNG/JPEG/WebP originals; cited images open from their exact immutable snapshot/hash and are labeled as original evidence with no automatic OCR/vision description or live-source claim. Every new checkpoint also pins the graph/artifact capture and captured Git revision it actually used; selecting that revision opens the exact historical graph instead of today's source. Learning evidence links back to its complete session, and every visible artifact reference opens its captured inventory record. A reviewed lesson or inspected session handoff can become ordinary Markdown only when the currently open note vault canonically matches that project’s private binding; repeat actions reopen the stable linked note instead of duplicating it. A session can also link that stable note into a user-chosen or newly named JSON Canvas as one standard file card; retries reuse both files and Ley opens the exact destination Canvas. The session inspector can physically erase one exact-name/version session plus every cited or supersession-dependent learning while preserving unrelated project memory and explicitly user-owned Markdown/Canvas copies. The project-level **Capture & privacy** surface previews the approved filesystem boundary, applies Minimal, Structured, or explicitly acknowledged Full Evidence retention through a real local re-capture, and offers exact-name whole-project Agent Memory erasure without deleting project files, notes, `.ley` policy, or the private binding. See [Capture and privacy](docs/agent-memory/capture-and-privacy.md), [ADR 0056](docs/adr/0056-reviewed-first-capture-onboarding.md), [ADR 0019](docs/adr/0019-immutable-project-graph-history.md), [ADR 0020](docs/adr/0020-reviewed-project-memory-erasure.md), [ADR 0021](docs/adr/0021-vault-verified-agent-memory-note-links.md), [ADR 0022](docs/adr/0022-checkpoint-project-revision-citations.md), [ADR 0023](docs/adr/0023-user-directed-session-canvas-links.md), [ADR 0024](docs/adr/0024-reviewed-session-memory-erasure.md), and [ADR 0051](docs/adr/0051-bounded-original-image-evidence.md). The browser app explains why this local-agent integration requires desktop instead of displaying fabricated or incomplete memory.
+This is an incremental reset rather than a blind rewrite. The current tree still contains substantial legacy notebook and Agent Memory implementation so the new design can be benchmarked and migrated without throwing away user data or hard-won safety work.
 
-The same foundation is available without the GUI through the local CLI:
+Work being retained or adapted includes:
 
-```bash
-cargo run -p ley-cli -- init /path/to/project --capture structured
-cargo run -p ley-cli -- bind /path/to/project --vault /path/to/ley-vault
-cargo run -p ley-cli -- binding /path/to/project
-cargo run -p ley-cli -- ingest /path/to/project
-cargo run -p ley-cli -- graph /path/to/project
-cargo run -p ley-cli -- session start /path/to/project \
-  --name "First session" --goal "Ship cited memory"
-cargo run -p ley-cli -- consolidation inbox /path/to/project --json
-cargo run -p ley-cli -- learning list /path/to/project --review
-cargo run -p ley-cli -- resume /path/to/project
-cargo run -p ley-cli -- mcp /path/to/project
-cargo run -p ley-cli -- doctor /path/to/project
-cargo run -p ley-cli -- preview /path/to/project
-```
+- bounded credential redaction and evidence handling;
+- stable project identity and idempotency patterns;
+- structured sessions/handoffs;
+- exact provenance/citation IDs;
+- Git revision relation logic;
+- privacy/egress/erasure tests;
+- six-lane Linux/macOS/Windows x64/ARM64 portability evidence;
+- host compatibility probes.
 
-Initialization creates a minimal `.ley/` project identity, capture policy, and additional ignore rules. Structured capture is the default and does not enable raw transcripts or retain image pixels. Repeating `init` reads the existing identity without changing its name or capture consent. `bind` stores only the stable project-ID-to-canonical-vault-path association in Ley's private OS application configuration; no machine path is written into the repository. A temporary `binding --vault /other/vault` override is validated but not persisted, and `unbind` removes the private association without touching project or vault data. `preview` deterministically lists the regular files that fit the approved roots and byte limits without reading their contents; ignored files and symlink targets are not captured. `ingest` performs a real incremental capture into the bound vault: Structured/Full Evidence modes retain redacted UTF-8 evidence, Full Evidence additionally retains signature-validated PNG/JPEG/WebP originals, Minimal retains metadata only, identical runs are no-ops, and additions/changes/renames/deletions create immutable cited snapshots. Image bytes are not OCRed or visually redacted. Ingestion also projects cited repository structure, Tree-sitter symbols/calls/imports/inheritance, declared dependencies, and bounded local Git state; images are not projected as generated text or deterministic graph facts. `graph` integrity-checks and reads that durable projection without rescanning source.
+Machine-managed state is planned to move from many custom JSON registries toward transactional SQLite, while large immutable evidence may remain content-addressed files. The old browser IndexedDB stores are currently left inert rather than destructively dropped; their final import/export handling belongs to that migration.
 
-`session start`, stdin-only `session prompt`/`session response`, `session checkpoint`, `session finish`, and user-authorized `session rename` append structured, credential-redacted events to the bound vault. Checkpoints retain durable meaning; prompt/response records remain a distinct bounded evidence stream. `session turns` inspects that stream explicitly, while normal resume and `session show` context expose counts only. Repeated request IDs are idempotent, concurrent writers are serialized, and session reads replay immutable events instead of trusting a mutable summary. `session erase SESSION --confirm-name NAME --expected-events N` is the deliberately destructive exception: it physically removes that session and its dependent learnings while preserving unrelated memory and user-owned notes/Canvas files. See [Capture structured agent sessions](docs/agent-memory/sessions.md), [ADR 0007](docs/adr/0007-append-only-structured-sessions.md), [ADR 0025](docs/adr/0025-bounded-session-turn-evidence.md), and the versioned [checkpoint input schema](schemas/agent-memory/checkpoint-input.schema.json).
+## Evaluation before feature growth
 
-`learning propose` distills one or more eligible retained session records into a project lesson. Structured records are the ordinary source, while captured body-bearing `tev_` prompt/response records may also be cited directly by explicit evidence-review workflows; body-free turns are rejected. Every proposal remains tentative until an explicit user confirmation; agents can contest or mark stale but cannot grant trust, reject, or supersede memory. Corrections and feedback append immutable events, while source-hash drift returns trusted lessons to `learning list --review`. See [Review project learnings](docs/agent-memory/learnings.md), [ADR 0009](docs/adr/0009-evidence-backed-learning-ledger.md), and the versioned [learning event](schemas/agent-memory/learning-event.schema.json) and [projection](schemas/agent-memory/learning.schema.json) schemas.
+New major product concepts are frozen until Ley has a stronger realistic downstream benchmark. At minimum the comparison should include:
 
-`consolidation inbox` is a deliberate local review surface for retained evidence after native sessions are paused, completed, or abandoned. It excludes active and imported sessions, returns stable evidence IDs/counts rather than turn bodies or machine paths, and never invokes a model, starts background work, persists state, mutates the cited session, or grants automatic write/trust. Exact captured turn IDs can be cited by the existing learning-proposal workflow, but those proposals still start tentative/review-required. MCP exposes the same view as read-only `ley_consolidation_inbox` under the normal historical-memory egress gate; learning proposals remain separately opt-in. See [ADR 0055](docs/adr/0055-local-consolidation-inbox.md).
+1. host-native agent + repository tools/instructions only;
+2. a concise human-authored `HANDOFF.md`;
+3. minimal redesigned Ley;
+4. the current full Ley implementation while it still exists.
 
-`resume` produces one token-bounded startup pack: active and paused work, recent handoffs and unresolved items, plus only user-trusted lessons whose artifact citations still match the latest ingestion. It never checks live source or includes tentative/uncited advice. See [Resume a project](docs/agent-memory/resume.md) and [ADR 0011](docs/adr/0011-bounded-project-resume-context.md).
-
-`search` queries captured structured memory without reading the live project. Exact lexical retrieval always works. **Agent Memory → Search memory** can explicitly install Ley's pinned local retrieval model for hybrid meaning-based ranking; the CLI equivalent is `ley semantic install`. The roughly 125 MiB download contains only public model files from the pinned Hugging Face revision, is checksum-verified before use, and never includes project text or queries. Missing, interrupted, or corrupt installations fall back visibly to lexical search. See [ADR 0026](docs/adr/0026-explicit-local-hybrid-retrieval.md) and [Local storage and data boundaries](docs/privacy-and-storage.md).
-
-`mcp` starts a stdout-clean, read-only Model Context Protocol (MCP) server over standard input/output (stdio). The process is fixed to that one project and its explicit binding. It exposes a project overview, bounded lexical source search, structured activity search across older decisions and problems, cited evidence reads, graph traversal, recent session listing, compact session resume packs, explicit bounded turn inspection, the body-free local Consolidation Inbox, and trusted-first project lessons; it cannot enumerate or switch to other projects. Prompt/response bodies appear only through `ley_session_turns_get` and are labeled untrusted. Every serialized tool result has a 256 KB hard limit. Point an MCP host at the executable and project:
-
-```json
-{
-  "mcpServers": {
-    "ley": {
-      "command": "/absolute/path/to/ley",
-      "args": ["mcp", "/absolute/path/to/project"]
-    }
-  }
-}
-```
-
-Add `--allow-session-writes` to the MCP arguments only when that host should append structured start, checkpoint, and finish events. Existing configurations remain read-only. The write tools require stable request IDs and return compact idempotent receipts; they use the same redaction, citation, locking, and event engine as the CLI.
-
-Add the independent `--allow-learning-proposals` flag only when that host should suggest cited, review-required lessons. It adds no confirmation, correction, rejection, supersession, deletion, or promotion authority. See [ADR 0010](docs/adr/0010-explicit-mcp-learning-proposal-consent.md).
-
-Reusable team/organization knowledge is an explicit local authority workflow rather than ambient project search. `ley scope create team|organization NAME SOURCE_PROJECT...` defines one immutable bounded read-only source set; `ley scope attach SCOPE_ID [ACTIVE_PROJECT]` deliberately enables it for an active project, while `scope attached` and `scope detach` inspect/revoke current attachment. The private scope registry stores stable IDs rather than project/vault paths. `ley_compile_context` uses attached scope sources only after higher-precedence human intent and active-project memory, labels them `untrusted-shared-project-memory`, applies each source project's agent-egress ceiling before search, and preserves bounded source ancestry after detach so restricted derivatives cannot be laundered. MCP can consume allowed shared context but cannot mutate scope authority. See [ADR 0052](docs/adr/0052-explicit-reusable-team-organization-knowledge-scopes.md).
-
-Reusable team/organization **Policy Bundles** deliberately compose that scope authority with already-approved Specifications. `ley policy-bundle create SCOPE_ID NAME --source SOURCE_PROJECT SPECIFICATION_ID...` pins an immutable bounded set of exact approved source-Specification revisions, and `policy-bundle attach/attached/status/detach` controls active-project use. A parent Knowledge Scope must already be attached. In compiled context, active-project Specifications remain highest-precedence human intent and override conflicting bundled policy; admitted bundled policy carries stable bundle/scope/source/spec/hash provenance as `user-approved-policy-bundle-specification`. Source-project and source-Specification egress are checked before policy text is opened, and bounded ancestry survives detach so historical derivatives cannot be laundered. MCP and host integrations may consume allowed bundle output but cannot create/list/attach/detach bundle authority. See [ADR 0053](docs/adr/0053-explicit-reusable-team-organization-policy-bundles.md).
-
-An **uninitialized** workspace can also consume explicit read-only Ley context without becoming a Ley project. `ley bootstrap-spec attach SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE]` grants exact already-approved human intent, while `ley bootstrap-ref attach SOURCE_PROJECT [WORKSPACE]` grants lower-authority access to that source project's current **captured** Ley memory; matching `list/detach` commands inspect or revoke each authority. Bootstrap currently requires a supported Unix filesystem that exposes device/inode plus filesystem creation time for non-reusable target generation; otherwise this narrow feature fails closed without affecting normal Ley project initialization. The target gets no `.ley`, binding, capture, session, project memory, or write authority. `ley mcp WORKSPACE` exposes only read-only `ley_compile_context`: exact Specifications consume budget first, then explicitly attached reference evidence passes the normal trust/conflict/revision admission rules under source-project egress. Reference search never enumerates unattached projects or reads live source file contents, and source identity is revalidated around the captured-memory read. Prompt-time hooks remain **Specification-only**; a reference-only bootstrap workspace stays a hook no-op. Successful normal initialization atomically retires both Specification and reference grants before creating writable project identity. See [ADR 0058](docs/adr/0058-bootstrap-specifications-for-uninitialized-workspaces.md) and [ADR 0059](docs/adr/0059-bootstrap-reference-projects-for-uninitialized-workspaces.md).
-
-The host launches this local process when it needs context. If that host uses a cloud model, the context it deliberately retrieves can be sent to that provider. See [Using Ley with an agent](docs/agent-memory/mcp.md), [ADR 0006](docs/adr/0006-read-only-project-mcp.md), [ADR 0008](docs/adr/0008-explicit-mcp-session-write-consent.md), and the [agent-memory threat model](docs/security/agent-memory-threat-model.md).
-
-For automatic session continuity, install Ley's Codex or Claude Code package.
-Each combines the same local MCP tools, lifecycle hooks, and
-structured-memory skill while keeping host-specific packaging isolated.
-Adapters use documented session, prompt, and final-response fields, never read
-transcript paths, and replay exact retries idempotently. Ordinary uninitialized or unavailable
-workspaces remain no-ops. An uninitialized workspace with explicit Bootstrap Specification authority
-is the narrow lifecycle-hook exception and receives only whole approved Specification context with no
-Ley session or turn capture; Bootstrap Reference authority is MCP-only and does not enable automatic
-hook injection. In an initialized project, each bounded `UserPromptSubmit` also runs the same
-authority- and egress-aware Context Compiler used by `ley_compile_context` and injects a compact
-task pack; oversized/unrepresentable tasks fall back without truncating the user's intent, and the
-agent can explicitly refine the query through MCP when needed. Structured mode stores bounded pattern-redacted
-prompt/response records; Minimal stores body-free observations. Neither stream is
-automatic startup context. See
-[Connect Ley to coding agents](docs/agent-memory/host-integrations.md) and
-[ADR 0018](docs/adr/0018-stable-lifecycle-host-adapters.md) plus
-[ADR 0057](docs/adr/0057-automatic-host-task-context.md) and
-[ADR 0058](docs/adr/0058-bootstrap-specifications-for-uninitialized-workspaces.md).
-
-Historical host data is a separate explicit local workflow. The first supported importer is
-`ley session import codex-history PROJECT --source FILE --host-session UUID`, which accepts
-the documented Codex message-history JSONL shape only and selects one exact session UUID. It
-imports user messages only as a completed `Import` session, preserves source timestamps,
-uses an opaque `hsi_` source reference instead of storing the host UUID/path, applies the
-project's existing capture/redaction bounds, and never invents assistant/tool history.
-Imported sessions are excluded from automatic Resume and remain explicit historical evidence
-for session inspection/search/Memory Compiler review. Ley does not discover `~/.codex`,
-parse Codex rollout transcripts, or expose an MCP import mutation route. See
-[ADR 0054](docs/adr/0054-explicit-codex-message-history-import.md).
-
-## Data model
-
-Filesystem-backed vaults are portable folders containing ordinary `.md` files. YAML frontmatter stores note properties. Dexie/IndexedDB holds derived indexes and recovery metadata; deleting it never invalidates the underlying filesystem vault.
-
-Browser-local mode is a compatibility option for browsers without folder access. Its notes live in IndexedDB and can be exported as an Obsidian-compatible ZIP.
-
-## Status
-
-Ley is under active development. Core note creation, editing, linking, embeds, attachments, templates, search, graph, JSON Canvas, folder vaults, and recovery are functional. Sync, a stable plugin API, and dedicated mobile clients remain future work.
+The goal is not to maximize the number of memory features. The goal is to show that Ley helps real agents resume work more correctly, with less stale-context harm and less wasted context.

@@ -6,12 +6,9 @@ import {
   deletePage,
   duplicatePage,
   getPageByTitle,
-  listDeletedPages,
   listPages,
   movePage,
-  permanentlyDeletePage,
   renamePage,
-  restorePage,
   restoreMissingPage,
   updatePageContent,
   updatePageFrontmatter,
@@ -348,33 +345,6 @@ describe("pages CRUD", () => {
     expect(live.map((p) => p.id).sort()).toEqual([a.id].sort());
   });
 
-  it("lists and restores browser-local deleted notes with rebuilt indexes", async () => {
-    const target = await createPage({ title: "Target" });
-    const page = await createPage({
-      title: "Recover me",
-      content: "See [[Target]] and #recovered.",
-    });
-    await deletePage(page.id);
-    expect((await listDeletedPages()).map((candidate) => candidate.id)).toEqual(
-      [page.id],
-    );
-    const restored = await restorePage(page.id);
-    expect(restored.deletedAt).toBeNull();
-    expect(
-      (await db.links.where("sourcePageId").equals(page.id).first())
-        ?.targetPageId,
-    ).toBe(target.id);
-    expect(await db.tags.get([page.id, "recovered"])).toBeTruthy();
-  });
-
-  it("allows a title to be recreated but prevents restoring over it", async () => {
-    const deleted = await createPage({ title: "Reusable title" });
-    await deletePage(deleted.id);
-    const replacement = await createPage({ title: "Reusable title" });
-    expect(replacement.id).not.toBe(deleted.id);
-    await expect(restorePage(deleted.id)).rejects.toThrow(/current note/);
-  });
-
   it("restores filesystem trash with its original identity and links", async () => {
     const target = await createPage({ title: "Target" });
     const page = await createPage({
@@ -561,28 +531,6 @@ describe("pages CRUD", () => {
       content: "Old disk body.",
       missingFromDisk: true,
     });
-  });
-
-  it("permanently deletes only recycled notes and their private data", async () => {
-    const page = await createPage({ title: "Disposable" });
-    const source = await createPage({
-      title: "Source",
-      content: "Still references [[Disposable]].",
-    });
-    await db.revisions.add({
-      id: "revision",
-      pageId: page.id,
-      content: "old",
-      createdAt: Date.now(),
-    });
-    await deletePage(page.id);
-    await permanentlyDeletePage(page.id);
-    expect(await db.pages.get(page.id)).toBeUndefined();
-    expect(await db.revisions.where("pageId").equals(page.id).count()).toBe(0);
-    expect(
-      (await db.links.where("sourcePageId").equals(source.id).first())
-        ?.targetPageId,
-    ).toBeNull();
   });
 
   it("getPageByTitle is case-insensitive", async () => {

@@ -163,7 +163,6 @@ const LearningPromotionEditor = lazy(() =>
 
 export function AgentMemoryWorkspace({
   open,
-  vaultMode,
   vaultPath,
   vaultName,
   activeNote,
@@ -173,7 +172,6 @@ export function AgentMemoryWorkspace({
   onLinkSessionCanvas,
 }: {
   open: boolean;
-  vaultMode: "desktop" | "browser-folder" | "browser-local";
   vaultPath: string;
   vaultName: string;
   activeNote?: Page;
@@ -185,7 +183,7 @@ export function AgentMemoryWorkspace({
   const [section, setSection] = useState<Section>("overview");
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<AgentProjectCatalog | null>(null);
-  const [catalogBusy, setCatalogBusy] = useState(vaultMode === "desktop");
+  const [catalogBusy, setCatalogBusy] = useState(true);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [inspection, setInspection] = useState<AgentProjectInspection | null>(
     null,
@@ -201,7 +199,7 @@ export function AgentMemoryWorkspace({
   const [graphFocus, setGraphFocus] = useState<GraphFocus | null>(null);
 
   useEffect(() => {
-    if (!open || vaultMode !== "desktop" || projectPath || catalog) return;
+    if (!open || projectPath || catalog) return;
     let current = true;
     const legacyProjectPath =
       localStorage.getItem(LAST_AGENT_PROJECT_KEY) ?? undefined;
@@ -220,12 +218,11 @@ export function AgentMemoryWorkspace({
     return () => {
       current = false;
     };
-  }, [catalog, catalogRevision, open, projectPath, vaultMode]);
+  }, [catalog, catalogRevision, open, projectPath]);
 
   useEffect(() => {
     if (
       !open ||
-      vaultMode !== "desktop" ||
       !projectPath ||
       inspectedPath === projectPath
     )
@@ -247,7 +244,7 @@ export function AgentMemoryWorkspace({
     return () => {
       current = false;
     };
-  }, [inspectedPath, open, projectPath, vaultMode]);
+  }, [inspectedPath, open, projectPath]);
 
   async function chooseProject() {
     setError(null);
@@ -502,7 +499,6 @@ export function AgentMemoryWorkspace({
   return (
     <AgentMemoryWorkspaceView
       open={open}
-      vaultMode={vaultMode}
       vaultName={vaultName}
       vaultPath={vaultPath}
       activeNote={activeNote}
@@ -559,7 +555,6 @@ export function AgentMemoryWorkspace({
 
 interface AgentMemoryWorkspaceViewProps {
   open: boolean;
-  vaultMode: "desktop" | "browser-folder" | "browser-local";
   vaultName: string;
   vaultPath: string;
   activeNote?: Page;
@@ -609,7 +604,6 @@ interface AgentMemoryWorkspaceViewProps {
 
 function AgentMemoryWorkspaceView({
   open,
-  vaultMode,
   vaultName,
   vaultPath,
   activeNote,
@@ -678,7 +672,6 @@ function AgentMemoryWorkspaceView({
             onClose={onClose}
           />
           <AgentMemoryBody
-            vaultMode={vaultMode}
             vaultName={vaultName}
             vaultPath={vaultPath}
             activeNote={activeNote}
@@ -822,7 +815,6 @@ function AgentMemoryHeader({
 }
 
 function AgentMemoryBody({
-  vaultMode,
   vaultName,
   vaultPath,
   activeNote,
@@ -851,7 +843,6 @@ function AgentMemoryBody({
   onPrivacyErased,
 }: Pick<
   AgentMemoryWorkspaceViewProps,
-  | "vaultMode"
   | "vaultName"
   | "vaultPath"
   | "activeNote"
@@ -879,9 +870,6 @@ function AgentMemoryBody({
   | "onPrivacyUpdated"
   | "onPrivacyErased"
 >) {
-  if (vaultMode !== "desktop") {
-    return <BrowserBoundary vaultMode={vaultMode} vaultName={vaultName} />;
-  }
   if (!projectPath) {
     return (
       <ProjectsHub
@@ -3776,50 +3764,6 @@ function ProjectOnboarding({
               <ShieldCheck size={14} className="mt-0.5 shrink-0 text-primary" />
               Known credentials, private keys, environment files, build output,
               and ignored paths are excluded before durable memory is written.
-            </p>
-          </div>
-        </div>
-      </div>
-    </main>
-  );
-}
-
-function BrowserBoundary({
-  vaultMode,
-  vaultName,
-}: {
-  vaultMode: "browser-folder" | "browser-local";
-  vaultName: string;
-}) {
-  return (
-    <main className="min-h-0 flex-1 overflow-y-auto px-4 py-10 sm:px-6">
-      <div className="mx-auto flex min-h-full max-w-xl items-center justify-center">
-        <div className="w-full rounded-sm border border-border bg-surface-1 p-6 shadow-panel sm:p-8">
-          <div className="flex size-11 items-center justify-center rounded-md border border-secondary/20 bg-secondary/10 text-secondary">
-            <LockKeyhole size={21} />
-          </div>
-          <p className="mt-5 text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Honest local boundary
-          </p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-[-0.035em]">
-            Agent Memory needs the desktop app
-          </h2>
-          <p className="mt-3 text-body leading-6 text-muted-foreground-strong">
-            This{" "}
-            {vaultMode === "browser-folder"
-              ? `browser folder vault, “${vaultName},”`
-              : "browser-local vault"}{" "}
-            can edit notes, but a web page cannot safely read coding projects or
-            serve local agents through stdio MCP.
-          </p>
-          <div className="mt-5 rounded-md border border-border bg-background/35 p-4">
-            <p className="text-meta font-medium">
-              Your browser notes still remain fully usable.
-            </p>
-            <p className="mt-1 text-micro leading-5 text-muted-foreground">
-              Open the same filesystem vault in Ley Desktop to initialize
-              projects, capture structured sessions, review lessons, and connect
-              Codex, Claude Code, or another compatible local MCP client.
             </p>
           </div>
         </div>

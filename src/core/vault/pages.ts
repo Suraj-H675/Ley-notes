@@ -78,12 +78,6 @@ export async function getPageByTitle(title: string): Promise<Page | null> {
   );
 }
 
-export async function listDeletedPages(): Promise<Page[]> {
-  return (await db.pages.where("deletedAt").above(0).toArray()).sort(
-    (left, right) => (right.deletedAt ?? 0) - (left.deletedAt ?? 0),
-  );
-}
-
 export async function getPageById(pageId: string): Promise<Page | null> {
   return (await db.pages.get(pageId)) ?? null;
 }
@@ -694,30 +688,6 @@ export function deletePage(pageId: string): Promise<void> {
   });
 }
 
-/** Restore a browser-local soft-deleted note and rebuild all derived indexes. */
-export async function restorePage(pageId: string): Promise<Page> {
-  const page = await db.pages.get(pageId);
-  if (!page || page.deletedAt === null)
-    throw new Error("That deleted note no longer exists");
-  const collision = await getPageByTitle(page.title);
-  if (collision)
-    throw new Error(`A current note named "${page.title}" already exists`);
-  const pathCollision = await db.pages
-    .where("path")
-    .equals(page.path)
-    .filter((candidate) => candidate.deletedAt === null)
-    .first();
-  if (pathCollision)
-    throw new Error(`A current note already uses ${page.path}`);
-  const updatedAt = now();
-  await db.pages.update(pageId, { deletedAt: null, updatedAt });
-  const restored = { ...page, deletedAt: null, updatedAt };
-  await rebuildPageLinks(pageId, page.content);
-  await rebuildPageTags(pageId, page.content, page.frontmatter);
-  await resolveGhostLinksForPage(restored);
-  return restored;
-}
-
 /**
  * Restore a filesystem `.trash` note to its original folder. If the original
  * path is occupied, create an independent sibling copy rather than overwrite
@@ -939,32 +909,4 @@ function stableTrashPageId(trashedPath: string): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return `file_${(hash >>> 0).toString(36)}_restored`;
-}
-
-/** Irreversibly remove a browser-local deleted note and its private history/assets. */
-export async function permanentlyDeletePage(pageId: string): Promise<void> {
-  const page = await db.pages.get(pageId);
-  if (!page || page.deletedAt === null)
-    throw new Error("Only notes in the recycle bin can be permanently deleted");
-  await db.transaction(
-    "rw",
-    db.pages,
-    db.links,
-    db.tags,
-    db.revisions,
-    db.assets,
-    async () => {
-      await db.links
-        .where("targetPageId")
-        .equals(pageId)
-        .modify({ targetPageId: null });
-      await Promise.all([
-        db.links.where("sourcePageId").equals(pageId).delete(),
-        db.tags.where("pageId").equals(pageId).delete(),
-        db.revisions.where("pageId").equals(pageId).delete(),
-        db.assets.where("pageId").equals(pageId).delete(),
-        db.pages.delete(pageId),
-      ]);
-    },
-  );
 }

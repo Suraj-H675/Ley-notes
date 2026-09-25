@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { parseSavedSearchesSetting, savedSearchesDataKey, type SavedSearch } from '@/core/vault/saved-searches';
-import { activeDataKind } from '@/infrastructure/database/browser-local-vault';
+import { activeDataKind } from '@/infrastructure/database/active-vault-state';
 import { db } from '@/infrastructure/database/db';
 
 export function useSavedSearches(): SavedSearch[] {

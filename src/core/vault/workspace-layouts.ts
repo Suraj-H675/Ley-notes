@@ -1,4 +1,4 @@
-import { activeDataKind } from '@/infrastructure/database/browser-local-vault';
+import { activeDataKind } from '@/infrastructure/database/active-vault-state';
 import { db } from '@/infrastructure/database/db';
 import { nanoid } from '@/shared/lib/nanoid';
 import type { NavigationLayout, PageReference } from './navigation-session';

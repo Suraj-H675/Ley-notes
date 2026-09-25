@@ -116,14 +116,12 @@ const AgentMemoryWorkspace = lazy(() =>
 );
 
 export function Layout({
-  vaultMode,
   vaultKey,
   vaultName,
   watcherStatus,
   onRefreshVault,
   onSwitchVault,
 }: {
-  vaultMode: "desktop" | "browser-folder" | "browser-local";
   vaultKey: string;
   vaultName: string;
   watcherStatus: "inactive" | "starting" | "watching" | "error";
@@ -388,7 +386,6 @@ export function Layout({
           <Suspense fallback={null}>
             <SettingsModal
               open
-              vaultMode={vaultMode}
               vaultName={vaultName}
               watcherStatus={watcherStatus}
               onRefreshVault={onRefreshVault}
@@ -488,7 +485,6 @@ export function Layout({
           >
             <AgentMemoryWorkspace
               open
-              vaultMode={vaultMode}
               vaultPath={vaultKey}
               vaultName={vaultName}
               activeNote={activePage}

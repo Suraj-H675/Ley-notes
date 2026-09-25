@@ -34,9 +34,9 @@ Ley should preserve that model for human knowledge and extend it for agent work:
 
 This resembles the capture-organize-distill-express loop often used in second-brain practice, but Ley should not impose one folder methodology. Links, typed properties, search, collections, and project/session views should remain composable.
 
-## Findings from Graphify
+## Historical Graphify findings
 
-The checked-in reference at `ref/graphify` is unusually relevant. Its useful ideas are:
+An earlier Graphify review surfaced several ideas that remain useful as hypotheses to validate:
 
 - deterministic local tree-sitter extraction for code;
 - explicit `EXTRACTED`, `INFERRED`, and `AMBIGUOUS` provenance on graph edges;
@@ -421,7 +421,6 @@ Measure recall@k, citation precision, answer key-fact coverage, stale/conflict a
 - [Letta context hierarchy](https://docs.letta.com/guides/core-concepts/memory/context-hierarchy)
 - [Zep temporal knowledge graph paper](https://arxiv.org/abs/2501.13956)
 - [Mem0 long-term memory paper](https://arxiv.org/abs/2504.19413)
-- Local Graphify reference: `ref/graphify/README.md`, `BENCHMARKS.md`, `graphify/serve.py`, and `graphify/reflect.py`
 
 ## Confirmed product decisions
 

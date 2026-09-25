@@ -1,4 +1,4 @@
-import { activeDataKind } from "@/infrastructure/database/browser-local-vault";
+import { activeDataKind } from "@/infrastructure/database/active-vault-state";
 import { db } from "@/infrastructure/database/db";
 import type { Page } from "@/infrastructure/database/schema";
 import { useNavStore } from "@/shared/state/nav";

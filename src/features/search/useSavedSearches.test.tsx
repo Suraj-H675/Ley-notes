@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { markActiveDataKind } from '@/infrastructure/database/browser-local-vault';
+import { markActiveDataKind } from '@/infrastructure/database/active-vault-state';
 import { resetDb } from '@/test/helpers';
 import { renameSavedSearch, saveSearch } from '@/core/vault/saved-searches';
 import { useSavedSearches } from './useSavedSearches';
@@ -8,7 +8,7 @@ import { useSavedSearches } from './useSavedSearches';
 describe('useSavedSearches', () => {
   beforeEach(async () => {
     await resetDb();
-    await markActiveDataKind('browser-local');
+    await markActiveDataKind('filesystem:/vault/default');
   });
 
   it('reacts to saved-query creation and rename without a reload', async () => {

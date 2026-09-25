@@ -1,45 +1,51 @@
 import {
   ArrowRight,
-  CalendarDays,
-  Download,
-  FileText,
-  FolderOpen,
+  BrainCircuit,
+  FileSearch,
   GitBranch,
+  History,
   LockKeyhole,
+  Search,
+  ShieldCheck,
+  Terminal,
 } from 'lucide-react';
 
 const FEATURES = [
   {
     label: '01',
-    title: 'Write first',
-    body: 'Live Preview stays close to the page. Wiki links, headings, tasks, properties, and unresolved mentions become structure while you type.',
+    title: 'Resume with context',
+    body: 'Recover the smallest useful account of what was decided, attempted, verified, and left unresolved instead of rereading an entire project history.',
   },
   {
     label: '02',
-    title: 'Find it later',
-    body: 'Search across titles, content, aliases, tags, paths, and YAML properties from a quick switcher built for muscle memory.',
+    title: 'Know why it is here',
+    body: 'Every durable memory keeps provenance so a human or agent can drill back to the session, revision, command, or source evidence behind it.',
   },
   {
     label: '03',
-    title: 'Follow the thought',
-    body: 'Backlinks and a local graph appear when they answer something—not as another dashboard to maintain.',
+    title: 'Respect the present',
+    body: 'Historical agent text stays historical. Current user intent, live project state, corrections, and Git applicability outrank stale memory.',
   },
   {
     label: '04',
-    title: 'Own the files',
-    body: 'A desktop vault is just a folder of Markdown files. Git, grep, editors, backups, and scripts all keep working.',
+    title: 'Keep it local',
+    body: 'Project memory and indexes live on your machine. Context reaches a model only through an integration you configure and the sharing boundary you allow.',
   },
 ];
 
 const PROMISES = [
-  { icon: <LockKeyhole size={13} />, text: 'No account' },
-  { icon: <FolderOpen size={13} />, text: 'Filesystem vaults' },
-  { icon: <GitBranch size={13} />, text: 'Git-friendly' },
+  { icon: <LockKeyhole size={13} />, text: 'No account required' },
+  { icon: <ShieldCheck size={13} />, text: 'Local project memory' },
+  { icon: <GitBranch size={13} />, text: 'Revision-aware' },
 ];
 
-const VAULT_ITEMS = ['Learning', 'Mental models', 'Books', 'Projects', 'Daily notes'];
-const BACKLINKS = ['Mental models', 'Reading queue', 'Project review'];
-const TOKENS = ['[[Mental models]]', '#systems', '#reading'];
+const BRIEF = [
+  ['Goal', 'Finish the provider hardening pass without repeating the failed shim approach.'],
+  ['Decision', 'Use the native Git path; the wrapper must preserve stdout exactly.'],
+  ['Dead end', 'Long polling loops caused transport timeouts and were abandoned.'],
+  ['Verified', 'Linux, macOS, and Windows x64/ARM64 portability matrix passed.'],
+  ['Open', 'Re-check the remaining private-state boundary before release.'],
+];
 
 export function LandingPage() {
   return (
@@ -52,11 +58,11 @@ export function LandingPage() {
           </a>
           <nav aria-label="Landing page" className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-6 text-sm text-[#b4b1a9] md:flex">
             <a href="#why" className="hover:text-white">Why Ley</a>
-            <a href="#features" className="hover:text-white">Features</a>
+            <a href="#features" className="hover:text-white">How it helps</a>
             <a href="#desktop" className="hover:text-white">Desktop</a>
           </nav>
-          <a href="/app" className="flex h-9 items-center gap-2 bg-[#c2b28f] px-3.5 text-sm font-semibold text-[#15161a] transition-colors hover:bg-[#d3c39d]">
-            Open web app <ArrowRight size={14} />
+          <a href="https://github.com/Suraj-H675/Ley-notes" className="flex h-9 items-center gap-2 bg-[#c2b28f] px-3.5 text-sm font-semibold text-[#15161a] transition-colors hover:bg-[#d3c39d]">
+            View source <ArrowRight size={14} />
           </a>
         </div>
       </header>
@@ -64,19 +70,19 @@ export function LandingPage() {
       <main>
         <section className="relative isolate overflow-hidden border-b border-white/5 px-5 pb-20 pt-20 md:pb-24 md:pt-28">
           <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 -z-10 opacity-70 [background-image:linear-gradient(to_right,rgba(255,255,255,.04)_1px,transparent_1px)] [background-size:82px_100%]" />
-          <div className="mx-auto grid max-w-5xl items-center gap-14 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:gap-16">
+          <div className="mx-auto grid max-w-5xl items-center gap-14 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-16">
             <div>
-              <p className="mb-5 max-w-sm text-sm leading-6 text-[#a19e96]">A local-first notebook for people whose ideas refuse to arrive one at a time.</p>
-              <h1 className="max-w-xl font-serif text-5xl leading-[0.99] tracking-[-0.03em] md:text-[4.35rem]">Notes with a memory.</h1>
+              <p className="mb-5 max-w-md text-sm leading-6 text-[#a19e96]">Local continuity for coding agents.</p>
+              <h1 className="max-w-xl font-serif text-5xl leading-[0.99] tracking-[-0.03em] md:text-[4.35rem]">Pick up where the last agent left off.</h1>
               <p className="mt-7 max-w-xl border-l border-white/10 pl-5 text-lg leading-8 text-[#aaa79f]">
-                Write Markdown naturally. Let links, backlinks, and structure accumulate quietly around your thinking—without surrendering your files to a service.
+                Ley keeps durable project memory small, cited, revision-aware, and under your control—so the next coding session can continue useful work without trusting stale summaries blindly.
               </p>
               <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-                <a href="/app" className="flex h-11 items-center justify-center gap-2 bg-[#c2b28f] px-5 text-sm font-semibold text-[#15161a] transition-colors hover:bg-[#d3c39d]">
-                  Start in your browser <ArrowRight size={15} />
+                <a href="#features" className="flex h-11 items-center justify-center gap-2 bg-[#c2b28f] px-5 text-sm font-semibold text-[#15161a] transition-colors hover:bg-[#d3c39d]">
+                  See how Ley works <ArrowRight size={15} />
                 </a>
-                <a href="#desktop" className="flex h-11 items-center justify-center gap-2 border border-white/10 px-5 text-sm font-medium text-[#d8d5cd] transition-colors hover:border-white/18 hover:bg-white/4">
-                  <Download size={15} /> Explore the desktop app
+                <a href="https://github.com/Suraj-H675/Ley-notes" className="flex h-11 items-center justify-center gap-2 border border-white/10 px-5 text-sm font-medium text-[#d8d5cd] transition-colors hover:border-white/18 hover:bg-white/4">
+                  <Terminal size={15} /> Follow development
                 </a>
               </div>
               <div className="mt-7 flex flex-wrap gap-x-5 gap-y-2 border-t border-white/6 pt-5 text-xs text-[#807d76]">
@@ -85,19 +91,19 @@ export function LandingPage() {
                 ))}
               </div>
             </div>
-            <KnowledgePreview />
+            <BriefPreview />
           </div>
         </section>
 
         <section id="why" className="border-b border-white/5 bg-[#131417] px-5 py-20">
           <div className="mx-auto grid max-w-5xl gap-10 md:grid-cols-[0.72fr_1.28fr] md:items-start">
             <div>
-              <p className="font-medium uppercase tracking-[0.15em] text-micro text-[#8a877f]">The premise</p>
-              <h2 className="mt-4 font-serif text-3xl leading-[1.08] tracking-[-0.02em] md:text-4xl">The graph should emerge from thinking—not become another chore.</h2>
+              <p className="font-medium uppercase tracking-[0.15em] text-micro text-[#8a877f]">The problem</p>
+              <h2 className="mt-4 font-serif text-3xl leading-[1.08] tracking-[-0.02em] md:text-4xl">Coding agents forget the hard-won parts.</h2>
             </div>
             <div className="grid gap-x-10 gap-y-6 text-base leading-7 text-[#a5a29a] sm:grid-cols-2">
-              <p>Write in a familiar workspace. Ley quietly indexes links, headings, tags, and properties while you focus on the idea itself.</p>
-              <p>Use the graph when it answers a question: what connects, what is isolated, and where an idea might lead next.</p>
+              <p>A repository tells an agent what exists now. It usually does not tell it why a decision was made, which approach already failed, or what the previous session actually verified.</p>
+              <p>Ley keeps that continuity separate from current source, then assembles only the historical context that is useful for the task in front of the agent.</p>
             </div>
           </div>
         </section>
@@ -105,9 +111,9 @@ export function LandingPage() {
         <section id="features" className="border-b border-white/5 px-5 py-20">
           <div className="mx-auto max-w-5xl">
             <div className="max-w-2xl">
-              <p className="font-medium uppercase tracking-[0.15em] text-micro text-[#8a877f]">Built for recall</p>
-              <h2 className="mt-4 font-serif text-4xl leading-[1.05] tracking-[-0.025em]">Capture is only half the job.</h2>
-              <p className="mt-4 text-[#b4b1a9]">Ley is designed around retrieving, connecting, and developing ideas over years—not collecting forgotten documents.</p>
+              <p className="font-medium uppercase tracking-[0.15em] text-micro text-[#8a877f]">Continuity, not another transcript archive</p>
+              <h2 className="mt-4 font-serif text-4xl leading-[1.05] tracking-[-0.025em]">Remember what changes the next decision.</h2>
+              <p className="mt-4 text-[#b4b1a9]">Ley is being rebuilt around a smaller contract: brief the task, search historical memory, inspect exact evidence, and checkpoint meaningful state.</p>
             </div>
             <div role="list" className="mt-12 grid border-t border-white/7 md:grid-cols-2">
               {FEATURES.map((feature) => (
@@ -126,11 +132,15 @@ export function LandingPage() {
         <section id="desktop" className="px-5 py-20">
           <div className="mx-auto flex max-w-5xl flex-col gap-8 border-y border-white/8 bg-[#141518] p-8 md:flex-row md:items-center md:justify-between md:px-12 md:py-11">
             <div className="max-w-2xl">
-              <p className="flex items-center gap-2 text-sm font-medium text-[#bfbcb4]"><FileText size={15} /> Desktop is where your files become the vault</p>
-              <h2 className="mt-4 font-serif text-3xl leading-[1.06] tracking-[-0.022em]">Keep every note in a folder you control.</h2>
-              <p className="mt-4 leading-7 text-[#b4b1a9]">The native app reads and writes ordinary Markdown, supports external editors and Git, and keeps indexes disposable.</p>
+              <p className="flex items-center gap-2 text-sm font-medium text-[#bfbcb4]"><BrainCircuit size={15} /> Native by design</p>
+              <h2 className="mt-4 font-serif text-3xl leading-[1.06] tracking-[-0.022em]">One real app. One public website.</h2>
+              <p className="mt-4 leading-7 text-[#b4b1a9]">The desktop app owns local project access, integrations, privacy controls, review, and evidence. This website only explains and showcases Ley; there is no reduced browser edition pretending to provide the same product.</p>
             </div>
-            <div className="shrink-0 border-l-2 border-[#c2b28f]/70 pl-4 font-mono text-sm text-[#b4b1a9]">npm run desktop:build</div>
+            <div className="shrink-0 space-y-2 border-l-2 border-[#c2b28f]/70 pl-4 font-mono text-xs text-[#b4b1a9]">
+              <p>desktop · local project access</p>
+              <p>website · product + docs</p>
+              <p className="text-[#7e7b74]">browser workspace · retired</p>
+            </div>
           </div>
         </section>
       </main>
@@ -142,64 +152,34 @@ export function LandingPage() {
   );
 }
 
-function KnowledgePreview() {
+function BriefPreview() {
   return (
-    <figure className="relative mx-auto w-full max-w-[590px] overflow-hidden border border-white/9 bg-[#17181b] shadow-[0_34px_84px_rgba(0,0,0,.38)]">
-      <figcaption className="flex h-9 items-center justify-between border-b border-white/6 bg-[#141518] px-3 font-mono text-[11px] uppercase tracking-[0.09em] text-[#7d7a73]">
-        <span className="text-[#b4b1a9]">Learning.md</span>
+    <figure className="relative mx-auto w-full max-w-[610px] overflow-hidden border border-white/9 bg-[#17181b] shadow-[0_34px_84px_rgba(0,0,0,.38)]">
+      <figcaption className="flex h-10 items-center justify-between border-b border-white/6 bg-[#141518] px-4 font-mono text-[11px] uppercase tracking-[0.09em] text-[#7d7a73]">
+        <span className="text-[#b4b1a9]">Task brief</span>
+        <span>5 records · bounded</span>
       </figcaption>
-      <div className="relative grid min-h-[430px] grid-cols-[190px_minmax(0,1fr)]">
-        <aside className="hidden border-r border-white/6 bg-[#151619] p-3 sm:block">
-          <p className="px-2 pb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-[#a5a29a]">Vault</p>
-          <nav className="space-y-0.5">
-            {VAULT_ITEMS.map((name, index) => (
-              <span key={name} className={`flex h-7 items-center truncate px-2 text-[12px] ${index === 0 ? 'bg-[#222427] text-[#dedbd3]' : 'text-[#8f8c85]'}`}>{name}</span>
-            ))}
-          </nav>
-          <div className="mt-5 border-t border-white/5 pt-4">
-            <p className="px-2 pb-1.5 text-[10px] uppercase tracking-[0.1em] text-[#a5a29a]">Backlinks</p>
-            {BACKLINKS.map((item) => (
-              <p key={item} className="truncate px-2 py-1 text-[11px] text-[#b4b1a9]">{item}</p>
-            ))}
+      <div className="p-5 sm:p-7">
+        <div className="flex items-start justify-between gap-5 border-b border-white/6 pb-5">
+          <div>
+            <p className="text-xs uppercase tracking-[0.12em] text-[#8b887f]">Continue portability hardening</p>
+            <p className="mt-2 max-w-md font-serif text-2xl leading-tight">Useful history, without pretending history is current source.</p>
           </div>
-        </aside>
-        <div className="min-w-0 p-5 sm:p-7">
-          <div className="mb-5 border-b border-white/5 pb-4">
-        <p className="bg-[#17181b] font-serif text-3xl leading-tight text-[#eae7df]">Learning</p>
-            <p className="mt-1.5 font-mono text-[11px] text-[#b4b1a9]">#systems · updated today</p>
-          </div>
-          <div className="space-y-3 text-[13px] leading-6 text-[#a8a59d]">
-            <p>A note becomes useful when it can be found again. Ley derives those paths from ordinary writing instead of asking for metadata first.</p>
-            <p>Links are visible but quiet. The graph is a tool for orientation, not a replacement for the page.</p>
-          </div>
-          <div className="mt-6 flex flex-wrap gap-1.5">
-            {TOKENS.map((token) => (
-              <code key={token} className="border border-white/7 bg-white/[0.035] px-2 py-1 font-mono text-[11px] text-[#cfc3a5]">{token}</code>
-            ))}
-          </div>
-          <div className="mt-7 border border-white/6 bg-[#121316] p-3">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.1em] text-[#a5a29a]"><CalendarDays size={11} /> Local graph · depth 2</div>
-            <svg viewBox="0 0 340 120" className="mt-3 h-[92px]" role="img" aria-label="Small connected note graph">
-              <g stroke="#63615b" strokeOpacity=".42" strokeWidth="1">
-                <path d="M170 62 L92 32 M170 62 L246 33 M170 62 L108 94 M170 62 L236 93 M92 32 L43 63" />
-              </g>
-              {[
-                [170, 62, 7, '#c2b28f'],
-                [92, 32, 5, '#8f9a86'],
-                [246, 33, 4, '#8f9a86'],
-                [108, 94, 4, '#8f9a86'],
-                [236, 93, 4, '#8f9a86'],
-                [43, 63, 3, '#8f9a86'],
-              ].map(([cx, cy, radius, fill], index) => (
-                <circle key={index} cx={cx} cy={cy} r={radius} fill={String(fill)} />
-              ))}
-            </svg>
-          </div>
+          <div className="flex size-10 shrink-0 items-center justify-center border border-white/8 bg-[#121316] text-[#c2b28f]"><History size={18} /></div>
         </div>
-      </div>
-      <div aria-hidden="true" className="absolute bottom-4 right-4 hidden border border-white/8 bg-[#1b1c20]/95 px-3 py-2 backdrop-blur-sm sm:block">
-        <p className="text-[12px] font-medium text-[#dedbd3]">Learning</p>
-        <p className="mt-0.5 text-[11px] text-[#b4b1a9]">Connected to 4 notes · 2 backlinks</p>
+        <div className="divide-y divide-white/5">
+          {BRIEF.map(([label, value]) => (
+            <div key={label} className="grid gap-2 py-4 sm:grid-cols-[86px_minmax(0,1fr)]">
+              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#8c887f]">{label}</span>
+              <span className="text-[13px] leading-6 text-[#c5c1b8]">{value}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-2 grid gap-2 border-t border-white/6 pt-4 text-[11px] text-[#918d84] sm:grid-cols-3">
+          <span className="flex items-center gap-1.5"><GitBranch size={12} /> revision checked</span>
+          <span className="flex items-center gap-1.5"><FileSearch size={12} /> cited evidence</span>
+          <span className="flex items-center gap-1.5"><Search size={12} /> search for more</span>
+        </div>
       </div>
     </figure>
   );

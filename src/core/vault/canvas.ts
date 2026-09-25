@@ -1,4 +1,3 @@
-import { db } from "@/infrastructure/database/db";
 import {
   listActiveCanvasFiles,
   trashActiveCanvasFile,
@@ -136,23 +135,10 @@ export interface CanvasSummary {
 
 export async function listCanvases(): Promise<CanvasSummary[]> {
   const filesystem = await listActiveCanvasFiles();
-  if (filesystem)
-    return filesystem.map((file) =>
-      summary(file.path, file.content, file.updatedAt),
-    );
-  const rows = (await db.settings.toArray()).filter((row) =>
-    row.key.startsWith("canvas:"),
+  if (!filesystem) return [];
+  return filesystem.map((file) =>
+    summary(file.path, file.content, file.updatedAt),
   );
-  return rows
-    .map((row) => {
-      const value = row.value as { content?: string; updatedAt?: number };
-      return summary(
-        row.key.slice("canvas:".length),
-        value.content ?? '{"nodes":[],"edges":[]}',
-        value.updatedAt ?? 0,
-      );
-    })
-    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export async function createCanvas(name: string): Promise<CanvasSummary> {
@@ -176,17 +162,13 @@ export async function saveCanvas(
 ): Promise<void> {
   const normalized = normalizeCanvas(document);
   const content = JSON.stringify(normalized, null, 2);
-  if (!(await writeActiveCanvasFile(path, content))) {
-    await db.settings.put({
-      key: `canvas:${path}`,
-      value: { content, updatedAt: Date.now() },
-    });
-  }
+  if (!(await writeActiveCanvasFile(path, content)))
+    throw new Error("No desktop vault is open");
 }
 
 export async function deleteCanvas(path: string): Promise<void> {
   if (!(await trashActiveCanvasFile(path)))
-    await db.settings.delete(`canvas:${path}`);
+    throw new Error("No desktop vault is open");
 }
 
 export async function addFileToCanvas(

@@ -6,6 +6,25 @@ import { resetDb } from "@/test/helpers";
 import { SessionCanvasEditor } from "./SessionCanvasEditor";
 import type { SessionContext } from "./types";
 
+const canvasFiles = vi.hoisted(
+  () => new Map<string, { content: string; updatedAt: number }>(),
+);
+
+vi.mock("@/infrastructure/vault/filesystem-vault", async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/infrastructure/vault/filesystem-vault')>()),
+  listActiveCanvasFiles: vi.fn(async () =>
+    [...canvasFiles.entries()].map(([path, value]) => ({ path, ...value })),
+  ),
+  writeActiveCanvasFile: vi.fn(async (path: string, content: string) => {
+    canvasFiles.set(path, { content, updatedAt: Date.now() });
+    return true;
+  }),
+  trashActiveCanvasFile: vi.fn(async (path: string) => {
+    canvasFiles.delete(path);
+    return true;
+  }),
+}));
+
 const session: SessionContext = {
   projectionSchemaVersion: 1,
   schemaVersion: 1,
@@ -61,7 +80,10 @@ const session: SessionContext = {
 };
 
 describe("SessionCanvasEditor", () => {
-  beforeEach(() => resetDb());
+  beforeEach(async () => {
+    canvasFiles.clear();
+    await resetDb();
+  });
 
   it("lets the user create a named Canvas and reviews the note title", async () => {
     const onLink = vi.fn().mockResolvedValue(undefined);

@@ -24,7 +24,7 @@ import {
   type NamedWorkspace,
   type WorkspaceShellLayout,
 } from '@/core/vault/workspace-layouts';
-import { activeDataKind } from '@/infrastructure/database/browser-local-vault';
+import { activeDataKind } from '@/infrastructure/database/active-vault-state';
 import { db } from '@/infrastructure/database/db';
 import { Button } from '@/shared/components/Button';
 import { useUIStore } from '@/shared/state/ui';

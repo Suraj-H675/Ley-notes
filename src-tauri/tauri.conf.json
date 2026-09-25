@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "app.leynotes.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev:desktop-ui",
     "devUrl": "http://localhost:3000",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
+    "beforeBuildCommand": "npm run build:desktop-ui",
+    "frontendDist": "../dist-desktop"
   },
   "app": {
     "windows": [
