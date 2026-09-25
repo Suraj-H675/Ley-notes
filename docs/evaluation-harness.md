@@ -47,11 +47,13 @@ developer's real Ley configuration or locally installed semantic model from sile
 retrieval system an acceptance scenario exercises. Deterministic scenarios therefore start with no
 semantic model unless a future fixture explicitly stages one inside that run's private cache.
 
-The Git revision portability runner additionally creates one owner-private temporary root with
+The Git revision portability runner additionally creates one temporary private-state root with
 pre-created `config/` and `cache/` children and supplies it as `LEY_EVAL_PRIVATE_ROOT`. Feature-enabled
 Ley children derive both authority registries and semantic cache from that root on every operating
 system, while the runner points its XDG variables at the same children for its own direct fixture
-inspection. Invalid roots fail closed and never fall back to the developer/runner profile.
+inspection. Invalid roots fail closed and never fall back to the developer/runner profile. Unix eval
+roots are mode-checked as owner-only. Windows eval roots reject reparse-point redirects and live under
+the runner's per-user temporary directory; explicit DACL inspection is still tracked as open validation.
 
 ## What the harness measures
 

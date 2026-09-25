@@ -231,7 +231,15 @@ fn git_is_shallow_repository(project_root: &Path) -> bool {
     if !output.status.success() {
         return true;
     }
-    output.stdout == b"true\n"
+    parse_git_shallow_repository_output(&output.stdout)
+}
+
+fn parse_git_shallow_repository_output(output: &[u8]) -> bool {
+    match std::str::from_utf8(output).map(str::trim) {
+        Ok("false") => false,
+        Ok("true") => true,
+        _ => true,
+    }
 }
 
 fn valid_git_object_id(value: &str) -> bool {
@@ -393,6 +401,17 @@ mod tests {
             classify_revision(project, None, None, Some(&base), Some("main"), false),
             RevisionCompatibility::Unknown
         );
+    }
+
+    #[test]
+    fn shallow_repository_output_accepts_lf_and_crlf_without_guessing() {
+        assert!(parse_git_shallow_repository_output(b"true\n"));
+        assert!(parse_git_shallow_repository_output(b"true\r\n"));
+        assert!(!parse_git_shallow_repository_output(b"false\n"));
+        assert!(!parse_git_shallow_repository_output(b"false\r\n"));
+        assert!(parse_git_shallow_repository_output(b""));
+        assert!(parse_git_shallow_repository_output(b"unknown\n"));
+        assert!(parse_git_shallow_repository_output(&[0xff]));
     }
 
     #[test]

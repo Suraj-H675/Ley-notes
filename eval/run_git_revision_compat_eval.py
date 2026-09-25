@@ -57,8 +57,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def git_wrapper_main(args: list[str]) -> int:
-    real_git = os.environ["LEY_GIT_PROBE_REAL_GIT"]
+def log_git_command(args: list[str]) -> None:
     log = Path(os.environ["LEY_GIT_PROBE_LOG"])
     with log.open("a", encoding="utf-8") as handle:
         handle.write(
@@ -74,8 +73,18 @@ def git_wrapper_main(args: list[str]) -> int:
             + "\n"
         )
         handle.flush()
+
+
+def git_wrapper_main(args: list[str]) -> int:
+    real_git = os.environ["LEY_GIT_PROBE_REAL_GIT"]
+    log_git_command(args)
     os.execv(real_git, [real_git, *args])
     return 127
+
+
+def git_log_only_main(args: list[str]) -> int:
+    log_git_command(args)
+    return 0
 
 
 def write_git_wrapper(directory: Path) -> Path:
@@ -88,17 +97,32 @@ def write_git_wrapper(directory: Path) -> Path:
             )
         source = directory / "git_wrapper.rs"
         source.write_text(
-            r'''use std::{env, process::{exit, Command}};
+            r'''use std::{env, ffi::OsString, process::{exit, Command, Stdio}};
 
 fn main() {
     let python = env::var("LEY_GIT_PROBE_PYTHON").expect("missing probe Python path");
     let runner = env::var("LEY_GIT_PROBE_RUNNER").expect("missing probe runner path");
-    let status = Command::new(python)
-        .arg(runner)
-        .arg("--git-wrapper")
-        .args(env::args().skip(1))
+    let real_git = env::var("LEY_GIT_PROBE_REAL_GIT").expect("missing real Git path");
+    let args: Vec<OsString> = env::args_os().skip(1).collect();
+
+    let logged = Command::new(&python)
+        .arg(&runner)
+        .arg("--git-log-only")
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
         .status()
         .expect("failed to launch Git probe logger");
+    if !logged.success() {
+        exit(logged.code().unwrap_or(1));
+    }
+
+    // Launch real Git directly from the native shim so Ley's inherited stdout/stderr pipe handles
+    // are not routed through Python's Windows exec emulation.
+    let status = Command::new(real_git)
+        .args(&args)
+        .status()
+        .expect("failed to launch real Git");
     exit(status.code().unwrap_or(1));
 }
 ''',
@@ -137,6 +161,22 @@ def load_git_log(log: Path) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
             rows.append(payload)
     return rows
+
+
+def verify_git_wrapper_passthrough(wrapper: Path, env: dict[str, str], log: Path) -> None:
+    result = subprocess.run(
+        [str(wrapper), "--version"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip().startswith("git version "):
+        detail = result.stderr.strip() or result.stdout.strip() or "no Git stdout received"
+        raise RuntimeError(
+            "temporary Git instrumentation shim did not preserve real Git stdout: " + detail
+        )
+    log.unlink(missing_ok=True)
 
 
 def fixture_git(project: Path, args: list[str]) -> str:
@@ -495,7 +535,7 @@ def main() -> int:
             appdata.mkdir()
             local_appdata.mkdir()
             log = base / "git-commands.jsonl"
-            write_git_wrapper(wrapper_dir)
+            wrapper = write_git_wrapper(wrapper_dir)
             wrapper_path = str(wrapper_dir) + os.pathsep + os.environ.get("PATH", "")
             harness.EVAL_ENV.clear()
             harness.EVAL_ENV.update(
@@ -514,6 +554,9 @@ def main() -> int:
                     "LEY_GIT_PROBE_RUNNER": str(Path(__file__).resolve()),
                 }
             )
+            wrapper_env = os.environ.copy()
+            wrapper_env.update(harness.EVAL_ENV)
+            verify_git_wrapper_passthrough(wrapper, wrapper_env, log)
             cases: dict[str, Any] = {}
             for name, expected, expected_live_git, prepare in CASE_PREPARERS:
                 cases[name] = evaluate_case(
@@ -606,4 +649,6 @@ def main() -> int:
 if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] == "--git-wrapper":
         raise SystemExit(git_wrapper_main(sys.argv[2:]))
+    if len(sys.argv) >= 2 and sys.argv[1] == "--git-log-only":
+        raise SystemExit(git_log_only_main(sys.argv[2:]))
     raise SystemExit(main())
