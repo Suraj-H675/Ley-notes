@@ -2873,7 +2873,9 @@ mod tests {
         );
         assert!(!outside.join("escape.md").exists());
         assert!(read_vault_file(vault.clone(), "linked/secret.md".into()).is_err());
-        assert!(scan_vault(vault).is_err());
+        let scanned = scan_vault(vault).unwrap();
+        assert!(scanned.iter().all(|file| file.path != "linked/secret.md"));
+        assert!(scanned.iter().all(|file| file.content != "outside-secret"));
         assert_eq!(
             fs::read_to_string(outside.join("secret.md")).unwrap(),
             "outside-secret"
@@ -2975,6 +2977,73 @@ mod tests {
                 _ => unreachable!(),
             }
 
+            fs::remove_dir_all(root).unwrap();
+            fs::remove_dir_all(outside).unwrap();
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reserved_vault_directories_cannot_be_windows_junctions() {
+        for reserved in ["attachments", "canvases", ".trash"] {
+            let root = std::env::temp_dir().join(format!(
+                "ley-vault-reserved-junction-{reserved}-{}",
+                std::process::id()
+            ));
+            let outside = std::env::temp_dir().join(format!(
+                "ley-vault-reserved-junction-outside-{reserved}-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&root);
+            let _ = fs::remove_dir_all(&outside);
+            fs::create_dir_all(&root).unwrap();
+            fs::create_dir_all(&outside).unwrap();
+            let junction = root.join(reserved);
+            let output = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&junction)
+                .arg(&outside)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "could not create Windows junction for {reserved}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let vault = root.to_string_lossy().into_owned();
+
+            match reserved {
+                "attachments" => {
+                    assert!(write_vault_attachment(
+                        vault,
+                        "attachments/escape.png".into(),
+                        vec![1, 2, 3]
+                    )
+                    .is_err());
+                    assert!(!outside.join("escape.png").exists());
+                }
+                "canvases" => {
+                    assert!(write_canvas_file(
+                        vault.clone(),
+                        "canvases/escape.canvas".into(),
+                        "{\"nodes\":[],\"edges\":[]}".into()
+                    )
+                    .is_err());
+                    let scanned = scan_canvases(vault).unwrap_or_default();
+                    assert!(scanned.is_empty());
+                    assert!(!outside.join("escape.canvas").exists());
+                }
+                ".trash" => {
+                    write_vault_file(vault.clone(), "safe.md".into(), "safe".into()).unwrap();
+                    assert!(trash_vault_file(vault.clone(), "safe.md".into()).is_err());
+                    assert!(scan_trashed_vault_files(vault).is_err());
+                    assert_eq!(fs::read_to_string(root.join("safe.md")).unwrap(), "safe");
+                    assert!(fs::read_dir(&outside).unwrap().next().is_none());
+                }
+                _ => unreachable!(),
+            }
+
+            fs::remove_dir(&junction).unwrap();
             fs::remove_dir_all(root).unwrap();
             fs::remove_dir_all(outside).unwrap();
         }
