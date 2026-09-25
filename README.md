@@ -66,7 +66,9 @@ The website and desktop share reusable source code where useful, but they have *
 
 ## Development
 
-Requirements today: Node.js 22+, Rust stable, and the Tauri 2 platform prerequisites for your operating system. Explicit checked-in toolchain pins are planned as part of the reset.
+Requirements today: Node.js **24.21.0** and Rust **1.98.1**, pinned by `.node-version` and
+`rust-toolchain.toml`, plus the Tauri 2 platform prerequisites for your operating system. With `rustup`
+installed, the repository toolchain file selects/installs the pinned Rust toolchain automatically.
 
 ```bash
 npm install
@@ -85,6 +87,11 @@ cargo check --locked --workspace
 ```
 
 `npm run build` currently aliases the website production build.
+
+Routine GitHub Actions CI runs on pushes to `main` and pull requests. It continuously checks the frontend
+typecheck/lint/tests/website+desktop-UI builds/production dependency audit and the pinned Rust workspace
+format/check/tests on Ubuntu. The manual six-lane portability/security workflow remains separate because
+its Linux/macOS/Windows x64+ARM64 matrix is intentionally more expensive and evidence-oriented.
 
 ## Migration status
 
