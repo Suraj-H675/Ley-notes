@@ -67,8 +67,18 @@ jobs:
       - name: Verify native vault confinement
         run: cargo test --locked -p ley-notes vault_confinement_ -- --nocapture
 
-      - name: Verify native portability smoke
-        run: cargo test --locked -p ley-notes portability_ -- --nocapture
+      - name: Verify native project-catalog portability
+        run: >-
+          cargo test --locked -p ley-notes
+          portability_project_catalog_summarizes_ready_unbound_and_unavailable_projects
+          -- --nocapture
+
+      - name: Verify native watcher event delivery
+        if: runner.os != 'macOS'
+        run: >-
+          cargo test --locked -p ley-notes
+          portability_native_watcher_reports_external_markdown_changes_and_ignores_hidden_files
+          -- --nocapture
 
       - name: Verify cross-process private registry contention
         run: cargo test --locked -p ley-core --test binding_process_contention

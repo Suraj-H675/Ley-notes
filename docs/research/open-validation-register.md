@@ -66,6 +66,8 @@ direction. Future experiments should compare against that baseline rather than r
 This does **not** require changing `LEY.md`: §36 is intentionally a durable research agenda. The register
 simply records how far current evidence has moved each question.
 
+- Routine CI run `36164225888` passed on pinned Node 24.21.0 / Rust 1.98.1 after the stale consolidation-inbox schema assertion was corrected: frontend install/typecheck/lint/tests/website+desktop builds/production audit all passed, and the Ubuntu Rust job passed format, full workspace check, and full workspace tests.
+
 ## Highest-value next experiments
 
 ### 1. Frontier-agent complexity ladder and targeted compiler ablations
@@ -137,6 +139,14 @@ privacy, latency, and operational cost.
   have hosted evidence that they do not follow these tested link/reparse escape shapes outside the
   selected vault. This remains evidence for the fixed hosted filesystems/runner families rather than a
   proof covering every possible filesystem or reparse tag.
+- Pinned-toolchain follow-up runs exposed a narrower desktop portability boundary: the project catalog
+  passes on hosted Linux/macOS/Windows x64+ARM64, while Notify 8.2.0 native watcher delivery repeatedly
+  produced no callback on GitHub-hosted macOS 15 Intel or Apple Silicon within an 8-second bounded
+  readiness probe. Linux/Windows hosted lanes and local Linux observed the event. The workflow therefore
+  keeps project-catalog portability blocking on all six lanes but scopes raw watcher-delivery blocking to
+  Linux/Windows. This is not evidence that real-machine macOS watcher delivery is broken or proven; it is
+  an explicit hosted-runner evidence gap. Do not erase that distinction by adding arbitrary sleeps or a
+  production polling backend solely for CI.
 - The runner uses only `status`, `rev-parse`, and `merge-base`, disables optional locks/lazy fetch,
   verifies that the temporary Git shim preserves real Git stdout before measuring cases, and requires
   all normal cases to observe the instrumentation shim.

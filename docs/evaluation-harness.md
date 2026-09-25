@@ -58,6 +58,16 @@ Linux/macOS x64+ARM64 rejected final/parent/reserved-directory symlink escapes, 
 x64+ARM64 rejected real `mklink /J` parent and reserved-directory junction escapes. The tests assert
 that external targets are not modified or surfaced through recursive vault scans.
 
+The later native-desktop portability smoke is intentionally split by evidence boundary. Project-catalog
+behavior remains a six-lane Linux/macOS/Windows x64+ARM64 gate. Raw watcher callback delivery remains a
+hosted Linux/Windows gate only: on GitHub-hosted macOS 15 Intel and Apple Silicon, Notify 8.2.0's native
+FSEvents backend repeatedly failed to emit the test mutation within a bounded 8-second readiness probe
+even though watcher construction succeeded and the same test passed locally plus on hosted Linux/Windows.
+Ley therefore does **not** claim hosted-macOS FSEvents delivery is proven. The legacy desktop keeps an
+authoritative refresh immediately after watcher startup and manual refresh remains available; the raw
+watcher test stays in the repository for real-machine/manual macOS validation rather than being weakened
+or replaced with permanent polling solely to make the hosted runner green.
+
 Each run also owns private temporary `XDG_CONFIG_HOME` **and** `XDG_CACHE_HOME` roots. This prevents a
 developer's real Ley configuration or locally installed semantic model from silently changing which
 retrieval system an acceptance scenario exercises. Deterministic scenarios therefore start with no
