@@ -45,6 +45,10 @@ DEFAULT_MAX_RESULTS = 8
 DEFAULT_MAX_TOKENS = 500
 MAX_REPETITIONS = 10
 MAX_SANDBOX_OUTPUT_BYTES = 1_048_576
+MAX_ORACLE_SCRIPT_BYTES = 65_536
+ORACLE_REFERENCE_TIMEOUT_SECONDS = 30
+COMPARISON_VARIANTS = ("baseline", "handoff", "minimal", "ley")
+SIMPLER_VARIANTS = ("baseline", "handoff", "minimal")
 DEFAULT_RUNNER_ENV = (
     "LANG",
     "LC_ALL",
@@ -87,6 +91,13 @@ def validate_fixture_schema(fixture: dict[str, object], line_number: int) -> Non
         value = fixture.get(field)
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(f"{prefix} requires non-empty string {field}")
+    task_family = fixture.get("task_family")
+    if (
+        not isinstance(task_family, str)
+        or not task_family.strip()
+        or len(task_family) > 64
+    ):
+        raise RuntimeError(f"{prefix} task_family must be a non-empty string up to 64 characters")
 
     project_files = fixture.get("project_files")
     if not isinstance(project_files, dict) or not project_files:
@@ -138,31 +149,55 @@ def validate_fixture_schema(fixture: dict[str, object], line_number: int) -> Non
         )
 
     oracle_probe = fixture.get("oracle_probe")
-    if not isinstance(oracle_probe, dict):
-        raise RuntimeError(f"{prefix} requires oracle_probe")
-    module = oracle_probe.get("module")
-    function = oracle_probe.get("function")
-    inputs = oracle_probe.get("inputs")
-    if (
-        not isinstance(module, str)
-        or module not in project_files
-        or Path(module).is_absolute()
-        or ".." in Path(module).parts
-    ):
-        raise RuntimeError(f"{prefix} oracle_probe.module must name an initial project file")
-    if (
-        not isinstance(function, str)
-        or not function.isidentifier()
-    ):
-        raise RuntimeError(f"{prefix} oracle_probe.function must be a Python identifier")
-    if not isinstance(inputs, list):
-        raise RuntimeError(f"{prefix} oracle_probe.inputs must be a JSON array")
-    if not isinstance(fixture.get("secret_contract"), dict):
-        expected = fixture.get("oracle_expected")
-        if not isinstance(expected, list) or len(expected) != len(inputs):
+    oracle_script = fixture.get("oracle_script")
+    if (oracle_probe is None) == (oracle_script is None):
+        raise RuntimeError(
+            f"{prefix} requires exactly one of oracle_probe or oracle_script"
+        )
+    if oracle_probe is not None:
+        if not isinstance(oracle_probe, dict):
+            raise RuntimeError(f"{prefix} oracle_probe must be an object")
+        module = oracle_probe.get("module")
+        function = oracle_probe.get("function")
+        inputs = oracle_probe.get("inputs")
+        if (
+            not isinstance(module, str)
+            or module not in project_files
+            or Path(module).is_absolute()
+            or ".." in Path(module).parts
+        ):
+            raise RuntimeError(f"{prefix} oracle_probe.module must name an initial project file")
+        if not isinstance(function, str) or not function.isidentifier():
+            raise RuntimeError(f"{prefix} oracle_probe.function must be a Python identifier")
+        if not isinstance(inputs, list):
+            raise RuntimeError(f"{prefix} oracle_probe.inputs must be a JSON array")
+        if not isinstance(fixture.get("secret_contract"), dict):
+            expected = fixture.get("oracle_expected")
+            if not isinstance(expected, list) or len(expected) != len(inputs):
+                raise RuntimeError(
+                    f"{prefix} non-secret fixtures require oracle_expected matching oracle_probe.inputs"
+                )
+    else:
+        if not isinstance(oracle_script, str) or not oracle_script.strip():
+            raise RuntimeError(f"{prefix} oracle_script must be non-empty Python source")
+        if len(oracle_script.encode("utf-8")) > MAX_ORACLE_SCRIPT_BYTES:
             raise RuntimeError(
-                f"{prefix} non-secret fixtures require oracle_expected matching oracle_probe.inputs"
+                f"{prefix} oracle_script exceeds {MAX_ORACLE_SCRIPT_BYTES} bytes"
             )
+        if "oracle_expected" in fixture:
+            raise RuntimeError(f"{prefix} oracle_script fixtures cannot declare oracle_expected")
+        solution_files = fixture.get("oracle_solution_files")
+        if not isinstance(solution_files, dict) or not solution_files:
+            raise RuntimeError(f"{prefix} oracle_script fixtures require oracle_solution_files")
+        for relative, body in solution_files.items():
+            if not isinstance(relative, str) or not isinstance(body, str):
+                raise RuntimeError(
+                    f"{prefix} oracle_solution_files must map string paths to string bodies"
+                )
+            if relative not in allowed:
+                raise RuntimeError(
+                    f"{prefix} oracle solution path {relative!r} is not an allowed changed file"
+                )
     secret_contract = fixture.get("secret_contract")
     if secret_contract is not None:
         if (
@@ -170,6 +205,8 @@ def validate_fixture_schema(fixture: dict[str, object], line_number: int) -> Non
             or secret_contract.get("kind") not in {"retry-schedule-v1"}
         ):
             raise RuntimeError(f"{prefix} contains an unsupported secret_contract")
+        if oracle_probe is None:
+            raise RuntimeError(f"{prefix} secret_contract currently requires oracle_probe")
 
 
 def load_master_seed(path: Path | None) -> bytes:
@@ -640,12 +677,64 @@ def render_context(pack: dict[str, object]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_handoff(fixture: dict[str, object]) -> str:
+    prior = fixture.get("prior_memory")
+    if not isinstance(prior, dict):
+        raise RuntimeError("agent task fixture requires prior_memory")
+    lines = [
+        "# HANDOFF",
+        "",
+        "This is a concise human handoff from the previous work session.",
+        "Verify it against the live repository before changing code.",
+        "",
+        "## Goal",
+        str(prior["goal"]).strip(),
+        "",
+        "## Last known state",
+        str(prior["summary"]).strip(),
+        "",
+        f"## Decision — {str(prior['decision_title']).strip()}",
+        str(prior["decision"]).strip(),
+    ]
+    rationale = str(prior.get("rationale", "")).strip()
+    if rationale:
+        lines.extend(["", "## Why", rationale])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_minimal_brief(fixture: dict[str, object]) -> str:
+    """Render the deliberately small non-Ley benchmark context baseline."""
+
+    prior = fixture.get("prior_memory")
+    if not isinstance(prior, dict):
+        raise RuntimeError("agent task fixture requires prior_memory")
+    lines = [
+        "# Minimal continuity brief (benchmark baseline)",
+        "",
+        "Historical context only. Live repository evidence wins if they conflict.",
+        "Source: one prior completed work session.",
+        "",
+        f"Goal: {str(prior['goal']).strip()}",
+        f"State: {str(prior['summary']).strip()}",
+        f"Decision: {str(prior['decision']).strip()}",
+    ]
+    rationale = str(prior.get("rationale", "")).strip()
+    if rationale:
+        lines.append(f"Rationale: {rationale}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def approximate_text_tokens(text: str) -> int:
+    return max(1, (len(text) + 3) // 4)
+
+
 def build_agent_prompt(task: str, context: str | None) -> str:
     parts = [
         "You are running one isolated coding-task evaluation.",
         "Work only inside the current repository. Do not read parent directories.",
         "Do not invoke Ley, network services, external memory, or hidden evaluation files.",
         "Use only the supplied prompt/context and files inside this repository.",
+        "Inspect repository files for relevant current or handoff information before editing.",
         "Do not ask clarifying questions; make the best evidence-grounded change you can.",
         "You may inspect files and run local commands/tests.",
         "",
@@ -1025,6 +1114,83 @@ def run_oracle_probe(
     return summary
 
 
+def run_oracle_script(
+    fixture: dict[str, object],
+    project: Path,
+    timeout_seconds: int,
+    capture_raw: bool,
+) -> dict[str, object]:
+    script = fixture.get("oracle_script")
+    if not isinstance(script, str) or not script.strip():
+        raise RuntimeError("materialized fixture is missing oracle script state")
+    sandbox = run_sandboxed_project_command(
+        ["python3", "-c", script],
+        project,
+        timeout_seconds,
+        capture_raw=True,
+    )
+    stdout_raw = bytes(sandbox.pop("_stdout", b""))
+    stderr_raw = bytes(sandbox.pop("_stderr", b""))
+    passed = bool(sandbox["completed"])
+    summary: dict[str, object] = {
+        "attempted": True,
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "exitCode": sandbox["exitCode"],
+        "timedOut": sandbox["timedOut"],
+        "stdoutSha256": sandbox["stdoutSha256"],
+        "stderrSha256": sandbox["stderrSha256"],
+    }
+    if capture_raw:
+        summary["_stdout"] = stdout_raw.decode("utf-8", errors="replace")
+        summary["_stderr"] = stderr_raw.decode("utf-8", errors="replace")
+    return summary
+
+
+def run_hidden_oracle(
+    fixture: dict[str, object],
+    project: Path,
+    timeout_seconds: int,
+    capture_raw: bool,
+) -> dict[str, object]:
+    if fixture.get("oracle_probe") is not None:
+        return run_oracle_probe(fixture, project, timeout_seconds, capture_raw)
+    if fixture.get("oracle_script") is not None:
+        return run_oracle_script(fixture, project, timeout_seconds, capture_raw)
+    raise RuntimeError("materialized fixture has no hidden oracle")
+
+
+def validate_script_oracle_reference(
+    fixture: dict[str, object],
+    root: Path,
+    timeout_seconds: int,
+) -> dict[str, object] | None:
+    if fixture.get("oracle_script") is None:
+        return None
+    files = fixture.get("project_files")
+    solution_files = fixture.get("oracle_solution_files")
+    if not isinstance(files, dict) or not isinstance(solution_files, dict):
+        raise RuntimeError("script-oracle fixture is missing project/reference files")
+    project = root / "oracle-project"
+    project.mkdir(parents=True)
+    write_project_files(project, {str(path): str(body) for path, body in files.items()})
+    initial = run_hidden_oracle(fixture, project, timeout_seconds, False)
+    if initial.get("passed") is not False:
+        raise RuntimeError("script-oracle fixture hidden test passes the initial buggy project")
+    write_project_files(
+        project,
+        {str(path): str(body) for path, body in solution_files.items()},
+    )
+    reference = run_hidden_oracle(fixture, project, timeout_seconds, False)
+    if reference.get("passed") is not True:
+        raise RuntimeError("script-oracle fixture reference solution does not pass hidden verification")
+    return {
+        "initialStatus": initial["status"],
+        "referenceStatus": reference["status"],
+        "referenceSolutionFileCount": len(solution_files),
+    }
+
+
 def evaluate_task_constraints(
     fixture: dict[str, object],
     project: Path,
@@ -1144,6 +1310,11 @@ def validate_compiled_fixture(
     git_run(project, ["init", "-b", "main"])
     git_commit_all(project, "agent-eval fixture")
     try:
+        oracle_reference = validate_script_oracle_reference(
+            fixture,
+            root / "oracle-validation",
+            ORACLE_REFERENCE_TIMEOUT_SECONDS,
+        )
         init_project(project, "Agent downstream eval validation", vault)
         seed_prior_memory(project, fixture)
         rendered, utility = prepare_ley_context(
@@ -1160,6 +1331,7 @@ def validate_compiled_fixture(
             "contextCharacters": len(rendered),
             "estimatedTokens": utility["estimatedTokens"],
             "evidenceState": utility["evidenceState"],
+            "oracleReferenceValidation": oracle_reference,
         }
     finally:
         if previous_config is None:
@@ -1420,14 +1592,23 @@ def variants_for_repetition(
     first_variant: str,
     repetition: int,
 ) -> tuple[str, ...]:
-    if selected_variant != "both":
+    if selected_variant not in {"all", "both"}:
         return (selected_variant,)
-    first = (
-        first_variant
-        if repetition % 2 == 1
-        else ("ley" if first_variant == "baseline" else "baseline")
-    )
-    return (first, "ley" if first == "baseline" else "baseline")
+    if selected_variant == "both":
+        if first_variant not in {"baseline", "ley"}:
+            raise RuntimeError("--variant both requires baseline or ley as --first-variant")
+        first = (
+            first_variant
+            if repetition % 2 == 1
+            else ("ley" if first_variant == "baseline" else "baseline")
+        )
+        return (first, "ley" if first == "baseline" else "baseline")
+
+    ordered = list(COMPARISON_VARIANTS)
+    start = ordered.index(first_variant)
+    ordered = ordered[start:] + ordered[:start]
+    offset = (repetition - 1) % len(ordered)
+    return tuple(ordered[offset:] + ordered[:offset])
 
 
 def summarize_hidden_oracles(
@@ -1445,6 +1626,38 @@ def summarize_hidden_oracles(
         "skippedCount": skipped,
         "passRateAmongAttempted": (
             passed / attempted if attempted else None
+        ),
+    }
+
+
+def summarize_variant_results(results: list[dict[str, object]]) -> dict[str, object]:
+    task_rate = (
+        sum(bool(item["taskPassed"]) for item in results) / len(results)
+        if results
+        else None
+    )
+    runner_seconds = [
+        float(item["runner"]["seconds"])
+        for item in results
+        if isinstance(item.get("runner"), dict)
+        and isinstance(item["runner"].get("seconds"), (int, float))
+    ]
+    context_characters = [
+        int(item["context"]["contextCharacters"])
+        for item in results
+        if isinstance(item.get("context"), dict)
+        and isinstance(item["context"].get("contextCharacters"), int)
+    ]
+    return {
+        "taskPassRate": task_rate,
+        "hiddenOracle": summarize_hidden_oracles(results),
+        "meanRunnerSeconds": (
+            sum(runner_seconds) / len(runner_seconds) if runner_seconds else None
+        ),
+        "meanContextCharacters": (
+            sum(context_characters) / len(context_characters)
+            if context_characters
+            else 0
         ),
     }
 
@@ -1475,17 +1688,41 @@ def execute_variant(
     max_tokens: int,
     capture_audit: bool,
 ) -> dict[str, object]:
+    if variant not in COMPARISON_VARIANTS:
+        raise RuntimeError(f"unsupported agent-task variant: {variant!r}")
     project = root / "project"
     project.mkdir(parents=True)
     files = fixture.get("project_files")
     if not isinstance(files, dict):
         raise RuntimeError("agent task fixture requires project_files")
     write_project_files(project, {str(path): str(body) for path, body in files.items()})
+
+    context_text: str | None = None
+    prompt_context: str | None = None
+    context_metadata: dict[str, object] | None = None
+    if variant == "handoff":
+        context_text = render_handoff(fixture)
+        (project / "HANDOFF.md").write_text(context_text, encoding="utf-8")
+        context_metadata = {
+            "kind": "human-handoff-file",
+            "contextSha256": sha256_text(context_text),
+            "contextCharacters": len(context_text),
+            "estimatedTokens": approximate_text_tokens(context_text),
+        }
+    elif variant == "minimal":
+        context_text = render_minimal_brief(fixture)
+        prompt_context = context_text
+        context_metadata = {
+            "kind": "fixture-derived-minimal-brief-baseline",
+            "contextSha256": sha256_text(context_text),
+            "contextCharacters": len(context_text),
+            "estimatedTokens": approximate_text_tokens(context_text),
+        }
+
     git_run(project, ["init", "-b", "main"])
     git_commit_all(project, "agent-eval fixture")
     initial_snapshot = snapshot_project_tree(project)
 
-    context: str | None = None
     utility: dict[str, object] | None = None
     memory_project: Path | None = None
     memory_root: Path | None = None
@@ -1501,16 +1738,25 @@ def execute_variant(
             EVAL_ENV["XDG_CONFIG_HOME"] = str(memory_root / "config")
             init_project(memory_project, "Agent downstream eval", vault)
             seed_prior_memory(memory_project, fixture)
-            context, utility = prepare_ley_context(
+            context_text, utility = prepare_ley_context(
                 memory_project,
                 fixture,
                 max_results=max_results,
                 max_tokens=max_tokens,
             )
+            prompt_context = context_text
+            context_metadata = {
+                "kind": "current-full-ley-compiled-context",
+                **{
+                    key: value
+                    for key, value in utility.items()
+                    if key not in {"sessionId", "bindingId"}
+                },
+            }
             memory_snapshot = snapshot_directory(memory_root)
             shutil.rmtree(memory_root)
 
-        prompt = build_agent_prompt(str(fixture["task"]), context)
+        prompt = build_agent_prompt(str(fixture["task"]), prompt_context)
         runner = run_external_agent(
             command,
             project,
@@ -1537,7 +1783,7 @@ def execute_variant(
             timeout_seconds,
         )
         oracle = (
-            run_oracle_probe(
+            run_hidden_oracle(
                 fixture,
                 project,
                 timeout_seconds,
@@ -1605,21 +1851,13 @@ def execute_variant(
             "diffSha256": sha256_bytes(diff_material),
             "promptSha256": sha256_text(prompt),
             "promptCharacters": len(prompt),
-            "context": (
-                {
-                    key: value
-                    for key, value in utility.items()
-                    if key not in {"sessionId", "bindingId"}
-                }
-                if utility is not None
-                else None
-            ),
+            "context": context_metadata,
             "utilityObservation": utility_result,
         }
         if capture_audit:
             result["_audit"] = {
                 "prompt": prompt,
-                "context": context or "",
+                "context": context_text or "",
                 "runnerStdout": runner_stdout,
                 "runnerStderr": runner_stderr,
                 "oracleStdout": oracle_stdout,
@@ -1753,16 +1991,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--variant",
-        choices=("both", "baseline", "ley"),
-        default="both",
-        help="Run both comparison arms or only one arm",
+        choices=("all", "both", *COMPARISON_VARIANTS),
+        default="all",
+        help=(
+            "Run all four comparison arms, legacy baseline+Ley, or one arm. "
+            "The minimal arm is a fixture-derived benchmark baseline, not the redesigned Ley implementation."
+        ),
     )
     parser.add_argument("--repetitions", type=int, default=1)
     parser.add_argument(
         "--first-variant",
-        choices=("baseline", "ley"),
+        choices=COMPARISON_VARIANTS,
         default="baseline",
-        help="First arm for repetition 1; later repetitions alternate arm order",
+        help="First arm for repetition 1; multi-arm runs rotate order across repetitions",
     )
     parser.add_argument("--timeout-seconds", type=int, default=600)
     parser.add_argument("--max-results", type=int, default=DEFAULT_MAX_RESULTS)
@@ -1798,7 +2039,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--require-ley-advantage",
         action="store_true",
         help=(
-            "Exit non-zero unless Ley's overall task pass rate is strictly above baseline"
+            "Exit non-zero unless Ley's overall task pass rate is strictly above every simpler arm included"
         ),
     )
     return parser.parse_args(argv)
@@ -1868,8 +2109,10 @@ def main(argv: list[str] | None = None) -> int:
             or name in {"HOME", "PATH", "PWD", "OLDPWD", "USER", "LOGNAME"}
         ):
             raise SystemExit(f"invalid --runner-env name: {name!r}")
-    if args.require_ley_advantage and args.variant != "both":
-        raise SystemExit("--require-ley-advantage requires --variant both")
+    if args.variant == "both" and args.first_variant not in {"baseline", "ley"}:
+        raise SystemExit("--variant both requires --first-variant baseline or ley")
+    if args.require_ley_advantage and args.variant not in {"all", "both"}:
+        raise SystemExit("--require-ley-advantage requires --variant all or both")
     command = shlex.split(args.runner_command)
     if not command:
         raise SystemExit("--runner-command parsed to an empty command")
@@ -1930,28 +2173,32 @@ def main(argv: list[str] | None = None) -> int:
                     flush=True,
                 )
 
-    baseline = [item for item in results if item["variant"] == "baseline"]
-    ley = [item for item in results if item["variant"] == "ley"]
-    baseline_task_rate = (
-        sum(bool(item["taskPassed"]) for item in baseline) / len(baseline)
-        if baseline
-        else None
-    )
-    ley_task_rate = (
-        sum(bool(item["taskPassed"]) for item in ley) / len(ley)
-        if ley
-        else None
-    )
+    results_by_variant = {
+        variant: [item for item in results if item["variant"] == variant]
+        for variant in COMPARISON_VARIANTS
+    }
+    summaries = {
+        variant: summarize_variant_results(items)
+        for variant, items in results_by_variant.items()
+    }
+    baseline_task_rate = summaries["baseline"]["taskPassRate"]
+    handoff_task_rate = summaries["handoff"]["taskPassRate"]
+    minimal_task_rate = summaries["minimal"]["taskPassRate"]
+    ley_task_rate = summaries["ley"]["taskPassRate"]
+    simpler_rates = [
+        summaries[variant]["taskPassRate"]
+        for variant in SIMPLER_VARIANTS
+        if summaries[variant]["taskPassRate"] is not None
+    ]
     task_advantage = (
-        baseline_task_rate is not None
-        and ley_task_rate is not None
-        and ley_task_rate > baseline_task_rate
+        ley_task_rate is not None
+        and bool(simpler_rates)
+        and all(ley_task_rate > rate for rate in simpler_rates)
     )
-    baseline_oracles = summarize_hidden_oracles(baseline)
-    ley_oracles = summarize_hidden_oracles(ley)
     report = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "taskId": fixture["id"],
+        "taskFamily": fixture.get("task_family"),
         "fixtureSecretCommitment": fixture.get("_secret_commitment"),
         "runner": {
             "executable": Path(command[0]).name,
@@ -1965,19 +2212,28 @@ def main(argv: list[str] | None = None) -> int:
             ),
         },
         "repetitions": args.repetitions,
-        "firstVariant": args.first_variant if args.variant == "both" else None,
+        "firstVariant": (
+            args.first_variant if args.variant in {"all", "both"} else None
+        ),
         "results": results,
         "comparison": {
+            "variantSummaries": summaries,
             "baselineTaskPassRate": baseline_task_rate,
+            "handoffTaskPassRate": handoff_task_rate,
+            "minimalTaskPassRate": minimal_task_rate,
             "leyTaskPassRate": ley_task_rate,
             "leyTaskAdvantageObserved": task_advantage,
-            "baselineHiddenOracle": baseline_oracles,
-            "leyHiddenOracle": ley_oracles,
+            "baselineHiddenOracle": summaries["baseline"]["hiddenOracle"],
+            "handoffHiddenOracle": summaries["handoff"]["hiddenOracle"],
+            "minimalHiddenOracle": summaries["minimal"]["hiddenOracle"],
+            "leyHiddenOracle": summaries["ley"]["hiddenOracle"],
             "contextUsageProven": False,
             "causalUtilityProven": False,
             "interpretation": (
-                "This is an opt-in external-agent observation. It is not a deterministic CI gate, "
-                "does not prove causation, and must be reproduced before product claims."
+                "This is an opt-in external-agent observation. The handoff and minimal arms are simpler "
+                "comparison baselines; the minimal arm is fixture-derived and is not a claim that redesigned "
+                "Ley already exists. Results are not a deterministic CI gate, do not prove causation, and "
+                "must be reproduced before product claims."
             ),
         },
     }

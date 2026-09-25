@@ -549,8 +549,8 @@ runner/task invocation rather than a reproducible product claim.
 
 The runner uses only synthetic task fixtures from `eval/fixtures/agent_tasks.jsonl`. Each fixture
 contains a tiny disposable repository, one prior Ley session/Decision that represents information a
-returning teammate could know, explicit context markers, allowed changed files, a visible-test command,
-and an external oracle. Fixtures can also declare a runtime-secret contract. For those fixtures the
+returning teammate could know, a task-family label, explicit context markers, allowed changed files, a
+visible-test command, and a hidden executable oracle. Fixtures can also declare a runtime-secret contract. For those fixtures the
 consequential answer does **not** exist in the checked-in fixture or oracle source: a fresh 32-byte
 master seed is generated in the evaluator process, the hidden contract is derived from it, and only a
 SHA-256 commitment is written to the normal report.
@@ -558,15 +558,23 @@ SHA-256 commitment is written to the normal report.
 Fixture validation rejects unsafe or malformed schema fields/paths, invalid change allowlists, tasks
 outside the Context Compiler query bound, and historical markers already visible in the task/live
 project files. `--validate` initializes the synthetic Ley project, seeds the materialized prior memory,
-compiles the real 500-token context pack by default, and requires the expected historical markers to be
-genuinely admitted before any model spend. The runtime-secret retry fixture therefore tests retrieval
-of an answer that a baseline cannot recover by reading the checked-in benchmark source.
+compiles the real 500-token context pack by default, and requires the minimum task-relevant historical
+markers to be genuinely admitted before any model spend. Script-oracle fixtures additionally carry an
+evaluator-only reference solution: validation proves the buggy initial repository **fails** the hidden
+oracle and the reference solution **passes** it. This catches vacuous or broken hidden tests before an
+external model is invoked. The runtime-secret retry fixture still uses a seeded legacy probe, so its
+consequential answer cannot be recovered from checked-in benchmark source.
 
 For a real comparison, the runner creates fresh temporary workspaces and executes the same external
-agent command in two arms:
+agent command in four arms by default:
 
-- **baseline** — the synthetic code repository only, with no Ley project/history/context supplied;
-- **ley** — the external agent receives the same code-only repository plus the bounded Ley context
+- **baseline** — the synthetic code repository only, with no historical handoff/context supplied;
+- **handoff** — the same repository plus a concise evaluator-created `HANDOFF.md` containing the prior
+  goal/state/decision/rationale. It is ordinary repository context, not prompt-injected Ley state;
+- **minimal** — the code repository plus a deliberately tiny fixture-derived continuity brief injected
+  into the prompt. This is a **benchmark baseline**, not an implementation or claim that redesigned Ley
+  already exists;
+- **ley** — the external agent receives the same task repository plus the bounded current/full Ley context
   projection in its prompt. The prior Ley history is built in a separate private synthetic project. A
   neutral measurement session is started so instrumentation does not outrank historical task evidence;
   the exact context pack is compiled and bound; then the entire Ley project/vault/config tree is
@@ -574,8 +582,11 @@ agent command in two arms:
   starts. It is restored only after the agent/oracle finish so the typed utility outcome can be
   recorded against the original binding.
 
-The comparison is therefore a whole-product “without Ley vs with Ley context” ablation, not a claim
-that only one internal retrieval component changed.
+The four conditions form a complexity ladder rather than a single no-memory control. Current/full Ley
+must be compared not only with no history, but also with the much cheaper human handoff and minimal-brief
+baselines. The comparison remains a whole-product observation; it is not a claim that only one internal
+retrieval component changed. The legacy `--variant both` option remains available for exact
+baseline-vs-Ley compatibility, while `--variant all` is the default.
 
 The external runner contract is intentionally small: `--runner-command` is parsed without a shell,
 receives the complete task/context prompt on stdin, and runs inside a Linux `bwrap` namespace with the
@@ -583,6 +594,15 @@ disposable project as `/workspace`. Each arm receives its own randomly named tem
 that workspace is deleted before the next arm begins. `/usr` is read-only, the project alone is
 writable, `/tmp` is private, the process runs in its own PID namespace, and the host home/repository are
 not mounted. Network is intentionally retained because remote model APIs need it.
+
+That network allowance is an important benchmark limitation. The outer Bubblewrap boundary proves that
+the runner cannot read the host checkout/fixture/oracle files from the local filesystem, but it cannot
+both allow an arbitrary remote-model API and cryptographically prove that an arbitrary runner never uses
+internet tools to look up a public benchmark repository. Prefer runner configurations whose **tool**
+network is disabled even when model transport is allowed, retain seeded/novel fixtures, and treat public
+fixed fixtures as increasingly contamination-prone over time. For the strongest blinded studies, use a
+local/offline runner or a transport setup that can allowlist only the model endpoint. Do not describe the
+current generic runner as network-isolated.
 
 The runner receives a fixed isolated `HOME=/home/runner` and a small environment allowlist. Additional
 environment variables must be explicitly named with `--runner-env NAME`; `HOME`, `PATH`, `PWD`, `USER`,
@@ -610,12 +630,13 @@ runner cannot hide unauthorized changes by committing them, changing the index, 
 metadata. Symlinks and other special filesystem entries are rejected before evaluator-controlled code
 is executed.
 
-Visible tests and the hidden oracle probe run inside a separate Linux `bwrap` namespace with the
-project mounted read-only, `/usr` mounted read-only, a private `/tmp`, no inherited evaluator
-environment, and network access unshared/disabled. The oracle child receives only the public probe
-module/function/inputs; the expected outputs remain in the evaluator parent and are compared only after
-the sandboxed process returns. The evaluator snapshots the project again after visible tests/oracle and
-requires the tree to be byte-for-byte stable.
+Visible tests and hidden oracles run inside a separate Linux `bwrap` namespace with the project mounted
+read-only, `/usr` mounted read-only, a private `/tmp`, no inherited evaluator environment, and network
+access unshared/disabled. Legacy probe oracles receive only the probe module/function/inputs; expected
+outputs remain in the evaluator parent. New script oracles receive bounded Python source directly from
+the evaluator process through `python -c`; that source is never materialized into the agent workspace and
+can verify multi-file behavior with ordinary assertions. The evaluator snapshots the project again after
+visible tests/oracle execution and requires the tree to be byte-for-byte stable.
 
 A task passes only when all of these are true:
 
@@ -627,8 +648,11 @@ A task passes only when all of these are true:
 - the post-agent hidden oracle passes; and
 - the project tree remains unchanged while evaluator-controlled tests/oracle execute.
 
-The current oracles are intentionally narrow and synthetic; a pass is evidence for that fixture's task
-contract only.
+The current corpus contains five fixtures: two exact-prior-contract tasks plus changed-requirement-vs-
+stale-memory, avoid-known-failed-attempt, and interrupted-implementation-resume tasks. A pass remains
+evidence for that fixture's task contract only. Divergent/merged branch continuation, crash/missing-
+checkpoint recovery, verified-vs-claimed state, and explicit cross-project isolation still require
+richer fixture setup and are not yet covered by this runner corpus.
 
 Runner stdout/stderr are captured through anonymous temporary file descriptors and discarded after
 their byte counts/hashes are computed. Normal reports retain no raw model output, no full context body,
@@ -661,7 +685,7 @@ IDs, revalidation state, and utility projection. That observation must continue 
 
 The evaluator never turns a model-dependent success into memory authority or ranking changes.
 
-Repeated two-arm runs alternate which arm executes first to reduce simple order effects. A result is
+Repeated four-arm runs rotate arm order across repetitions to reduce simple order effects. A result is
 not a product claim merely because `leyTaskAdvantageObserved` is true. Before using an external-agent result
 to justify additional product complexity, reproduce it across multiple runs and preferably multiple
 task fixtures/runners, report the exact non-secret runner label and task IDs, retain negative/no-
@@ -678,10 +702,10 @@ Run one opt-in comparison:
 
 ```text
 python eval/run_agent_task_eval.py \
-  --task prior-retry-delay-contract \
-  --runner-label codex-luna-xhigh \
+  --task changed-display-name-requirement \
+  --runner-label pinned-runner-model \
   --runner-ro-bind "$HOME/.codex/auth.json=/home/runner/.codex/auth.json" \
-  --runner-command 'codex exec --ignore-user-config --ignore-rules --ephemeral -s workspace-write -m gpt-5.6-luna -c model_reasoning_effort="xhigh" -'
+  --runner-command 'codex exec --ignore-user-config --ignore-rules --ephemeral -s workspace-write -m <pinned-model> -'
 ```
 
 The Codex example exposes only `auth.json` read-only inside the isolated runner home. Do not mount the
@@ -689,10 +713,12 @@ whole real home directory merely for convenience. Other runners should use the s
 pattern for their authentication material.
 
 `--require-ley-advantage` is a local experiment assertion on the **overall task pass rate**, not the
-hidden-oracle pass rate. Normal reports expose separate baseline/Ley overall-task rates and separate
-hidden-oracle attempted/passed/failed/skipped counts plus pass rate among attempted oracles. A hidden
+hidden-oracle pass rate. In a four-arm run it requires Ley to be strictly above every simpler arm that
+was included; in legacy `both` mode it compares baseline and Ley only. Normal reports expose per-variant
+task rates, hidden-oracle attempted/passed/failed/skipped counts, mean runner time, and mean supplied
+context characters while retaining the older baseline/Ley summary fields for compatibility. A hidden
 oracle that was not run because an earlier gate failed is recorded as `skipped`, never as `failed`.
-Do not add this assertion to deterministic CI or reinterpret one failed baseline / passed Ley arm as
+Do not add this assertion to deterministic CI or reinterpret one failed simpler arm / passed Ley arm as
 causal proof.
 
 ## P0 capability coverage

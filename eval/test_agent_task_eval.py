@@ -73,6 +73,32 @@ class AgentTaskEvalTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "not initial project files"):
             agent_eval.validate_fixture_schema(fixture, 1)
 
+    def test_fixture_schema_requires_task_family(self) -> None:
+        fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
+        fixture.pop("task_family")
+        with self.assertRaisesRegex(RuntimeError, "task_family"):
+            agent_eval.validate_fixture_schema(fixture, 1)
+
+    def test_fixture_schema_requires_exactly_one_hidden_oracle_mode(self) -> None:
+        fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
+        fixture["oracle_script"] = "raise SystemExit(0)\n"
+        with self.assertRaisesRegex(RuntimeError, "exactly one"):
+            agent_eval.validate_fixture_schema(fixture, 1)
+
+        fixture.pop("oracle_probe")
+        fixture.pop("oracle_script")
+        fixture.pop("oracle_expected")
+        with self.assertRaisesRegex(RuntimeError, "exactly one"):
+            agent_eval.validate_fixture_schema(fixture, 1)
+
+    def test_fixture_schema_bounds_hidden_oracle_script(self) -> None:
+        fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
+        fixture.pop("oracle_probe")
+        fixture.pop("oracle_expected")
+        fixture["oracle_script"] = "#" * (agent_eval.MAX_ORACLE_SCRIPT_BYTES + 1)
+        with self.assertRaisesRegex(RuntimeError, "exceeds"):
+            agent_eval.validate_fixture_schema(fixture, 1)
+
     def test_duplicate_fixture_ids_are_rejected(self) -> None:
         fixture = self.fixture("prior-label-normalization-contract")
         with tempfile.TemporaryDirectory() as temporary:
@@ -218,6 +244,56 @@ class AgentTaskEvalTests(unittest.TestCase):
                 10,
                 False,
             )
+            self.assertFalse(result["passed"])
+
+    def test_oracle_script_verifies_multi_file_behavior_in_project_only_sandbox(self) -> None:
+        fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
+        fixture.pop("oracle_probe")
+        fixture.pop("oracle_expected")
+        fixture["project_files"] = {
+            "math_ops.py": "def add(left, right): return left - right\n",
+            "service.py": "from math_ops import add\ndef total(values): return add(values[0], values[1])\n",
+        }
+        fixture["allowed_changed_files"] = ["math_ops.py", "service.py"]
+        fixture["visible_test_command"] = ["python3", "-c", "import service"]
+        fixture["oracle_script"] = (
+            "from pathlib import Path\n"
+            "assert not Path('/etc/passwd').exists()\n"
+            "import math_ops, service\n"
+            "assert math_ops.add(3, 4) == 7\n"
+            "assert service.total([5, 8]) == 13\n"
+        )
+        fixture["oracle_solution_files"] = {
+            "math_ops.py": "def add(left, right): return left + right\n",
+        }
+        agent_eval.validate_fixture_schema(fixture, 1)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            validation = agent_eval.validate_script_oracle_reference(
+                fixture,
+                Path(temporary),
+                10,
+            )
+            self.assertEqual(validation["initialStatus"], "failed")
+            self.assertEqual(validation["referenceStatus"], "passed")
+            self.assertEqual(validation["referenceSolutionFileCount"], 1)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            write_project_files(project, fixture["project_files"])
+            write_project_files(project, fixture["oracle_solution_files"])
+            result = agent_eval.run_hidden_oracle(fixture, project, 10, False)
+            self.assertTrue(result["passed"])
+            self.assertNotIn("assert service.total", "\n".join(
+                path.read_text(encoding="utf-8")
+                for path in project.rglob("*.py")
+            ))
+
+            (project / "math_ops.py").write_text(
+                "def add(left, right): return left - right\n",
+                encoding="utf-8",
+            )
+            result = agent_eval.run_hidden_oracle(fixture, project, 10, False)
             self.assertFalse(result["passed"])
 
     def test_nonzero_runner_exit_is_a_failed_attempt_not_an_exception(self) -> None:
@@ -416,23 +492,42 @@ class AgentTaskEvalTests(unittest.TestCase):
         self.assertNotIn("changedFiles", result)
         self.assertGreaterEqual(result["changedFileCount"], 1)
 
-    def test_variant_order_alternates(self) -> None:
+    def test_variant_order_balances_four_arm_comparison(self) -> None:
         self.assertEqual(
-            agent_eval.variants_for_repetition("both", "baseline", 1),
-            ("baseline", "ley"),
+            agent_eval.variants_for_repetition("all", "baseline", 1),
+            ("baseline", "handoff", "minimal", "ley"),
+        )
+        self.assertEqual(
+            agent_eval.variants_for_repetition("all", "baseline", 2),
+            ("handoff", "minimal", "ley", "baseline"),
+        )
+        self.assertEqual(
+            agent_eval.variants_for_repetition("all", "ley", 1),
+            ("ley", "baseline", "handoff", "minimal"),
         )
         self.assertEqual(
             agent_eval.variants_for_repetition("both", "baseline", 2),
             ("ley", "baseline"),
         )
         self.assertEqual(
-            agent_eval.variants_for_repetition("both", "ley", 1),
-            ("ley", "baseline"),
+            agent_eval.variants_for_repetition("minimal", "baseline", 3),
+            ("minimal",),
         )
-        self.assertEqual(
-            agent_eval.variants_for_repetition("ley", "baseline", 3),
-            ("ley",),
-        )
+
+    def test_simple_context_baselines_preserve_required_historical_markers(self) -> None:
+        seed = bytes.fromhex("45" * 32)
+        for raw in agent_eval.load_fixtures():
+            fixture = agent_eval.materialize_fixture(raw, seed)
+            with self.subTest(task=fixture["id"]):
+                markers = [str(value) for value in fixture["context_markers"]]
+                handoff = agent_eval.render_handoff(fixture)
+                minimal = agent_eval.render_minimal_brief(fixture)
+                for marker in markers:
+                    self.assertIn(marker.lower(), handoff.lower())
+                    self.assertIn(marker.lower(), minimal.lower())
+                self.assertIn("human handoff", handoff.lower())
+                self.assertIn("benchmark baseline", minimal.lower())
+                self.assertLessEqual(len(minimal), len(handoff))
 
     def test_task_pass_requires_all_gates(self) -> None:
         good_runner = {"completed": True}
@@ -608,6 +703,105 @@ class AgentTaskEvalTests(unittest.TestCase):
                     False,
                 )
         self.assertFalse(result["taskPassed"])
+
+    def test_handoff_variant_delivers_history_as_repository_file_only(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-label-normalization-contract"),
+            bytes.fromhex("49" * 32),
+        )
+
+        def fake_runner(
+            command,
+            project,
+            prompt,
+            timeout_seconds,
+            variant,
+            inherited_env_names,
+            read_only_mounts,
+            capture_raw,
+        ):
+            del command, timeout_seconds, inherited_env_names, read_only_mounts, capture_raw
+            self.assertEqual(variant, "handoff")
+            handoff = (project / "HANDOFF.md").read_text(encoding="utf-8")
+            self.assertIn("preserve internal spaces and tabs exactly", handoff)
+            self.assertNotIn("# HANDOFF", prompt)
+            return {
+                "completed": False,
+                "timedOut": False,
+                "exitCode": 1,
+                "seconds": 0.0,
+                "stdoutBytes": 0,
+                "stderrBytes": 0,
+                "stdoutSha256": agent_eval.sha256_bytes(b""),
+                "stderrSha256": agent_eval.sha256_bytes(b""),
+            }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch.object(agent_eval, "run_external_agent", side_effect=fake_runner):
+                result = agent_eval.execute_variant(
+                    fixture,
+                    Path(temporary),
+                    ["ignored"],
+                    [],
+                    [],
+                    "handoff",
+                    10,
+                    8,
+                    500,
+                    False,
+                )
+        self.assertEqual(result["context"]["kind"], "human-handoff-file")
+
+    def test_minimal_variant_delivers_tiny_fixture_derived_prompt_context(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("prior-label-normalization-contract"),
+            bytes.fromhex("4a" * 32),
+        )
+
+        def fake_runner(
+            command,
+            project,
+            prompt,
+            timeout_seconds,
+            variant,
+            inherited_env_names,
+            read_only_mounts,
+            capture_raw,
+        ):
+            del command, timeout_seconds, inherited_env_names, read_only_mounts, capture_raw
+            self.assertEqual(variant, "minimal")
+            self.assertFalse((project / "HANDOFF.md").exists())
+            self.assertIn("# Minimal continuity brief (benchmark baseline)", prompt)
+            self.assertIn("preserve internal spaces and tabs exactly", prompt)
+            return {
+                "completed": False,
+                "timedOut": False,
+                "exitCode": 1,
+                "seconds": 0.0,
+                "stdoutBytes": 0,
+                "stderrBytes": 0,
+                "stdoutSha256": agent_eval.sha256_bytes(b""),
+                "stderrSha256": agent_eval.sha256_bytes(b""),
+            }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch.object(agent_eval, "run_external_agent", side_effect=fake_runner):
+                result = agent_eval.execute_variant(
+                    fixture,
+                    Path(temporary),
+                    ["ignored"],
+                    [],
+                    [],
+                    "minimal",
+                    10,
+                    8,
+                    500,
+                    False,
+                )
+        self.assertEqual(
+            result["context"]["kind"],
+            "fixture-derived-minimal-brief-baseline",
+        )
 
     def test_seed_export_is_private_and_exclusive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -40,7 +40,7 @@ regressions, recorded runtime verification, and the separate opt-in model-depend
 | When is explicit user-wide reusable knowledge worth adding beyond mounted notes/specs, and how do we avoid hidden profile inference? | **Partial** | Ley has taken an explicit-scope route instead of inferred profiling: Context Mounts, Bootstrap References, reusable team/organization Knowledge Scopes, and Policy Bundles are all opt-in authority with provenance/egress/non-laundering evaluation. No ambient whole-vault/user-profile inference is introduced. | A generic user-wide knowledge layer is still unproven. It should require a concrete cross-project task benchmark showing material value beyond explicit scopes/mounts, plus UX/privacy evidence that users can inspect and revoke exactly what became reusable. |
 | Which multimodal evidence types justify first-class support and which should remain ordinary user attachments? | **Partial** | The first evaluated slice supports bounded original PNG/JPEG/WebP evidence under explicit Full Evidence capture. Citations preserve media type and immutable snapshot/hash; readers return original historical bytes; no OCR/vision description or live-source claim is invented. P2 and focused core/MCP/desktop tests cover this boundary. | Audio, video, PDF/document rendering, OCR, generated descriptions, embeddings, and other modalities have no evidence-backed first-class case yet. Each should remain an ordinary attachment until a task benchmark demonstrates value that cannot be obtained from existing portable files/citations. |
 | When should Ley adopt MCP `2026-07-28` or later, given actual Codex/Claude host support? | **Evidence-backed direction** | As of 2026-09-24, direct no-model probes against the installed hosts succeed with Ley's current server: Codex `0.156.1` actually sends MCP `2025-06-18`, Ley negotiates/responds `2025-06-18`, then Codex inventories 32 tools plus the project resource; Claude Code `2.1.217` sends `2025-11-25`, Ley responds `2025-11-25`, and Claude reports the server connected after `tools/list`. Ley currently pins `ProtocolVersion::V_2025_11_25`, and the server successfully negotiates the older Codex version rather than requiring every client to send the same version. | Keep the current server pin while these supported hosts interoperate. Re-run `eval/run_mcp_host_compat_eval.py --require-all` after relevant Codex/Claude/SDK upgrades and before any protocol-pin change. Move to `2026-07-28` only after the actual supported host paths negotiate/operate successfully there and the packaged integration acceptance gates remain green; do not upgrade merely because the specification is newer or a binary embeds a newer version string. |
-| Which compiler features still help as frontier models improve, and which should be deleted because the model/harness no longer needs them? | **Open / external-validation-dependent** | The deterministic harness proves safety/selection invariants and the opt-in `eval/run_agent_task_eval.py` provides blinded baseline-vs-Ley downstream tasks with context-utility recording. `--validate` proves fixture isolation/retrieval without model spend. | The repo does not currently contain repeated frontier-model comparison results sufficient to remove or retain features based on model capability trends. This needs periodic fixed-fixture model runs across baseline vs Ley (and ideally ablations) with version/cost/latency recorded. Safety/authority features should not be removed merely because one model succeeds without them. |
+| Which compiler features still help as frontier models improve, and which should be deleted because the model/harness no longer needs them? | **Open / external-validation-dependent** | The deterministic harness proves safety/selection invariants and the opt-in `eval/run_agent_task_eval.py` now supports four matched downstream conditions: no-history baseline, human `HANDOFF.md`, fixture-derived minimal brief, and current/full Ley. The five checked-in tasks include two exact-prior contracts plus changed-requirement/stale-memory, known-failed-attempt, and interrupted multi-file resume cases. Script-oracle fixtures prove initial failure/reference-solution success before model spend. | The repo still lacks repeated pinned frontier-model results across the expanded corpus, and branch-divergence, crash-recovery, verified-vs-claimed, and cross-project task families are not yet represented in the real-agent corpus. Safety/authority features should not be removed merely because one model succeeds without them. |
 
 ## Questions whose current wording is now partly stale
 
@@ -68,17 +68,20 @@ simply records how far current evidence has moved each question.
 
 ## Highest-value next experiments
 
-### 1. Frontier-agent baseline vs Ley vs targeted compiler ablations
+### 1. Frontier-agent complexity ladder and targeted compiler ablations
 
-Use `eval/run_agent_task_eval.py` with fixed blinded fixtures and a pinned agent/model version. The
-current runner directly supports only baseline-vs-Ley. A third targeted ablation arm therefore requires
-either a small explicit runner extension or separate orchestration that preserves identical task/source
-conditions. Compare at least:
+Use `eval/run_agent_task_eval.py` with fixed blinded fixtures and a pinned agent/model version. Compare
+the built-in four-arm ladder under identical task/oracle conditions:
 
-1. baseline with no Ley context;
-2. normal Ley context;
-3. where the harness has been extended/orchestrated for it, one targeted ablation (for example
-   conflict/premise suppression removed, or a simpler retrieval-only pack).
+1. baseline with no historical context;
+2. concise human `HANDOFF.md`;
+3. fixture-derived minimal continuity brief (benchmark baseline, not redesigned Ley);
+4. current/full Ley compiled context.
+
+Only after the ladder has repeated model evidence should a targeted internal compiler ablation be added
+(for example conflict/premise suppression removed or a simpler retrieval-only pack). Keep any such
+ablation separate from the fixture-derived minimal baseline so product implementation and benchmark
+control are not conflated.
 
 Record task success, allowed-file violations, context pack ID/size, latency, model/version, runner
 configuration, and Ley's existing context-utility outcome. This directly informs §36 questions 1, 2,
