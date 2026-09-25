@@ -54,7 +54,11 @@ Ley children derive both authority registries and semantic cache from that root 
 system, while the runner points its XDG variables at the same children for its own direct fixture
 inspection. Invalid roots fail closed and never fall back to the developer/runner profile. Unix eval
 roots are mode-checked as owner-only. Windows eval roots reject reparse-point redirects and live under
-the runner's per-user temporary directory; explicit DACL inspection is still tracked as open validation.
+the runner's per-user temporary directory. Before Ley starts, the Windows runner removes inherited ACL
+entries from the root and both children, grants inheritable full control only to the current user SID,
+then independently inspects each resulting DACL through PowerShell. Unexpected trustees, deny/inherited
+rules, missing full control, or failed ACL inspection abort the evaluation rather than falling back to
+the user profile. Core does not treat this evaluator hardening as a general production ACL override.
 
 ## What the harness measures
 

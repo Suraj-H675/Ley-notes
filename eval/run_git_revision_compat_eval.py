@@ -179,6 +179,114 @@ def verify_git_wrapper_passthrough(wrapper: Path, env: dict[str, str], log: Path
     log.unlink(missing_ok=True)
 
 
+def powershell_output(script: str, env: dict[str, str] | None = None) -> str:
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if not powershell:
+        raise RuntimeError("Windows private-root ACL verification requires PowerShell")
+    result = subprocess.run(
+        [powershell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError("PowerShell ACL probe failed: " + detail)
+    return result.stdout.strip()
+
+
+def validate_windows_acl_payload(payload: dict[str, Any], current_sid: str) -> None:
+    if payload.get("protected") is not True:
+        raise RuntimeError("Windows evaluation private root still inherits parent ACL entries")
+    rules = payload.get("access")
+    if not isinstance(rules, list) or not rules:
+        raise RuntimeError("Windows evaluation private root has no explicit access rule")
+    full_control = False
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise RuntimeError("Windows evaluation private root returned a malformed ACL rule")
+        if rule.get("sid") != current_sid:
+            raise RuntimeError(
+                "Windows evaluation private root grants access to an unexpected trustee: "
+                + str(rule.get("sid"))
+            )
+        if rule.get("type") != "Allow" or rule.get("inherited") is not False:
+            raise RuntimeError(
+                "Windows evaluation private root contains a denied or inherited access rule"
+            )
+        if "FullControl" in str(rule.get("rights", "")):
+            full_control = True
+    if not full_control:
+        raise RuntimeError(
+            "Windows evaluation private root does not grant the current user full control"
+        )
+
+
+def harden_windows_private_tree(paths: list[Path]) -> bool:
+    if os.name != "nt":
+        return False
+    current_sid = powershell_output(
+        "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value"
+    )
+    if not current_sid.startswith("S-"):
+        raise RuntimeError("failed to resolve the current Windows user SID")
+    icacls = shutil.which("icacls.exe") or shutil.which("icacls")
+    if not icacls:
+        raise RuntimeError("Windows evaluation private-root hardening requires icacls")
+
+    inspect_script = r'''
+$acl = Get-Acl -LiteralPath $env:LEY_EVAL_ACL_PATH
+$rules = @($acl.Access | ForEach-Object {
+    $sid = try {
+        $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+    } catch {
+        $_.IdentityReference.Value
+    }
+    [pscustomobject]@{
+        sid = $sid
+        type = $_.AccessControlType.ToString()
+        rights = $_.FileSystemRights.ToString()
+        inherited = $_.IsInherited
+    }
+})
+[pscustomobject]@{
+    protected = $acl.AreAccessRulesProtected
+    access = $rules
+} | ConvertTo-Json -Depth 4 -Compress
+'''
+    for path in paths:
+        result = subprocess.run(
+            [
+                icacls,
+                str(path),
+                "/inheritancelevel:r",
+                "/grant:r",
+                f"*{current_sid}:(OI)(CI)F",
+                "/Q",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            raise RuntimeError(f"failed to harden Windows ACL for {path}: {detail}")
+        probe_env = os.environ.copy()
+        probe_env["LEY_EVAL_ACL_PATH"] = str(path)
+        raw = powershell_output(inspect_script, probe_env)
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(
+                f"Windows ACL probe returned invalid JSON for {path}: {raw}"
+            ) from error
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Windows ACL probe returned malformed data for {path}")
+        validate_windows_acl_payload(payload, current_sid)
+    return True
+
+
 def fixture_git(project: Path, args: list[str]) -> str:
     real_git = harness.EVAL_ENV.get("LEY_GIT_PROBE_REAL_GIT")
     if not real_git:
@@ -555,6 +663,9 @@ def main() -> int:
                 private_root.chmod(0o700)
                 xdg_config.chmod(0o700)
                 xdg_cache.chmod(0o700)
+            windows_private_root_dacl_verified = harden_windows_private_tree(
+                [private_root, xdg_config, xdg_cache]
+            )
             home.mkdir()
             appdata.mkdir()
             local_appdata.mkdir()
@@ -653,6 +764,9 @@ def main() -> int:
                 "temporaryStateOnly": True,
                 "allowedGitSubcommands": sorted(ALLOWED_GIT_SUBCOMMANDS),
                 "maxGitCommandsPerQuery": args.max_git_commands,
+                "windowsPrivateRootDaclVerified": (
+                    windows_private_root_dacl_verified if os.name == "nt" else None
+                ),
                 "repetitions": args.repetitions,
                 "cases": cases,
                 "allPassed": all(case["ok"] for case in cases.values()),
