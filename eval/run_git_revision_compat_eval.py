@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run disposable Git revision-compatibility shapes through real Ley session retrieval and "
-            "record query-time Git command counts/latency."
+            "record query-time Git command counts plus end-to-end query wall time."
         )
     )
     parser.add_argument("--repetitions", type=int, default=3)

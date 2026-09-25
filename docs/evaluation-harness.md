@@ -19,7 +19,8 @@ Use `--require-all` when both supported host CLIs are expected to be installed.
 
 Git revision portability/cost is measured separately by `eval/run_git_revision_compat_eval.py`. That
 runner creates disposable repository shapes, puts a temporary logging `git` shim only in Ley's child
-process `PATH`, and records the exact metadata commands/latency used by real session retrieval. Its
+process `PATH`, and records the exact metadata commands plus end-to-end query wall time used by real
+session retrieval. Its
 classification and command-policy checks are deterministic; wall-clock timing is environment-sensitive
 evidence. The shim is an executable Python launcher on Unix-like hosts and a temporary native
 `git.exe` launcher built with `rustc` on Windows, so bare `Command::new("git")` can be instrumented
@@ -32,6 +33,12 @@ temporary Git instrumentation shim, so a bypassed/broken logger cannot satisfy t
 with a vacuous zero-command result. The default command bound is three subprocesses per measured query,
 matching the optimized ancestry/divergence path; the higher hard ceiling exists only for explicit
 diagnostic overrides.
+
+The repository includes a manual-only GitHub Actions workflow,
+`.github/workflows/revision-portability.yml`, for the portability experiment. It runs the same matrix
+on fixed standard runner labels (`ubuntu-24.04`, `macos-15-intel`, and `windows-2025`) without turning
+the experiment into an every-push CI requirement. The workflow records the actual Git/Python/Rust
+toolchain versions in its logs before running the matrix.
 
 Each run also owns private temporary `XDG_CONFIG_HOME` **and** `XDG_CACHE_HOME` roots. This prevents a
 developer's real Ley configuration or locally installed semantic model from silently changing which

@@ -700,12 +700,13 @@ P2_CAPABILITY_COVERAGE = {
 
 def find_ley() -> str:
     configured = os.environ.get("LEY_BIN")
+    binary_name = "ley.exe" if os.name == "nt" else "ley"
     candidates = [
         Path(configured) if configured else None,
-        REPO_ROOT / "target" / "debug" / "ley",
-        REPO_ROOT / "target" / "release" / "ley",
+        REPO_ROOT / "target" / "debug" / binary_name,
+        REPO_ROOT / "target" / "release" / binary_name,
         Path(shutil.which("ley") or ""),
-        Path.home() / ".local" / "bin" / "ley",
+        Path.home() / ".local" / "bin" / binary_name,
     ]
     for candidate in candidates:
         if candidate and candidate.is_file() and os.access(candidate, os.X_OK):
