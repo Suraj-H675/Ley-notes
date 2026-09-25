@@ -2,7 +2,6 @@ use crate::{
     canonical_directory, diagnose_project, validate_project_id, LeyCoreError, ProjectCatalog,
     METADATA_FILE_LIMIT_BYTES,
 };
-use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -396,9 +395,7 @@ impl BindingRegistry {
 }
 
 pub fn default_binding_registry_path() -> Result<PathBuf, LeyCoreError> {
-    let base = BaseDirs::new().ok_or(LeyCoreError::ConfigDirectoryUnavailable)?;
-    Ok(base
-        .config_dir()
+    Ok(crate::private_state::default_private_config_dir()?
         .join(APP_IDENTIFIER)
         .join(BINDING_REGISTRY_FILE))
 }

@@ -17,6 +17,15 @@ Store bindings in a private OS-local registry named `bindings-v1.json` under Ley
 - macOS: the user's Application Support directory;
 - Windows: the user's roaming application-data directory.
 
+For deterministic cross-platform evaluation only, `ley-core` has a non-default `eval-private-root`
+build feature. A feature-enabled process may set `LEY_EVAL_PRIVATE_ROOT` to one pre-existing absolute
+owner-private directory containing pre-created `config/` and `cache/` children. Ley then derives the
+application configuration directory from `<root>/config` and the semantic-model cache from
+`<root>/cache`. The root and children must be ordinary directories rather than symlinks/reparse-point
+redirects; invalid values fail closed. Builds without the feature reject a set variable instead of
+silently ignoring it. This is an evaluation-isolation boundary, not an alternative production
+configuration mechanism; ordinary builds continue to use the operating-system locations above.
+
 The registry contains only:
 
 ```json

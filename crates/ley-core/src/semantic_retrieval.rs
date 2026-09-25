@@ -5,7 +5,6 @@ use crate::{LeyCoreError, AGENT_MEMORY_DIRECTORY};
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
-use directories::BaseDirs;
 use model2vec_rs::model::StaticModel;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -176,9 +175,7 @@ pub fn supported_semantic_model() -> SemanticModelDescriptor {
 ///
 /// This does not create the directory and never accesses the network.
 pub fn default_semantic_model_cache_path() -> Result<PathBuf, LeyCoreError> {
-    let base = BaseDirs::new().ok_or(LeyCoreError::ConfigDirectoryUnavailable)?;
-    Ok(base
-        .cache_dir()
+    Ok(crate::private_state::default_private_cache_dir()?
         .join(SEMANTIC_CACHE_APPLICATION_DIRECTORY)
         .join(SEMANTIC_CACHE_MODELS_DIRECTORY)
         .join(SEMANTIC_CACHE_MODEL_DIRECTORY)

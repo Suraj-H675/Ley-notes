@@ -5,6 +5,9 @@ edition.workspace = true
 authors.workspace = true
 description = "Local project identity and agent-memory primitives for Ley"
 
+[features]
+eval-private-root = []
+
 [dependencies]
 atomic-write-file.workspace = true
 cap-fs-ext.workspace = true

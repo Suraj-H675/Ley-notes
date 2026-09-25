@@ -5,6 +5,9 @@ edition.workspace = true
 authors.workspace = true
 description = "Local command-line interface for Ley project and agent memory"
 
+[features]
+eval-private-root = ["ley-core/eval-private-root"]
+
 [[bin]]
 name = "ley"
 path = "src/main.rs"

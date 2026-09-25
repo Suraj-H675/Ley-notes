@@ -476,15 +476,21 @@ def main() -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="ley-git-revision-compat-") as directory:
             base = Path(directory)
-            xdg_config = base / "xdg-config"
-            xdg_cache = base / "xdg-cache"
+            private_root = base / "private-state"
+            xdg_config = private_root / "config"
+            xdg_cache = private_root / "cache"
             home = base / "home"
             appdata = base / "appdata"
             local_appdata = base / "local-appdata"
             wrapper_dir = base / "git-wrapper"
             wrapper_dir.mkdir()
-            xdg_config.mkdir()
-            xdg_cache.mkdir()
+            private_root.mkdir(mode=0o700)
+            xdg_config.mkdir(mode=0o700)
+            xdg_cache.mkdir(mode=0o700)
+            if os.name != "nt":
+                private_root.chmod(0o700)
+                xdg_config.chmod(0o700)
+                xdg_cache.chmod(0o700)
             home.mkdir()
             appdata.mkdir()
             local_appdata.mkdir()
@@ -494,6 +500,7 @@ def main() -> int:
             harness.EVAL_ENV.clear()
             harness.EVAL_ENV.update(
                 {
+                    "LEY_EVAL_PRIVATE_ROOT": str(private_root),
                     "XDG_CONFIG_HOME": str(xdg_config),
                     "XDG_CACHE_HOME": str(xdg_cache),
                     "HOME": str(home),

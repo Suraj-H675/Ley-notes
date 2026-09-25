@@ -32,6 +32,7 @@ mod memory_compiler;
 mod memory_health;
 mod memory_transition;
 mod policy_bundle;
+mod private_state;
 mod project_activity;
 mod project_catalog;
 mod project_memory_search;
@@ -257,6 +258,7 @@ pub use policy_bundle::{
     MAX_POLICY_BUNDLE_HISTORY_PER_PROJECT, MAX_POLICY_BUNDLE_SOURCES, POLICY_BUNDLE_REGISTRY_FILE,
     POLICY_BUNDLE_REGISTRY_SCHEMA_VERSION,
 };
+pub use private_state::EVAL_PRIVATE_ROOT_ENV;
 pub use project_activity::{
     project_activity_view, ProjectActivityCitation, ProjectActivityView, ProjectDecision,
     ProjectProblem, ProjectProblemAttempt, ProjectProblemResolution, ProjectProblemScope,
@@ -614,6 +616,8 @@ pub enum LeyCoreError {
     },
     #[error("no private configuration directory is available on this operating system")]
     ConfigDirectoryUnavailable,
+    #[error("invalid Ley evaluation private root: {0}")]
+    InvalidEvalPrivateRoot(String),
     #[error("project {0} is not bound to a Ley vault; run 'ley bind --vault <path>'")]
     VaultNotBound(String),
     #[error("the bound Ley vault is unavailable; rebind project {project_id}: {path}")]

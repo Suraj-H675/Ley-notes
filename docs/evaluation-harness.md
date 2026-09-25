@@ -38,12 +38,20 @@ The repository includes a manual-only GitHub Actions workflow,
 `.github/workflows/revision-portability.yml`, for the portability experiment. It runs the same matrix
 on fixed standard runner labels (`ubuntu-24.04`, `macos-15-intel`, and `windows-2025`) without turning
 the experiment into an every-push CI requirement. The workflow records the actual Git/Python/Rust
-toolchain versions in its logs before running the matrix.
+toolchain versions in its logs before running the matrix. That workflow deliberately builds the CLI
+with the non-default `eval-private-root` feature; ordinary Ley builds do not accept evaluation path
+redirection.
 
 Each run also owns private temporary `XDG_CONFIG_HOME` **and** `XDG_CACHE_HOME` roots. This prevents a
 developer's real Ley configuration or locally installed semantic model from silently changing which
 retrieval system an acceptance scenario exercises. Deterministic scenarios therefore start with no
 semantic model unless a future fixture explicitly stages one inside that run's private cache.
+
+The Git revision portability runner additionally creates one owner-private temporary root with
+pre-created `config/` and `cache/` children and supplies it as `LEY_EVAL_PRIVATE_ROOT`. Feature-enabled
+Ley children derive both authority registries and semantic cache from that root on every operating
+system, while the runner points its XDG variables at the same children for its own direct fixture
+inspection. Invalid roots fail closed and never fall back to the developer/runner profile.
 
 ## What the harness measures
 

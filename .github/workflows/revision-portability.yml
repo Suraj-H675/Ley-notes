@@ -38,7 +38,7 @@ jobs:
           cargo --version
 
       - name: Build Ley CLI
-        run: cargo build --locked -p ley-cli
+        run: cargo build --locked -p ley-cli --features eval-private-root
 
       - name: Run revision compatibility matrix
         run: python eval/run_git_revision_compat_eval.py --require-all
