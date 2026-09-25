@@ -49,7 +49,18 @@ jobs:
         shell: pwsh
         run: pwsh --version
 
-      - name: Build Ley CLI
+      - name: Verify cross-process private registry contention
+        run: cargo test --locked -p ley-core --test binding_process_contention
+
+      - name: Build ordinary Ley CLI
+        if: runner.os != 'Windows'
+        run: cargo build --locked -p ley-cli
+
+      - name: Verify production private config permissions
+        if: runner.os != 'Windows'
+        run: python eval/run_private_config_permissions_eval.py --require-all
+
+      - name: Build Ley CLI for revision evaluator
         run: cargo build --locked -p ley-cli --features eval-private-root
 
       - name: Run revision compatibility matrix
