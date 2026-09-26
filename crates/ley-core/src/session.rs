@@ -3014,6 +3014,7 @@ fn project_memory_result_kind_label(kind: ProjectMemoryResultKind) -> &'static s
         ProjectMemoryResultKind::Revision => "revision",
         ProjectMemoryResultKind::Decision => "decision",
         ProjectMemoryResultKind::Problem => "problem",
+        ProjectMemoryResultKind::Verification => "verification",
         ProjectMemoryResultKind::Learning => "learning",
         ProjectMemoryResultKind::Artifact => "artifact",
         ProjectMemoryResultKind::Symbol => "symbol",

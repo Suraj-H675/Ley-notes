@@ -2652,6 +2652,7 @@ fn is_branch_bound_historical_memory(kind: ProjectMemoryResultKind) -> bool {
             | ProjectMemoryResultKind::Revision
             | ProjectMemoryResultKind::Decision
             | ProjectMemoryResultKind::Problem
+            | ProjectMemoryResultKind::Verification
             | ProjectMemoryResultKind::Learning
     )
 }
@@ -2752,7 +2753,8 @@ fn admit_candidate(
         ProjectMemoryResultKind::Session
         | ProjectMemoryResultKind::Revision
         | ProjectMemoryResultKind::Decision
-        | ProjectMemoryResultKind::Problem => ContextAuthority::HistoricalProjectMemory,
+        | ProjectMemoryResultKind::Problem
+        | ProjectMemoryResultKind::Verification => ContextAuthority::HistoricalProjectMemory,
     };
     let estimated_tokens = estimate_item_tokens(&item);
     Ok(AdmittedCandidate {
@@ -3823,12 +3825,13 @@ fn validate_limits(task: &str, limits: ContextCompileLimits) -> Result<(), LeyCo
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, ingest_project, initialize_project, propose_learning, review_learning,
-        start_session, BindingRegistry, CaptureMode, CheckpointInput, DecisionInput,
-        EgressPolicyRegistry, KnowledgeScopeKind, KnowledgeScopeRegistry, LearningActor,
-        LearningEvidenceInput, LearningFeedbackAction, LearningKind, LearningProvenance,
-        ProjectMemorySearchCoverage, ProposeLearningInput, RetrievalMode, ReviewLearningInput,
-        StartSessionInput, BINDING_REGISTRY_FILE, CONTEXT_MOUNT_REGISTRY_FILE,
+        checkpoint_session, finish_session, ingest_project, initialize_project, propose_learning,
+        review_learning, start_session, BindingRegistry, CaptureMode, CheckpointInput,
+        DecisionInput, EgressPolicyRegistry, FinishSessionInput, KnowledgeScopeKind,
+        KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningFeedbackAction,
+        LearningKind, LearningProvenance, ProjectMemorySearchCoverage, ProposeLearningInput,
+        RetrievalMode, ReviewLearningInput, SessionStatus, StartSessionInput, VerificationInput,
+        VerificationStatus, BINDING_REGISTRY_FILE, CONTEXT_MOUNT_REGISTRY_FILE,
         KNOWLEDGE_SCOPE_REGISTRY_FILE,
     };
     use std::fs;
@@ -5920,6 +5923,116 @@ mod tests {
         }));
         assert!(merged.estimated_tokens <= merged.max_tokens);
         assert!(!merged.live_source_checked);
+    }
+
+    #[test]
+    fn compact_context_can_admit_recorded_verification_over_narrative_claim() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        git(&project, &["init", "-b", "main"]);
+        git_commit(
+            &project,
+            "timeouts.py",
+            "def default_timeout_seconds():\n    return 20\n",
+            "baseline",
+        );
+        initialize_project(
+            &project,
+            Some("Verification-aware compiler"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "9".repeat(32)),
+                name: "Timeout rollout handoff".to_owned(),
+                goal: "Finalize the service default timeout after the compatibility rollout."
+                    .to_owned(),
+                source: Default::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "a".repeat(32)),
+                summary: "The narrative handoff recorded 30 seconds as the rollout default and described it as validated."
+                    .to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "Default timeout".to_owned(),
+                    decision: "Use 30 seconds as the default timeout; the rollout note claimed this value had been validated."
+                        .to_owned(),
+                    rationale: "The value came from the rollout note before the final automated compatibility check was reviewed."
+                        .to_owned(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: vec![VerificationInput {
+                    kind: "compatibility-test".to_owned(),
+                    status: VerificationStatus::Passed,
+                    summary: "Compatibility test passed with a 45-second default; the earlier 30-second rollout claim was not verified."
+                        .to_owned(),
+                    command: Some("python3 -m unittest compatibility_timeout".to_owned()),
+                    evidence_artifact_paths: Vec::new(),
+                }],
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        finish_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            FinishSessionInput {
+                request_id: format!("req_{}", "b".repeat(32)),
+                status: SessionStatus::Completed,
+                summary: "Timeout rollout handoff completed.".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let registry = SpecificationRegistry::at(root.path().join("specifications.json"));
+        let compiled = compile_project_context_with_registry(
+            &project,
+            &vault,
+            "Restore the actually verified default timeout contract. Keep the existing default_timeout_seconds API, visible tests, and dependencies unchanged. Historical narrative claims may be stale; prefer concrete recorded verification when available.",
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 500,
+            },
+            &registry,
+        )
+        .unwrap();
+        let verification = compiled
+            .items
+            .iter()
+            .find(|item| item.kind == ProjectMemoryResultKind::Verification)
+            .expect("top-ranked structured verification should fit the compact brief");
+        assert_eq!(verification.title, "compatibility-test · passed");
+        assert!(verification.excerpt.contains("45-second default"));
+        assert_eq!(
+            verification.authority,
+            ContextAuthority::HistoricalProjectMemory
+        );
+        assert!(!verification.trusted_for_reuse);
+        assert!(compiled.estimated_tokens <= compiled.max_tokens);
+        assert!(!compiled.live_source_checked);
     }
 
     #[test]

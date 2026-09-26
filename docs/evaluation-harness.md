@@ -664,9 +664,11 @@ A task passes only when all of these are true:
 - the post-agent hidden oracle passes; and
 - the project tree remains unchanged while evaluator-controlled tests/oracle execute.
 
-The current corpus contains six fixtures: two exact-prior-contract tasks plus changed-requirement-vs-
-stale-memory, avoid-known-failed-attempt, interrupted-implementation-resume, and divergent-branch stale-
-memory suppression. The divergent fixture uses one narrow typed setup rather than arbitrary fixture
+The current corpus contains ten fixtures: two exact-prior-contract tasks plus changed-requirement-vs-
+stale-memory, avoid-known-failed-attempt, interrupted-implementation-resume, divergent-branch stale-
+memory suppression, post-merge branch applicability, crash/missing-final-checkpoint recovery,
+recorded Verification vs narrative claim, and explicit second-project reference without ambient
+leakage. The divergent fixture uses one narrow typed setup rather than arbitrary fixture
 scripting: Ley is ingested on an experimental empty commit, prior structured memory is captured there,
 the repository returns to `main` and receives a distinct empty commit, and pre-model validation requires
 the prior checkpoint to read back as `revisionApplicability=divergent`. The underlying task files and
@@ -676,13 +678,20 @@ and the Ley arm keeps its structured historical state private from the external 
 A first end-to-end validation of this fixture exposed a compiler admission bug: divergent Decision,
 Revision, and Learning candidates were already withheld, but divergent Session/Problem historical memory
 could still enter active task context. The compiler now applies the same fail-closed divergent-revision
-rule to every branch-bound historical semantic kind (`Session`, `Revision`, `Decision`, `Problem`, and
-`Learning`) while leaving direct Artifact/Symbol/Dependency evidence under its separate authority model.
+rule to every branch-bound historical semantic kind (`Session`, `Revision`, `Decision`, `Problem`,
+`Verification`, and `Learning`) while leaving direct Artifact/Symbol/Dependency evidence under its
+separate authority model.
 Focused core coverage preserves the existing post-merge behavior: once Git proves the branch landed, the
-previously divergent decision becomes eligible historical context again.
-A pass remains evidence for that fixture's task contract only. Crash/missing-checkpoint recovery,
-verified-vs-claimed state, explicit cross-project isolation, and a downstream post-merge branch task still
-require richer fixture setup and are not yet covered by this runner corpus.
+previously divergent decision becomes eligible historical context again. The crash fixture keeps the
+ordinary handoff identical in the simpler historical arms while full Ley additionally receives bounded
+unconsolidated evidence from the active post-checkpoint session. The Verification fixture distinguishes a
+stale narrative claim from a structured checkpoint Verification record without treating `status=passed`
+as trusted/current proof. The explicit-reference fixture creates two real registered Ley projects,
+selects exactly one, requires the selected marker downstream, and treats either unrelated-project canary
+as a privacy failure. Its preserved full-Ley Context Mount control declares a 1,000-token minimum context
+budget while the normal benchmark request remains 500; the public report records both values so the legacy
+cross-project overhead is visible rather than hidden. A pass remains evidence for that fixture's task
+contract only.
 
 Runner stdout/stderr are captured through anonymous temporary file descriptors and discarded after
 their byte counts/hashes are computed. Normal reports retain no raw model output, no full context body,
@@ -738,7 +747,7 @@ python eval/run_agent_task_eval.py \
   --task changed-display-name-requirement \
   --runner-label pinned-runner-model \
   --runner-ro-bind "$HOME/.codex/auth.json=/home/runner/.codex/auth.json" \
-  --runner-command 'codex exec --ignore-user-config --ignore-rules --ephemeral -s workspace-write -m <pinned-model> -'
+  --runner-command 'codex exec --ignore-user-config --ignore-rules --ephemeral -s workspace-write -m <pinned-model> -c model_reasoning_effort="<pinned-effort>" -'
 ```
 
 Run a selected suite by repeating `--task`. Task order is preserved, duplicate selectors are rejected,
@@ -757,9 +766,12 @@ The full checked-in corpus is intentionally **not** the implicit real-agent defa
 `--all-tasks` explicitly when you actually intend to pay for every selected arm/repetition. By contrast,
 `--validate` with no task selector still validates the full corpus because it makes no model calls.
 
-The Codex example exposes only `auth.json` read-only inside the isolated runner home. Do not mount the
-whole real home directory merely for convenience. Other runners should use the same minimum-exposure
-pattern for their authentication material.
+The Codex example exposes only `auth.json` read-only inside the isolated runner home. For standalone
+Codex distributions outside `/usr`, the harness also detects a sibling `codex-code-mode-host` binary and
+mounts that executable read-only at `/runner/codex-code-mode-host`; it does not expose the surrounding
+installation directory. Do not mount the whole real home or Codex install tree merely for convenience.
+Other runners should use the same minimum-exposure pattern for authentication and required companion
+executables.
 
 `--require-ley-advantage` is a local experiment assertion on the **overall task pass rate**, not the
 hidden-oracle pass rate. In a four-arm run Ley must be strictly above every simpler included arm **and**

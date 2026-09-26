@@ -492,9 +492,9 @@ fn classify_evidence(sections: &mut TopicDossierSections, result: &ProjectMemory
                 sections.related_history.push(id);
             }
         }
-        ProjectMemoryResultKind::Problem | ProjectMemoryResultKind::Session => {
-            sections.related_history.push(id)
-        }
+        ProjectMemoryResultKind::Problem
+        | ProjectMemoryResultKind::Verification
+        | ProjectMemoryResultKind::Session => sections.related_history.push(id),
     }
 }
 

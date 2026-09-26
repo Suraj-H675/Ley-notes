@@ -1016,6 +1016,10 @@ def mcp_call_result(
             proc.kill()
             proc.wait()
         raise
+    finally:
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
     if proc.returncode != 0:
         raise RuntimeError(f"MCP call {name} failed: {error_output.strip()}")
 
@@ -2001,6 +2005,7 @@ def create_structured_session(
     goal: str,
     summary: str,
     decisions: list[dict[str, str]] | None = None,
+    verification: list[dict[str, object]] | None = None,
     touched_artifacts: list[str] | None = None,
     unresolved: list[str] | None = None,
     host: str = "codex",
@@ -2024,6 +2029,8 @@ def create_structured_session(
     }
     if decisions:
         checkpoint["decisions"] = decisions
+    if verification:
+        checkpoint["verification"] = verification
     if touched_artifacts:
         checkpoint["touchedArtifacts"] = touched_artifacts
     if unresolved:

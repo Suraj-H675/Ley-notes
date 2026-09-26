@@ -29,6 +29,7 @@ from pathlib import Path
 from run_eval import (
     EVAL_ENV,
     WRITE_FLAGS,
+    cli_json,
     create_structured_session,
     git_commit_all,
     git_run,
@@ -86,6 +87,144 @@ def load_fixtures() -> list[dict[str, object]]:
     return fixtures
 
 
+def validate_reference_projects(
+    fixture: dict[str, object],
+    prefix: str,
+) -> list[dict[str, object]]:
+    raw = fixture.get("ley_reference_projects", [])
+    if not isinstance(raw, list) or not all(isinstance(item, dict) for item in raw):
+        raise RuntimeError(f"{prefix} ley_reference_projects must be an object array")
+
+    reference_projects = [item for item in raw if isinstance(item, dict)]
+    selected_references = 0
+    for index, item in enumerate(reference_projects):
+        name = item.get("name")
+        files = item.get("project_files")
+        selected = item.get("selected")
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(files, dict)
+            or not files
+            or not isinstance(selected, bool)
+        ):
+            raise RuntimeError(
+                f"{prefix} ley_reference_projects[{index}] requires name, "
+                "non-empty project_files, and boolean selected"
+            )
+        for relative, body in files.items():
+            if not isinstance(relative, str) or not isinstance(body, str):
+                raise RuntimeError(
+                    f"{prefix} ley_reference_projects[{index}].project_files must map strings"
+                )
+            path = Path(relative)
+            if path.is_absolute() or ".." in path.parts:
+                raise RuntimeError(
+                    f"{prefix} ley_reference_projects[{index}] contains unsafe path {relative!r}"
+                )
+        selected_references += int(selected)
+
+    if reference_projects and (
+        len(reference_projects) < 2 or selected_references != 1
+    ):
+        raise RuntimeError(
+            f"{prefix} cross-project fixtures require exactly one selected reference "
+            "and at least one unselected project"
+        )
+    return reference_projects
+
+
+def validate_context_markers(
+    fixture: dict[str, object],
+    prefix: str,
+    prior: dict[str, object],
+    prior_verification: list[dict[str, object]],
+    reference_projects: list[dict[str, object]],
+    prior_session_state: str,
+) -> None:
+    crash_evidence = fixture.get("crash_evidence")
+    marker_fields = (
+        "context_markers",
+        "simple_context_markers",
+        "ley_context_markers",
+        "forbidden_context_markers",
+        "ley_forbidden_context_markers",
+    )
+    groups: dict[str, list[str]] = {}
+    for field in marker_fields:
+        value = fixture.get(field, [] if field != "context_markers" else None)
+        if not isinstance(value, list) or not all(
+            isinstance(marker, str) and marker for marker in value
+        ):
+            raise RuntimeError(f"{prefix} {field} must be a string array")
+        groups[field] = value
+
+    ley_markers = groups["ley_context_markers"]
+    ley_forbidden = groups["ley_forbidden_context_markers"]
+    if prior_session_state == "crashed-active":
+        if (
+            not isinstance(crash_evidence, dict)
+            or not isinstance(crash_evidence.get("prompt"), str)
+            or not str(crash_evidence["prompt"]).strip()
+        ):
+            raise RuntimeError(
+                f"{prefix} crashed-active fixtures require crash_evidence.prompt"
+            )
+        if not ley_markers:
+            raise RuntimeError(
+                f"{prefix} crashed-active fixtures require ley_context_markers"
+            )
+    elif crash_evidence is not None:
+        raise RuntimeError(
+            f"{prefix} crash_evidence requires prior_session_state 'crashed-active'"
+        )
+
+    ley_only_sources = json.dumps(
+        {
+            "crash_evidence": crash_evidence,
+            "prior_verification": prior_verification,
+            "ley_reference_projects": reference_projects,
+        },
+        sort_keys=True,
+    ).lower()
+    missing_ley_markers = [
+        marker
+        for marker in [*ley_markers, *ley_forbidden]
+        if marker.lower() not in ley_only_sources
+    ]
+    if missing_ley_markers:
+        raise RuntimeError(
+            f"{prefix} Ley-only context markers are absent from Ley-only evidence sources: "
+            f"{missing_ley_markers}"
+        )
+
+    if not any(groups.values()):
+        raise RuntimeError(f"{prefix} requires at least one required or forbidden context marker")
+    group_items = [(name, set(values)) for name, values in groups.items()]
+    for index, (left_name, left) in enumerate(group_items):
+        for right_name, right in group_items[index + 1 :]:
+            overlap = left & right
+            if overlap:
+                raise RuntimeError(
+                    f"{prefix} context marker groups {left_name} and {right_name} overlap: "
+                    f"{sorted(overlap)}"
+                )
+
+    prior_markers = [
+        *groups["context_markers"],
+        *groups["simple_context_markers"],
+        *groups["forbidden_context_markers"],
+    ]
+    prior_text = json.dumps(prior, sort_keys=True).lower()
+    missing_prior_markers = [
+        marker for marker in prior_markers if marker.lower() not in prior_text
+    ]
+    if missing_prior_markers:
+        raise RuntimeError(
+            f"{prefix} context markers are absent from prior_memory: {missing_prior_markers}"
+        )
+
+
 def validate_fixture_schema(fixture: dict[str, object], line_number: int) -> None:
     prefix = f"{FIXTURES.name}:{line_number}"
     for field in ("id", "task"):
@@ -99,6 +238,15 @@ def validate_fixture_schema(fixture: dict[str, object], line_number: int) -> Non
         or len(task_family) > 64
     ):
         raise RuntimeError(f"{prefix} task_family must be a non-empty string up to 64 characters")
+    ley_min_context_tokens = fixture.get("ley_min_context_tokens")
+    if ley_min_context_tokens is not None and (
+        not isinstance(ley_min_context_tokens, int)
+        or isinstance(ley_min_context_tokens, bool)
+        or not 500 <= ley_min_context_tokens <= 8_000
+    ):
+        raise RuntimeError(
+            f"{prefix} ley_min_context_tokens must be an integer between 500 and 8000"
+        )
 
     project_files = fixture.get("project_files")
     if not isinstance(project_files, dict) or not project_files:
@@ -137,35 +285,56 @@ def validate_fixture_schema(fixture: dict[str, object], line_number: int) -> Non
     ):
         raise RuntimeError(f"{prefix} requires complete string prior_memory fields")
 
-    markers = fixture.get("context_markers")
-    if not isinstance(markers, list) or not all(
-        isinstance(value, str) and value for value in markers
+    prior_verification = fixture.get("prior_verification", [])
+    if not isinstance(prior_verification, list) or not all(
+        isinstance(item, dict) for item in prior_verification
     ):
-        raise RuntimeError(f"{prefix} context_markers must be a string array")
-    forbidden_markers = fixture.get("forbidden_context_markers", [])
-    if not isinstance(forbidden_markers, list) or not all(
-        isinstance(value, str) and value for value in forbidden_markers
-    ):
-        raise RuntimeError(f"{prefix} forbidden_context_markers must be a string array")
-    if not markers and not forbidden_markers:
-        raise RuntimeError(f"{prefix} requires at least one required or forbidden context marker")
-    if set(markers) & set(forbidden_markers):
-        raise RuntimeError(f"{prefix} context markers cannot be both required and forbidden")
-    prior_text = json.dumps(prior, sort_keys=True).lower()
-    missing_prior_markers = [
-        marker
-        for marker in [*markers, *forbidden_markers]
-        if marker.lower() not in prior_text
-    ]
-    if missing_prior_markers:
+        raise RuntimeError(f"{prefix} prior_verification must be an object array")
+    for item in prior_verification:
+        kind = item.get("kind")
+        status = item.get("status")
+        summary = item.get("summary")
+        command = item.get("command")
+        if (
+            not isinstance(kind, str)
+            or not kind.strip()
+            or status not in {"passed", "failed", "skipped", "unknown"}
+            or not isinstance(summary, str)
+            or not summary.strip()
+            or (command is not None and not isinstance(command, str))
+        ):
+            raise RuntimeError(
+                f"{prefix} prior_verification entries require kind/status/summary "
+                "and optional string command"
+            )
+
+    reference_projects = validate_reference_projects(fixture, prefix)
+
+    prior_session_state = fixture.get("prior_session_state", "completed")
+    if prior_session_state not in {"completed", "crashed-active"}:
         raise RuntimeError(
-            f"{prefix} context markers are absent from prior_memory: {missing_prior_markers}"
+            f"{prefix} prior_session_state must be 'completed' or 'crashed-active'"
         )
+    ley_seed_prior_memory = fixture.get("ley_seed_prior_memory", True)
+    if not isinstance(ley_seed_prior_memory, bool):
+        raise RuntimeError(f"{prefix} ley_seed_prior_memory must be boolean")
+    if prior_session_state == "crashed-active" and not ley_seed_prior_memory:
+        raise RuntimeError(
+            f"{prefix} crashed-active fixtures must seed prior Ley memory"
+        )
+    validate_context_markers(
+        fixture,
+        prefix,
+        prior,
+        prior_verification,
+        reference_projects,
+        str(prior_session_state),
+    )
 
     prior_revision_state = fixture.get("prior_revision_state", "current")
-    if prior_revision_state not in {"current", "divergent"}:
+    if prior_revision_state not in {"current", "divergent", "merged"}:
         raise RuntimeError(
-            f"{prefix} prior_revision_state must be 'current' or 'divergent'"
+            f"{prefix} prior_revision_state must be 'current', 'divergent', or 'merged'"
         )
 
     oracle_probe = fixture.get("oracle_probe")
@@ -309,12 +478,16 @@ def runner_sandbox_command(
     if executable is None:
         raise RuntimeError("external agent executable could not be resolved")
     executable_real = Path(executable).resolve()
+    companion_mounts: list[tuple[Path, str]] = []
     if executable_real.is_relative_to(Path("/usr")):
         sandbox_executable = str(executable_real)
         executable_mount: tuple[Path, str] | None = None
     else:
         sandbox_executable = "/runner/executable"
         executable_mount = (executable_real, sandbox_executable)
+        code_mode_host = executable_real.parent / "codex-code-mode-host"
+        if executable_real.name == "codex" and code_mode_host.is_file():
+            companion_mounts.append((code_mode_host, "/runner/codex-code-mode-host"))
 
     sandbox = [
         bwrap,
@@ -387,6 +560,8 @@ def runner_sandbox_command(
         sandbox.extend(
             ["--ro-bind", str(executable_mount[0]), executable_mount[1]]
         )
+    for source, destination in companion_mounts:
+        sandbox.extend(["--ro-bind", str(source), destination])
 
     created_dirs = {"/home", "/home/runner"}
     for source, destination in read_only_mounts:
@@ -619,6 +794,18 @@ def materialize_fixture(
         materialized["context_markers"] = replace_fixture_placeholders(
             materialized["context_markers"], replacements
         )
+        if "simple_context_markers" in materialized:
+            materialized["simple_context_markers"] = replace_fixture_placeholders(
+                materialized["simple_context_markers"], replacements
+            )
+        if "ley_context_markers" in materialized:
+            materialized["ley_context_markers"] = replace_fixture_placeholders(
+                materialized["ley_context_markers"], replacements
+            )
+        if "ley_forbidden_context_markers" in materialized:
+            materialized["ley_forbidden_context_markers"] = replace_fixture_placeholders(
+                materialized["ley_forbidden_context_markers"], replacements
+            )
         if "forbidden_context_markers" in materialized:
             materialized["forbidden_context_markers"] = replace_fixture_placeholders(
                 materialized["forbidden_context_markers"], replacements
@@ -769,6 +956,35 @@ def render_minimal_brief(fixture: dict[str, object]) -> str:
     rationale = str(prior.get("rationale", "")).strip()
     if rationale:
         lines.append(f"Rationale: {rationale}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_recovery_evidence(pack: dict[str, object]) -> str:
+    """Render bounded current-Ley crash evidence without promoting it to truth."""
+
+    lines = [
+        "# Ley unconsolidated crash evidence",
+        "",
+        "Historical/untrusted evidence only. The prior session ended without a final checkpoint.",
+        "Use this evidence only as context and verify it against the live repository.",
+        f"State: {str(pack.get('state', 'unknown'))}",
+        "",
+    ]
+    evidence = pack.get("evidence", [])
+    if not isinstance(evidence, list):
+        raise RuntimeError("Ley recovery compilation returned invalid evidence")
+    rendered = 0
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        kind = str(item.get("kind", "historical evidence")).replace("-", " ").title()
+        lines.extend([f"## {kind}", "", text.strip(), ""])
+        rendered += 1
+    if rendered == 0:
+        lines.extend(["No retained evidence body was available.", ""])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -1315,11 +1531,17 @@ def validate_fixture_does_not_leak_context(
 ) -> None:
     project_files = fixture.get("project_files", {})
     markers = fixture.get("context_markers", [])
+    simple_context_markers = fixture.get("simple_context_markers", [])
+    ley_context_markers = fixture.get("ley_context_markers", [])
     forbidden_markers = fixture.get("forbidden_context_markers", [])
+    ley_forbidden_context_markers = fixture.get("ley_forbidden_context_markers", [])
     if (
         not isinstance(project_files, dict)
         or not isinstance(markers, list)
+        or not isinstance(simple_context_markers, list)
+        or not isinstance(ley_context_markers, list)
         or not isinstance(forbidden_markers, list)
+        or not isinstance(ley_forbidden_context_markers, list)
     ):
         raise RuntimeError("agent task fixture has invalid project_files/context_markers")
     task = str(fixture.get("task", ""))
@@ -1336,7 +1558,13 @@ def validate_fixture_does_not_leak_context(
     ).lower()
     leaked = [
         str(marker)
-        for marker in [*markers, *forbidden_markers]
+        for marker in [
+            *markers,
+            *simple_context_markers,
+            *ley_context_markers,
+            *forbidden_markers,
+            *ley_forbidden_context_markers,
+        ]
         if str(marker).lower() in visible
     ]
     if leaked:
@@ -1350,12 +1578,13 @@ def prepare_fixture_git_state(project: Path, fixture: dict[str, object]) -> None
     revision_state = str(fixture.get("prior_revision_state", "current"))
     if revision_state == "current":
         return
-    if revision_state != "divergent":
+    if revision_state not in {"divergent", "merged"}:
         raise RuntimeError(f"unsupported prior revision state: {revision_state!r}")
     current_branch = git_run(project, ["branch", "--show-current"])
     if not current_branch:
-        raise RuntimeError("divergent fixture requires an attached Git branch")
-    git_run(project, ["checkout", "-b", "ley-eval-prior-divergent"])
+        raise RuntimeError(f"{revision_state} fixture requires an attached Git branch")
+    prior_branch = f"ley-eval-prior-{revision_state}"
+    git_run(project, ["checkout", "-b", prior_branch])
     git_run(
         project,
         [
@@ -1366,23 +1595,39 @@ def prepare_fixture_git_state(project: Path, fixture: dict[str, object]) -> None
             "commit",
             "--allow-empty",
             "-m",
-            "agent-eval divergent prior history",
+            f"agent-eval {revision_state} prior history",
         ],
     )
     git_run(project, ["checkout", current_branch])
-    git_run(
-        project,
-        [
-            "-c",
-            "user.name=Ley Eval",
-            "-c",
-            "user.email=ley-eval@example.invalid",
-            "commit",
-            "--allow-empty",
-            "-m",
-            "agent-eval current mainline",
-        ],
-    )
+    if revision_state == "divergent":
+        git_run(
+            project,
+            [
+                "-c",
+                "user.name=Ley Eval",
+                "-c",
+                "user.email=ley-eval@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "agent-eval current mainline",
+            ],
+        )
+    else:
+        git_run(
+            project,
+            [
+                "-c",
+                "user.name=Ley Eval",
+                "-c",
+                "user.email=ley-eval@example.invalid",
+                "merge",
+                "--no-ff",
+                prior_branch,
+                "-m",
+                "agent-eval merge prior history",
+            ],
+        )
 
 
 def validate_compiled_fixture(
@@ -1413,10 +1658,15 @@ def validate_compiled_fixture(
             ORACLE_REFERENCE_TIMEOUT_SECONDS,
         )
         init_project(project, "Agent downstream eval validation", vault)
-        seed_prior_memory(project, fixture)
+        prior_session_id = (
+            seed_prior_memory(project, fixture)
+            if fixture.get("ley_seed_prior_memory", True)
+            else None
+        )
         rendered, utility = prepare_ley_context(
             project,
             fixture,
+            prior_session_id,
             max_results=max_results,
             max_tokens=max_tokens,
         )
@@ -1428,6 +1678,12 @@ def validate_compiled_fixture(
             "contextCharacters": len(rendered),
             "estimatedTokens": utility["estimatedTokens"],
             "evidenceState": utility["evidenceState"],
+            "contextComposition": utility["contextComposition"],
+            "recoveryState": utility["recoveryState"],
+            "requestedMaxTokens": utility["requestedMaxTokens"],
+            "contextTokenBudget": utility["contextTokenBudget"],
+            "referenceProjectCount": utility["referenceProjectCount"],
+            "selectedReferenceCount": utility["selectedReferenceCount"],
             "oracleReferenceValidation": oracle_reference,
         }
     finally:
@@ -1446,11 +1702,13 @@ def seed_prior_memory(
         raise RuntimeError("agent task fixture requires prior_memory")
     revision_state = str(fixture.get("prior_revision_state", "current"))
     original_branch = ""
-    if revision_state == "divergent":
+    if revision_state in {"divergent", "merged"}:
         original_branch = git_run(project, ["branch", "--show-current"])
         if not original_branch:
-            raise RuntimeError("divergent prior-memory fixture requires an attached Git branch")
-        git_run(project, ["checkout", "ley-eval-prior-divergent"])
+            raise RuntimeError(
+                f"{revision_state} prior-memory fixture requires an attached Git branch"
+            )
+        git_run(project, ["checkout", f"ley-eval-prior-{revision_state}"])
         run(["ingest", str(project), "--json"])
     try:
         session_id, _ = create_structured_session(
@@ -1466,26 +1724,72 @@ def seed_prior_memory(
                     "rationale": str(prior.get("rationale", "")),
                 }
             ],
+            verification=[
+                {
+                    "kind": str(item["kind"]),
+                    "status": str(item["status"]),
+                    "summary": str(item["summary"]),
+                    **(
+                        {"command": str(item["command"])}
+                        if isinstance(item.get("command"), str)
+                        else {}
+                    ),
+                }
+                for item in fixture.get("prior_verification", [])
+                if isinstance(item, dict)
+            ],
         )
-        mcp_call(
-            project,
-            "ley_session_finish",
-            {
-                "sessionId": session_id,
-                "requestId": request_id(f"{fixture['id']}:prior:finish"),
-                "status": "completed",
-                "summary": str(prior["summary"]),
-                "finalResponse": "The prior contract was recorded and verified for handoff.",
-                "handoff": "Use the recorded prior contract when this topic is revisited.",
-                "unresolved": [],
-            },
-            WRITE_FLAGS,
-        )
+        if fixture.get("prior_session_state", "completed") == "crashed-active":
+            crash_evidence = fixture.get("crash_evidence")
+            if not isinstance(crash_evidence, dict):
+                raise RuntimeError("crashed fixture is missing crash_evidence")
+            run(
+                [
+                    "session",
+                    "prompt",
+                    session_id,
+                    str(project),
+                    "--stdin",
+                    "--request-id",
+                    request_id(f"{fixture['id']}:prior:crash-prompt"),
+                    "--json",
+                ],
+                stdin=str(crash_evidence["prompt"]),
+            )
+            crashed = mcp_call(
+                project,
+                "ley_session_get",
+                {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
+            )
+            if (
+                crashed.get("status") != "active"
+                or crashed.get("checkpointCount") != 1
+                or crashed.get("promptCount") != 1
+                or crashed.get("responseCount") != 0
+            ):
+                raise RuntimeError(
+                    "crashed prior-memory fixture did not preserve one active post-checkpoint prompt"
+                )
+        else:
+            mcp_call(
+                project,
+                "ley_session_finish",
+                {
+                    "sessionId": session_id,
+                    "requestId": request_id(f"{fixture['id']}:prior:finish"),
+                    "status": "completed",
+                    "summary": str(prior["summary"]),
+                    "finalResponse": "The prior contract was recorded and verified for handoff.",
+                    "handoff": "Use the recorded prior contract when this topic is revisited.",
+                    "unresolved": [],
+                },
+                WRITE_FLAGS,
+            )
     finally:
-        if revision_state == "divergent" and original_branch:
+        if revision_state in {"divergent", "merged"} and original_branch:
             git_run(project, ["checkout", original_branch])
 
-    if revision_state == "divergent":
+    if revision_state in {"divergent", "merged"}:
         payload = mcp_call(
             project,
             "ley_session_get",
@@ -1502,20 +1806,74 @@ def seed_prior_memory(
             if isinstance(applicability, dict)
             else ""
         )
-        if compatibility != "divergent":
+        if compatibility != revision_state:
             raise RuntimeError(
-                "divergent prior-memory fixture did not classify captured history as divergent"
+                f"{revision_state} prior-memory fixture classified captured history as "
+                f"{compatibility or 'unknown'}"
             )
     return session_id
+
+
+def prepare_ley_reference_projects(
+    project: Path,
+    fixture: dict[str, object],
+) -> dict[str, object]:
+    definitions = fixture.get("ley_reference_projects", [])
+    if not definitions:
+        return {"referenceProjectCount": 0, "selectedReferenceCount": 0}
+    if not isinstance(definitions, list):
+        raise RuntimeError("agent task fixture has invalid ley_reference_projects")
+
+    reference_root = project.parent / "agent-eval-reference-projects"
+    reference_root.mkdir()
+    selected_count = 0
+    for index, definition in enumerate(definitions):
+        if not isinstance(definition, dict):
+            raise RuntimeError("agent task reference project definition is invalid")
+        reference = reference_root / f"project-{index}"
+        vault = reference_root / f"vault-{index}"
+        reference.mkdir()
+        vault.mkdir()
+        files = definition.get("project_files")
+        if not isinstance(files, dict):
+            raise RuntimeError("agent task reference project requires project_files")
+        write_project_files(
+            reference,
+            {str(path): str(body) for path, body in files.items()},
+        )
+        init_project(reference, str(definition["name"]), vault)
+        if definition.get("selected") is True:
+            selected_count += 1
+            receipt = cli_json(["mount", "add", str(reference), str(project), "--json"])
+            if not isinstance(receipt, dict) or not isinstance(receipt.get("mount"), dict):
+                raise RuntimeError("explicit reference mount returned no mount receipt")
+            mount = receipt["mount"]
+            mount_id = str(mount.get("mountId", ""))
+            if (
+                not mount_id.startswith("mnt_")
+                or mount.get("agentContextEnabled") is not True
+                or mount.get("status") != "ready"
+            ):
+                raise RuntimeError("explicit reference mount was not ready for agent context")
+    if selected_count != 1:
+        raise RuntimeError("agent task reference setup requires exactly one selected project")
+    return {
+        "referenceProjectCount": len(definitions),
+        "selectedReferenceCount": selected_count,
+    }
 
 
 def prepare_ley_context(
     project: Path,
     fixture: dict[str, object],
+    prior_session_id: str | None,
     max_results: int,
     max_tokens: int,
 ) -> tuple[str, dict[str, object]]:
     task = str(fixture["task"])
+    fixture_min_tokens = int(fixture.get("ley_min_context_tokens", max_tokens))
+    effective_max_tokens = max(max_tokens, fixture_min_tokens)
+    reference_setup = prepare_ley_reference_projects(project, fixture)
     started = mcp_call(
         project,
         "ley_session_start",
@@ -1531,20 +1889,57 @@ def prepare_ley_context(
     compiled = mcp_call(
         project,
         "ley_compile_context",
-        {"task": task, "maxResults": max_results, "maxTokens": max_tokens},
+        {
+            "task": task,
+            "maxResults": max_results,
+            "maxTokens": effective_max_tokens,
+        },
     )
     context_pack_id = str(compiled.get("contextPackId", ""))
     if not context_pack_id.startswith("cpk_"):
         raise RuntimeError("Ley context compilation returned no stable contextPackId")
     rendered = render_context(compiled)
-    markers = [str(value) for value in fixture.get("context_markers", [])]
+    recovery_pack: dict[str, object] | None = None
+    if fixture.get("prior_session_state", "completed") == "crashed-active":
+        if prior_session_id is None:
+            raise RuntimeError("crashed fixture has no prior Ley session")
+        recovery_pack = mcp_call(
+            project,
+            "ley_session_memory_compile",
+            {
+                "sessionId": prior_session_id,
+                "maxResults": max_results,
+                "maxCharacters": max(1_000, min(64_000, effective_max_tokens * 4)),
+            },
+        )
+        if (
+            recovery_pack.get("sessionStatus") != "active"
+            or recovery_pack.get("canCheckpoint") is not True
+            or int(recovery_pack.get("totalUnconsolidatedEvidence", 0)) < 1
+        ):
+            raise RuntimeError(
+                "Ley recovery compilation did not expose active unconsolidated crash evidence"
+            )
+        rendered = rendered.rstrip() + "\n\n" + render_recovery_evidence(recovery_pack)
+
+    markers = [
+        str(value)
+        for value in [
+            *fixture.get("context_markers", []),
+            *fixture.get("ley_context_markers", []),
+        ]
+    ]
     missing = [marker for marker in markers if marker.lower() not in rendered.lower()]
     if missing:
         raise RuntimeError(
             f"Ley context omitted {len(missing)} required benchmark evidence marker(s)"
         )
     forbidden_markers = [
-        str(value) for value in fixture.get("forbidden_context_markers", [])
+        str(value)
+        for value in [
+            *fixture.get("forbidden_context_markers", []),
+            *fixture.get("ley_forbidden_context_markers", []),
+        ]
     ]
     leaked = [
         marker for marker in forbidden_markers if marker.lower() in rendered.lower()
@@ -1553,36 +1948,50 @@ def prepare_ley_context(
         raise RuntimeError(
             f"Ley context exposed {len(leaked)} forbidden benchmark evidence marker(s)"
         )
-    bound = mcp_call(
-        project,
-        "ley_context_utility_bind",
-        {
-            "sessionId": session_id,
-            "requestId": request_id(f"{fixture['id']}:eval:bind"),
-            "expectedEventCount": 1,
-            "contextPackId": context_pack_id,
-            "task": task,
-            "maxResults": max_results,
-            "maxTokens": max_tokens,
-        },
-        WRITE_FLAGS,
-    )
-    binding_id = str(bound.get("bindingId", ""))
-    if (
-        not binding_id.startswith("cub_")
-        or bound.get("contextPackId") != context_pack_id
-        or bound.get("eventCount") != 2
-        or bound.get("replayed") is not False
-    ):
-        raise RuntimeError("Ley context utility bind receipt did not match the compiled pack")
+    binding_id: str | None = None
+    pre_outcome_event_count = 1
+    if recovery_pack is None:
+        bound = mcp_call(
+            project,
+            "ley_context_utility_bind",
+            {
+                "sessionId": session_id,
+                "requestId": request_id(f"{fixture['id']}:eval:bind"),
+                "expectedEventCount": 1,
+                "contextPackId": context_pack_id,
+                "task": task,
+                "maxResults": max_results,
+                "maxTokens": effective_max_tokens,
+            },
+            WRITE_FLAGS,
+        )
+        binding_id = str(bound.get("bindingId", ""))
+        if (
+            not binding_id.startswith("cub_")
+            or bound.get("contextPackId") != context_pack_id
+            or bound.get("eventCount") != 2
+            or bound.get("replayed") is not False
+        ):
+            raise RuntimeError("Ley context utility bind receipt did not match the compiled pack")
+        pre_outcome_event_count = 2
     return rendered, {
         "sessionId": session_id,
         "bindingId": binding_id,
         "contextPackId": context_pack_id,
         "contextSha256": sha256_text(rendered),
         "contextCharacters": len(rendered),
-        "estimatedTokens": compiled.get("estimatedTokens"),
+        "estimatedTokens": approximate_text_tokens(rendered),
         "evidenceState": compiled.get("evidenceState"),
+        "requestedMaxTokens": max_tokens,
+        "contextTokenBudget": effective_max_tokens,
+        "preOutcomeEventCount": pre_outcome_event_count,
+        "contextComposition": (
+            "compiled-context+unconsolidated-session-evidence"
+            if recovery_pack is not None
+            else "compiled-context"
+        ),
+        "recoveryState": recovery_pack.get("state") if recovery_pack is not None else None,
+        **reference_setup,
     }
 
 
@@ -1648,7 +2057,7 @@ def record_ley_outcome(
         {
             "sessionId": session_id,
             "requestId": request_id(f"{fixture['id']}:eval:checkpoint"),
-            "expectedEventCount": 2,
+            "expectedEventCount": int(utility.get("preOutcomeEventCount", 2)),
             "summary": fields["checkpointSummary"],
             "tasks": [
                 {
@@ -1676,6 +2085,29 @@ def record_ley_outcome(
         },
         WRITE_FLAGS,
     )
+    binding_id = utility.get("bindingId")
+    if not binding_id:
+        session = mcp_call(
+            project,
+            "ley_session_get",
+            {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
+        )
+        if (
+            session.get("contextUtilityBindingCount") != 0
+            or session.get("contextUtilityObservationCount") != 0
+        ):
+            raise RuntimeError(
+                "composite Ley context unexpectedly created a partial utility binding"
+            )
+        return {
+            "observationEventId": None,
+            "observationRecorded": False,
+            "observationOmissionReason": "composite-context-not-single-pack-bound",
+            "contextUsageProven": False,
+            "causalUtilityProven": False,
+            "trustChangesApplied": False,
+            "rankingChangesApplied": False,
+        }
     observed = mcp_call(
         project,
         "ley_context_utility_observe",
@@ -1683,7 +2115,7 @@ def record_ley_outcome(
             "sessionId": session_id,
             "requestId": request_id(f"{fixture['id']}:eval:observe"),
             "expectedEventCount": 4,
-            "bindingId": str(utility["bindingId"]),
+            "bindingId": str(binding_id),
             "downstreamEventIds": [checkpoint_event_id, str(finished["eventId"])],
         },
         WRITE_FLAGS,
@@ -1981,10 +2413,15 @@ def execute_variant(
             vault.mkdir()
             EVAL_ENV["XDG_CONFIG_HOME"] = str(memory_root / "config")
             init_project(memory_project, "Agent downstream eval", vault)
-            seed_prior_memory(memory_project, fixture)
+            prior_session_id = (
+                seed_prior_memory(memory_project, fixture)
+                if fixture.get("ley_seed_prior_memory", True)
+                else None
+            )
             context_text, utility = prepare_ley_context(
                 memory_project,
                 fixture,
+                prior_session_id,
                 max_results=max_results,
                 max_tokens=max_tokens,
             )

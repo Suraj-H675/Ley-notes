@@ -68,6 +68,7 @@ pub enum ProjectMemoryResultKind {
     Revision,
     Decision,
     Problem,
+    Verification,
     Learning,
     Artifact,
     Symbol,
@@ -722,6 +723,53 @@ fn collect_session_candidates(
             candidate.revision_applicability = revision_applicability.clone();
             collector.push(candidate);
         }
+
+        for verification in &checkpoint.verification {
+            let status = verification_status_label(verification.status);
+            let title = format!("{} · {status}", verification.kind);
+            let excerpt = verification.summary.clone();
+            let evidence_citation = verification
+                .evidence_artifacts
+                .first()
+                .map(graph_citation_from_session);
+            let mut candidate = new_candidate(
+                ProjectMemoryResultKind::Verification,
+                verification.id.clone(),
+                title,
+                excerpt,
+                join_bounded_fields(
+                    std::iter::once(session.name.as_str())
+                        .chain(std::iter::once(checkpoint.summary.as_str()))
+                        .chain(std::iter::once(verification.kind.as_str()))
+                        .chain(std::iter::once(status))
+                        .chain(std::iter::once(verification.summary.as_str()))
+                        .chain(verification.command.iter().map(String::as_str)),
+                ),
+                checkpoint.recorded_at_unix_ms,
+                Some(session.session_id.clone()),
+                None,
+                evidence_citation,
+                None,
+                None,
+                None,
+                None,
+                false,
+                None,
+                query,
+                terms,
+            );
+            candidate.revision_applicability = revision_applicability.clone();
+            collector.push(candidate);
+        }
+    }
+}
+
+fn verification_status_label(status: crate::VerificationStatus) -> &'static str {
+    match status {
+        crate::VerificationStatus::Passed => "passed",
+        crate::VerificationStatus::Failed => "failed",
+        crate::VerificationStatus::Skipped => "skipped",
+        crate::VerificationStatus::Unknown => "unknown",
     }
 }
 
@@ -1394,6 +1442,7 @@ fn kind_name(kind: ProjectMemoryResultKind) -> &'static str {
         ProjectMemoryResultKind::Revision => "revision",
         ProjectMemoryResultKind::Decision => "decision",
         ProjectMemoryResultKind::Problem => "problem",
+        ProjectMemoryResultKind::Verification => "verification",
         ProjectMemoryResultKind::Learning => "learning",
         ProjectMemoryResultKind::Artifact => "artifact",
         ProjectMemoryResultKind::Symbol => "symbol",
@@ -1438,6 +1487,7 @@ mod tests {
     use crate::{
         checkpoint_session, ingest_project, initialize_project, start_session, ArtifactMediaType,
         CaptureMode, CheckpointInput, DecisionInput, SessionSource, StartSessionInput,
+        VerificationInput, VerificationStatus,
     };
     use std::fs;
     use std::process::Command;
@@ -1890,6 +1940,86 @@ mod tests {
         assert!(!serde_json::to_string(&result)
             .unwrap()
             .contains(project.to_string_lossy().as_ref()));
+        assert!(!result.live_source_checked);
+    }
+
+    #[test]
+    fn structured_verification_is_searchable_without_becoming_trusted_truth() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        initialize_project(
+            &project,
+            Some("Verification search"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('4'),
+                name: "Timeout rollout".to_owned(),
+                goal: "Finalize timeout defaults".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: request_id('5'),
+                summary: "Narrative rollout note claimed 30 seconds was validated.".to_owned(),
+                plan: Vec::new(),
+                decisions: vec![DecisionInput {
+                    title: "Timeout default".to_owned(),
+                    decision: "Use 30 seconds as the default timeout.".to_owned(),
+                    rationale: String::new(),
+                    alternatives: Vec::new(),
+                }],
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: vec![VerificationInput {
+                    kind: "compatibility-test".to_owned(),
+                    status: VerificationStatus::Passed,
+                    summary: "Final compatibility check passed with a 45-second default."
+                        .to_owned(),
+                    command: Some("python3 -m unittest compatibility_timeout".to_owned()),
+                    evidence_artifact_paths: Vec::new(),
+                }],
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let result = search_project_memory(
+            &project,
+            &vault,
+            "45-second default compatibility",
+            ProjectMemorySearchLimits {
+                max_results: 8,
+                max_tokens: 2_000,
+            },
+            None,
+        )
+        .unwrap();
+        let verification = result
+            .results
+            .iter()
+            .find(|item| item.kind == ProjectMemoryResultKind::Verification)
+            .expect("verification should be a first-class historical search result");
+        assert_eq!(verification.title, "compatibility-test · passed");
+        assert!(verification.excerpt.contains("45-second default"));
+        assert!(!verification.trusted_for_reuse);
+        assert_eq!(verification.trust_signal, None);
         assert!(!result.live_source_checked);
     }
 

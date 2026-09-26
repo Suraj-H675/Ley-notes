@@ -88,8 +88,42 @@ class AgentTaskEvalTests(unittest.TestCase):
         fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
         marker = fixture["context_markers"][0]
         fixture["forbidden_context_markers"] = [marker]
-        with self.assertRaisesRegex(RuntimeError, "both required and forbidden"):
+        with self.assertRaisesRegex(RuntimeError, "context marker groups"):
             agent_eval.validate_fixture_schema(fixture, 1)
+
+    def test_crash_fixture_schema_requires_bounded_ley_only_evidence(self) -> None:
+        fixture = copy.deepcopy(self.fixture("crash-slug-normalization-contract"))
+        agent_eval.validate_fixture_schema(fixture, 1)
+
+        missing_evidence = copy.deepcopy(fixture)
+        missing_evidence.pop("crash_evidence")
+        with self.assertRaisesRegex(RuntimeError, "crash_evidence.prompt"):
+            agent_eval.validate_fixture_schema(missing_evidence, 1)
+
+        missing_markers = copy.deepcopy(fixture)
+        missing_markers["ley_context_markers"] = []
+        with self.assertRaisesRegex(RuntimeError, "require ley_context_markers"):
+            agent_eval.validate_fixture_schema(missing_markers, 1)
+
+        completed = copy.deepcopy(fixture)
+        completed["prior_session_state"] = "completed"
+        with self.assertRaisesRegex(RuntimeError, "requires prior_session_state"):
+            agent_eval.validate_fixture_schema(completed, 1)
+
+    def test_cross_project_fixture_schema_requires_one_explicit_selection(self) -> None:
+        fixture = copy.deepcopy(self.fixture("explicit-reference-cache-contract"))
+        agent_eval.validate_fixture_schema(fixture, 1)
+
+        no_selection = copy.deepcopy(fixture)
+        for reference in no_selection["ley_reference_projects"]:
+            reference["selected"] = False
+        with self.assertRaisesRegex(RuntimeError, "exactly one selected reference"):
+            agent_eval.validate_fixture_schema(no_selection, 1)
+
+        oversized_budget = copy.deepcopy(fixture)
+        oversized_budget["ley_min_context_tokens"] = 8_001
+        with self.assertRaisesRegex(RuntimeError, "ley_min_context_tokens"):
+            agent_eval.validate_fixture_schema(oversized_budget, 1)
 
     def test_divergent_fixture_git_state_is_two_sided_without_source_changes(self) -> None:
         fixture = agent_eval.materialize_fixture(
@@ -113,6 +147,36 @@ class AgentTaskEvalTests(unittest.TestCase):
             self.assertNotEqual(main, experiment)
             self.assertEqual(
                 agent_eval.git_run(project, ["merge-base", main, experiment]),
+                base,
+            )
+            self.assertEqual(agent_eval.snapshot_project_tree(project), before)
+
+    def test_merged_fixture_git_state_lands_prior_branch_without_source_changes(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("merged-release-cache-key-contract"),
+            bytes.fromhex("4d" * 32),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            write_project_files(project, fixture["project_files"])
+            agent_eval.git_run(project, ["init", "-b", "main"])
+            base = agent_eval.git_commit_all(project, "fixture")
+            before = agent_eval.snapshot_project_tree(project)
+
+            agent_eval.prepare_fixture_git_state(project, fixture)
+
+            self.assertEqual(agent_eval.git_run(project, ["branch", "--show-current"]), "main")
+            main = agent_eval.git_run(project, ["rev-parse", "main"])
+            merged = agent_eval.git_run(
+                project, ["rev-parse", "ley-eval-prior-merged"]
+            )
+            self.assertNotEqual(main, merged)
+            self.assertEqual(
+                agent_eval.git_run(project, ["merge-base", main, merged]),
+                merged,
+            )
+            self.assertEqual(
+                agent_eval.git_run(project, ["rev-parse", f"{main}^1"]),
                 base,
             )
             self.assertEqual(agent_eval.snapshot_project_tree(project), before)
@@ -487,6 +551,36 @@ class AgentTaskEvalTests(unittest.TestCase):
                 joined,
             )
 
+    def test_external_runner_mounts_codex_code_mode_host_with_standalone_codex(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            install = root / "codex-install"
+            project.mkdir()
+            install.mkdir()
+            codex = install / "codex"
+            host = install / "codex-code-mode-host"
+            codex.write_text("codex", encoding="utf-8")
+            host.write_text("host", encoding="utf-8")
+            codex.chmod(0o755)
+            host.chmod(0o755)
+            with mock.patch.object(agent_eval.shutil, "which") as which:
+                which.side_effect = lambda name, path=None: (
+                    "/usr/bin/bwrap" if name == "bwrap" else str(codex)
+                )
+                command, _ = agent_eval.runner_sandbox_command(
+                    ["codex", "exec", "-"],
+                    project,
+                    [],
+                    [],
+                )
+        joined = "\n".join(command)
+        self.assertIn(f"--ro-bind\n{codex}\n/runner/executable", joined)
+        self.assertIn(
+            f"--ro-bind\n{host}\n/runner/codex-code-mode-host",
+            joined,
+        )
+
     def test_snapshot_does_not_follow_directory_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -654,13 +748,21 @@ class AgentTaskEvalTests(unittest.TestCase):
             fixture = agent_eval.materialize_fixture(raw, seed)
             with self.subTest(task=fixture["id"]):
                 markers = [str(value) for value in fixture["context_markers"]]
+                simple_only = [
+                    str(value)
+                    for value in fixture.get("simple_context_markers", [])
+                ]
                 forbidden = [
                     str(value)
                     for value in fixture.get("forbidden_context_markers", [])
                 ]
+                ley_only = [
+                    str(value)
+                    for value in fixture.get("ley_context_markers", [])
+                ]
                 handoff = agent_eval.render_handoff(fixture)
                 minimal = agent_eval.render_minimal_brief(fixture)
-                for marker in markers:
+                for marker in [*markers, *simple_only]:
                     self.assertIn(marker.lower(), handoff.lower())
                     self.assertIn(marker.lower(), minimal.lower())
                 for marker in forbidden:
@@ -675,9 +777,167 @@ class AgentTaskEvalTests(unittest.TestCase):
                     self.assertTrue(
                         any(marker.lower() in minimal.lower() for marker in forbidden)
                     )
+                for marker in ley_only:
+                    self.assertNotIn(marker.lower(), handoff.lower())
+                    self.assertNotIn(marker.lower(), minimal.lower())
                 self.assertIn("human handoff", handoff.lower())
                 self.assertIn("benchmark baseline", minimal.lower())
                 self.assertLessEqual(len(minimal), len(handoff))
+
+    def test_crash_fixture_validation_recovers_unconsolidated_prompt_only_for_ley(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("crash-slug-normalization-contract"),
+            bytes.fromhex("46" * 32),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            result = agent_eval.validate_compiled_fixture(
+                fixture,
+                Path(temporary),
+                max_results=8,
+                max_tokens=500,
+            )
+        self.assertEqual(
+            result["contextComposition"],
+            "compiled-context+unconsolidated-session-evidence",
+        )
+        self.assertEqual(result["recoveryState"], "partial-evidence")
+        self.assertGreater(result["contextCharacters"], 0)
+
+    def test_crash_ley_arm_records_outcome_without_partial_utility_binding(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("crash-slug-normalization-contract"),
+            bytes.fromhex("47" * 32),
+        )
+        runner_code = (
+            "from pathlib import Path\n"
+            "import sys\n"
+            "sys.stdin.read()\n"
+            "Path('slug.py').write_text("
+            "'import re\\n\\ndef canonical_slug(value: str) -> str:\\n'"
+            "+ '    return re.sub(r\"[\\\\s_-]+\", \"-\", value.strip().lower())\\n',"
+            " encoding='utf-8')\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            result = agent_eval.execute_variant(
+                fixture,
+                Path(temporary),
+                ["python3", "-c", runner_code],
+                [],
+                [],
+                "ley",
+                timeout_seconds=20,
+                max_results=8,
+                max_tokens=500,
+                capture_audit=False,
+            )
+        self.assertTrue(result["taskPassed"])
+        self.assertEqual(
+            result["context"]["contextComposition"],
+            "compiled-context+unconsolidated-session-evidence",
+        )
+        self.assertFalse(result["utilityObservation"]["observationRecorded"])
+        self.assertEqual(
+            result["utilityObservation"]["observationOmissionReason"],
+            "composite-context-not-single-pack-bound",
+        )
+        self.assertFalse(result["utilityObservation"]["contextUsageProven"])
+        self.assertFalse(result["utilityObservation"]["causalUtilityProven"])
+
+    def test_verified_vs_claimed_fixture_separates_simple_and_ley_context(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("verified-timeout-contract"),
+            bytes.fromhex("48" * 32),
+        )
+        runner_code = (
+            "from pathlib import Path\n"
+            "import sys\n"
+            "prompt = sys.stdin.read()\n"
+            "handoff = Path('HANDOFF.md').read_text(encoding='utf-8') "
+            "if Path('HANDOFF.md').exists() else ''\n"
+            "context = prompt + '\\n' + handoff\n"
+            "value = 45 if '45-second default' in context else "
+            "(30 if 'Use 30 seconds as the default timeout' in context else 20)\n"
+            "Path('timeouts.py').write_text("
+            "f'def default_timeout_seconds() -> int:\\n    return {value}\\n', "
+            "encoding='utf-8')\n"
+        )
+        results = {}
+        for variant in agent_eval.COMPARISON_VARIANTS:
+            with tempfile.TemporaryDirectory() as temporary:
+                results[variant] = agent_eval.execute_variant(
+                    fixture,
+                    Path(temporary),
+                    ["python3", "-c", runner_code],
+                    [],
+                    [],
+                    variant,
+                    timeout_seconds=20,
+                    max_results=8,
+                    max_tokens=500,
+                    capture_audit=True,
+                )
+
+        self.assertFalse(results["baseline"]["taskPassed"])
+        self.assertFalse(results["handoff"]["taskPassed"])
+        self.assertFalse(results["minimal"]["taskPassed"])
+        self.assertTrue(results["ley"]["taskPassed"])
+
+        handoff_context = results["handoff"]["_audit"]["context"]
+        minimal_prompt = results["minimal"]["_audit"]["prompt"]
+        ley_prompt = results["ley"]["_audit"]["prompt"]
+        self.assertIn("Use 30 seconds as the default timeout", handoff_context)
+        self.assertIn("Use 30 seconds as the default timeout", minimal_prompt)
+        self.assertNotIn("45-second default", handoff_context)
+        self.assertNotIn("45-second default", minimal_prompt)
+        self.assertIn("45-second default", ley_prompt)
+        self.assertNotIn("Use 30 seconds as the default timeout", ley_prompt)
+
+    def test_explicit_reference_fixture_uses_only_selected_project(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("explicit-reference-cache-contract"),
+            bytes.fromhex("49" * 32),
+        )
+        runner_code = (
+            "from pathlib import Path\n"
+            "import sys\n"
+            "prompt = sys.stdin.read()\n"
+            "handoff = Path('HANDOFF.md').read_text(encoding='utf-8') "
+            "if Path('HANDOFF.md').exists() else ''\n"
+            "context = prompt + '\\n' + handoff\n"
+            "prefix = 'peer-v4::' if 'selected_reference_contract_52d1' in context else "
+            "('billing-secret::' if 'unrelated_reference_canary_9c17' in context else 'local:')\n"
+            "Path('adapter.py').write_text("
+            "f'def make_key(identifier: str) -> str:\\n    return f\"{prefix}{{identifier}}\"\\n', "
+            "encoding='utf-8')\n"
+        )
+        results = {}
+        for variant in agent_eval.COMPARISON_VARIANTS:
+            with tempfile.TemporaryDirectory() as temporary:
+                results[variant] = agent_eval.execute_variant(
+                    fixture,
+                    Path(temporary),
+                    ["python3", "-c", runner_code],
+                    [],
+                    [],
+                    variant,
+                    timeout_seconds=20,
+                    max_results=8,
+                    max_tokens=500,
+                    capture_audit=True,
+                )
+
+        self.assertFalse(results["baseline"]["taskPassed"])
+        self.assertFalse(results["handoff"]["taskPassed"])
+        self.assertFalse(results["minimal"]["taskPassed"])
+        self.assertTrue(results["ley"]["taskPassed"])
+        ley_prompt = results["ley"]["_audit"]["prompt"]
+        self.assertIn("selected_reference_contract_52d1", ley_prompt)
+        self.assertNotIn("unrelated_reference_canary_9c17", ley_prompt)
+        self.assertNotIn("billing-secret::", ley_prompt)
+        self.assertEqual(results["ley"]["context"]["requestedMaxTokens"], 500)
+        self.assertEqual(results["ley"]["context"]["contextTokenBudget"], 1_000)
+        self.assertEqual(results["ley"]["context"]["referenceProjectCount"], 2)
+        self.assertEqual(results["ley"]["context"]["selectedReferenceCount"], 1)
 
     def test_task_pass_requires_all_gates(self) -> None:
         good_runner = {"completed": True}
