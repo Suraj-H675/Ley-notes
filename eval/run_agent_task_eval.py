@@ -597,6 +597,9 @@ def runner_sandbox_command(
             "--setenv",
             "LOGNAME",
             "runner",
+            "--setenv",
+            "PYTHONDONTWRITEBYTECODE",
+            "1",
         ]
     )
     for name in (*DEFAULT_RUNNER_ENV, *inherited_env_names):
@@ -1072,6 +1075,8 @@ def snapshot_project_tree(project: Path) -> dict[str, tuple[str, int, bytes]]:
         for name in names:
             if not prefix and name == ".git":
                 continue
+            if name == "__pycache__":
+                continue
             relative = f"{prefix}/{name}" if prefix else name
             try:
                 entry_stat = os.stat(
@@ -1462,9 +1467,12 @@ def evaluate_task_constraints(
     after_snapshot: dict[str, tuple[str, int, bytes]],
     changed_files: list[str],
     timeout_seconds: int,
+    ignored_changed_files: set[str] | None = None,
 ) -> dict[str, object]:
     allowed = {str(value) for value in fixture["allowed_changed_files"]}
-    unexpected_changes = sorted(set(changed_files) - allowed)
+    ignored = ignored_changed_files or set()
+    evaluated_changes = [path for path in changed_files if path not in ignored]
+    unexpected_changes = sorted(set(evaluated_changes) - allowed)
     symlinks = project_symlink_paths(after_snapshot)
     unsafe_special_paths = sorted(
         path
@@ -1473,7 +1481,7 @@ def evaluate_task_constraints(
     )
     unchanged_mismatches = sorted(
         path
-        for path in changed_files
+        for path in evaluated_changes
         if path in before_snapshot and path not in allowed
     )
     missing_allowed = sorted(
@@ -2462,6 +2470,7 @@ def execute_variant(
             after_snapshot,
             changed_files,
             timeout_seconds,
+            {"HANDOFF.md"} if variant == "handoff" else None,
         )
         oracle = (
             run_hidden_oracle(

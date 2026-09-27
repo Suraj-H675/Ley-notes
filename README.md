@@ -112,11 +112,16 @@ Machine-managed state is planned to move from many custom JSON registries toward
 
 ## Evaluation before feature growth
 
-New major product concepts are frozen until Ley has a stronger realistic downstream benchmark. At minimum the comparison should include:
+The Phase-0 comparison is complete for the reset decision. A pinned `gpt-6-luna` / `xhigh` study compared
+no history, a human `HANDOFF.md`, a tiny historical brief, and current/full Ley across four controlled
+continuity tasks. After fixing two evaluator artifacts and replacing the affected observations, the final
+sample contains 48 valid attempts with three observations per task/arm cell and zero runner failures.
 
-1. host-native agent + repository tools/instructions only;
-2. a concise human-authored `HANDOFF.md`;
-3. minimal redesigned Ley;
-4. the current full Ley implementation while it still exists.
+The result does **not** justify preserving the current architecture wholesale. It earns a narrower set of
+capabilities: structured verification/evidence and explicit selected-source context; bounded event evidence
+and lightweight revision applicability remain cheap safety/provenance primitives. Persistent mount/scope/
+policy graphs, shape-specific recovery APIs, semantic/vector retrieval, full source graphs/capture, and
+other legacy breadth still have to beat simpler replacements before they return.
 
-The goal is not to maximize the number of memory features. The goal is to show that Ley helps real agents resume work more correctly, with less stale-context harm and less wasted context.
+See [`docs/research/phase0-frontier-agent-benchmark-2026-09-26.md`](docs/research/phase0-frontier-agent-benchmark-2026-09-26.md)
+for methodology, corrected results, discarded evaluator artifacts, limits, and migration implications.
