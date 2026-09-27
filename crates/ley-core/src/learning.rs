@@ -626,6 +626,7 @@ pub(crate) fn continuity_events_for_migration(
             Ok(crate::ContinuityEventInput {
                 event_id: event.event_id,
                 project_id: event.project_id,
+                subject_id: Some(event.learning_id),
                 session_id: None,
                 session_sequence: None,
                 request_id: None,

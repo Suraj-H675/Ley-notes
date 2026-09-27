@@ -3389,6 +3389,7 @@ pub(crate) fn continuity_events_for_migration(
             imported.push(crate::ContinuityEventInput {
                 event_id: event.event_id,
                 project_id: event.project_id,
+                subject_id: None,
                 session_id: Some(event.session_id),
                 session_sequence: Some(event.sequence),
                 request_id: Some(event.request_id),

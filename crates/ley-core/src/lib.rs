@@ -123,8 +123,9 @@ pub use continuity_import::{
 };
 pub use continuity_store::{
     default_continuity_database_path, ContinuityEvent, ContinuityEventInput,
-    ContinuityImportSummary, ContinuityStore, ContinuityWrite, CONTINUITY_DATABASE_FILE,
-    CONTINUITY_EVENT_LIMIT_BYTES, CONTINUITY_SCHEMA_VERSION,
+    ContinuityImportSummary, ContinuitySessionErasure, ContinuitySessionErasurePreview,
+    ContinuityStore, ContinuityWrite, CONTINUITY_DATABASE_FILE, CONTINUITY_EVENT_LIMIT_BYTES,
+    CONTINUITY_SCHEMA_VERSION,
 };
 pub use cross_project_search::{
     search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,

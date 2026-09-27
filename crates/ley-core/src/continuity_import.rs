@@ -1,7 +1,9 @@
+use crate::continuity_store::ContinuityEventLinkInput;
 use crate::{diagnose_project, ContinuityEventInput, ContinuityStore, LeyCoreError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub const LEGACY_CONTINUITY_IMPORT_FORMAT_VERSION: u32 = 1;
@@ -35,6 +37,7 @@ pub fn import_legacy_continuity(
     let mut events = session_events;
     events.extend(learning_events);
     events.sort_by(|left, right| left.event_id.cmp(&right.event_id));
+    let links = legacy_event_links(&events)?;
     let source_digest = event_inventory_digest(&events)?;
     let digest_hex = source_digest
         .strip_prefix("sha256:")
@@ -49,6 +52,7 @@ pub fn import_legacy_continuity(
     events.push(ContinuityEventInput {
         event_id: manifest_event_id.clone(),
         project_id: diagnostic.identity.project_id.clone(),
+        subject_id: None,
         session_id: None,
         session_sequence: None,
         request_id: None,
@@ -68,7 +72,7 @@ pub fn import_legacy_continuity(
         }),
     });
 
-    let imported = store.sync_legacy_project_events(&diagnostic.identity, &events)?;
+    let imported = store.sync_legacy_project_events(&diagnostic.identity, &events, &links)?;
     Ok(LegacyContinuityImportSummary {
         project_id: diagnostic.identity.project_id,
         session_events: session_event_count,
@@ -89,6 +93,114 @@ fn event_inventory_digest(events: &[ContinuityEventInput]) -> Result<String, Ley
         ))
     })?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+}
+
+fn legacy_event_links(
+    events: &[ContinuityEventInput],
+) -> Result<Vec<ContinuityEventLinkInput>, LeyCoreError> {
+    let mut session_anchors = BTreeMap::<String, String>::new();
+    let mut learning_roots = BTreeMap::<String, (u64, String)>::new();
+    for event in events {
+        if event.kind == "legacy-session-started" {
+            let session_id = event.session_id.as_ref().ok_or_else(|| {
+                LeyCoreError::InvalidContinuityStore(
+                    "legacy session start event is missing session ID".to_owned(),
+                )
+            })?;
+            if session_anchors
+                .insert(session_id.clone(), event.event_id.clone())
+                .is_some()
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "legacy session {session_id} has multiple start events"
+                )));
+            }
+        }
+        if let Some(subject_id) = &event.subject_id {
+            let sequence = event.payload["sequence"].as_u64().ok_or_else(|| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "legacy learning event {} is missing sequence",
+                    event.event_id
+                ))
+            })?;
+            match learning_roots.get(subject_id) {
+                Some((current, _)) if *current <= sequence => {}
+                _ => {
+                    learning_roots.insert(subject_id.clone(), (sequence, event.event_id.clone()));
+                }
+            }
+        }
+    }
+
+    let mut links = BTreeSet::<(String, String, String)>::new();
+    for event in events {
+        match event.kind.as_str() {
+            "legacy-learning-proposed" | "legacy-learning-corrected" => {
+                let evidence = event.payload["data"]["evidence"]
+                    .as_array()
+                    .ok_or_else(|| {
+                        LeyCoreError::InvalidContinuityStore(format!(
+                            "legacy learning event {} is missing evidence",
+                            event.event_id
+                        ))
+                    })?;
+                for item in evidence {
+                    let session_id = item["sessionId"].as_str().ok_or_else(|| {
+                        LeyCoreError::InvalidContinuityStore(format!(
+                            "legacy learning event {} has invalid session evidence",
+                            event.event_id
+                        ))
+                    })?;
+                    let target = session_anchors.get(session_id).ok_or_else(|| {
+                        LeyCoreError::InvalidContinuityStore(format!(
+                            "legacy learning event {} cites missing session {session_id}",
+                            event.event_id
+                        ))
+                    })?;
+                    links.insert((
+                        event.event_id.clone(),
+                        target.clone(),
+                        "depends-on-session".to_owned(),
+                    ));
+                }
+            }
+            "legacy-learning-reviewed"
+                if event.payload["data"]["action"].as_str() == Some("supersede") =>
+            {
+                let replacement = event.payload["data"]["replacementLearningId"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        LeyCoreError::InvalidContinuityStore(format!(
+                            "legacy supersession event {} is missing replacement learning",
+                            event.event_id
+                        ))
+                    })?;
+                let (_, target) = learning_roots.get(replacement).ok_or_else(|| {
+                    LeyCoreError::InvalidContinuityStore(format!(
+                        "legacy supersession event {} references missing learning {replacement}",
+                        event.event_id
+                    ))
+                })?;
+                links.insert((
+                    event.event_id.clone(),
+                    target.clone(),
+                    "supersedes".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(links
+        .into_iter()
+        .map(
+            |(from_event_id, to_event_id, relation)| ContinuityEventLinkInput {
+                from_event_id,
+                to_event_id,
+                relation,
+            },
+        )
+        .collect())
 }
 
 #[cfg(test)]
@@ -235,6 +347,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(imported_learning.kind, "legacy-learning-proposed");
+        assert_eq!(
+            imported_learning.subject_id.as_deref(),
+            Some(learning.learning.learning_id.as_str())
+        );
         assert!(imported_learning.session_id.is_none());
         assert!(imported_learning.request_id.is_none());
         assert_eq!(imported_learning.payload["kind"], "proposed");
@@ -244,6 +360,16 @@ mod tests {
             learning.learning.learning_id
         );
         assert_eq!(imported_learning.payload["requestId"], request_id('3'));
+
+        let native_preview = store
+            .preview_session_erasure(&first.project_id, &started.session.session_id)
+            .unwrap();
+        assert_eq!(native_preview.session_event_count, 2);
+        assert_eq!(native_preview.total_event_count, 3);
+        assert_eq!(
+            native_preview.dependent_subject_ids,
+            vec![learning.learning.learning_id.clone()]
+        );
 
         let manifest = store
             .event(&first.project_id, &first.manifest_event_id)
@@ -269,6 +395,7 @@ mod tests {
         let probe = ContinuityEventInput {
             event_id: format!("evt_{}", "f".repeat(64)),
             project_id: identity.project_id.clone(),
+            subject_id: None,
             session_id: None,
             session_sequence: None,
             request_id: None,
@@ -291,6 +418,7 @@ mod tests {
         let native = ContinuityEventInput {
             event_id: format!("evt_{}", "e".repeat(64)),
             project_id: identity.project_id.clone(),
+            subject_id: None,
             session_id: None,
             session_sequence: None,
             request_id: None,

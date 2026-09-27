@@ -35,12 +35,13 @@ Keep a tiny repo-local `.ley/` identity/config so a project can retain a stable 
 
 Move machine-managed metadata toward one owner-private SQLite database, initially device-wide and partitioned by project.
 
-Phase-1 v1 deliberately starts smaller than the legacy ontology:
+Phase-1 deliberately starts smaller than the legacy ontology. Schema v2 currently uses:
 
 - `projects` keeps stable portable project identity;
 - `events` is the append-only continuity envelope for session activity, handoffs, verification, evidence,
-  corrections, and other durable facts. It carries dedicated project/session/order/request/revision columns
-  plus a versioned JSON payload;
+  corrections, and other durable facts. It carries dedicated project/session/order/request/revision columns,
+  an optional `subject_id` for durable aggregate identity (for example a learning ID), and a versioned JSON
+  payload;
 - `event_links` records explicit provenance/supersession/dependency relations between events.
 
 The store uses bundled SQLite in WAL mode with `synchronous=FULL`, foreign keys, owner-private filesystem
@@ -134,9 +135,16 @@ whole batch. While legacy storage remains authoritative, repeating the snapshot 
 means legacy session erasure (including its dependent-learning cascade) is reflected in SQLite without
 touching future native continuity events.
 
-This is **snapshot/equivalence machinery, not cutover**: immutable artifact/blob bytes still live in the
-legacy store, native post-cutover session erasure is not implemented yet, and a portable export must include
-referenced blob bytes before the database can stand alone.
+Native post-cutover session erasure is now relational rather than legacy-payload-aware. Learning events use
+`subject_id`; dependency links connect a learning event to the session it cites; supersession links connect
+the superseding learning to the replacement learning. Erasure is a two-step operation: a preview computes
+the exact session/dependent-subject event set and returns a deterministic confirmation digest, then erase
+recomputes that set under `BEGIN IMMEDIATE` and refuses stale digests. The cascade deletes the session,
+directly dependent learning aggregates, and transitive superseders while preserving unrelated continuity.
+Successful erasure also requires WAL truncation, and retry after a completed delete remains safe.
+
+This is still **not full cutover**: immutable artifact/blob bytes remain in the legacy store, and portable
+export/import must include those referenced bytes before the SQLite database can stand alone.
 
 Do not add new capabilities to the legacy note domain merely because it still exists during migration.
 

@@ -3,14 +3,15 @@ use crate::{
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::BTreeSet;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const CONTINUITY_DATABASE_FILE: &str = "continuity.sqlite3";
-pub const CONTINUITY_SCHEMA_VERSION: u32 = 1;
+pub const CONTINUITY_SCHEMA_VERSION: u32 = 2;
 pub const CONTINUITY_EVENT_LIMIT_BYTES: usize = 1_048_576;
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -24,6 +25,8 @@ pub struct ContinuityStore {
 pub struct ContinuityEventInput {
     pub event_id: String,
     pub project_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -47,6 +50,8 @@ pub struct ContinuityEventInput {
 pub struct ContinuityEvent {
     pub event_id: String,
     pub project_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,6 +83,34 @@ pub struct ContinuityImportSummary {
     pub events_created: usize,
     pub events_replayed: usize,
     pub events_removed: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContinuitySessionErasurePreview {
+    pub project_id: String,
+    pub session_id: String,
+    pub session_event_count: usize,
+    pub dependent_subject_ids: Vec<String>,
+    pub total_event_count: usize,
+    pub confirmation_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContinuitySessionErasure {
+    pub project_id: String,
+    pub session_id: String,
+    pub erased_event_count: usize,
+    pub erased_subject_ids: Vec<String>,
+    pub already_absent: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityEventLinkInput {
+    pub from_event_id: String,
+    pub to_event_id: String,
+    pub relation: String,
 }
 
 pub fn default_continuity_database_path() -> Result<PathBuf, LeyCoreError> {
@@ -173,6 +206,7 @@ impl ContinuityStore {
         &self,
         identity: &ProjectIdentity,
         events: &[ContinuityEventInput],
+        links: &[ContinuityEventLinkInput],
     ) -> Result<ContinuityImportSummary, LeyCoreError> {
         validate_identity(identity)?;
         let mut desired_ids = BTreeSet::new();
@@ -197,6 +231,24 @@ impl ContinuityStore {
                 )));
             }
         }
+        for link in links {
+            validate_identifier(&link.from_event_id, "source event ID")?;
+            validate_identifier(&link.to_event_id, "target event ID")?;
+            validate_kind(&link.relation, "event relation")?;
+            if link.from_event_id == link.to_event_id {
+                return Err(LeyCoreError::InvalidContinuityStore(
+                    "an event cannot link to itself".to_owned(),
+                ));
+            }
+            if !desired_ids.contains(&link.from_event_id)
+                || !desired_ids.contains(&link.to_event_id)
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "legacy link {} -> {} references an event outside the snapshot",
+                    link.from_event_id, link.to_event_id
+                )));
+            }
+        }
 
         let mut connection = self.open_connection()?;
         let transaction = connection
@@ -211,6 +263,28 @@ impl ContinuityStore {
             } else {
                 events_replayed += 1;
             }
+        }
+        transaction
+            .execute(
+                "DELETE FROM event_links
+                 WHERE project_id = ?1
+                   AND relation IN ('depends-on-session', 'supersedes')
+                   AND from_event_id IN (
+                       SELECT event_id FROM events
+                       WHERE project_id = ?1 AND kind LIKE 'legacy-learning-%'
+                   )",
+                [&identity.project_id],
+            )
+            .map_err(|error| self.database_error(error))?;
+        for link in links {
+            link_events_on(
+                &transaction,
+                &identity.project_id,
+                &link.from_event_id,
+                &link.to_event_id,
+                &link.relation,
+                &self.path,
+            )?;
         }
 
         let existing_legacy_ids = {
@@ -264,13 +338,14 @@ impl ContinuityStore {
             ));
         }
         let connection = self.open_connection()?;
-        let changed = connection
-            .execute(
-                "INSERT INTO event_links(project_id, from_event_id, to_event_id, relation) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(project_id, from_event_id, to_event_id, relation) DO NOTHING",
-                params![project_id, from_event_id, to_event_id, relation],
-            )
-            .map_err(|error| self.database_error(error))?;
-        Ok(changed == 1)
+        link_events_on(
+            &connection,
+            project_id,
+            from_event_id,
+            to_event_id,
+            relation,
+            &self.path,
+        )
     }
 
     pub fn events_for_session(
@@ -283,7 +358,7 @@ impl ContinuityStore {
         let connection = self.open_connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT project_id, event_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json FROM events WHERE project_id = ?1 AND session_id = ?2 ORDER BY session_sequence IS NULL, session_sequence, recorded_at_unix_ms, event_id",
+                "SELECT project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json FROM events WHERE project_id = ?1 AND session_id = ?2 ORDER BY session_sequence IS NULL, session_sequence, recorded_at_unix_ms, event_id",
             )
             .map_err(|error| self.database_error(error))?;
         let rows = statement
@@ -316,7 +391,7 @@ impl ContinuityStore {
         let connection = self.open_connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT e.project_id, e.event_id, e.session_id, e.session_sequence, e.request_id, e.request_fingerprint, e.kind, e.payload_version, e.recorded_at_unix_ms, e.revision_head, e.revision_branch, e.payload_json FROM events e JOIN event_links l ON l.project_id = e.project_id AND l.to_event_id = e.event_id WHERE l.project_id = ?1 AND l.from_event_id = ?2 AND l.relation = ?3 ORDER BY e.recorded_at_unix_ms, e.event_id",
+                "SELECT e.project_id, e.event_id, e.subject_id, e.session_id, e.session_sequence, e.request_id, e.request_fingerprint, e.kind, e.payload_version, e.recorded_at_unix_ms, e.revision_head, e.revision_branch, e.payload_json FROM events e JOIN event_links l ON l.project_id = e.project_id AND l.to_event_id = e.event_id WHERE l.project_id = ?1 AND l.from_event_id = ?2 AND l.relation = ?3 ORDER BY e.recorded_at_unix_ms, e.event_id",
             )
             .map_err(|error| self.database_error(error))?;
         let rows = statement
@@ -324,6 +399,87 @@ impl ContinuityStore {
             .map_err(|error| self.database_error(error))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| self.database_error(error))
+    }
+
+    pub fn preview_session_erasure(
+        &self,
+        project_id: &str,
+        session_id: &str,
+    ) -> Result<ContinuitySessionErasurePreview, LeyCoreError> {
+        validate_project_id(project_id)?;
+        validate_identifier(session_id, "session ID")?;
+        let connection = self.open_connection()?;
+        let plan = session_erasure_plan_on(&connection, project_id, session_id, &self.path)?
+            .ok_or_else(|| LeyCoreError::SessionNotFound(session_id.to_owned()))?;
+        session_erasure_preview(project_id, session_id, &plan)
+    }
+
+    pub fn erase_session(
+        &self,
+        project_id: &str,
+        session_id: &str,
+        expected_confirmation_digest: &str,
+    ) -> Result<ContinuitySessionErasure, LeyCoreError> {
+        validate_project_id(project_id)?;
+        validate_identifier(session_id, "session ID")?;
+        if !is_sha256_digest(expected_confirmation_digest) {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "session erasure confirmation digest must be sha256".to_owned(),
+            ));
+        }
+
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let Some(plan) = session_erasure_plan_on(&transaction, project_id, session_id, &self.path)?
+        else {
+            transaction
+                .commit()
+                .map_err(|error| self.database_error(error))?;
+            truncate_wal_after_erasure(&connection, &self.path)?;
+            return Ok(ContinuitySessionErasure {
+                project_id: project_id.to_owned(),
+                session_id: session_id.to_owned(),
+                erased_event_count: 0,
+                erased_subject_ids: Vec::new(),
+                already_absent: true,
+            });
+        };
+        let preview = session_erasure_preview(project_id, session_id, &plan)?;
+        if preview.confirmation_digest != expected_confirmation_digest {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "session changed since erasure preview; refresh the preview before erasing"
+                    .to_owned(),
+            ));
+        }
+
+        let mut erased_event_count = 0;
+        for subject_id in &plan.dependent_subject_ids {
+            erased_event_count += transaction
+                .execute(
+                    "DELETE FROM events WHERE project_id = ?1 AND subject_id = ?2",
+                    params![project_id, subject_id],
+                )
+                .map_err(|error| self.database_error(error))?;
+        }
+        erased_event_count += transaction
+            .execute(
+                "DELETE FROM events WHERE project_id = ?1 AND session_id = ?2",
+                params![project_id, session_id],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        truncate_wal_after_erasure(&connection, &self.path)?;
+        Ok(ContinuitySessionErasure {
+            project_id: project_id.to_owned(),
+            session_id: session_id.to_owned(),
+            erased_event_count,
+            erased_subject_ids: plan.dependent_subject_ids.into_iter().collect(),
+            already_absent: false,
+        })
     }
 
     pub fn erase_project(&self, project_id: &str) -> Result<(), LeyCoreError> {
@@ -338,18 +494,7 @@ impl ContinuityStore {
         transaction
             .commit()
             .map_err(|error| self.database_error(error))?;
-        let (busy, _, _): (i64, i64, i64) = connection
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })
-            .map_err(|error| self.database_error(error))?;
-        if busy != 0 {
-            return Err(LeyCoreError::InvalidContinuityStore(
-                "SQLite could not truncate the continuity WAL because another reader is active; retry erasure after the reader closes"
-                    .to_owned(),
-            ));
-        }
-        Ok(())
+        truncate_wal_after_erasure(&connection, &self.path)
     }
 
     fn open_connection(&self) -> Result<Connection, LeyCoreError> {
@@ -367,6 +512,182 @@ impl ContinuityStore {
     fn database_error(&self, error: rusqlite::Error) -> LeyCoreError {
         database_error(&self.path, error)
     }
+}
+
+#[derive(Debug, Clone)]
+struct SessionErasurePlan {
+    session_event_count: usize,
+    dependent_subject_ids: BTreeSet<String>,
+    event_ids: BTreeSet<String>,
+}
+
+fn session_erasure_plan_on(
+    connection: &Connection,
+    project_id: &str,
+    session_id: &str,
+    path: &Path,
+) -> Result<Option<SessionErasurePlan>, LeyCoreError> {
+    let session_event_ids = {
+        let mut statement = connection
+            .prepare(
+                "SELECT event_id FROM events WHERE project_id = ?1 AND session_id = ?2 ORDER BY event_id",
+            )
+            .map_err(|error| database_error(path, error))?;
+        let rows = statement
+            .query_map(params![project_id, session_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| database_error(path, error))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| database_error(path, error))?
+    };
+    if session_event_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let mut dependent_subject_ids = {
+        let mut statement = connection
+            .prepare(
+                "SELECT DISTINCT source.subject_id
+                 FROM event_links link
+                 JOIN events source
+                   ON source.project_id = link.project_id
+                  AND source.event_id = link.from_event_id
+                 JOIN events target
+                   ON target.project_id = link.project_id
+                  AND target.event_id = link.to_event_id
+                 WHERE link.project_id = ?1
+                   AND link.relation = 'depends-on-session'
+                   AND target.session_id = ?2
+                   AND source.subject_id IS NOT NULL
+                 ORDER BY source.subject_id",
+            )
+            .map_err(|error| database_error(path, error))?;
+        let rows = statement
+            .query_map(params![project_id, session_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| database_error(path, error))?;
+        rows.collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|error| database_error(path, error))?
+    };
+
+    let supersession_predecessors = {
+        let mut statement = connection
+            .prepare(
+                "SELECT DISTINCT source.subject_id, target.subject_id
+                 FROM event_links link
+                 JOIN events source
+                   ON source.project_id = link.project_id
+                  AND source.event_id = link.from_event_id
+                 JOIN events target
+                   ON target.project_id = link.project_id
+                  AND target.event_id = link.to_event_id
+                 WHERE link.project_id = ?1
+                   AND link.relation = 'supersedes'
+                   AND source.subject_id IS NOT NULL
+                   AND target.subject_id IS NOT NULL",
+            )
+            .map_err(|error| database_error(path, error))?;
+        let rows = statement
+            .query_map([project_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| database_error(path, error))?;
+        let mut predecessors = BTreeMap::<String, BTreeSet<String>>::new();
+        for row in rows {
+            let (source, target) = row.map_err(|error| database_error(path, error))?;
+            predecessors.entry(target).or_default().insert(source);
+        }
+        predecessors
+    };
+
+    let mut frontier = dependent_subject_ids.iter().cloned().collect::<Vec<_>>();
+    while let Some(target) = frontier.pop() {
+        if let Some(predecessors) = supersession_predecessors.get(&target) {
+            for predecessor in predecessors {
+                if dependent_subject_ids.insert(predecessor.clone()) {
+                    frontier.push(predecessor.clone());
+                }
+            }
+        }
+    }
+
+    let mut event_ids = session_event_ids.iter().cloned().collect::<BTreeSet<_>>();
+    for subject_id in &dependent_subject_ids {
+        let mut statement = connection
+            .prepare(
+                "SELECT event_id FROM events WHERE project_id = ?1 AND subject_id = ?2 ORDER BY event_id",
+            )
+            .map_err(|error| database_error(path, error))?;
+        let rows = statement
+            .query_map(params![project_id, subject_id], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| database_error(path, error))?;
+        for event_id in rows {
+            event_ids.insert(event_id.map_err(|error| database_error(path, error))?);
+        }
+    }
+    Ok(Some(SessionErasurePlan {
+        session_event_count: session_event_ids.len(),
+        dependent_subject_ids,
+        event_ids,
+    }))
+}
+
+fn session_erasure_preview(
+    project_id: &str,
+    session_id: &str,
+    plan: &SessionErasurePlan,
+) -> Result<ContinuitySessionErasurePreview, LeyCoreError> {
+    let dependent_subject_ids = plan
+        .dependent_subject_ids
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let event_ids = plan.event_ids.iter().cloned().collect::<Vec<_>>();
+    let material = serde_json::to_vec(&json!({
+        "version": 1,
+        "projectId": project_id,
+        "sessionId": session_id,
+        "eventIds": event_ids,
+        "dependentSubjectIds": dependent_subject_ids,
+    }))
+    .map_err(|error| {
+        LeyCoreError::InvalidContinuityStore(format!(
+            "session erasure preview could not be serialized: {error}"
+        ))
+    })?;
+    Ok(ContinuitySessionErasurePreview {
+        project_id: project_id.to_owned(),
+        session_id: session_id.to_owned(),
+        session_event_count: plan.session_event_count,
+        dependent_subject_ids,
+        total_event_count: plan.event_ids.len(),
+        confirmation_digest: format!("sha256:{:x}", Sha256::digest(material)),
+    })
+}
+
+fn truncate_wal_after_erasure(connection: &Connection, path: &Path) -> Result<(), LeyCoreError> {
+    let (busy, _, _): (i64, i64, i64) = connection
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|error| database_error(path, error))?;
+    if busy != 0 {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "SQLite could not truncate the continuity WAL because another reader is active; retry erasure after the reader closes"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_sha256_digest(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn register_project_on(
@@ -457,10 +778,11 @@ fn append_event_on(
     }
     let changed = connection
         .execute(
-            "INSERT INTO events(project_id, event_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) ON CONFLICT DO NOTHING",
+            "INSERT INTO events(project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) ON CONFLICT DO NOTHING",
             params![
                 input.project_id,
                 input.event_id,
+                input.subject_id,
                 input.session_id,
                 optional_u64_to_i64(input.session_sequence, "session sequence")?,
                 input.request_id,
@@ -523,6 +845,32 @@ fn append_event_on(
     })
 }
 
+fn link_events_on(
+    connection: &Connection,
+    project_id: &str,
+    from_event_id: &str,
+    to_event_id: &str,
+    relation: &str,
+    path: &Path,
+) -> Result<bool, LeyCoreError> {
+    validate_project_id(project_id)?;
+    validate_identifier(from_event_id, "source event ID")?;
+    validate_identifier(to_event_id, "target event ID")?;
+    validate_kind(relation, "event relation")?;
+    if from_event_id == to_event_id {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "an event cannot link to itself".to_owned(),
+        ));
+    }
+    let changed = connection
+        .execute(
+            "INSERT INTO event_links(project_id, from_event_id, to_event_id, relation) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(project_id, from_event_id, to_event_id, relation) DO NOTHING",
+            params![project_id, from_event_id, to_event_id, relation],
+        )
+        .map_err(|error| database_error(path, error))?;
+    Ok(changed == 1)
+}
+
 fn configure_connection(connection: &Connection, path: &Path) -> Result<(), LeyCoreError> {
     connection
         .busy_timeout(SQLITE_BUSY_TIMEOUT)
@@ -572,7 +920,8 @@ fn migrate(connection: &mut Connection, path: &Path) -> Result<(), LeyCoreError>
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| database_error(path, error))?;
-    if version == 0 {
+    let mut current_version = version;
+    if current_version == 0 {
         transaction
             .execute_batch(
                 r#"
@@ -634,6 +983,25 @@ fn migrate(connection: &mut Connection, path: &Path) -> Result<(), LeyCoreError>
                     ON event_links(project_id, to_event_id, relation, from_event_id);
 
                 PRAGMA user_version = 1;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 1;
+    }
+    if current_version == 1 {
+        transaction
+            .execute_batch(
+                r#"
+                ALTER TABLE events ADD COLUMN subject_id TEXT;
+                UPDATE events
+                   SET subject_id = json_extract(payload_json, '$.learningId')
+                 WHERE subject_id IS NULL
+                   AND kind LIKE 'legacy-learning-%'
+                   AND json_type(payload_json, '$.learningId') = 'text';
+                CREATE INDEX events_subject_time
+                    ON events(project_id, subject_id, recorded_at_unix_ms, event_id)
+                    WHERE subject_id IS NOT NULL;
+                PRAGMA user_version = 2;
                 "#,
             )
             .map_err(|error| database_error(path, error))?;
@@ -794,7 +1162,7 @@ fn read_event(
 ) -> Result<Option<ContinuityEvent>, LeyCoreError> {
     connection
         .query_row(
-            "SELECT project_id, event_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json FROM events WHERE project_id = ?1 AND event_id = ?2",
+            "SELECT project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json FROM events WHERE project_id = ?1 AND event_id = ?2",
             params![project_id, event_id],
             row_to_event,
         )
@@ -811,7 +1179,7 @@ fn read_event_by_request(
 ) -> Result<Option<ContinuityEvent>, LeyCoreError> {
     connection
         .query_row(
-            "SELECT project_id, event_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json FROM events WHERE project_id = ?1 AND request_id = ?2 AND ((session_id = ?3) OR (session_id IS NULL AND ?3 IS NULL))",
+            "SELECT project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json FROM events WHERE project_id = ?1 AND request_id = ?2 AND ((session_id = ?3) OR (session_id IS NULL AND ?3 IS NULL))",
             params![project_id, request_id, session_id],
             row_to_event,
         )
@@ -820,7 +1188,7 @@ fn read_event_by_request(
 }
 
 fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContinuityEvent> {
-    let payload_json: String = row.get(11)?;
+    let payload_json: String = row.get(12)?;
     let payload = serde_json::from_str(&payload_json).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
             payload_json.len(),
@@ -831,15 +1199,16 @@ fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContinuityEvent> {
     Ok(ContinuityEvent {
         project_id: row.get(0)?,
         event_id: row.get(1)?,
-        session_id: row.get(2)?,
-        session_sequence: optional_i64_to_u64_sql(row.get(3)?, "session sequence")?,
-        request_id: row.get(4)?,
-        request_fingerprint: row.get(5)?,
-        kind: row.get(6)?,
-        payload_version: i64_to_u32_sql(row.get(7)?, "event payload_version")?,
-        recorded_at_unix_ms: i64_to_u64_sql(row.get(8)?, "event recorded_at_unix_ms")?,
-        revision_head: row.get(9)?,
-        revision_branch: row.get(10)?,
+        subject_id: row.get(2)?,
+        session_id: row.get(3)?,
+        session_sequence: optional_i64_to_u64_sql(row.get(4)?, "session sequence")?,
+        request_id: row.get(5)?,
+        request_fingerprint: row.get(6)?,
+        kind: row.get(7)?,
+        payload_version: i64_to_u32_sql(row.get(8)?, "event payload_version")?,
+        recorded_at_unix_ms: i64_to_u64_sql(row.get(9)?, "event recorded_at_unix_ms")?,
+        revision_head: row.get(10)?,
+        revision_branch: row.get(11)?,
         payload,
     })
 }
@@ -847,6 +1216,9 @@ fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContinuityEvent> {
 fn validate_event_input(input: &ContinuityEventInput) -> Result<(), LeyCoreError> {
     validate_identifier(&input.event_id, "event ID")?;
     validate_project_id(&input.project_id)?;
+    if let Some(subject_id) = &input.subject_id {
+        validate_identifier(subject_id, "subject ID")?;
+    }
     if let Some(session_id) = &input.session_id {
         validate_identifier(session_id, "session ID")?;
     }
@@ -930,6 +1302,7 @@ fn event_from_input(input: ContinuityEventInput) -> ContinuityEvent {
     ContinuityEvent {
         event_id: input.event_id,
         project_id: input.project_id,
+        subject_id: input.subject_id,
         session_id: input.session_id,
         session_sequence: input.session_sequence,
         request_id: input.request_id,
@@ -945,6 +1318,7 @@ fn event_from_input(input: ContinuityEventInput) -> ContinuityEvent {
 
 fn retry_event_matches(existing: &ContinuityEvent, input: &ContinuityEventInput) -> bool {
     existing.project_id == input.project_id
+        && existing.subject_id == input.subject_id
         && existing.session_id == input.session_id
         && existing.session_sequence == input.session_sequence
         && existing.request_id == input.request_id
@@ -1041,6 +1415,7 @@ mod tests {
         ContinuityEventInput {
             event_id: event_id.to_owned(),
             project_id: project_id.to_owned(),
+            subject_id: None,
             session_id: Some(session_id.to_owned()),
             session_sequence: Some(sequence),
             request_id: Some(format!("req_{sequence}_{}", "a".repeat(24))),
@@ -1175,6 +1550,64 @@ mod tests {
     }
 
     #[test]
+    fn existing_v1_store_migrates_to_subject_schema() {
+        let (_base, store) = private_store();
+        store.initialize().unwrap();
+        let project = project();
+        store.register_project(&project).unwrap();
+        let original = ContinuityEventInput {
+            event_id: format!("evt_{}", "a".repeat(64)),
+            project_id: project.project_id.clone(),
+            subject_id: Some("lrn_v1_migration".to_owned()),
+            session_id: None,
+            session_sequence: None,
+            request_id: None,
+            request_fingerprint: None,
+            kind: "legacy-learning-proposed".to_owned(),
+            payload_version: 1,
+            recorded_at_unix_ms: 250,
+            revision_head: None,
+            revision_branch: None,
+            payload: json!({
+                "schemaVersion": 3,
+                "learningId": "lrn_v1_migration",
+                "sequence": 1,
+                "kind": "proposed",
+                "data": {"evidence": []}
+            }),
+        };
+        store.append_event(&original).unwrap();
+        let connection = store.open_connection().unwrap();
+        connection
+            .execute_batch(
+                "DROP INDEX events_subject_time;
+                 ALTER TABLE events DROP COLUMN subject_id;
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(store.schema_version().unwrap(), CONTINUITY_SCHEMA_VERSION);
+        let connection = store.open_connection().unwrap();
+        let subject_columns: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('events') WHERE name = 'subject_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(subject_columns, 1);
+        drop(connection);
+        assert_eq!(
+            store
+                .event(&project.project_id, &original.event_id)
+                .unwrap()
+                .unwrap(),
+            event_from_input(original)
+        );
+    }
+
+    #[test]
     fn independent_connections_do_not_lose_concurrent_events() {
         let (_base, store) = private_store();
         let project = project();
@@ -1193,6 +1626,7 @@ mod tests {
                 let shared = ContinuityEventInput {
                     event_id: format!("evt_shared_{worker}_{}", "b".repeat(48)),
                     project_id: project_id.clone(),
+                    subject_id: None,
                     session_id: Some(session_id.clone()),
                     session_sequence: Some(17),
                     request_id: Some(format!("req_shared_{}", "c".repeat(24))),
@@ -1289,5 +1723,186 @@ mod tests {
                 "erasure must truncate retained WAL frames"
             );
         }
+    }
+
+    #[test]
+    fn native_session_erasure_cascades_dependents_and_rejects_stale_preview() {
+        let (_base, store) = private_store();
+        let project = project();
+        store.register_project(&project).unwrap();
+        let session_id = format!("ses_{}", "c".repeat(32));
+        let session_start = event(
+            &project.project_id,
+            &format!("evt_{}", "1".repeat(64)),
+            &session_id,
+            0,
+            "session-started",
+            json!({"name":"native session"}),
+        );
+        let checkpoint = event(
+            &project.project_id,
+            &format!("evt_{}", "2".repeat(64)),
+            &session_id,
+            1,
+            "checkpoint-recorded",
+            json!({"summary":"checkpoint"}),
+        );
+        store.append_event(&session_start).unwrap();
+        store.append_event(&checkpoint).unwrap();
+
+        let dependent = ContinuityEventInput {
+            event_id: format!("evt_{}", "3".repeat(64)),
+            project_id: project.project_id.clone(),
+            subject_id: Some("lrn_dependent".to_owned()),
+            session_id: None,
+            session_sequence: None,
+            request_id: None,
+            request_fingerprint: None,
+            kind: "learning-proposed".to_owned(),
+            payload_version: 1,
+            recorded_at_unix_ms: 300,
+            revision_head: None,
+            revision_branch: None,
+            payload: json!({"guidance":"depends on session"}),
+        };
+        let superseder = ContinuityEventInput {
+            event_id: format!("evt_{}", "4".repeat(64)),
+            project_id: project.project_id.clone(),
+            subject_id: Some("lrn_superseder".to_owned()),
+            session_id: None,
+            session_sequence: None,
+            request_id: None,
+            request_fingerprint: None,
+            kind: "learning-reviewed".to_owned(),
+            payload_version: 1,
+            recorded_at_unix_ms: 301,
+            revision_head: None,
+            revision_branch: None,
+            payload: json!({"action":"supersede"}),
+        };
+        let unrelated = ContinuityEventInput {
+            event_id: format!("evt_{}", "5".repeat(64)),
+            project_id: project.project_id.clone(),
+            subject_id: Some("lrn_unrelated".to_owned()),
+            session_id: None,
+            session_sequence: None,
+            request_id: None,
+            request_fingerprint: None,
+            kind: "learning-proposed".to_owned(),
+            payload_version: 1,
+            recorded_at_unix_ms: 302,
+            revision_head: None,
+            revision_branch: None,
+            payload: json!({"guidance":"keep me"}),
+        };
+        let native = ContinuityEventInput {
+            event_id: format!("evt_{}", "6".repeat(64)),
+            project_id: project.project_id.clone(),
+            subject_id: None,
+            session_id: None,
+            session_sequence: None,
+            request_id: None,
+            request_fingerprint: None,
+            kind: "native-continuity-probe".to_owned(),
+            payload_version: 1,
+            recorded_at_unix_ms: 303,
+            revision_head: None,
+            revision_branch: None,
+            payload: json!({"keep":true}),
+        };
+        for input in [&dependent, &superseder, &unrelated, &native] {
+            store.append_event(input).unwrap();
+        }
+        store
+            .link_events(
+                &project.project_id,
+                &dependent.event_id,
+                &session_start.event_id,
+                "depends-on-session",
+            )
+            .unwrap();
+        store
+            .link_events(
+                &project.project_id,
+                &superseder.event_id,
+                &dependent.event_id,
+                "supersedes",
+            )
+            .unwrap();
+
+        let stale = store
+            .preview_session_erasure(&project.project_id, &session_id)
+            .unwrap();
+        assert_eq!(stale.session_event_count, 2);
+        assert_eq!(
+            stale.dependent_subject_ids,
+            vec!["lrn_dependent".to_owned(), "lrn_superseder".to_owned()]
+        );
+        assert_eq!(stale.total_event_count, 4);
+
+        let late_event = event(
+            &project.project_id,
+            &format!("evt_{}", "7".repeat(64)),
+            &session_id,
+            2,
+            "session-finished",
+            json!({"status":"completed"}),
+        );
+        store.append_event(&late_event).unwrap();
+        assert!(matches!(
+            store.erase_session(
+                &project.project_id,
+                &session_id,
+                &stale.confirmation_digest
+            ),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("changed since erasure preview")
+        ));
+        assert!(store
+            .event(&project.project_id, &session_start.event_id)
+            .unwrap()
+            .is_some());
+
+        let current = store
+            .preview_session_erasure(&project.project_id, &session_id)
+            .unwrap();
+        assert_eq!(current.session_event_count, 3);
+        assert_eq!(current.total_event_count, 5);
+        let erased = store
+            .erase_session(
+                &project.project_id,
+                &session_id,
+                &current.confirmation_digest,
+            )
+            .unwrap();
+        assert!(!erased.already_absent);
+        assert_eq!(erased.erased_event_count, 5);
+        assert_eq!(erased.erased_subject_ids, current.dependent_subject_ids);
+        assert!(store
+            .events_for_session(&project.project_id, &session_id)
+            .unwrap()
+            .is_empty());
+        for event_id in [&dependent.event_id, &superseder.event_id] {
+            assert!(store
+                .event(&project.project_id, event_id)
+                .unwrap()
+                .is_none());
+        }
+        for event_id in [&unrelated.event_id, &native.event_id] {
+            assert!(store
+                .event(&project.project_id, event_id)
+                .unwrap()
+                .is_some());
+        }
+
+        let retried = store
+            .erase_session(
+                &project.project_id,
+                &session_id,
+                &current.confirmation_digest,
+            )
+            .unwrap();
+        assert!(retried.already_absent);
+        assert_eq!(retried.erased_event_count, 0);
     }
 }
