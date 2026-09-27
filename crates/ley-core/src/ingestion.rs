@@ -188,6 +188,35 @@ pub(crate) struct LoadedProjectMemory {
     content_dir: Dir,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct PortableArtifactCitation {
+    pub(crate) artifact_snapshot_id: String,
+    pub(crate) artifact_path: String,
+    pub(crate) content_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PortableArtifactBlob {
+    pub(crate) content_hash: String,
+    pub(crate) file_name: String,
+    pub(crate) bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PortableArtifactReference {
+    pub(crate) artifact_path: String,
+    pub(crate) content_hash: String,
+    pub(crate) file_name: String,
+    pub(crate) bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PortableArtifactSnapshot {
+    pub(crate) snapshot_id: String,
+    pub(crate) artifacts: Vec<PortableArtifactReference>,
+    pub(crate) blobs: Vec<PortableArtifactBlob>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct GraphHistoryEntry {
@@ -820,6 +849,13 @@ pub(crate) fn load_project_graph_history(
 }
 
 impl LoadedProjectMemory {
+    fn read_artifact_blob_bytes(
+        &self,
+        artifact: &ArtifactRecord,
+    ) -> Result<Option<Vec<u8>>, LeyCoreError> {
+        read_verified_artifact_blob(&self.content_dir, artifact)
+    }
+
     pub(crate) fn read_artifact_text(
         &self,
         artifact: &ArtifactRecord,
@@ -827,32 +863,9 @@ impl LoadedProjectMemory {
         if artifact.kind == ArtifactKind::Image {
             return Ok(None);
         }
-        let Some(blob) = &artifact.content_blob else {
+        let Some(stored) = self.read_artifact_blob_bytes(artifact)? else {
             return Ok(None);
         };
-        let name = blob
-            .strip_prefix(&format!("{CONTENT_DIRECTORY}/"))
-            .ok_or_else(|| {
-                LeyCoreError::InvalidArtifactStore(format!(
-                    "invalid content blob for {}",
-                    artifact.path
-                ))
-            })?;
-        let stored = read_optional_store_file(&self.content_dir, name, artifact.stored_bytes)?
-            .ok_or_else(|| {
-                LeyCoreError::InvalidArtifactStore(format!(
-                    "content blob is missing for {}",
-                    artifact.path
-                ))
-            })?;
-        if stored.len() as u64 != artifact.stored_bytes
-            || format!("sha256:{}", sha256_hex(&stored)) != artifact.content_hash
-        {
-            return Err(LeyCoreError::InvalidArtifactStore(format!(
-                "content blob failed integrity verification for {}",
-                artifact.path
-            )));
-        }
         String::from_utf8(stored).map(Some).map_err(|_| {
             LeyCoreError::InvalidArtifactStore(format!(
                 "content blob is not UTF-8 for {}",
@@ -868,34 +881,164 @@ impl LoadedProjectMemory {
         if artifact.kind != ArtifactKind::Image {
             return Ok(None);
         }
-        let Some(blob) = &artifact.content_blob else {
-            return Ok(None);
-        };
-        let name = blob
-            .strip_prefix(&format!("{CONTENT_DIRECTORY}/"))
-            .ok_or_else(|| {
-                LeyCoreError::InvalidArtifactStore(format!(
-                    "invalid content blob for {}",
-                    artifact.path
-                ))
-            })?;
-        let stored = read_optional_store_file(&self.content_dir, name, artifact.stored_bytes)?
-            .ok_or_else(|| {
-                LeyCoreError::InvalidArtifactStore(format!(
-                    "content blob is missing for {}",
-                    artifact.path
-                ))
-            })?;
-        if stored.len() as u64 != artifact.stored_bytes
-            || format!("sha256:{}", sha256_hex(&stored)) != artifact.content_hash
-        {
+        self.read_artifact_blob_bytes(artifact)
+    }
+}
+
+pub(crate) fn read_portable_artifact_snapshots(
+    vault: impl AsRef<Path>,
+    project_id: &str,
+    citations: &[PortableArtifactCitation],
+) -> Result<Vec<PortableArtifactSnapshot>, LeyCoreError> {
+    validate_project_id(project_id)?;
+    if citations.is_empty() {
+        return Ok(Vec::new());
+    }
+    let vault_path = vault
+        .as_ref()
+        .canonicalize()
+        .map_err(|source| LeyCoreError::Io {
+            path: vault.as_ref().to_path_buf(),
+            source,
+        })?;
+    if !vault_path.is_dir() {
+        return Err(LeyCoreError::NotDirectory(vault.as_ref().to_path_buf()));
+    }
+    let store = ArtifactStore::open_existing(&vault_path, project_id)?;
+    let _lock = store.read_lock()?;
+
+    let mut grouped = BTreeMap::<String, BTreeMap<String, String>>::new();
+    for citation in citations {
+        validate_artifact_snapshot_id(&citation.artifact_snapshot_id)?;
+        validate_relative_artifact_path(&citation.artifact_path)?;
+        if !is_sha256(&citation.content_hash) {
             return Err(LeyCoreError::InvalidArtifactStore(format!(
-                "content blob failed integrity verification for {}",
-                artifact.path
+                "invalid cited content hash for {}",
+                citation.artifact_path
             )));
         }
-        Ok(Some(stored))
+        let paths = grouped
+            .entry(citation.artifact_snapshot_id.clone())
+            .or_default();
+        if let Some(existing) = paths.insert(
+            citation.artifact_path.clone(),
+            citation.content_hash.clone(),
+        ) {
+            if existing != citation.content_hash {
+                return Err(LeyCoreError::InvalidArtifactStore(format!(
+                    "conflicting cited content hashes for {} in {}",
+                    citation.artifact_path, citation.artifact_snapshot_id
+                )));
+            }
+        }
     }
+
+    let mut snapshots = Vec::with_capacity(grouped.len());
+    for (snapshot_id, requested) in grouped {
+        let manifest = store.read_manifest_snapshot(&snapshot_id)?.ok_or_else(|| {
+            LeyCoreError::InvalidArtifactStore(format!(
+                "artifact snapshot is not retained: {snapshot_id}"
+            ))
+        })?;
+        validate_manifest(&manifest, project_id)?;
+        store.verify_snapshot(&manifest)?;
+        let mut artifacts = Vec::with_capacity(requested.len());
+        let mut blobs = BTreeMap::<String, PortableArtifactBlob>::new();
+        for (artifact_path, content_hash) in requested {
+            let artifact = manifest
+                .files
+                .iter()
+                .find(|artifact| artifact.path == artifact_path)
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidArtifactStore(format!(
+                        "cited artifact {artifact_path} is not present in snapshot {snapshot_id}"
+                    ))
+                })?;
+            if artifact.content_hash != content_hash {
+                return Err(LeyCoreError::InvalidArtifactStore(format!(
+                    "cited content hash does not match {artifact_path} in snapshot {snapshot_id}"
+                )));
+            }
+            let blob_path = artifact.content_blob.as_ref().ok_or_else(|| {
+                LeyCoreError::ProjectMemoryUnavailable(format!(
+                    "cited evidence bytes are not retained for {artifact_path} in snapshot {snapshot_id}"
+                ))
+            })?;
+            let file_name = blob_path
+                .strip_prefix(&format!("{CONTENT_DIRECTORY}/"))
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidArtifactStore(format!(
+                        "invalid content blob for {artifact_path}"
+                    ))
+                })?
+                .to_owned();
+            let bytes = read_verified_artifact_blob(&store.content_dir, artifact)?
+                .expect("content_blob presence was checked above");
+            artifacts.push(PortableArtifactReference {
+                artifact_path,
+                content_hash: content_hash.clone(),
+                file_name: file_name.clone(),
+                bytes: artifact.stored_bytes,
+            });
+            match blobs.get(&content_hash) {
+                Some(existing) if existing.bytes != bytes || existing.file_name != file_name => {
+                    return Err(LeyCoreError::InvalidArtifactStore(format!(
+                        "content-addressed evidence collision for {content_hash}"
+                    )));
+                }
+                Some(_) => {}
+                None => {
+                    blobs.insert(
+                        content_hash.clone(),
+                        PortableArtifactBlob {
+                            content_hash,
+                            file_name,
+                            bytes,
+                        },
+                    );
+                }
+            }
+        }
+        snapshots.push(PortableArtifactSnapshot {
+            snapshot_id,
+            artifacts,
+            blobs: blobs.into_values().collect(),
+        });
+    }
+    Ok(snapshots)
+}
+
+fn read_verified_artifact_blob(
+    content_dir: &Dir,
+    artifact: &ArtifactRecord,
+) -> Result<Option<Vec<u8>>, LeyCoreError> {
+    let Some(blob) = &artifact.content_blob else {
+        return Ok(None);
+    };
+    let name = blob
+        .strip_prefix(&format!("{CONTENT_DIRECTORY}/"))
+        .ok_or_else(|| {
+            LeyCoreError::InvalidArtifactStore(format!(
+                "invalid content blob for {}",
+                artifact.path
+            ))
+        })?;
+    let stored =
+        read_optional_store_file(content_dir, name, artifact.stored_bytes)?.ok_or_else(|| {
+            LeyCoreError::InvalidArtifactStore(format!(
+                "content blob is missing for {}",
+                artifact.path
+            ))
+        })?;
+    if stored.len() as u64 != artifact.stored_bytes
+        || format!("sha256:{}", sha256_hex(&stored)) != artifact.content_hash
+    {
+        return Err(LeyCoreError::InvalidArtifactStore(format!(
+            "content blob failed integrity verification for {}",
+            artifact.path
+        )));
+    }
+    Ok(Some(stored))
 }
 
 impl GraphHistoryEntry {
@@ -1465,7 +1608,7 @@ fn ensure_private_file_permissions(
     Ok(())
 }
 
-fn validate_manifest(
+pub(crate) fn validate_manifest(
     manifest: &ArtifactManifest,
     expected_project_id: &str,
 ) -> Result<(), LeyCoreError> {
@@ -1708,7 +1851,7 @@ fn validate_snapshot_id(value: &str, prefix: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_relative_artifact_path(value: &str) -> Result<(), LeyCoreError> {
+pub(crate) fn validate_relative_artifact_path(value: &str) -> Result<(), LeyCoreError> {
     let path = Path::new(value);
     if value.is_empty()
         || path.is_absolute()

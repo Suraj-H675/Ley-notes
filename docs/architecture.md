@@ -143,8 +143,28 @@ recomputes that set under `BEGIN IMMEDIATE` and refuses stale digests. The casca
 directly dependent learning aggregates, and transitive superseders while preserving unrelated continuity.
 Successful erasure also requires WAL truncation, and retry after a completed delete remains safe.
 
-This is still **not full cutover**: immutable artifact/blob bytes remain in the legacy store, and portable
-export/import must include those referenced bytes before the SQLite database can stand alone.
+Portable continuity no longer depends on the legacy artifact vault. Export takes a consistent SQLite online
+backup in Ley's owner-private database directory, prunes every non-selected project, switches the copy to a
+standalone journal mode, and `VACUUM`s it before any database bytes enter the user-selected bundle staging
+directory. Evidence selection is then derived from that frozen project-only copy.
+
+The portable bundle contains the project-only `continuity.sqlite3` plus **only evidence actually cited by
+those events**. Legacy artifact snapshots are fully validated while exporting, but the bundle stores a
+normalized cited-only snapshot file rather than the complete legacy manifest, so unrelated project paths /
+hashes do not cross the portability boundary. Every database, normalized snapshot, and content-addressed
+blob is hash/size validated. Import copies declared files through no-follow handles into a private staging
+directory, validates the copied tree, then atomically installs a mutable runtime database plus immutable
+evidence root. The immutable export manifest is intentionally not installed beside the runtime DB because
+opening/writing that DB legitimately changes its bytes.
+
+After the original vault is unavailable, the imported runtime can read cited evidence, accept new native
+continuity events, and produce another valid portable bundle using only its SQLite database + installed
+evidence root. Graph snapshots/history, search indexes, current vault manifests, notes, and uncited artifact
+metadata/bytes are not part of the continuity bundle.
+
+This closes the portable evidence/blob cutover gate for migrated session/learning continuity. It does **not**
+declare all legacy product state migrated: every remaining registry/configuration surface must still be
+explicitly migrated, rebuilt, or retired before the legacy architecture itself is removed.
 
 Do not add new capabilities to the legacy note domain merely because it still exists during migration.
 

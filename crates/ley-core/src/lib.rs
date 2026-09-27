@@ -17,6 +17,7 @@ mod context_compiler;
 mod context_mount;
 mod context_pack_inspector;
 mod continuity_import;
+mod continuity_portable;
 mod continuity_store;
 mod cross_project_search;
 mod current_project_state;
@@ -120,6 +121,12 @@ pub use context_pack_inspector::{
 pub use continuity_import::{
     import_legacy_continuity, LegacyContinuityImportSummary,
     LEGACY_CONTINUITY_IMPORT_FORMAT_VERSION,
+};
+pub use continuity_portable::{
+    export_portable_continuity, export_portable_continuity_from_evidence_root,
+    import_portable_continuity, read_continuity_evidence, read_portable_cited_evidence,
+    PortableContinuityBlobEntry, PortableContinuityBundleManifest, PortableContinuityImport,
+    PortableContinuitySnapshotEntry, PORTABLE_CONTINUITY_BUNDLE_VERSION,
 };
 pub use continuity_store::{
     default_continuity_database_path, ContinuityEvent, ContinuityEventInput,
@@ -634,6 +641,8 @@ pub enum LeyCoreError {
     InvalidContinuityStore(String),
     #[error("Ley continuity database error at {path}: {message}")]
     ContinuityDatabase { path: PathBuf, message: String },
+    #[error("invalid Ley portable continuity bundle: {0}")]
+    InvalidPortableContinuityBundle(String),
     #[error("project {0} is not bound to a Ley vault; run 'ley bind --vault <path>'")]
     VaultNotBound(String),
     #[error("the bound Ley vault is unavailable; rebind project {project_id}: {path}")]

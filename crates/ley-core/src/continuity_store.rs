@@ -497,6 +497,116 @@ impl ContinuityStore {
         truncate_wal_after_erasure(&connection, &self.path)
     }
 
+    pub(crate) fn export_project_database(
+        &self,
+        project_id: &str,
+        destination: &Path,
+    ) -> Result<(), LeyCoreError> {
+        validate_project_id(project_id)?;
+        if fs::symlink_metadata(destination).is_ok() {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "portable database destination already exists: {}",
+                destination.display()
+            )));
+        }
+        let parent = destination.parent().ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "portable database destination has no parent directory".to_owned(),
+            )
+        })?;
+        validate_private_directory_metadata(
+            parent,
+            &fs::symlink_metadata(parent).map_err(|source| LeyCoreError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?,
+        )?;
+
+        let source = self.open_connection()?;
+        let project_exists: bool = source
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE project_id = ?1)",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        if !project_exists {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "project {project_id} is not present in the continuity database"
+            )));
+        }
+
+        prepare_private_database_file(destination)?;
+        let mut backup_destination = Connection::open_with_flags(
+            destination,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .map_err(|error| database_error(destination, error))?;
+        let backup = rusqlite::backup::Backup::new(&source, &mut backup_destination)
+            .map_err(|error| self.database_error(error))?;
+        backup
+            .run_to_completion(100, Duration::from_millis(20), None)
+            .map_err(|error| self.database_error(error))?;
+        drop(backup);
+        drop(backup_destination);
+        drop(source);
+
+        let mut exported = Connection::open_with_flags(
+            destination,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .map_err(|error| database_error(destination, error))?;
+        exported
+            .busy_timeout(SQLITE_BUSY_TIMEOUT)
+            .map_err(|error| database_error(destination, error))?;
+        exported
+            .pragma_update(None, "foreign_keys", "ON")
+            .map_err(|error| database_error(destination, error))?;
+        exported
+            .pragma_update(None, "trusted_schema", "OFF")
+            .map_err(|error| database_error(destination, error))?;
+        exported
+            .pragma_update(None, "secure_delete", "ON")
+            .map_err(|error| database_error(destination, error))?;
+        let mode: String = exported
+            .query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))
+            .map_err(|error| database_error(destination, error))?;
+        if !mode.eq_ignore_ascii_case("delete") {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "SQLite refused standalone DELETE journal mode for {}",
+                destination.display()
+            )));
+        }
+
+        let transaction = exported
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| database_error(destination, error))?;
+        transaction
+            .execute("DELETE FROM projects WHERE project_id <> ?1", [project_id])
+            .map_err(|error| database_error(destination, error))?;
+        transaction
+            .commit()
+            .map_err(|error| database_error(destination, error))?;
+        exported
+            .execute_batch("VACUUM;")
+            .map_err(|error| database_error(destination, error))?;
+        validate_exported_project_database(&exported, destination, project_id)?;
+        drop(exported);
+        ensure_no_sqlite_sidecars(destination)?;
+
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(destination)
+            .map_err(|source| LeyCoreError::Io {
+                path: destination.to_path_buf(),
+                source,
+            })?;
+        file.sync_all().map_err(|source| LeyCoreError::Io {
+            path: destination.to_path_buf(),
+            source,
+        })
+    }
+
     fn open_connection(&self) -> Result<Connection, LeyCoreError> {
         prepare_private_database_file(&self.path)?;
         let mut connection = Connection::open_with_flags(
@@ -682,6 +792,111 @@ fn truncate_wal_after_erasure(connection: &Connection, path: &Path) -> Result<()
         ));
     }
     Ok(())
+}
+
+fn validate_exported_project_database(
+    connection: &Connection,
+    path: &Path,
+    project_id: &str,
+) -> Result<(), LeyCoreError> {
+    let integrity: String = connection
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .map_err(|error| database_error(path, error))?;
+    if integrity != "ok" {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "portable continuity database failed integrity_check: {integrity}"
+        )));
+    }
+    let mut foreign_keys = connection
+        .prepare("PRAGMA foreign_key_check")
+        .map_err(|error| database_error(path, error))?;
+    if foreign_keys
+        .query([])
+        .map_err(|error| database_error(path, error))?
+        .next()
+        .map_err(|error| database_error(path, error))?
+        .is_some()
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "portable continuity database failed foreign_key_check".to_owned(),
+        ));
+    }
+    let schema_version: u32 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(|error| database_error(path, error))?;
+    if schema_version != CONTINUITY_SCHEMA_VERSION {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "portable continuity database schema {schema_version} does not match supported schema {CONTINUITY_SCHEMA_VERSION}"
+        )));
+    }
+    let project_count: i64 = connection
+        .query_row("SELECT count(*) FROM projects", [], |row| row.get(0))
+        .map_err(|error| database_error(path, error))?;
+    let selected_count: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM projects WHERE project_id = ?1",
+            [project_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| database_error(path, error))?;
+    if project_count != 1 || selected_count != 1 {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "portable continuity database must contain exactly the selected project".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_no_sqlite_sidecars(path: &Path) -> Result<(), LeyCoreError> {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let mut sidecar = path.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        let sidecar = PathBuf::from(sidecar);
+        match fs::symlink_metadata(&sidecar) {
+            Ok(_) => {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "portable continuity database left SQLite sidecar {}",
+                    sidecar.display()
+                )))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(LeyCoreError::Io {
+                    path: sidecar,
+                    source,
+                })
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn project_events_from_portable_database(
+    path: &Path,
+    project_id: &str,
+) -> Result<Vec<ContinuityEvent>, LeyCoreError> {
+    validate_project_id(project_id)?;
+    let metadata = fs::symlink_metadata(path).map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    validate_private_database_metadata(path, &metadata)?;
+    let connection = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .map_err(|error| database_error(path, error))?;
+    validate_exported_project_database(&connection, path, project_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json FROM events WHERE project_id = ?1 ORDER BY event_id",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let rows = statement
+        .query_map([project_id], row_to_event)
+        .map_err(|error| database_error(path, error))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| database_error(path, error))
 }
 
 fn is_sha256_digest(value: &str) -> bool {
