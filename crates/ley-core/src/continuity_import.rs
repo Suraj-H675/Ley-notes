@@ -17,6 +17,7 @@ pub struct LegacyContinuityImportSummary {
     pub project_created: bool,
     pub continuity_events_created: usize,
     pub continuity_events_replayed: usize,
+    pub continuity_events_removed: usize,
 }
 
 pub fn import_legacy_continuity(
@@ -67,7 +68,7 @@ pub fn import_legacy_continuity(
         }),
     });
 
-    let imported = store.import_project_events(&diagnostic.identity, &events)?;
+    let imported = store.sync_legacy_project_events(&diagnostic.identity, &events)?;
     Ok(LegacyContinuityImportSummary {
         project_id: diagnostic.identity.project_id,
         session_events: session_event_count,
@@ -77,6 +78,7 @@ pub fn import_legacy_continuity(
         project_created: imported.project_created,
         continuity_events_created: imported.events_created,
         continuity_events_replayed: imported.events_replayed,
+        continuity_events_removed: imported.events_removed,
     })
 }
 
@@ -93,10 +95,11 @@ fn event_inventory_digest(events: &[ContinuityEventInput]) -> Result<String, Ley
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, ingest_project, initialize_project, propose_learning, read_learning,
-        read_session, start_session, CaptureMode, CheckpointInput, LearningActor,
-        LearningEvidenceInput, LearningKind, LearningProvenance, ProposeLearningInput,
-        SessionSource, SessionSourceKind, StartSessionInput, VerificationInput, VerificationStatus,
+        checkpoint_session, erase_session_memory, ingest_project, initialize_project,
+        propose_learning, read_learning, read_session, start_session, CaptureMode, CheckpointInput,
+        EraseSessionMemoryInput, LearningActor, LearningEvidenceInput, LearningKind,
+        LearningProvenance, ProposeLearningInput, SessionSource, SessionSourceKind,
+        StartSessionInput, VerificationInput, VerificationStatus,
     };
     use std::process::Command;
     use tempfile::tempdir;
@@ -204,6 +207,7 @@ mod tests {
         assert!(first.project_created);
         assert_eq!(first.continuity_events_created, 4);
         assert_eq!(first.continuity_events_replayed, 0);
+        assert_eq!(first.continuity_events_removed, 0);
 
         let session_events = store
             .events_for_session(&first.project_id, &started.session.session_id)
@@ -255,6 +259,7 @@ mod tests {
         assert!(!replayed.project_created);
         assert_eq!(replayed.continuity_events_created, 0);
         assert_eq!(replayed.continuity_events_replayed, 4);
+        assert_eq!(replayed.continuity_events_removed, 0);
 
         let identity = diagnose_project(&project).unwrap().identity;
         let mut conflict = crate::session::continuity_events_for_migration(&project, &vault)
@@ -283,6 +288,22 @@ mod tests {
             .unwrap()
             .is_none());
 
+        let native = ContinuityEventInput {
+            event_id: format!("evt_{}", "e".repeat(64)),
+            project_id: identity.project_id.clone(),
+            session_id: None,
+            session_sequence: None,
+            request_id: None,
+            request_fingerprint: None,
+            kind: "native-continuity-probe".to_owned(),
+            payload_version: 1,
+            recorded_at_unix_ms: 1_000,
+            revision_head: None,
+            revision_branch: None,
+            payload: json!({"native":true}),
+        };
+        assert!(store.append_event(&native).unwrap().created);
+
         assert_eq!(
             read_session(&project, &vault, &started.session.session_id)
                 .unwrap()
@@ -295,5 +316,55 @@ mod tests {
                 .event_count,
             1
         );
+
+        let erased = erase_session_memory(
+            &project,
+            &vault,
+            &started.session.session_id,
+            EraseSessionMemoryInput {
+                expected_event_count: 2,
+                expected_name: started.session.name.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            erased.erased_learning_ids,
+            vec![learning.learning.learning_id.clone()]
+        );
+
+        let after_erasure = import_legacy_continuity(&project, &vault, &store).unwrap();
+        assert_eq!(after_erasure.session_events, 0);
+        assert_eq!(after_erasure.learning_events, 0);
+        assert_ne!(after_erasure.source_digest, first.source_digest);
+        assert_ne!(after_erasure.manifest_event_id, first.manifest_event_id);
+        assert_eq!(after_erasure.continuity_events_created, 1);
+        assert_eq!(after_erasure.continuity_events_replayed, 0);
+        assert_eq!(after_erasure.continuity_events_removed, 4);
+        assert!(store
+            .events_for_session(&first.project_id, &started.session.session_id)
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .event(&first.project_id, &learning.event_id)
+            .unwrap()
+            .is_none());
+        assert!(store
+            .event(&first.project_id, &first.manifest_event_id)
+            .unwrap()
+            .is_none());
+        assert!(store
+            .event(&first.project_id, &after_erasure.manifest_event_id)
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            store
+                .event(&identity.project_id, &native.event_id)
+                .unwrap()
+                .unwrap()
+                .kind,
+            "native-continuity-probe"
+        );
+        assert!(read_session(&project, &vault, &started.session.session_id).is_err());
+        assert!(read_learning(&project, &vault, &learning.learning.learning_id).is_err());
     }
 }

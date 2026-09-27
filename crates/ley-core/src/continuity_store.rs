@@ -4,6 +4,7 @@ use crate::{
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -76,6 +77,7 @@ pub struct ContinuityImportSummary {
     pub project_created: bool,
     pub events_created: usize,
     pub events_replayed: usize,
+    pub events_removed: usize,
 }
 
 pub fn default_continuity_database_path() -> Result<PathBuf, LeyCoreError> {
@@ -163,6 +165,85 @@ impl ContinuityStore {
             project_created: project.created,
             events_created,
             events_replayed,
+            events_removed: 0,
+        })
+    }
+
+    pub(crate) fn sync_legacy_project_events(
+        &self,
+        identity: &ProjectIdentity,
+        events: &[ContinuityEventInput],
+    ) -> Result<ContinuityImportSummary, LeyCoreError> {
+        validate_identity(identity)?;
+        let mut desired_ids = BTreeSet::new();
+        for event in events {
+            validate_event_input(event)?;
+            if event.project_id != identity.project_id {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "event {} belongs to project {}, not {}",
+                    event.event_id, event.project_id, identity.project_id
+                )));
+            }
+            if !event.kind.starts_with("legacy-") {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "legacy snapshot contains non-legacy event kind {}",
+                    event.kind
+                )));
+            }
+            if !desired_ids.insert(event.event_id.clone()) {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "legacy snapshot repeats event {}",
+                    event.event_id
+                )));
+            }
+        }
+
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let project = register_project_on(&transaction, identity, &self.path)?;
+        let mut events_created = 0;
+        let mut events_replayed = 0;
+        for event in events {
+            if append_event_on(&transaction, event, &self.path)?.created {
+                events_created += 1;
+            } else {
+                events_replayed += 1;
+            }
+        }
+
+        let existing_legacy_ids = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT event_id FROM events WHERE project_id = ?1 AND kind LIKE 'legacy-%' ORDER BY event_id",
+                )
+                .map_err(|error| self.database_error(error))?;
+            let rows = statement
+                .query_map([&identity.project_id], |row| row.get::<_, String>(0))
+                .map_err(|error| self.database_error(error))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|error| self.database_error(error))?
+        };
+        let mut events_removed = 0;
+        for event_id in existing_legacy_ids {
+            if !desired_ids.contains(&event_id) {
+                events_removed += transaction
+                    .execute(
+                        "DELETE FROM events WHERE project_id = ?1 AND event_id = ?2",
+                        params![identity.project_id, event_id],
+                    )
+                    .map_err(|error| self.database_error(error))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(ContinuityImportSummary {
+            project_created: project.created,
+            events_created,
+            events_replayed,
+            events_removed,
         })
     }
 

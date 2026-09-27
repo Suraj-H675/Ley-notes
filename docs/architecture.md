@@ -129,10 +129,14 @@ idempotency is scoped per learning, not per session/project.
 
 Each snapshot ends with an atomic `legacy-snapshot-imported` manifest containing a deterministic inventory
 digest and `cutover: false`. Exact reruns replay without duplicates; any conflicting event rolls back the
-whole batch. This is **snapshot/equivalence machinery, not cutover**: immutable artifact/blob bytes still
-live in the legacy store, legacy session erasure also has learning-cascade semantics that SQLite must
-reproduce before retirement, and a portable export must include referenced blob bytes before the database
-can stand alone.
+whole batch. While legacy storage remains authoritative, repeating the snapshot also prunes mirrored
+`legacy-*` events and superseded snapshot manifests that no longer exist in the validated source. This
+means legacy session erasure (including its dependent-learning cascade) is reflected in SQLite without
+touching future native continuity events.
+
+This is **snapshot/equivalence machinery, not cutover**: immutable artifact/blob bytes still live in the
+legacy store, native post-cutover session erasure is not implemented yet, and a portable export must include
+referenced blob bytes before the database can stand alone.
 
 Do not add new capabilities to the legacy note domain merely because it still exists during migration.
 
