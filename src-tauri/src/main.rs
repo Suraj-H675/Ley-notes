@@ -1,3 +1,3 @@
 fn main() {
-    ley_notes_lib::run();
+    ley_desktop_lib::run();
 }

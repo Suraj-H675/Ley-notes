@@ -134,7 +134,7 @@ export function CommandPalette({
         detail:
           "Review project sessions, continuity, and evidence-backed lessons",
         icon: <BrainCircuit size={15} />,
-        keywords: "agents mcp sessions lessons second brain context",
+        keywords: "agents mcp sessions evidence continuity context",
         run: onAgentMemory,
       },
       ...(activeNoteBookmarked === null

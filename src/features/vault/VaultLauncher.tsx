@@ -20,7 +20,7 @@ export function VaultLauncher({
           </div>
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Open your Ley vault</h1>
-            <p className="text-meta text-muted-foreground">Your folder is your second brain.</p>
+            <p className="text-meta text-muted-foreground">Choose the local workspace Ley can inspect.</p>
           </div>
         </div>
 

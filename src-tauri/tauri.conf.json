@@ -37,7 +37,7 @@
       "icons/icon.ico"
     ],
     "category": "Productivity",
-    "shortDescription": "A Markdown-native second brain",
-    "longDescription": "Ley is a local-first knowledge base for connected Markdown notes."
+    "shortDescription": "Local continuity for coding agents",
+    "longDescription": "Ley keeps durable project memory small, cited, revision-aware, and under your control so coding agents can continue useful work without trusting stale summaries blindly."
   }
 }

@@ -1,5 +1,5 @@
 /**
- * GraphModal — full-screen graph view, the Obsidian-style "second brain" map.
+ * GraphModal — legacy full-screen note graph retained during the continuity migration.
  * Opens via Cmd+G (or titlebar button). Has the full controls sidebar, the
  * big interactive canvas, and a community legend.
  */
