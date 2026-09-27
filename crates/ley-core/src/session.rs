@@ -3321,6 +3321,90 @@ pub(crate) fn visit_session_records(
     Ok(total_sessions)
 }
 
+pub(crate) fn continuity_events_for_migration(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<Vec<crate::ContinuityEventInput>, LeyCoreError> {
+    let diagnostic = diagnose_project(&project_start)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
+    let Some(store) = SessionStore::open(&vault, &diagnostic.identity.project_id, false)? else {
+        return Ok(Vec::new());
+    };
+    let _lock = store.lock(true)?;
+    let mut imported = Vec::new();
+    for session_id in store.session_ids()? {
+        let session_dir = store.open_session(&session_id)?;
+        let events = store.read_events(&session_id, &session_dir)?;
+        replay_events(&events, &diagnostic.identity.project_id, &session_id)?;
+        for event in events {
+            let (kind, revision_head, revision_branch) = match &event.payload {
+                SessionEventPayload::SessionStarted { .. } => {
+                    ("legacy-session-started", None, None)
+                }
+                SessionEventPayload::CheckpointRecorded(checkpoint) => (
+                    "legacy-checkpoint-recorded",
+                    checkpoint
+                        .project_revision
+                        .as_ref()
+                        .and_then(|revision| revision.head.clone()),
+                    checkpoint
+                        .project_revision
+                        .as_ref()
+                        .and_then(|revision| revision.branch.clone()),
+                ),
+                SessionEventPayload::RecoveryCheckpointRecorded(recovery) => (
+                    "legacy-recovery-checkpoint-recorded",
+                    recovery
+                        .checkpoint
+                        .project_revision
+                        .as_ref()
+                        .and_then(|revision| revision.head.clone()),
+                    recovery
+                        .checkpoint
+                        .project_revision
+                        .as_ref()
+                        .and_then(|revision| revision.branch.clone()),
+                ),
+                SessionEventPayload::SessionFinished(_) => ("legacy-session-finished", None, None),
+                SessionEventPayload::ContextUtilityBound(_) => {
+                    ("legacy-context-utility-bound", None, None)
+                }
+                SessionEventPayload::ContextUtilityObserved(_) => {
+                    ("legacy-context-utility-observed", None, None)
+                }
+                SessionEventPayload::SessionRenamed(_) => ("legacy-session-renamed", None, None),
+                SessionEventPayload::UserPromptObserved(_) => {
+                    ("legacy-user-prompt-observed", None, None)
+                }
+                SessionEventPayload::AssistantResponseObserved(_) => {
+                    ("legacy-assistant-response-observed", None, None)
+                }
+                SessionEventPayload::ToolObserved(_) => ("legacy-tool-observed", None, None),
+            };
+            let payload = serde_json::to_value(&event).map_err(|error| {
+                LeyCoreError::InvalidSessionStore(format!(
+                    "validated session event could not be serialized for migration: {error}"
+                ))
+            })?;
+            imported.push(crate::ContinuityEventInput {
+                event_id: event.event_id,
+                project_id: event.project_id,
+                session_id: Some(event.session_id),
+                session_sequence: Some(event.sequence),
+                request_id: Some(event.request_id),
+                request_fingerprint: Some(event.request_fingerprint),
+                kind: kind.to_owned(),
+                payload_version: 1,
+                recorded_at_unix_ms: event.recorded_at_unix_ms,
+                revision_head,
+                revision_branch,
+                payload,
+            });
+        }
+    }
+    Ok(imported)
+}
+
 impl From<&AgentSession> for SessionSummary {
     fn from(session: &AgentSession) -> Self {
         Self {

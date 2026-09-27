@@ -70,6 +70,14 @@ pub struct ContinuityWrite<T> {
     pub created: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContinuityImportSummary {
+    pub project_created: bool,
+    pub events_created: usize,
+    pub events_replayed: usize,
+}
+
 pub fn default_continuity_database_path() -> Result<PathBuf, LeyCoreError> {
     Ok(crate::private_state::default_private_config_dir()?
         .join(APP_IDENTIFIER)
@@ -107,154 +115,54 @@ impl ContinuityStore {
     ) -> Result<ContinuityWrite<ProjectIdentity>, LeyCoreError> {
         validate_identity(identity)?;
         let connection = self.open_connection()?;
-        let changed = connection
-            .execute(
-                "INSERT INTO projects(project_id, name, created_at_unix_ms) VALUES (?1, ?2, ?3) ON CONFLICT(project_id) DO NOTHING",
-                params![
-                    identity.project_id,
-                    identity.name,
-                    u64_to_i64(identity.created_at_unix_ms, "project created_at_unix_ms")?
-                ],
-            )
-            .map_err(|error| self.database_error(error))?;
-        if changed == 1 {
-            return Ok(ContinuityWrite {
-                record: identity.clone(),
-                created: true,
-            });
-        }
-
-        let existing =
-            read_project(&connection, &identity.project_id, &self.path)?.ok_or_else(|| {
-                LeyCoreError::InvalidContinuityStore(format!(
-                    "project {} disappeared during registration",
-                    identity.project_id
-                ))
-            })?;
-        if existing.created_at_unix_ms != identity.created_at_unix_ms {
-            return Err(LeyCoreError::InvalidContinuityStore(format!(
-                "project {} changed its creation timestamp",
-                identity.project_id
-            )));
-        }
-        if existing.name != identity.name {
-            connection
-                .execute(
-                    "UPDATE projects SET name = ?1 WHERE project_id = ?2",
-                    params![identity.name, identity.project_id],
-                )
-                .map_err(|error| self.database_error(error))?;
-        }
-        Ok(ContinuityWrite {
-            record: identity.clone(),
-            created: false,
-        })
+        register_project_on(&connection, identity, &self.path)
     }
 
     pub fn append_event(
         &self,
         input: &ContinuityEventInput,
     ) -> Result<ContinuityWrite<ContinuityEvent>, LeyCoreError> {
-        validate_event_input(input)?;
         let connection = self.open_connection()?;
-        let payload_json = serde_json::to_string(&input.payload).map_err(|error| {
-            LeyCoreError::InvalidContinuityStore(format!(
-                "event payload is not serializable: {error}"
-            ))
-        })?;
-        if payload_json.len() > CONTINUITY_EVENT_LIMIT_BYTES {
-            return Err(LeyCoreError::InvalidContinuityStore(format!(
-                "event payload exceeds {CONTINUITY_EVENT_LIMIT_BYTES} bytes"
-            )));
-        }
-        if let (Some(request_id), Some(request_fingerprint)) =
-            (&input.request_id, &input.request_fingerprint)
-        {
-            if let Some(existing) = read_event_by_request(
-                &connection,
-                &input.project_id,
-                input.session_id.as_deref(),
-                request_id,
-                &self.path,
-            )? {
-                if existing.request_fingerprint.as_deref() != Some(request_fingerprint.as_str())
-                    || !retry_event_matches(&existing, input)
-                {
-                    return Err(LeyCoreError::InvalidContinuityStore(format!(
-                        "request {request_id} was reused with different event content"
-                    )));
-                }
-                return Ok(ContinuityWrite {
-                    record: existing,
-                    created: false,
-                });
-            }
-        }
-        let changed = connection
-            .execute(
-                "INSERT INTO events(project_id, event_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) ON CONFLICT DO NOTHING",
-                params![
-                    input.project_id,
-                    input.event_id,
-                    input.session_id,
-                    optional_u64_to_i64(input.session_sequence, "session sequence")?,
-                    input.request_id,
-                    input.request_fingerprint,
-                    input.kind,
-                    i64::from(input.payload_version),
-                    u64_to_i64(input.recorded_at_unix_ms, "event recorded_at_unix_ms")?,
-                    input.revision_head,
-                    input.revision_branch,
-                    payload_json,
-                ],
-            )
-            .map_err(|error| self.database_error(error))?;
-        let expected = event_from_input(input.clone());
-        if changed == 1 {
-            return Ok(ContinuityWrite {
-                record: expected,
-                created: true,
-            });
-        }
-        if let (Some(request_id), Some(request_fingerprint)) =
-            (&input.request_id, &input.request_fingerprint)
-        {
-            if let Some(existing) = read_event_by_request(
-                &connection,
-                &input.project_id,
-                input.session_id.as_deref(),
-                request_id,
-                &self.path,
-            )? {
-                if existing.request_fingerprint.as_deref() == Some(request_fingerprint.as_str())
-                    && retry_event_matches(&existing, input)
-                {
-                    return Ok(ContinuityWrite {
-                        record: existing,
-                        created: false,
-                    });
-                }
+        append_event_on(&connection, input, &self.path)
+    }
+
+    pub fn import_project_events(
+        &self,
+        identity: &ProjectIdentity,
+        events: &[ContinuityEventInput],
+    ) -> Result<ContinuityImportSummary, LeyCoreError> {
+        validate_identity(identity)?;
+        for event in events {
+            validate_event_input(event)?;
+            if event.project_id != identity.project_id {
                 return Err(LeyCoreError::InvalidContinuityStore(format!(
-                    "request {request_id} was reused with different event content"
+                    "event {} belongs to project {}, not {}",
+                    event.event_id, event.project_id, identity.project_id
                 )));
             }
         }
-        let existing = read_event(&connection, &input.project_id, &input.event_id, &self.path)?
-            .ok_or_else(|| {
-                LeyCoreError::InvalidContinuityStore(format!(
-                    "event {} conflicted with another continuity constraint",
-                    input.event_id
-                ))
-            })?;
-        if existing != expected {
-            return Err(LeyCoreError::InvalidContinuityStore(format!(
-                "event {} was reused with different content",
-                input.event_id
-            )));
+
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let project = register_project_on(&transaction, identity, &self.path)?;
+        let mut events_created = 0;
+        let mut events_replayed = 0;
+        for event in events {
+            if append_event_on(&transaction, event, &self.path)?.created {
+                events_created += 1;
+            } else {
+                events_replayed += 1;
+            }
         }
-        Ok(ContinuityWrite {
-            record: existing,
-            created: false,
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(ContinuityImportSummary {
+            project_created: project.created,
+            events_created,
+            events_replayed,
         })
     }
 
@@ -302,6 +210,17 @@ impl ContinuityStore {
             .map_err(|error| self.database_error(error))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| self.database_error(error))
+    }
+
+    pub fn event(
+        &self,
+        project_id: &str,
+        event_id: &str,
+    ) -> Result<Option<ContinuityEvent>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        validate_identifier(event_id, "event ID")?;
+        let connection = self.open_connection()?;
+        read_event(&connection, project_id, event_id, &self.path)
     }
 
     pub fn linked_events(
@@ -367,6 +286,160 @@ impl ContinuityStore {
     fn database_error(&self, error: rusqlite::Error) -> LeyCoreError {
         database_error(&self.path, error)
     }
+}
+
+fn register_project_on(
+    connection: &Connection,
+    identity: &ProjectIdentity,
+    path: &Path,
+) -> Result<ContinuityWrite<ProjectIdentity>, LeyCoreError> {
+    validate_identity(identity)?;
+    let changed = connection
+        .execute(
+            "INSERT INTO projects(project_id, name, created_at_unix_ms) VALUES (?1, ?2, ?3) ON CONFLICT(project_id) DO NOTHING",
+            params![
+                identity.project_id,
+                identity.name,
+                u64_to_i64(identity.created_at_unix_ms, "project created_at_unix_ms")?
+            ],
+        )
+        .map_err(|error| database_error(path, error))?;
+    if changed == 1 {
+        return Ok(ContinuityWrite {
+            record: identity.clone(),
+            created: true,
+        });
+    }
+
+    let existing = read_project(connection, &identity.project_id, path)?.ok_or_else(|| {
+        LeyCoreError::InvalidContinuityStore(format!(
+            "project {} disappeared during registration",
+            identity.project_id
+        ))
+    })?;
+    if existing.created_at_unix_ms != identity.created_at_unix_ms {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "project {} changed its creation timestamp",
+            identity.project_id
+        )));
+    }
+    if existing.name != identity.name {
+        connection
+            .execute(
+                "UPDATE projects SET name = ?1 WHERE project_id = ?2",
+                params![identity.name, identity.project_id],
+            )
+            .map_err(|error| database_error(path, error))?;
+    }
+    Ok(ContinuityWrite {
+        record: identity.clone(),
+        created: false,
+    })
+}
+
+fn append_event_on(
+    connection: &Connection,
+    input: &ContinuityEventInput,
+    path: &Path,
+) -> Result<ContinuityWrite<ContinuityEvent>, LeyCoreError> {
+    validate_event_input(input)?;
+    let payload_json = serde_json::to_string(&input.payload).map_err(|error| {
+        LeyCoreError::InvalidContinuityStore(format!("event payload is not serializable: {error}"))
+    })?;
+    if payload_json.len() > CONTINUITY_EVENT_LIMIT_BYTES {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "event payload exceeds {CONTINUITY_EVENT_LIMIT_BYTES} bytes"
+        )));
+    }
+    if let (Some(request_id), Some(request_fingerprint)) =
+        (&input.request_id, &input.request_fingerprint)
+    {
+        if let Some(existing) = read_event_by_request(
+            connection,
+            &input.project_id,
+            input.session_id.as_deref(),
+            request_id,
+            path,
+        )? {
+            if existing.request_fingerprint.as_deref() != Some(request_fingerprint.as_str())
+                || !retry_event_matches(&existing, input)
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "request {request_id} was reused with different event content"
+                )));
+            }
+            return Ok(ContinuityWrite {
+                record: existing,
+                created: false,
+            });
+        }
+    }
+    let changed = connection
+        .execute(
+            "INSERT INTO events(project_id, event_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) ON CONFLICT DO NOTHING",
+            params![
+                input.project_id,
+                input.event_id,
+                input.session_id,
+                optional_u64_to_i64(input.session_sequence, "session sequence")?,
+                input.request_id,
+                input.request_fingerprint,
+                input.kind,
+                i64::from(input.payload_version),
+                u64_to_i64(input.recorded_at_unix_ms, "event recorded_at_unix_ms")?,
+                input.revision_head,
+                input.revision_branch,
+                payload_json,
+            ],
+        )
+        .map_err(|error| database_error(path, error))?;
+    let expected = event_from_input(input.clone());
+    if changed == 1 {
+        return Ok(ContinuityWrite {
+            record: expected,
+            created: true,
+        });
+    }
+    if let (Some(request_id), Some(request_fingerprint)) =
+        (&input.request_id, &input.request_fingerprint)
+    {
+        if let Some(existing) = read_event_by_request(
+            connection,
+            &input.project_id,
+            input.session_id.as_deref(),
+            request_id,
+            path,
+        )? {
+            if existing.request_fingerprint.as_deref() == Some(request_fingerprint.as_str())
+                && retry_event_matches(&existing, input)
+            {
+                return Ok(ContinuityWrite {
+                    record: existing,
+                    created: false,
+                });
+            }
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "request {request_id} was reused with different event content"
+            )));
+        }
+    }
+    let existing =
+        read_event(connection, &input.project_id, &input.event_id, path)?.ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(format!(
+                "event {} conflicted with another continuity constraint",
+                input.event_id
+            ))
+        })?;
+    if existing != expected {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "event {} was reused with different content",
+            input.event_id
+        )));
+    }
+    Ok(ContinuityWrite {
+        record: existing,
+        created: false,
+    })
 }
 
 fn configure_connection(connection: &Connection, path: &Path) -> Result<(), LeyCoreError> {

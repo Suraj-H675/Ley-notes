@@ -120,6 +120,20 @@ The new Phase-1 SQLite kernel is not yet the live authority for existing install
 vault state remains a read-only migration source until import, equivalence, export, and erasure behavior are
 proved end to end. Do not silently dual-write both systems without an explicit migration plan.
 
+The first migration slice can now snapshot the validated legacy **session and learning event ledgers** into
+SQLite. It deliberately reuses the legacy readers/replay validators instead of reimplementing the
+`session-v1`…`session-v16` formats. Each imported continuity event retains the full validated legacy event
+object, while stable session/request/revision fields are lifted into indexed columns where their legacy
+scope matches the new schema. Learning request IDs remain inside the raw learning event because legacy
+idempotency is scoped per learning, not per session/project.
+
+Each snapshot ends with an atomic `legacy-snapshot-imported` manifest containing a deterministic inventory
+digest and `cutover: false`. Exact reruns replay without duplicates; any conflicting event rolls back the
+whole batch. This is **snapshot/equivalence machinery, not cutover**: immutable artifact/blob bytes still
+live in the legacy store, legacy session erasure also has learning-cascade semantics that SQLite must
+reproduce before retirement, and a portable export must include referenced blob bytes before the database
+can stand alone.
+
 Do not add new capabilities to the legacy note domain merely because it still exists during migration.
 
 ## Security boundaries retained through the reset

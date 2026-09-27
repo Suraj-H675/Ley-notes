@@ -598,6 +598,49 @@ pub fn list_learnings(
     Ok(records.iter().map(LearningSummary::from).collect())
 }
 
+pub(crate) fn continuity_events_for_migration(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<Vec<crate::ContinuityEventInput>, LeyCoreError> {
+    let diagnostic = diagnose_project(&project_start)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
+    let Some(store) = LearningStore::open(&vault, &diagnostic.identity.project_id, false)? else {
+        return Ok(Vec::new());
+    };
+    let _lock = store.lock(true)?;
+    let events = store.read_events()?;
+    replay_all(&events, &diagnostic.identity.project_id)?;
+    events
+        .into_iter()
+        .map(|event| {
+            let kind = match &event.payload {
+                LearningEventPayload::Proposed { .. } => "legacy-learning-proposed",
+                LearningEventPayload::Corrected { .. } => "legacy-learning-corrected",
+                LearningEventPayload::Reviewed { .. } => "legacy-learning-reviewed",
+            };
+            let payload = serde_json::to_value(&event).map_err(|error| {
+                LeyCoreError::InvalidLearningStore(format!(
+                    "validated learning event could not be serialized for migration: {error}"
+                ))
+            })?;
+            Ok(crate::ContinuityEventInput {
+                event_id: event.event_id,
+                project_id: event.project_id,
+                session_id: None,
+                session_sequence: None,
+                request_id: None,
+                request_fingerprint: None,
+                kind: kind.to_owned(),
+                payload_version: 1,
+                recorded_at_unix_ms: event.recorded_at_unix_ms,
+                revision_head: None,
+                revision_branch: None,
+                payload,
+            })
+        })
+        .collect()
+}
+
 pub fn learning_review_inbox(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,

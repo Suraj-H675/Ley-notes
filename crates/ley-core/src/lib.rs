@@ -16,6 +16,7 @@ mod consolidation_inbox;
 mod context_compiler;
 mod context_mount;
 mod context_pack_inspector;
+mod continuity_import;
 mod continuity_store;
 mod cross_project_search;
 mod current_project_state;
@@ -116,10 +117,14 @@ pub use context_pack_inspector::{
     inspect_context_pack, ContextPackBudgetBreakdown, ContextPackIncludedRecord,
     ContextPackInspection, ContextPackRecordSource, CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION,
 };
+pub use continuity_import::{
+    import_legacy_continuity, LegacyContinuityImportSummary,
+    LEGACY_CONTINUITY_IMPORT_FORMAT_VERSION,
+};
 pub use continuity_store::{
-    default_continuity_database_path, ContinuityEvent, ContinuityEventInput, ContinuityStore,
-    ContinuityWrite, CONTINUITY_DATABASE_FILE, CONTINUITY_EVENT_LIMIT_BYTES,
-    CONTINUITY_SCHEMA_VERSION,
+    default_continuity_database_path, ContinuityEvent, ContinuityEventInput,
+    ContinuityImportSummary, ContinuityStore, ContinuityWrite, CONTINUITY_DATABASE_FILE,
+    CONTINUITY_EVENT_LIMIT_BYTES, CONTINUITY_SCHEMA_VERSION,
 };
 pub use cross_project_search::{
     search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,
