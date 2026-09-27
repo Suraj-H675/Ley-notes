@@ -16,6 +16,7 @@ mod consolidation_inbox;
 mod context_compiler;
 mod context_mount;
 mod context_pack_inspector;
+mod continuity_store;
 mod cross_project_search;
 mod current_project_state;
 mod egress_policy;
@@ -114,6 +115,11 @@ pub use context_mount::{
 pub use context_pack_inspector::{
     inspect_context_pack, ContextPackBudgetBreakdown, ContextPackIncludedRecord,
     ContextPackInspection, ContextPackRecordSource, CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION,
+};
+pub use continuity_store::{
+    default_continuity_database_path, ContinuityEvent, ContinuityEventInput, ContinuityStore,
+    ContinuityWrite, CONTINUITY_DATABASE_FILE, CONTINUITY_EVENT_LIMIT_BYTES,
+    CONTINUITY_SCHEMA_VERSION,
 };
 pub use cross_project_search::{
     search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,
@@ -618,6 +624,10 @@ pub enum LeyCoreError {
     ConfigDirectoryUnavailable,
     #[error("invalid Ley evaluation private root: {0}")]
     InvalidEvalPrivateRoot(String),
+    #[error("invalid Ley continuity database: {0}")]
+    InvalidContinuityStore(String),
+    #[error("Ley continuity database error at {path}: {message}")]
+    ContinuityDatabase { path: PathBuf, message: String },
     #[error("project {0} is not bound to a Ley vault; run 'ley bind --vault <path>'")]
     VaultNotBound(String),
     #[error("the bound Ley vault is unavailable; rebind project {project_id}: {path}")]

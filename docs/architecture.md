@@ -33,19 +33,26 @@ Keep a tiny repo-local `.ley/` identity/config so a project can retain a stable 
 
 ### Machine-managed state
 
-Move machine-managed metadata toward one owner-private SQLite database, initially device-wide and partitioned by project. Candidate durable tables include:
+Move machine-managed metadata toward one owner-private SQLite database, initially device-wide and partitioned by project.
 
-- projects and integration state;
-- session/event records;
-- compact handoff/memory records;
-- evidence/provenance references;
-- corrections/supersession/pins;
-- selected privileged source approvals;
-- privacy/egress/retention settings.
+Phase-1 v1 deliberately starts smaller than the legacy ontology:
 
-Large immutable evidence blobs may remain content-addressed files under owner-private application data. Search indexes, vectors, summaries, and presentation projections are rebuildable derivatives.
+- `projects` keeps stable portable project identity;
+- `events` is the append-only continuity envelope for session activity, handoffs, verification, evidence,
+  corrections, and other durable facts. It carries dedicated project/session/order/request/revision columns
+  plus a versioned JSON payload;
+- `event_links` records explicit provenance/supersession/dependency relations between events.
 
-The current JSON registries and filesystem Agent Memory stores remain migration inputs, not architecture that must be preserved.
+The store uses bundled SQLite in WAL mode with `synchronous=FULL`, foreign keys, owner-private filesystem
+permissions, `trusted_schema=OFF`, and secure deletion enabled. Schema versioning uses
+`PRAGMA user_version`.
+
+Large immutable evidence blobs may remain content-addressed files under owner-private application data.
+Search indexes, vectors, summaries, and presentation projections are rebuildable derivatives.
+
+Do not create dedicated tables for every legacy record shape merely because those JSON registries exist.
+The current JSON registries and filesystem Agent Memory stores remain migration inputs, not architecture
+that must be preserved.
 
 ### Durable memory vocabulary
 
@@ -108,6 +115,10 @@ The native app still contains the legacy filesystem-note workspace while the con
 - one recursive watcher tracks external changes;
 - browser storage fallbacks are removed;
 - old browser-local Dexie tables remain inert until the SQLite migration defines explicit legacy-data handling.
+
+The new Phase-1 SQLite kernel is not yet the live authority for existing installations. Current JSON/session/
+vault state remains a read-only migration source until import, equivalence, export, and erasure behavior are
+proved end to end. Do not silently dual-write both systems without an explicit migration plan.
 
 Do not add new capabilities to the legacy note domain merely because it still exists during migration.
 
