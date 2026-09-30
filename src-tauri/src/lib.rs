@@ -31,24 +31,23 @@ use ley_core::{
     rename_session_with_continuity_transition, review_learning_with_continuity_transition,
     search_observed_projects, search_project_memory_with_continuity_transition,
     update_capture_mode, validate_project_memory, ApprovedSourceAuthorityList,
-    ApprovedSourceRegistry, ArtifactMediaType,
-    BindingRegistry, BindingSource, CaptureFile, CaptureMode, CapturePolicy, ContinuityStore,
-    CorrectLearningInput, CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt,
-    GraphCitation, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
-    LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
-    ProjectActivityView, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
-    ProjectMemorySearch, ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack,
-    ProjectVaultBinding, RenameSessionInput, ReviewLearningInput, RevisionCompatibility,
-    SessionContextPack, SessionMemoryErasure, SessionSummary, SessionTurnsContextPack,
-    SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS,
-    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
-    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
-    DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_PROJECT_CATALOG_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
-    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
-    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
-    DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS,
-    MAX_MEDIA_EVIDENCE_BYTES,
+    ApprovedSourceRegistry, ArtifactMediaType, BindingRegistry, BindingSource, CaptureFile,
+    CaptureMode, CapturePolicy, ContinuityStore, CorrectLearningInput, CrossProjectSearch,
+    EraseSessionMemoryInput, EvidenceExcerpt, GraphCitation, IngestionResult, LearningActor,
+    LearningContextPack, LearningEvidenceInput, LearningFeedbackAction, LearningList,
+    LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory,
+    ProjectCatalog, ProjectDiagnostic, ProjectMemorySearch, ProjectMemorySearchLimits,
+    ProjectProblemScope, ProjectResumePack, ProjectVaultBinding, RenameSessionInput,
+    ReviewLearningInput, RevisionCompatibility, SessionContextPack, SessionMemoryErasure,
+    SessionSummary, SessionTurnsContextPack, SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS,
+    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
+    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
+    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
+    DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS, MAX_MEDIA_EVIDENCE_BYTES,
 };
 use ley_core::{
     semantic_model_status as local_semantic_model_status, supported_semantic_model,
@@ -4075,15 +4074,11 @@ mod tests {
                 if path == &original_binding.vault_path
         ));
 
-        let error = match connect_agent_project_with_registry(
-            &project,
-            &wrong_vault,
-            None,
-            &registry,
-        ) {
-            Ok(_) => panic!("wrong legacy vault unexpectedly reconnected the project"),
-            Err(error) => error,
-        };
+        let error =
+            match connect_agent_project_with_registry(&project, &wrong_vault, None, &registry) {
+                Ok(_) => panic!("wrong legacy vault unexpectedly reconnected the project"),
+                Err(error) => error,
+            };
         assert!(matches!(error, LeyCoreError::InvalidContinuityStore(_)));
         assert!(error
             .to_string()
