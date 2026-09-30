@@ -1,4 +1,6 @@
-use crate::retrieval::project_captured_git_state;
+use crate::retrieval::{
+    project_captured_git_state, project_captured_git_state_with_continuity_transition,
+};
 use crate::revision::RevisionResolver;
 use crate::{
     list_sessions, list_sessions_with_continuity_transition, read_session,
@@ -520,7 +522,11 @@ pub fn read_session_context_with_continuity_transition(
     let legacy_vault = legacy_vault.as_ref();
     let session =
         read_session_with_continuity_transition(project_start, legacy_vault, store, session_id)?;
-    let captured_git = match project_captured_git_state(project_start, legacy_vault) {
+    let captured_git = match project_captured_git_state_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+    ) {
         Ok(captured_git) => captured_git,
         Err(error)
             if matches!(

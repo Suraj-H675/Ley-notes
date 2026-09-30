@@ -15,9 +15,10 @@ APP_IDENTIFIER = "app.leynotes.desktop"
 EXPECTED_FILES = {
     "bindings-v1.json",
     "bindings-v1.lock",
-    "projects-v1.json",
     "projects-v1.lock",
+    "continuity.sqlite3",
 }
+RETIRED_FILES = {"projects-v1.json"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -116,6 +117,12 @@ def main() -> int:
                 "ordinary Ley config is missing expected private files: "
                 + ", ".join(sorted(missing))
             )
+        recreated = RETIRED_FILES & entries
+        if recreated:
+            raise RuntimeError(
+                "fresh native Ley unexpectedly recreated retired private files: "
+                + ", ".join(sorted(recreated))
+            )
 
         file_modes: dict[str, str] = {}
         for name in sorted(EXPECTED_FILES):
@@ -133,6 +140,7 @@ def main() -> int:
             "configConvention": "xdg" if sys.platform == "linux" else "macos-application-support",
             "fileModes": file_modes,
             "permissiveUmask": "0000",
+            "retiredFilesAbsent": sorted(RETIRED_FILES),
             "supported": True,
             "system": "Linux" if sys.platform == "linux" else "Darwin",
         }

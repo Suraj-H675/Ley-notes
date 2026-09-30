@@ -2741,12 +2741,17 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        // macOS exposes its temporary directory through `/var`, which is a
+        // symlink to `/private/var`. SQLite's NOFOLLOW open intentionally
+        // rejects that alias, so exercise the real canonical directory.
+        let root = root.canonicalize().unwrap();
         let project = root.join("project");
         let original_vault = root.join("original-vault");
         let moved_vault = root.join("moved-vault");
         let wrong_vault = root.join("wrong-vault");
         let config = root.join("config");
-        let _ = fs::remove_dir_all(&root);
         for directory in [&project, &original_vault, &wrong_vault, &config] {
             fs::create_dir_all(directory).unwrap();
         }

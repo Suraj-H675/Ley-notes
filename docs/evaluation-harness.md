@@ -51,8 +51,9 @@ before reconnect can mutate continuity or bindings, and project-memory erasure p
 user-owned Markdown/Canvas copies remain untouched. Second, `binding_process_contention` launches independent OS processes against
 one binding/project-catalog pair and requires every concurrent mutation to survive. Third, Linux/macOS lanes build the ordinary
 CLI before the eval-feature rebuild and run `eval/run_private_config_permissions_eval.py` with umask
-`0000`; the fresh OS-native application directory must still be `0700` and the binding/project-catalog
-JSON and lock files must still be `0600`. Run `36121570078` passed the contention and
+`0000`; the fresh OS-native application directory must still be `0700`, current binding/continuity files
+and migration lock must be `0600`, and a native-born project must not recreate the retired
+`projects-v1.json` catalog. Run `36121570078` passed the earlier contention and
 production-permission gates on all applicable x64 and ARM64 lanes, including both macOS architectures.
 Follow-up run `36151215222` remains historical evidence for the now-retired native notebook filesystem
 engine; its confinement and watcher tests are no longer part of the current matrix because that engine is

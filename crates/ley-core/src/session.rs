@@ -869,6 +869,19 @@ fn transition_session_preparation(
     store: &crate::ContinuityStore,
 ) -> Result<TransitionSessionPreparation, LeyCoreError> {
     let diagnostic = diagnose_project(project_start)?;
+    if store.artifact_write_authority_ready(&diagnostic.identity.project_id)? {
+        let Some(snapshot) =
+            store.current_artifact_authority_snapshot(&diagnostic.identity.project_id)?
+        else {
+            return Err(LeyCoreError::ProjectMemoryUnavailable(
+                "native artifact write authority has no current artifact snapshot".to_owned(),
+            ));
+        };
+        return Ok(TransitionSessionPreparation {
+            diagnostic,
+            memory: TransitionSessionMemory::Native(snapshot),
+        });
+    }
     match std::fs::symlink_metadata(legacy_vault) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(
             LeyCoreError::UnsafeProjectLayout(legacy_vault.to_path_buf()),
@@ -11443,6 +11456,118 @@ mod tests {
             },
         )
         .is_err());
+    }
+
+    #[test]
+    fn transition_session_writers_use_native_artifact_authority_while_legacy_vault_remains() {
+        let (base, project, vault) = setup_memory();
+        git(&project, &["init", "-b", "main"]);
+        git(&project, &["config", "user.name", "Ley Tests"]);
+        git(&project, &["config", "user.email", "ley@example.invalid"]);
+        git(&project, &["add", "README.md", "src.rs"]);
+        git(&project, &["commit", "-m", "baseline"]);
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let first =
+            crate::ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+
+        git(&project, &["checkout", "-b", "experiment"]);
+        std::fs::write(
+            project.join("README.md"),
+            "# Session memory\n\nNative authority advanced after legacy cutover.\n",
+        )
+        .unwrap();
+        git(&project, &["add", "README.md"]);
+        git(&project, &["commit", "-m", "experiment"]);
+        let second =
+            crate::ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        let experiment_head = git(&project, &["rev-parse", "HEAD"]);
+        assert_ne!(first.snapshot_id, second.snapshot_id);
+        assert_eq!(
+            load_project_memory(&project, &vault)
+                .unwrap()
+                .manifest
+                .snapshot_id,
+            first.snapshot_id
+        );
+
+        git(&project, &["checkout", "main"]);
+        std::fs::write(project.join("main.txt"), "mainline advanced\n").unwrap();
+        git(&project, &["add", "main.txt"]);
+        git(&project, &["commit", "-m", "mainline"]);
+
+        let started = start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            StartSessionInput {
+                request_id: request_id('f'),
+                name: "Native artifact authority".to_owned(),
+                goal: "Pin session evidence to canonical native artifacts".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            started.session.artifact_snapshot_id_at_start,
+            second.snapshot_id
+        );
+
+        let mut input = checkpoint_input(
+            numbered_request_id(0x10),
+            "Checkpoint against canonical native artifact authority",
+        );
+        input.touched_artifacts = vec!["README.md".to_owned()];
+        let checkpoint = checkpoint_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            input,
+        )
+        .unwrap();
+        assert_eq!(
+            checkpoint.session.checkpoints[0]
+                .project_revision
+                .as_ref()
+                .unwrap()
+                .artifact_snapshot_id,
+            second.snapshot_id
+        );
+        assert_eq!(
+            checkpoint.session.checkpoints[0]
+                .project_revision
+                .as_ref()
+                .unwrap()
+                .head
+                .as_deref(),
+            Some(experiment_head.as_str())
+        );
+        assert_eq!(
+            checkpoint.session.checkpoints[0].touched_artifacts[0].artifact_snapshot_id,
+            second.snapshot_id
+        );
+
+        let context = crate::session_context::read_session_context_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            crate::session_context::DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+            crate::session_context::DEFAULT_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(
+            context.revision_freshness.capture_compatibility,
+            crate::RevisionCompatibility::Divergent
+        );
+        assert_eq!(
+            context.checkpoints[0]
+                .revision_applicability
+                .as_ref()
+                .unwrap()
+                .compatibility,
+            crate::RevisionCompatibility::Divergent
+        );
     }
 
     #[test]
