@@ -266,7 +266,6 @@ pub(crate) struct ResolvedProjectContextMounts {
     pub active_project_id: String,
     pub ready: Vec<ResolvedProjectContextMount>,
     pub unavailable: Vec<ContextMount>,
-    pub historical_mounts: Vec<ContextMountEgressSource>,
 }
 
 #[derive(Debug, Clone)]
@@ -584,13 +583,6 @@ impl ContextMountRegistry {
                 active_project_id: active_project_id.clone(),
                 ready,
                 unavailable,
-                historical_mounts: historical
-                    .into_iter()
-                    .map(|(mount_id, source_project_id)| ContextMountEgressSource {
-                        mount_id,
-                        source_project_id,
-                    })
-                    .collect(),
             })
         })
     }

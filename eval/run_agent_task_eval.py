@@ -1947,7 +1947,7 @@ def prepare_ley_context(
     session_id = str(started["sessionId"])
     compiled = mcp_call(
         project,
-        "ley_compile_context",
+        "ley_brief",
         {
             "task": task,
             "maxResults": max_results,
@@ -2007,35 +2007,9 @@ def prepare_ley_context(
         raise RuntimeError(
             f"Ley context exposed {len(leaked)} forbidden benchmark evidence marker(s)"
         )
-    binding_id: str | None = None
-    pre_outcome_event_count = 1
-    if recovery_pack is None:
-        bound = mcp_call(
-            project,
-            "ley_context_utility_bind",
-            {
-                "sessionId": session_id,
-                "requestId": request_id(f"{fixture['id']}:eval:bind"),
-                "expectedEventCount": 1,
-                "contextPackId": context_pack_id,
-                "task": task,
-                "maxResults": max_results,
-                "maxTokens": effective_max_tokens,
-            },
-            WRITE_FLAGS,
-        )
-        binding_id = str(bound.get("bindingId", ""))
-        if (
-            not binding_id.startswith("cub_")
-            or bound.get("contextPackId") != context_pack_id
-            or bound.get("eventCount") != 2
-            or bound.get("replayed") is not False
-        ):
-            raise RuntimeError("Ley context utility bind receipt did not match the compiled pack")
-        pre_outcome_event_count = 2
     return rendered, {
         "sessionId": session_id,
-        "bindingId": binding_id,
+        "bindingId": None,
         "contextPackId": context_pack_id,
         "contextSha256": sha256_text(rendered),
         "contextCharacters": len(rendered),
@@ -2043,7 +2017,7 @@ def prepare_ley_context(
         "evidenceState": compiled.get("evidenceState"),
         "requestedMaxTokens": max_tokens,
         "contextTokenBudget": effective_max_tokens,
-        "preOutcomeEventCount": pre_outcome_event_count,
+        "preOutcomeEventCount": 1,
         "contextComposition": (
             "compiled-context+unconsolidated-session-evidence"
             if recovery_pack is not None
@@ -2357,8 +2331,7 @@ def record_ley_outcome(
         },
         WRITE_FLAGS,
     )
-    checkpoint_event_id = str(checkpoint["eventId"])
-    finished = mcp_call(
+    mcp_call(
         project,
         "ley_session_finish",
         {
@@ -2372,79 +2345,14 @@ def record_ley_outcome(
         },
         WRITE_FLAGS,
     )
-    binding_id = utility.get("bindingId")
-    if not binding_id:
-        session = mcp_call(
-            project,
-            "ley_session_get",
-            {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
-        )
-        if (
-            session.get("contextUtilityBindingCount") != 0
-            or session.get("contextUtilityObservationCount") != 0
-        ):
-            raise RuntimeError(
-                "composite Ley context unexpectedly created a partial utility binding"
-            )
-        return {
-            "observationEventId": None,
-            "observationRecorded": False,
-            "observationOmissionReason": "composite-context-not-single-pack-bound",
-            "contextUsageProven": False,
-            "causalUtilityProven": False,
-            "trustChangesApplied": False,
-            "rankingChangesApplied": False,
-        }
-    observed = mcp_call(
-        project,
-        "ley_context_utility_observe",
-        {
-            "sessionId": session_id,
-            "requestId": request_id(f"{fixture['id']}:eval:observe"),
-            "expectedEventCount": 4,
-            "bindingId": str(binding_id),
-            "downstreamEventIds": [checkpoint_event_id, str(finished["eventId"])],
-        },
-        WRITE_FLAGS,
-    )
-    if (
-        observed.get("eventCount") != 5
-        or observed.get("replayed") is not False
-        or observed.get("status") != expected_session_status
-        or not str(observed.get("eventId", "")).startswith("evt_")
-    ):
-        raise RuntimeError("Ley context utility observation receipt did not match the expected event")
-    session = mcp_call(
-        project,
-        "ley_session_get",
-        {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
-    )
-    rows = session.get("contextUtilityObservations", [])
-    row = rows[0] if isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict) else {}
-    expected_downstream_ids = sorted([checkpoint_event_id, str(finished["eventId"])])
-    actual_downstream_ids = sorted(
-        str(value) for value in row.get("downstreamEventIds", [])
-    ) if isinstance(row.get("downstreamEventIds"), list) else []
-    if (
-        session.get("contextUtilityBindingCount") != 1
-        or session.get("contextUtilityObservationCount") != 1
-        or session.get("omittedContextUtilityObservations") != 0
-        or row.get("bindingId") != utility["bindingId"]
-        or row.get("contextPackId") != utility["contextPackId"]
-        or row.get("contextPackRevalidated") is not True
-        or actual_downstream_ids != expected_downstream_ids
-        or row.get("contextUsageProven") is not False
-        or row.get("causalUtilityProven") is not False
-        or row.get("trustChangesApplied") is not False
-        or row.get("rankingChangesApplied") is not False
-    ):
-        raise RuntimeError("utility observation violated the non-causal authority boundary")
     return {
-        "observationEventId": observed.get("eventId"),
-        "contextUsageProven": row["contextUsageProven"],
-        "causalUtilityProven": row["causalUtilityProven"],
-        "trustChangesApplied": row["trustChangesApplied"],
-        "rankingChangesApplied": row["rankingChangesApplied"],
+        "observationEventId": None,
+        "observationRecorded": False,
+        "observationOmissionReason": "context-utility-retired",
+        "contextUsageProven": False,
+        "causalUtilityProven": False,
+        "trustChangesApplied": False,
+        "rankingChangesApplied": False,
     }
 
 

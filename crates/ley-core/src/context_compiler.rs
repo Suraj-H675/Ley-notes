@@ -2,8 +2,7 @@ use crate::context_mount::ResolvedProjectContextMounts;
 use crate::egress_policy::EgressPolicySnapshot;
 use crate::knowledge_scope::ResolvedKnowledgeScopes;
 use crate::policy_bundle::{
-    PolicyBundleEgressPolicyOrigin, PolicyBundleTaskCandidate, PolicyBundleTaskExclusionReason,
-    PolicyBundleTaskScan, PolicyBundleTaskScanRequest,
+    PolicyBundleTaskCandidate, PolicyBundleTaskExclusionReason, PolicyBundleTaskScan,
 };
 use crate::revision::{estimate_revision_applicability_tokens, estimate_revision_freshness_tokens};
 use crate::specification::{
@@ -990,59 +989,88 @@ fn compile_project_context_for_agent_with_authority(
                             .expect("blocked decision has a reason"),
                     });
                 }
-                authorities.mounts.with_resolved_project_mounts_locked(project_start, |mounts| {
-                    authorities.knowledge_scopes.with_resolved_scopes_locked(
+                authorities.mounts.with_agent_context_sources_locked(project_start, |mount_sources| {
+                    authorities.knowledge_scopes.with_agent_context_sources_locked(
                         project_start,
-                        |scopes| {
-                    let active_scope_ids = scopes
-                        .scopes
+                        |scope_sources| {
+                    let active_scope_ids = scope_sources
+                        .active
                         .iter()
                         .map(|scope| scope.scope_id.clone())
                         .collect::<BTreeSet<_>>();
-                    authorities.policy_bundles.with_task_scan_for_agent_locked(
+                    authorities.policy_bundles.with_agent_context_sources_locked(
                         project_start,
-                        PolicyBundleTaskScanRequest {
-                            active_scope_ids: &active_scope_ids,
-                            task,
-                            specification_authority,
-                            policies: egress_snapshot,
+                        &active_scope_ids,
+                        |bundle_sources| {
+                    let policy_bundle_scan = PolicyBundleTaskScan {
+                        active_project_id: project_id.clone(),
+                        bundles: Vec::new(),
+                        candidates: Vec::new(),
+                        exclusions: Vec::new(),
+                        authorized_sources: 0,
+                        current_sources: 0,
+                        unavailable_sources: 0,
+                        low_relevance_sources: 0,
+                        egress_blocked_sources: 0,
+                    };
+                    let mut retained_bundle_sources = bundle_sources.active.clone();
+                    retained_bundle_sources.extend(bundle_sources.historical.clone());
+                    retained_bundle_sources.sort_by(|left, right| {
+                        left.bundle_id
+                            .cmp(&right.bundle_id)
+                            .then_with(|| left.source_project_id.cmp(&right.source_project_id))
+                            .then_with(|| left.specification_id.cmp(&right.specification_id))
+                    });
+                    retained_bundle_sources.dedup();
+                    let mut blocked_bundle_sources = BTreeSet::new();
+                    for source in &retained_bundle_sources {
+                        let project_decision = evaluate_agent_egress(
+                            egress_snapshot.project_policy(&source.source_project_id),
                             target,
-                        },
-                        |policy_bundle_scan, policy_bundle_egress| {
-                    let blocked_policy_bundle_sources = policy_bundle_egress
-                        .iter()
-                        .map(|item| {
-                            (
-                                item.bundle_id.clone(),
-                                item.source_project_id.clone(),
-                                item.specification_id.clone(),
-                            )
-                        })
-                        .collect::<BTreeSet<_>>()
-                        .len();
-                    egress_exclusions.extend(policy_bundle_egress.into_iter().map(|item| {
-                        ContextEgressExclusion {
-                            scope_kind: item.scope_kind,
-                            scope_id: item.scope_id,
-                            policy_origin: match item.policy_origin {
-                                PolicyBundleEgressPolicyOrigin::SourceProject => {
-                                    ContextEgressPolicyOrigin::PolicyBundleSourceProject
-                                }
-                                PolicyBundleEgressPolicyOrigin::SourceSpecification => {
-                                    ContextEgressPolicyOrigin::PolicyBundleSourceSpecification
-                                }
-                            },
-                            policy: item.policy,
-                            block_reason: item.block_reason,
+                        );
+                        if !project_decision.allowed {
+                            blocked_bundle_sources.insert((
+                                source.bundle_id.clone(),
+                                source.source_project_id.clone(),
+                                source.specification_id.clone(),
+                            ));
+                            egress_exclusions.push(ContextEgressExclusion {
+                                scope_kind: AgentEgressScopeKind::Project,
+                                scope_id: source.source_project_id.clone(),
+                                policy_origin: ContextEgressPolicyOrigin::PolicyBundleSourceProject,
+                                policy: project_decision.policy,
+                                block_reason: project_decision
+                                    .block_reason
+                                    .expect("blocked decision has a reason"),
+                            });
                         }
-                    }));
-                    let (mounts, mount_exclusions) =
-                        filter_mounts_for_egress(mounts, egress_snapshot, target);
-                    egress_exclusions.extend(mount_exclusions);
-                    let (scopes, shared_scope_exclusions) =
-                        filter_shared_knowledge_for_egress(scopes, egress_snapshot, target);
-                    egress_exclusions.extend(shared_scope_exclusions);
-                    for historical_mount in &mounts.historical_mounts {
+                        let specification_decision = evaluate_agent_egress(
+                            egress_snapshot.specification_policy(
+                                &source.source_project_id,
+                                &source.specification_id,
+                            ),
+                            target,
+                        );
+                        if !specification_decision.allowed {
+                            blocked_bundle_sources.insert((
+                                source.bundle_id.clone(),
+                                source.source_project_id.clone(),
+                                source.specification_id.clone(),
+                            ));
+                            egress_exclusions.push(ContextEgressExclusion {
+                                scope_kind: AgentEgressScopeKind::Specification,
+                                scope_id: source.specification_id.clone(),
+                                policy_origin:
+                                    ContextEgressPolicyOrigin::PolicyBundleSourceSpecification,
+                                policy: specification_decision.policy,
+                                block_reason: specification_decision
+                                    .block_reason
+                                    .expect("blocked decision has a reason"),
+                            });
+                        }
+                    }
+                    let blocked_policy_bundle_sources = blocked_bundle_sources.len();
+                    for historical_mount in &mount_sources.historical {
                         let mount_decision = evaluate_agent_egress(
                             egress_snapshot.mount_policy(
                                 &project_id,
@@ -1077,7 +1105,15 @@ fn compile_project_context_for_agent_with_authority(
                             });
                         }
                     }
-                    for historical_source in &scopes.historical_sources {
+                    let mut retained_scope_sources = scope_sources.active.clone();
+                    retained_scope_sources.extend(scope_sources.historical.clone());
+                    retained_scope_sources.sort_by(|left, right| {
+                        left.scope_id
+                            .cmp(&right.scope_id)
+                            .then_with(|| left.source_project_id.cmp(&right.source_project_id))
+                    });
+                    retained_scope_sources.dedup();
+                    for historical_source in &retained_scope_sources {
                         let source_decision = evaluate_agent_egress(
                             egress_snapshot.project_policy(&historical_source.source_project_id),
                             target,
@@ -1156,9 +1192,7 @@ fn compile_project_context_for_agent_with_authority(
                         policy_bundle_scan,
                         inner_limits,
                     );
-                    let pack = append_mounted_references(pack, mounts, task, inner_limits)?;
-                    let mut pack =
-                        append_shared_knowledge_references(pack, scopes, task, inner_limits)?;
+                    let mut pack = pack;
                     pack.max_tokens = limits.max_tokens;
                     pack.estimated_tokens = pack
                         .estimated_tokens
@@ -1712,126 +1746,6 @@ fn finalize_context_pack(mut pack: CompiledContextPack) -> CompiledContextPack {
     let bytes = serde_json::to_vec(&identity).expect("compiled context pack is serializable");
     pack.context_pack_id = format!("cpk_{:x}", Sha256::digest(bytes));
     pack
-}
-
-fn filter_mounts_for_egress(
-    mut mounts: ResolvedProjectContextMounts,
-    policies: &EgressPolicySnapshot,
-    target: AgentEgressTarget,
-) -> (ResolvedProjectContextMounts, Vec<ContextEgressExclusion>) {
-    let active_project_id = mounts.active_project_id.clone();
-    let mut exclusions = Vec::new();
-    mounts.ready.retain(|mount| {
-        mount_allowed_for_egress(
-            &active_project_id,
-            &mount.mount_id,
-            &mount.source_project_id,
-            policies,
-            target,
-            &mut exclusions,
-        )
-    });
-    mounts.unavailable.retain(|mount| {
-        mount_allowed_for_egress(
-            &active_project_id,
-            &mount.mount_id,
-            &mount.source_project_id,
-            policies,
-            target,
-            &mut exclusions,
-        )
-    });
-    (mounts, exclusions)
-}
-
-fn filter_shared_knowledge_for_egress(
-    mut scopes: ResolvedKnowledgeScopes,
-    policies: &EgressPolicySnapshot,
-    target: AgentEgressTarget,
-) -> (ResolvedKnowledgeScopes, Vec<ContextEgressExclusion>) {
-    let mut exclusions = Vec::new();
-    for scope in &mut scopes.scopes {
-        scope.ready.retain(|source| {
-            shared_source_allowed_for_egress(
-                &source.source_project_id,
-                policies,
-                target,
-                &mut exclusions,
-            )
-        });
-        scope.unavailable.retain(|source| {
-            shared_source_allowed_for_egress(
-                &source.source_project_id,
-                policies,
-                target,
-                &mut exclusions,
-            )
-        });
-    }
-    scopes
-        .scopes
-        .retain(|scope| !scope.ready.is_empty() || !scope.unavailable.is_empty());
-    (scopes, exclusions)
-}
-
-fn shared_source_allowed_for_egress(
-    source_project_id: &str,
-    policies: &EgressPolicySnapshot,
-    target: AgentEgressTarget,
-    exclusions: &mut Vec<ContextEgressExclusion>,
-) -> bool {
-    let source_decision = evaluate_agent_egress(policies.project_policy(source_project_id), target);
-    if source_decision.allowed {
-        return true;
-    }
-    exclusions.push(ContextEgressExclusion {
-        scope_kind: AgentEgressScopeKind::Project,
-        scope_id: source_project_id.to_owned(),
-        policy_origin: ContextEgressPolicyOrigin::SourceProject,
-        policy: source_decision.policy,
-        block_reason: source_decision
-            .block_reason
-            .expect("blocked decision has a reason"),
-    });
-    false
-}
-
-fn mount_allowed_for_egress(
-    active_project_id: &str,
-    mount_id: &str,
-    source_project_id: &str,
-    policies: &EgressPolicySnapshot,
-    target: AgentEgressTarget,
-    exclusions: &mut Vec<ContextEgressExclusion>,
-) -> bool {
-    let mount_decision =
-        evaluate_agent_egress(policies.mount_policy(active_project_id, mount_id), target);
-    if !mount_decision.allowed {
-        exclusions.push(ContextEgressExclusion {
-            scope_kind: AgentEgressScopeKind::ContextMount,
-            scope_id: mount_id.to_owned(),
-            policy_origin: ContextEgressPolicyOrigin::ContextMount,
-            policy: mount_decision.policy,
-            block_reason: mount_decision
-                .block_reason
-                .expect("blocked decision has a reason"),
-        });
-        return false;
-    }
-    let source_decision = evaluate_agent_egress(policies.project_policy(source_project_id), target);
-    if !source_decision.allowed {
-        exclusions.push(ContextEgressExclusion {
-            scope_kind: AgentEgressScopeKind::ContextMount,
-            scope_id: mount_id.to_owned(),
-            policy_origin: ContextEgressPolicyOrigin::SourceProject,
-            policy: source_decision.policy,
-            block_reason: source_decision
-                .block_reason
-                .expect("blocked decision has a reason"),
-        });
-        return false;
-    }
-    true
 }
 
 fn fit_egress_exclusions(
@@ -5481,10 +5395,11 @@ mod tests {
             AgentEgressTarget::Local,
         )
         .unwrap();
-        assert!(local
-            .mounted_references
-            .iter()
-            .any(|item| item.excerpt.contains("local_reference_marker")));
+        assert!(local.mounted_reference_scopes.is_empty());
+        assert!(local.mounted_references.is_empty());
+        assert!(!serde_json::to_string(&local)
+            .unwrap()
+            .contains(reference_marker));
 
         let started = start_session(
             &active,
@@ -5539,7 +5454,8 @@ mod tests {
         .unwrap();
         assert!(source_blocked.mounted_references.is_empty());
         assert!(source_blocked.egress_exclusions.iter().any(|item| {
-            item.scope_id == mounted.mount.mount_id
+            item.scope_kind == AgentEgressScopeKind::Project
+                && item.scope_id == mounted.mount.source_project_id
                 && item.policy_origin == ContextEgressPolicyOrigin::SourceProject
                 && item.policy == AgentEgressPolicy::NeverSend
         }));
@@ -5750,10 +5666,11 @@ mod tests {
             AgentEgressTarget::Local,
         )
         .unwrap();
-        assert!(local
-            .shared_knowledge_references
-            .iter()
-            .any(|item| item.excerpt.contains(reference_marker)));
+        assert!(local.shared_knowledge_scopes.is_empty());
+        assert!(local.shared_knowledge_references.is_empty());
+        assert!(!serde_json::to_string(&local)
+            .unwrap()
+            .contains(reference_marker));
 
         let started = start_session(
             &active,
@@ -6180,211 +6097,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_historical_guidance_conflicting_with_active_trusted_state_is_explained() {
-        let root = tempdir().unwrap();
-        let config = root.path().join("config");
-        let active = root.path().join("active");
-        let active_vault = root.path().join("active-vault");
-        let reference = root.path().join("reference");
-        let reference_vault = root.path().join("reference-vault");
-        for path in [
-            &active,
-            &active_vault,
-            &reference,
-            &reference_vault,
-            &config,
-        ] {
-            fs::create_dir_all(path).unwrap();
-        }
-        initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
-        initialize_project(&reference, Some("Reference"), CaptureMode::Structured).unwrap();
-        fs::write(
-            active.join("README.md"),
-            "Do not use Redis cache for startup state.\n",
-        )
-        .unwrap();
-        fs::write(
-            reference.join("REFERENCE.md"),
-            "shared_direct_cache_marker Use Redis cache for startup state.\n",
-        )
-        .unwrap();
-        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
-        bindings.bind(&active, &active_vault).unwrap();
-        bindings.bind(&reference, &reference_vault).unwrap();
-        ingest_project(&active, &active_vault).unwrap();
-        ingest_project(&reference, &reference_vault).unwrap();
-
-        let active_session = start_session(
-            &active,
-            &active_vault,
-            StartSessionInput {
-                request_id: format!("req_{}", "1".repeat(32)),
-                name: "Active cache state".to_owned(),
-                goal: "Record reviewed active cache guidance".to_owned(),
-                source: Default::default(),
-            },
-        )
-        .unwrap();
-        let active_checkpoint = checkpoint_session(
-            &active,
-            &active_vault,
-            &active_session.session.session_id,
-            CheckpointInput {
-                request_id: format!("req_{}", "2".repeat(32)),
-                summary: "Captured current active cache guidance".to_owned(),
-                plan: Vec::new(),
-                decisions: Vec::new(),
-                tasks: Vec::new(),
-                problems: Vec::new(),
-                touched_artifacts: vec!["README.md".to_owned()],
-                commands: Vec::new(),
-                verification: Vec::new(),
-                unresolved: Vec::new(),
-            },
-        )
-        .unwrap();
-        let proposed = propose_learning(
-            &active,
-            &active_vault,
-            ProposeLearningInput {
-                request_id: format!("req_{}", "3".repeat(32)),
-                actor: LearningActor::Agent,
-                kind: LearningKind::Constraint,
-                title: "Redis cache startup state".to_owned(),
-                guidance: "Do not use Redis cache for startup state.".to_owned(),
-                confidence_percent: 95,
-                provenance: LearningProvenance::Inferred,
-                evidence: vec![LearningEvidenceInput {
-                    session_id: active_session.session.session_id,
-                    record_id: active_checkpoint.session.checkpoints[0].id.clone(),
-                    note: "Current active-project cache constraint.".to_owned(),
-                }],
-            },
-        )
-        .unwrap();
-        let active_learning_id = proposed.learning.learning_id.clone();
-        review_learning(
-            &active,
-            &active_vault,
-            &active_learning_id,
-            ReviewLearningInput {
-                request_id: format!("req_{}", "4".repeat(32)),
-                expected_event_count: Some(proposed.learning.event_count),
-                actor: LearningActor::User,
-                action: LearningFeedbackAction::Confirm,
-                note: "Confirmed current active cache constraint.".to_owned(),
-                replacement_learning_id: None,
-            },
-        )
-        .unwrap();
-
-        let reference_session = start_session(
-            &reference,
-            &reference_vault,
-            StartSessionInput {
-                request_id: format!("req_{}", "5".repeat(32)),
-                name: "Historical shared cache decision".to_owned(),
-                goal: "Preserve old shared guidance".to_owned(),
-                source: Default::default(),
-            },
-        )
-        .unwrap();
-        let reference_checkpoint = checkpoint_session(
-            &reference,
-            &reference_vault,
-            &reference_session.session.session_id,
-            CheckpointInput {
-                request_id: format!("req_{}", "6".repeat(32)),
-                summary: "Shared source historically chose Redis".to_owned(),
-                plan: Vec::new(),
-                decisions: vec![DecisionInput {
-                    title: "Redis cache startup state".to_owned(),
-                    decision: "Use Redis cache for startup state.".to_owned(),
-                    rationale: String::new(),
-                    alternatives: Vec::new(),
-                }],
-                tasks: Vec::new(),
-                problems: Vec::new(),
-                touched_artifacts: Vec::new(),
-                commands: Vec::new(),
-                verification: Vec::new(),
-                unresolved: Vec::new(),
-            },
-        )
-        .unwrap();
-        let reference_decision_id = reference_checkpoint.session.checkpoints[0].decisions[0]
-            .id
-            .clone();
-
-        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
-        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
-            config.join("approved-source-private/continuity.sqlite3"),
-        ));
-        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
-        let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
-        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
-        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
-        let created = scopes
-            .create(
-                KnowledgeScopeKind::Team,
-                "Cache team",
-                std::slice::from_ref(&reference),
-            )
-            .unwrap();
-        scopes.attach(&active, &created.scope.scope_id).unwrap();
-
-        let pack = compile_project_context_for_agent_with_registries(
-            &active,
-            &active_vault,
-            "Redis cache startup state",
-            ContextCompileLimits {
-                max_results: 8,
-                max_tokens: 2_000,
-            },
-            AgentContextAuthorities {
-                specifications: &specifications,
-                approved_sources: &approved_sources,
-                mounts: &mounts,
-                knowledge_scopes: &scopes,
-                policy_bundles: &policy_bundles,
-                egress: &egress,
-            },
-            AgentEgressTarget::Cloud,
-        )
-        .unwrap();
-
-        assert!(pack.items.iter().any(|item| {
-            item.learning_id.as_deref() == Some(active_learning_id.as_str())
-                && item.authority == ContextAuthority::TrustedReviewedKnowledge
-                && item.trusted_for_reuse
-        }));
-        assert!(pack.shared_knowledge_references.iter().any(|item| {
-            item.scope_id == created.scope.scope_id
-                && item.kind == ProjectMemoryResultKind::Artifact
-                && item.excerpt.contains("shared_direct_cache_marker")
-        }));
-        assert!(!pack
-            .shared_knowledge_references
-            .iter()
-            .any(|item| item.entity_id == reference_decision_id));
-        assert!(pack.shared_knowledge_exclusions.iter().any(|item| {
-            item.scope_id == created.scope.scope_id
-                && item.entity_id == reference_decision_id
-                && item.reason == ContextExclusionReason::ConflictingMemory
-                && item.specification_ids.is_empty()
-                && item.conflicting_active_project_entity_ids == vec![active_learning_id.clone()]
-        }));
-        assert_eq!(pack.shared_knowledge_coverage.active_project_conflicts, 1);
-        assert_eq!(pack.shared_knowledge_coverage.human_intent_conflicts, 0);
-        assert_eq!(
-            pack.shared_knowledge_precedence,
-            SHARED_KNOWLEDGE_PRECEDENCE
-        );
-        assert!(pack.estimated_tokens <= pack.max_tokens);
-    }
-
-    #[test]
-    fn shared_knowledge_scope_requires_explicit_attachment_and_stays_read_only_reference_context() {
+    fn canonical_compiler_ignores_shared_scope_content_but_preserves_scope_egress_ancestry() {
         let root = tempdir().unwrap();
         let config = root.path().join("config");
         let active = root.path().join("active");
@@ -6415,17 +6128,17 @@ mod tests {
         fs::write(active.join("README.md"), "active baseline\n").unwrap();
         fs::write(
             platform.join("PLATFORM.md"),
-            "shared_scope_marker platform deployment procedure\n",
+            "platform_scope_content_canary platform deployment procedure\n",
         )
         .unwrap();
         fs::write(
             security.join("SECURITY.md"),
-            "shared_scope_marker security review checklist\n",
+            "security_scope_content_canary security review checklist\n",
         )
         .unwrap();
         fs::write(
             unrelated.join("PRIVATE.md"),
-            "shared_scope_marker unrelated private material\n",
+            "unrelated_scope_content_canary unrelated private material\n",
         )
         .unwrap();
 
@@ -6463,7 +6176,7 @@ mod tests {
             compile_project_context_for_agent_with_registries(
                 &active,
                 &active_vault,
-                "shared_scope_marker",
+                "shared_scope_query",
                 limits,
                 AgentContextAuthorities {
                     specifications: &specifications,
@@ -6484,41 +6197,30 @@ mod tests {
 
         scopes.attach(&active, &created.scope.scope_id).unwrap();
         let attached = compile();
-        assert_eq!(attached.shared_knowledge_scopes.len(), 1);
-        assert_eq!(
-            attached.shared_knowledge_scopes[0].scope_id,
-            created.scope.scope_id
-        );
-        assert_eq!(
-            attached.shared_knowledge_scopes[0].kind,
-            KnowledgeScopeKind::Team
-        );
-        assert_eq!(attached.shared_knowledge_scopes[0].name, "Platform team");
-        assert_eq!(attached.shared_knowledge_coverage.attached_scopes, 1);
-        assert_eq!(attached.shared_knowledge_coverage.authorized_sources, 2);
-        assert_eq!(attached.shared_knowledge_coverage.ready_sources, 2);
-        assert_eq!(
-            attached.shared_knowledge_precedence,
-            SHARED_KNOWLEDGE_PRECEDENCE
-        );
-        assert!(attached.shared_knowledge_references.iter().any(|item| {
-            item.scope_id == created.scope.scope_id
-                && item.source_project_name == "Platform"
-                && item.excerpt.contains("shared_scope_marker")
-                && item.authority == SHARED_KNOWLEDGE_AUTHORITY
-                && item.source_boundary == SHARED_KNOWLEDGE_SOURCE_BOUNDARY
-        }));
-        assert!(attached.shared_knowledge_references.iter().any(|item| {
-            item.scope_id == created.scope.scope_id
-                && item.source_project_name == "Security"
-                && item.excerpt.contains("shared_scope_marker")
-        }));
+        assert!(attached.shared_knowledge_scopes.is_empty());
+        assert!(attached.shared_knowledge_references.is_empty());
         let serialized = serde_json::to_string(&attached).unwrap();
         assert!(!serialized.contains("Unrelated"));
+        assert!(!serialized.contains("platform_scope_content_canary"));
+        assert!(!serialized.contains("security_scope_content_canary"));
+        assert!(!serialized.contains("unrelated_scope_content_canary"));
         assert!(!serialized.contains(unrelated.to_str().unwrap()));
         assert!(!serialized.contains(platform.to_str().unwrap()));
         assert!(!serialized.contains(security.to_str().unwrap()));
         assert!(attached.estimated_tokens <= attached.max_tokens);
+
+        egress
+            .set_project_policy(&platform, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        let blocked = compile();
+        let blocked_coverage = blocked.egress_coverage.as_ref().unwrap();
+        assert!(blocked_coverage.historical_memory_withheld);
+        assert!(blocked_coverage.blocked_historical_sources >= 1);
+        assert!(blocked.shared_knowledge_scopes.is_empty());
+        assert!(blocked.shared_knowledge_references.is_empty());
+        let blocked_serialized = serde_json::to_string(&blocked).unwrap();
+        assert!(!blocked_serialized.contains("platform_scope_content_canary"));
+        assert!(!blocked_serialized.contains("security_scope_content_canary"));
 
         scopes
             .detach(&active, &created.scope.scope_id)
@@ -6527,102 +6229,9 @@ mod tests {
         let after = compile();
         assert!(after.shared_knowledge_scopes.is_empty());
         assert!(after.shared_knowledge_references.is_empty());
-    }
-
-    #[test]
-    fn shared_knowledge_and_whole_approved_source_share_budget_without_projection_layer() {
-        let root = tempdir().unwrap();
-        let config = root.path().join("config");
-        let active = root.path().join("active");
-        let active_vault = root.path().join("active-vault");
-        let reference = root.path().join("reference");
-        let reference_vault = root.path().join("reference-vault");
-        for path in [
-            &active,
-            &active_vault,
-            &reference,
-            &reference_vault,
-            &config,
-        ] {
-            fs::create_dir_all(path).unwrap();
-        }
-        initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
-        initialize_project(&reference, Some("Reference"), CaptureMode::Structured).unwrap();
-        fs::write(active.join("README.md"), "unrelated active source\n").unwrap();
-        fs::write(
-            reference.join("REFERENCE.md"),
-            "criteria_shared_budget_marker reusable shared evidence\n",
-        )
-        .unwrap();
-
-        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
-        bindings.bind(&active, &active_vault).unwrap();
-        bindings.bind(&reference, &reference_vault).unwrap();
-        ingest_project(&active, &active_vault).unwrap();
-        ingest_project(&reference, &reference_vault).unwrap();
-
-        fs::create_dir_all(active_vault.join("Specs")).unwrap();
-        let criterion = format!(
-            "- criteria_shared_budget_marker {}\n",
-            "must remain exact ".repeat(40)
-        );
-        fs::write(
-            active_vault.join("Specs/Budget.md"),
-            format!(
-                "# Shared reference budget\n\ncriteria_shared_budget_marker is required.\n\n## Acceptance criteria\n\n{criterion}"
-            ),
-        )
-        .unwrap();
-        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
-        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
-            config.join("approved-source-private/continuity.sqlite3"),
-        ));
-        let specification_id = crate::generate_specification_id();
-        specifications
-            .approve(&active, &active_vault, &specification_id, "Specs/Budget.md")
-            .unwrap();
-        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
-        let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
-        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
-        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
-        let scope = scopes
-            .create(
-                KnowledgeScopeKind::Team,
-                "Shared budget team",
-                std::slice::from_ref(&reference),
-            )
-            .unwrap();
-        scopes.attach(&active, &scope.scope.scope_id).unwrap();
-
-        let pack = compile_project_context_for_agent_with_registries(
-            &active,
-            &active_vault,
-            "criteria_shared_budget_marker",
-            ContextCompileLimits {
-                max_results: 2,
-                max_tokens: 900,
-            },
-            AgentContextAuthorities {
-                specifications: &specifications,
-                approved_sources: &approved_sources,
-                mounts: &mounts,
-                knowledge_scopes: &scopes,
-                policy_bundles: &policy_bundles,
-                egress: &egress,
-            },
-            AgentEgressTarget::Cloud,
-        )
-        .unwrap();
-
-        assert_eq!(pack.specifications.len(), 1);
-        assert!(pack
-            .shared_knowledge_references
-            .iter()
-            .any(|item| { item.excerpt.contains("criteria_shared_budget_marker") }));
-        assert!(pack.specifications[0]
-            .source
-            .contains("criteria_shared_budget_marker"));
-        assert!(pack.estimated_tokens <= pack.max_tokens);
+        let after_coverage = after.egress_coverage.as_ref().unwrap();
+        assert!(after_coverage.historical_memory_withheld);
+        assert!(after_coverage.blocked_historical_sources >= 1);
     }
 
     #[test]
@@ -7040,230 +6649,7 @@ mod tests {
     }
 
     #[test]
-    fn policy_bundle_requires_explicit_activation_and_active_specification_wins() {
-        let root = tempdir().unwrap();
-        let config = root.path().join("config");
-        let active = root.path().join("active");
-        let active_vault = root.path().join("active-vault");
-        let source = root.path().join("source");
-        let source_vault = root.path().join("source-vault");
-        for path in [&config, &active, &active_vault, &source, &source_vault] {
-            fs::create_dir_all(path).unwrap();
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
-        initialize_project(&source, Some("Team policy source"), CaptureMode::Structured).unwrap();
-        fs::write(
-            active.join("README.md"),
-            "redis cache implementation baseline\n",
-        )
-        .unwrap();
-        let bindings = BindingRegistry::at(config.join(BINDING_REGISTRY_FILE));
-        bindings.bind(&active, &active_vault).unwrap();
-        bindings.bind(&source, &source_vault).unwrap();
-        ingest_project(&active, &active_vault).unwrap();
-
-        fs::create_dir_all(active_vault.join("Specs")).unwrap();
-        fs::create_dir_all(source_vault.join("Specs")).unwrap();
-        fs::write(
-            active_vault.join("Specs/Cache.md"),
-            "# Active cache policy\n\nDo not use Redis cache.\n",
-        )
-        .unwrap();
-        fs::write(
-            source_vault.join("Specs/TeamCache.md"),
-            "# Team cache policy\n\nUse Redis cache.\n",
-        )
-        .unwrap();
-
-        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
-        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
-            config.join("approved-source-private/continuity.sqlite3"),
-        ));
-        let active_specification_id = crate::generate_specification_id();
-        let source_specification_id = crate::generate_specification_id();
-        specifications
-            .approve(
-                &active,
-                &active_vault,
-                &active_specification_id,
-                "Specs/Cache.md",
-            )
-            .unwrap();
-        specifications
-            .approve(
-                &source,
-                &source_vault,
-                &source_specification_id,
-                "Specs/TeamCache.md",
-            )
-            .unwrap();
-
-        let started = start_session(
-            &active,
-            &active_vault,
-            StartSessionInput {
-                request_id: format!("req_{}", "7".repeat(32)),
-                name: "Historical cache decision".to_owned(),
-                goal: "Record earlier cache guidance".to_owned(),
-                source: Default::default(),
-            },
-        )
-        .unwrap();
-        checkpoint_session(
-            &active,
-            &active_vault,
-            &started.session.session_id,
-            CheckpointInput {
-                request_id: format!("req_{}", "8".repeat(32)),
-                summary: "Recorded earlier cache guidance".to_owned(),
-                plan: Vec::new(),
-                decisions: vec![DecisionInput {
-                    title: "Use Redis cache".to_owned(),
-                    decision: "Use Redis cache.".to_owned(),
-                    rationale: "Historical decision that should yield to current human intent."
-                        .to_owned(),
-                    alternatives: Vec::new(),
-                }],
-                tasks: Vec::new(),
-                problems: Vec::new(),
-                touched_artifacts: Vec::new(),
-                commands: Vec::new(),
-                verification: Vec::new(),
-                unresolved: Vec::new(),
-            },
-        )
-        .unwrap();
-
-        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
-        let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
-        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
-        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
-        let scope = scopes
-            .create(
-                KnowledgeScopeKind::Team,
-                "Platform team",
-                std::slice::from_ref(&source),
-            )
-            .unwrap();
-        let bundle = policy_bundles
-            .create(
-                &scope.scope.scope_id,
-                "Team cache policy",
-                &[crate::PolicyBundleSourceInput {
-                    source_project: source.clone(),
-                    specification_id: source_specification_id.clone(),
-                }],
-                &scopes,
-                &specifications,
-            )
-            .unwrap();
-        let authorities = AgentContextAuthorities {
-            specifications: &specifications,
-            approved_sources: &approved_sources,
-            mounts: &mounts,
-            knowledge_scopes: &scopes,
-            policy_bundles: &policy_bundles,
-            egress: &egress,
-        };
-        let limits = ContextCompileLimits {
-            max_results: 8,
-            max_tokens: 4_000,
-        };
-
-        let before = compile_project_context_for_agent_with_registries(
-            &active,
-            &active_vault,
-            "Redis cache",
-            limits,
-            authorities,
-            AgentEgressTarget::Cloud,
-        )
-        .unwrap();
-        assert!(before.policy_bundles.is_empty());
-        assert!(before.policy_bundle_policies.is_empty());
-
-        scopes.attach(&active, &scope.scope.scope_id).unwrap();
-        let scope_only = compile_project_context_for_agent_with_registries(
-            &active,
-            &active_vault,
-            "Redis cache",
-            limits,
-            authorities,
-            AgentEgressTarget::Cloud,
-        )
-        .unwrap();
-        assert!(scope_only.policy_bundles.is_empty());
-        assert!(scope_only.policy_bundle_policies.is_empty());
-
-        policy_bundles
-            .attach(&active, &bundle.bundle.bundle_id, &scopes)
-            .unwrap();
-        let attached = compile_project_context_for_agent_with_registries(
-            &active,
-            &active_vault,
-            "Redis cache",
-            limits,
-            authorities,
-            AgentEgressTarget::Cloud,
-        )
-        .unwrap();
-        assert_eq!(attached.policy_bundle_precedence, POLICY_BUNDLE_PRECEDENCE);
-        assert_eq!(attached.policy_bundles.len(), 1);
-        assert_eq!(
-            attached.policy_bundles[0].bundle_id,
-            bundle.bundle.bundle_id
-        );
-        assert_eq!(attached.policy_bundle_coverage.attached_bundles, 1);
-        assert_eq!(attached.policy_bundle_coverage.authorized_sources, 1);
-        assert_eq!(attached.policy_bundle_coverage.current_sources, 1);
-        assert_eq!(attached.policy_bundle_coverage.human_intent_conflicts, 1);
-        assert!(attached
-            .specifications
-            .iter()
-            .any(|item| item.specification_id == active_specification_id));
-        assert!(attached.policy_bundle_policies.is_empty());
-        assert!(attached.policy_bundle_exclusions.iter().any(|item| {
-            item.bundle_id == bundle.bundle.bundle_id
-                && item.specification_id == source_specification_id
-                && item.reason == PolicyBundleCompileExclusionReason::ContradictsActiveSpecification
-                && item.conflicting_specification_ids == vec![active_specification_id.clone()]
-        }));
-        assert!(attached.exclusions.iter().any(|item| {
-            item.reason == ContextExclusionReason::ContradictsHumanIntent
-                && item.specification_ids == vec![active_specification_id.clone()]
-        }));
-        assert!(attached
-            .gaps
-            .iter()
-            .any(|gap| gap.kind == ContextGapKind::HumanIntentConflict));
-        assert!(attached.estimated_tokens <= attached.max_tokens);
-
-        policy_bundles
-            .detach(&active, &bundle.bundle.bundle_id)
-            .unwrap()
-            .unwrap();
-        let detached = compile_project_context_for_agent_with_registries(
-            &active,
-            &active_vault,
-            "Redis cache",
-            limits,
-            authorities,
-            AgentEgressTarget::Cloud,
-        )
-        .unwrap();
-        assert!(detached.policy_bundles.is_empty());
-        assert!(detached.policy_bundle_policies.is_empty());
-        assert_eq!(detached.policy_bundle_coverage.attached_bundles, 0);
-        assert!(detached.estimated_tokens <= detached.max_tokens);
-    }
-
-    #[test]
-    fn policy_bundle_egress_precedes_source_read_and_detached_history_withholds_derivatives() {
+    fn canonical_compiler_ignores_policy_bundle_content_but_preserves_bundle_egress_ancestry() {
         let root = tempdir().unwrap();
         let config = root.path().join("config");
         let active = root.path().join("active");
@@ -7405,23 +6791,12 @@ mod tests {
             AgentEgressTarget::Local,
         )
         .unwrap();
-        assert!(local.policy_bundle_policies.iter().any(|item| {
-            item.bundle_id == bundle.bundle.bundle_id
-                && item.specification_id == source_specification_id
-                && item.source.contains(private_marker)
-                && item.authority == POLICY_BUNDLE_AUTHORITY
-                && item.source_boundary == POLICY_BUNDLE_SOURCE_BOUNDARY
-        }));
-        let local_policy = local
-            .policy_bundle_policies
-            .iter()
-            .find(|item| item.specification_id == source_specification_id)
-            .unwrap();
-        assert!(local_policy.source.contains(acceptance_marker));
-        assert!(local_policy.source.contains(verification_method_marker));
-        let serialized = serde_json::to_value(local_policy).unwrap();
-        assert!(serialized.get("acceptanceCriteria").is_none());
-        assert!(serialized.get("verificationMethods").is_none());
+        assert!(local.policy_bundles.is_empty());
+        assert!(local.policy_bundle_policies.is_empty());
+        let serialized = serde_json::to_string(&local).unwrap();
+        assert!(!serialized.contains(private_marker));
+        assert!(!serialized.contains(acceptance_marker));
+        assert!(!serialized.contains(verification_method_marker));
         assert!(local.egress_exclusions.is_empty());
 
         fs::remove_dir_all(&source_vault).unwrap();
@@ -7435,11 +6810,7 @@ mod tests {
         )
         .unwrap();
         assert!(project_blocked.policy_bundle_policies.is_empty());
-        assert!(project_blocked.policy_bundle_exclusions.iter().any(|item| {
-            item.bundle_id == bundle.bundle.bundle_id
-                && item.specification_id == source_specification_id
-                && item.reason == PolicyBundleCompileExclusionReason::EgressBlockedSourceProject
-        }));
+        assert!(project_blocked.policy_bundle_exclusions.is_empty());
         assert!(project_blocked.egress_exclusions.iter().any(|item| {
             item.scope_kind == AgentEgressScopeKind::Project
                 && item.policy_origin == ContextEgressPolicyOrigin::PolicyBundleSourceProject
@@ -7480,14 +6851,7 @@ mod tests {
         )
         .unwrap();
         assert!(specification_blocked.policy_bundle_policies.is_empty());
-        assert!(specification_blocked
-            .policy_bundle_exclusions
-            .iter()
-            .any(|item| {
-                item.bundle_id == bundle.bundle.bundle_id
-                    && item.specification_id == source_specification_id
-                    && item.reason == PolicyBundleCompileExclusionReason::EgressBlockedSpecification
-            }));
+        assert!(specification_blocked.policy_bundle_exclusions.is_empty());
         assert!(specification_blocked.egress_exclusions.iter().any(|item| {
             item.scope_kind == AgentEgressScopeKind::Specification
                 && item.scope_id == source_specification_id
@@ -7563,7 +6927,6 @@ mod tests {
                     created_at_unix_ms: index + 1,
                 })
                 .collect(),
-            historical_mounts: Vec::new(),
         };
         let pack = append_mounted_references(
             pack,

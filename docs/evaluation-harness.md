@@ -729,141 +729,33 @@ causal proof.
 
 ## P0 capability coverage
 
-A full-corpus run validates a matrix for each P0 capability:
+A full-corpus run validates the current P0 matrix for:
 
-- Context Compiler
-- Reliable Memory Compiler
-- user-authored Specifications
-- Context Mounts
-- origin-preserving derivation lineage
-- premise/state adjudication
-- revision/branch-aware retrieval
-- agent-context egress policy
+- Context Compiler;
+- read-only Memory Compiler crash/interruption evidence;
+- user-authored Specifications;
+- origin-preserving derivation lineage;
+- premise/state adjudication;
+- revision/branch-aware retrieval; and
+- agent-context egress policy.
 
-Every capability must retain measured adversarial, downstream, privacy, and regression evidence. The
-matrix references concrete scenario/metric pairs. Missing scenarios, misspelled metrics, unsupported
-expectations, or failing metric values make a full-corpus run fail. For task-facing P0 context
-capabilities and origin-lineage progressive disclosure, downstream evidence must use the independent
-`downstream_task_contract` described above. Memory Compiler keeps its separate crash-recovery outcome
-signal because its downstream contract is successful recovery/closure of interrupted evidence rather
-than read-time context selection. P1 capabilities listed in the downstream-contract section above are likewise configuration-enforced.
-The listed P2 reusable-context capabilities are configuration-enforced in the same way.
-The Context Compiler regression cell is additionally bound to the retrieval fallback/budget-ladder
-scenario rather than the older fixed-500-token quality fixture; that fixture remains in the full
-corpus as a narrower selection-efficiency regression with both recent-resume and all-history baselines.
+Every capability keeps adversarial, downstream, privacy, and regression evidence. Task-facing capabilities and origin-lineage use the independent `downstream_task_contract`; Memory Compiler instead uses the real `crash-before-session-end-resume` outcome because its job is to preserve bounded interruption evidence rather than select normal task context.
 
-The crash-recovery representative exercises the supported candidate-bound recovery writers through the
-real MCP server. It first verifies and idempotently commits one unresolved claim through the legacy
-schema-v3 route, then records new bounded host evidence and commits a Decision through schema v8, a
-typed Task through schema v9, and a typed Plan through schema v10. It then creates one new interrupted
-evidence window supporting several facts at once and uses `ley_session_memory_verify_batch` plus
-`ley_session_memory_commit_batch` to preserve a Decision, Task, Plan, and unresolved item in one
-schema-v11 checkpoint. The representative requires exact replay, closed recovery-window state,
-mechanically preserved recovery-candidate/turn-evidence lineage, exact durable Task/Plan state,
-read-projected `unr_...` unresolved identity, and record-specific schema-v11 child lineage for both a
-structured child and the unresolved child so unrelated evidence from the same atomic checkpoint is not
-attributed to every child. It then records one more interrupted debugging window and uses
-`ley_session_memory_verify_problem` plus `ley_session_memory_commit_problem` to preserve a rich
-schema-v12 Problem episode containing expected behavior, ordered Attempts/outcomes/evidence, and an
-optional Resolution. The representative requires exact retry, closed recovery-window state, durable
-`session-v12.json`, and component-specific origin lineage proving an Attempt/Resolution learning does
-not inherit unrelated turns from the same debugging episode. It then records a fourth independent
-recovery window in which one rich Problem, failed Attempt, Resolution, Decision, and completed Task all
-need to survive together. `ley_session_memory_verify_composite` plus
-`ley_session_memory_commit_composite` must preserve the whole set in one schema-v13 checkpoint rather
-than allowing either the rich episode or siblings to strand the other side of the window. The eval
-requires `session-v13.json`, exact retry, closed-window state, full-union checkpoint lineage, and
-component-specific Attempt/Decision lineage.
-After all v3-v13 recovery windows are closed, the same scenario sends one real Codex Bash
-`PostToolUse` payload through `ley hook`. The resulting schema-v14 observation must appear separately
-as supporting Memory Compiler provenance and bounded explicit session history, keep
-`totalUnconsolidatedEvidence == 0`, remain ineligible for candidate binding, preserve the existing
-checkpoint count, and label the normal post-tool event only as `returned` even when the synthetic
-response carries non-zero-looking metadata. The same compiler call must derive exactly one read-only
-automatic Command candidate from the complete retained command, reference the exact `toe_` source row,
-serialize `exitCode: null`, and carry a deterministic candidate fingerprint. The scenario then calls
-`ley_session_memory_verify_observed_command` with that exact `toe_` row and event count and requires a
-`review-required` result with the same fingerprint. Automatic write/Verification/outcome/semantic
-proof remain false, while `candidateBindingAllowed` becomes true only because this representative remains active, has
-zero current `tev_` turns, and has no sibling current tool observations. The scenario then uses the
-separate write-gated `ley_session_memory_commit_observed_command` route, requires one schema-v16
-Command with `exitCode: null` and exact `toe_`/source-event/observation-kind provenance, retries the
-same request idempotently, and confirms that the closed window no longer returns a current automatic
-Command candidate. The read-only derived candidate itself is never persisted as a separate object.
-Task-, Plan-, batch-, rich-Problem-, and composite-specific secret canaries are injected into captured
-host prompts and must be redacted from recovery packs and absent from durable `session-v9.json`,
-`session-v10.json`, `session-v11.json`, `session-v12.json`, and `session-v13.json`. A separate Bash
-secret canary and raw host tool-call ID are injected into the schema-v14 phase; both must be absent
-from compiler/history output, `session-v14.json`, and the later `session-v16.json` projection. The representative therefore requires zero
-privacy leakage and keeps rich/composite/tool-evidence behavior inside the existing Reliable
-Memory Compiler, memory-binding, and origin-lineage gates rather than introducing weaker standalone
-metrics.
+The crash representative creates an active session with a retained prompt and interrupted response, then requires `ley_session_memory_compile` to report the expected partial/review state with bounded `tev_` event provenance, `canCheckpoint: true` only for the still-active session, `liveSourceChecked: false`, `sourceBoundary: untrusted-memory-compiler-input`, and `automaticCommandWriteAllowed: false`. It does **not** call the retired shape-specific recovery verifier/commit routes and does not claim the interrupted request succeeded. Privacy and character/token bounds remain mandatory.
 
-`transition-verifier-challenge-matrix` separately measures the deterministic verifier's detection
-boundary through evaluator-supplied Codex lifecycle payloads processed by Ley's real hook adapter,
-followed by real MCP verifier calls, without committing any candidate memory. One
-captured prompt/response window states that offline startup must not require Redis and uses SQLite.
-The evaluator then submits six `ley_session_memory_verify` probes against the same evidence window:
+Origin-lineage coverage now comes from `parallel-agent-session-separation`: two independent checkpoints remain unchanged, an explicitly reviewed project-level learning cites both exact records, its durable origin lineage keeps the automatic authority ceiling at `review-required` with causal completeness unproven, canonical Search/Brief admit the reviewed synthesis, and conflicting raw Decisions remain historical/withheld. This tests lineage through a current workflow rather than recovery-generated synthetic checkpoints.
 
-- a semantically aligned Decision;
-- an explicitly opposite Redis-required / no-SQLite Decision using the same complete evidence;
-- an omitted-evidence candidate;
-- a duplicated-evidence-reference candidate;
-- a candidate containing an out-of-window evidence ID; and
-- a stale-event-count candidate.
+Context Mounts, Knowledge Scopes, Policy Bundles, external connector agent reads, Context Utility, and shape-specific recovery APIs are not release-matrix capabilities after the R3 contraction. Their retained privacy/migration/cleanup obligations are covered by focused Rust/CLI regressions instead of downstream product claims.
 
-The omitted, duplicate, invalid-ID, and stale probes must fail with their exact structural diagnostics.
-Both the aligned and deliberately contradicted complete candidates are expected to remain
-`review-required`, with complete evidence accounting, distinct fingerprints, no verifier issues, and
-`semanticFaithfulnessProven: false`. This is the point of the challenge: Ley's deterministic verifier
-strongly detects structural corruption/coverage/staleness problems, but it does **not** claim textual
-entailment or semantic truth. The fixture's contradiction label is an external evaluation oracle, not
-input to the verifier. `transition_verifier_challenge` therefore proves the boundary that any future
-semantic judge must improve rather than duplicating existing structural checks.
-
-The Context Mount representative also exercises reference precedence, current-state conflict
-adjudication, and the complete public fail-closed availability lifecycle. Its active project carries a
-user-reviewed current Constraint that says not to use Redis for startup state, while the explicitly
-mounted source retains both raw captured Redis source evidence and a historical Decision to use Redis.
-The raw mounted artifact remains visible as lower-authority evidence, but the historical mounted
-Decision must be withheld as `conflicting-memory`, cite the exact active learning ID through
-`conflictingActiveProjectEntityIds`, and increment
-`mountedReferenceCoverage.activeProjectConflicts`. Active-project reviewed knowledge stays in the
-ordinary active context, mounted direct evidence stays `authority: mounted-reference` /
-`sourceBoundary: untrusted-mounted-project-memory`, and the compiler still discloses
-`referencePrecedence: active-project-over-mounted-reference`. The conflict rule uses deterministic
-opposite-polarity/high-term-overlap clauses only; it does not treat semantic similarity as truth or hide
-contradictory direct source evidence.
-
-The same mounted source also contains an instruction-like poisoning canary that explicitly asks Ley to
-promote itself into trusted user policy. The evaluator deliberately retrieves that canary through the
-mounted reference and requires it to remain visible only inside a row with
-`authority: mounted-reference`, `sourceBoundary: untrusted-mounted-project-memory`, and
-`trustedForReuse: false`. The poison canary must not enter ordinary active-project items, while the
-compiler retains an explicit instruction warning. This proves that explicit reference authorization
-grants bounded evidence access, not a trust-escalation path from mounted text into project policy.
-
-The same mounted source is then moved and legitimately reobserved, after which a different initialized
-Ley project is placed at the observed location. Compilation must report
-`source-identity-changed`, keep the authorized mount diagnostically visible, search zero mounted
-sources, return no mounted body, and preserve active-project context. After restoring the original
-source identity, the scenario temporarily removes the observed source path and requires
-`source-project-unavailable` with the same fail-closed behavior. It then restores the project,
-removes only the source vault, and requires `source-vault-unavailable`. In all three degraded states
-`authorizedMounts == 1`, `readyMounts == 0`, `unavailableMounts == 1`, and
-`searchedMounts == 0`; active context survives, mounted content is withheld, and original/moved/
-parked project or vault paths remain private. Explicit unmount finally removes the current authority.
-This covers the changed-identity/unavailable-mounted-scope adversarial cases without editing Ley's
-private registries by hand.
-
-Focused subset runs validate the matrix schema but intentionally skip full result-value coverage because
-not every representative scenario was executed.
+Focused subset runs validate matrix schema but intentionally skip full result-value coverage when not every representative scenario was executed.
 
 ## P2 capability coverage
 
-The implemented P2 matrix covers public GitHub issue/PR connectors, commit-pinned text-document connectors, the bounded multimodal Agent Memory evidence slice, reusable team/organization Knowledge Scopes, reusable team/organization Policy Bundles, explicit historical-host import, and local consolidation review. `python eval/run_eval.py --p2-coverage` runs deterministic, network-free scenarios through the real CLI/MCP surfaces. Connector scenarios require authority creation without an implicit provider request, target-specific egress/non-laundering behavior, immutable document provenance, and retained restriction across remove/re-add. The multimodal scenario uses a real binary PNG under Full Evidence, writes structured historical/session evidence plus a verification citation, mutates the live file afterward, then uses canonical `ley_search` plus citation-bound `ley_evidence`; search must preserve `mediaType` + non-text `0/0` routing metadata, and Evidence must return the exact old captured bytes through a native image block, report no generated description/live-source check, and leak no local path or live mutation canary. The Knowledge Scope scenario creates three real initialized/bound projects, explicitly attaches a two-source team scope, proves unrelated-project isolation and path-free Inspector attribution, and verifies source-project egress plus retained ancestry before/after detach. The Policy Bundle scenario composes a two-source organization scope with exact approved source-Specification revisions, proves scope attachment alone does not activate policy, verifies active-project Specification precedence, and checks source-project/source-Specification egress before retained policy text is opened. The historical-host-import scenario imports one explicit synthetic Codex history session and requires bounded provenance, Resume exclusion, idempotency, source-file independence, and privacy. The local-consolidation scenario keeps active sessions excluded, retrieves only body-free stable evidence handles from completed sessions, rebuilds the same deterministic inbox fingerprint, and preserves review-required proposal authority without changing terminal session history. Every P2 capability keeps adversarial, downstream, privacy, and regression dimensions just like P0/P1.
+The current P2 matrix covers **multimodal Agent Memory evidence**, **explicit historical-host import**, and **local consolidation review**. `python eval/run_eval.py --p2-coverage` runs deterministic scenarios through the real CLI/MCP surfaces.
 
-The provider network adapter is tested separately so the normal evaluation corpus does not depend on public internet availability. Rust tests verify canonical-target revalidation, issue-vs-PR parsing, pinned-document UTF-8 mapping, response bounds, v1 registry compatibility, and structured-source tamper rejection. Multimodal core/MCP/desktop tests separately cover Full-Evidence-only retention, signature validation, exact snapshot/hash reads, original-vs-derived labeling, serialized output bounds, and historical UI inspection. Knowledge Scope core/CLI tests separately cover owner-private persistence, symlink/corruption failure, bounded membership/attachments/history, immutable/idempotent definitions, unavailable-source states, lock serialization, compiler precedence, host startup withholding, and broad MCP historical gating. Policy Bundle core/CLI/MCP/host tests separately cover immutable exact-revision definitions, parent-scope activation, active-Specification precedence, source-project/source-Specification egress-before-read, Inspector body/path privacy, detach ancestry, and broad historical non-laundering. Historical-import core/CLI tests separately cover source-session isolation, secret redaction, Minimal body omission, no-follow source handling, malformed/missing selection rejection, opaque provenance, schema-v7 projection, original timestamps, Resume/search temporal behavior, explicit Memory Compiler boundaries, idempotent retry, and changed immutable snapshots. Consolidation core/CLI/MCP tests separately cover terminal-native selection, active/import exclusion, body/path privacy, deterministic fingerprints, direct captured-turn learning evidence, body-free rejection, direct turn-origin lineage, independent proposal consent, and terminal-session non-mutation. Real disposable CLI workflows are also used during landing verification to exercise an issue refresh plus this repository's `README.md` at an already-pushed immutable commit, without touching user project/config state. This separation keeps the deterministic corpus reproducible while still testing actual fixed-origin network paths and local binary-evidence behavior before release.
+The multimodal scenario captures a real PNG under Full Evidence, mutates the live file afterward, and requires canonical `ley_search` plus citation-bound `ley_evidence` to preserve the exact historical bytes, media type, immutable snapshot/hash provenance, non-text `0/0` routing semantics, zero generated-description/live-source claims, and zero local-path/live-mutation leakage. Historical-host import requires explicit source/session selection, bounded/redacted imported user history, original timestamps, source-file independence, Resume exclusion, idempotency, and no fabricated assistant/tool/model evidence. Consolidation review keeps active/imported sessions excluded, exposes only body-free stable evidence handles from terminal native sessions, remains non-persistent/non-autonomous, and preserves separate review-required learning authority.
+
+Retired external connector, Knowledge Scope, and Policy Bundle release scenarios are no longer P2 capability claims. Existing connector snapshots and retained scope/bundle ancestry are compatibility/privacy cleanup state; focused core/CLI tests prove no agent content contribution, retained egress ceilings, and safe local removal/detach behavior.
 
 ## P1 capability coverage
 

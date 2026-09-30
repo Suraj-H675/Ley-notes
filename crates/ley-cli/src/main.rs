@@ -285,7 +285,7 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
                     "Approved source {specification_id} is neither current authority nor retained by legacy egress policy for this project"
                 )));
             }
-            let result = registry.set_specification_policy(&project, specification_id, policy)?;
+            let result = registry.clear_specification_override(&project, specification_id)?;
             print_egress_mutation(&result, json)
         }
         "mount" => {
@@ -307,7 +307,7 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
                     "Context Mount {mount_id} is neither current/historical nor retained by egress policy for this project"
                 )));
             }
-            let result = registry.set_mount_policy(&project, mount_id, policy)?;
+            let result = registry.clear_mount_override(&project, mount_id)?;
             print_egress_mutation(&result, json)
         }
         "connector" => {
@@ -331,7 +331,7 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
                     "External connector {connector_id} is neither current nor retained by egress policy for this project"
                 )));
             }
-            let result = registry.set_connector_policy(&project, connector_id, policy)?;
+            let result = registry.clear_connector_override(&project, connector_id)?;
             print_egress_mutation(&result, json)
         }
         other => Err(CliError::Usage(format!(

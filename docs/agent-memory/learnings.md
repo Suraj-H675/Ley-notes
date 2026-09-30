@@ -61,48 +61,11 @@ Corrections also preserve origin history: newly resolved origins are unioned wit
 
 Every desktop correction and review decision is tied to the ledger event count visible when the inspector opened. If another agent or window changes the learning first, Ley refuses the stale action and asks the user to reload rather than applying a decision to unseen text. If the bounded inspector had to truncate the claim, review controls remain unavailable until the complete projection is inspected through the CLI. Rejected and superseded learnings remain inspectable terminal history without non-working action buttons.
 
-## Procedure application history
+## Historical procedure/application instrumentation
 
-For a verified/trusted/current Procedure, an explicitly instrumented host workflow can preserve later
-application/outcome history without changing the learning itself. The workflow must first compile and
-bind the exact task context with `ley_context_utility_bind`. After typed checkpoint/session-finish
-outcomes exist, `ley_context_utility_observe` may include up to sixteen
-`claimedAppliedLearningIds`.
+Older Ley session schemas may contain Context Utility or Procedure-application observation events created by earlier explicitly instrumented workflows. They remain historical provenance for compatibility/migration, not a current agent capability. The model-facing `ley_context_utility_bind` / `ley_context_utility_observe` routes are retired, and current learning trust/ranking must not change because historical utility/application rows exist.
 
-Ley accepts a claimed learning only when the exact `lrn_` ID was present in that immutable binding as
-an active-project Procedure with a concrete learning ledger `eventCount`. Claim-bearing observations use
-session schema v15. A learning correction/review afterward does not rewrite the old observation:
-`ley_learning_get` reports the bound `learningEventCount` plus
-`learningVersionMatchesCurrent`.
-
-`ley_learning_get` returns at most twenty newest `applicationObservations` for the learning and reports
-the total/omitted count. Each row includes the session/utility binding identity, bounded task excerpt,
-typed downstream outcomes, and passed/failed/skipped/unknown verification counts. This is historical
-experience, not automatic proof:
-
-- `procedureFollowedProven` is false;
-- `conditionApplicabilityProven` is false;
-- `contextUsageProven` is false;
-- `causalUtilityProven` is false; and
-- no trust/ranking change is applied.
-
-A passing run therefore does not promote the Procedure, and a failing run does not reject or stale it.
-Different task excerpts can preserve observations made under changed conditions, but Ley does not infer
-that those conditions are equivalent. Explicit user review/correction/supersession remains the only
-authority-changing path. See [ADR 0073](../adr/0073-version-bound-procedure-application-observations.md).
-
-The desktop Provenance inspector mirrors this bounded application history for Procedures. It labels
-whether each observation is bound to the exact current learning version, shows typed verification
-outcome counts, links back to the originating session, and repeats the caller-declared/non-causal
-boundary. It does not classify a Procedure as reverified/failed and exposes no automatic trust or
-ranking action.
-
-The focused Desktop no longer promotes learnings into a Ley-managed Markdown note workspace. Learning review,
-correction, trust state, provenance, and supersession remain continuity concerns; human-authored Markdown stays
-outside that authority. Notes created by older versions remain ordinary user-owned files and are not silently
-rewritten or deleted. ADR 0021 records the retired note-link design as historical context.
-
-Use `--json` with propose, correct, review, list, or show for an automation-safe response. Supply `--request-id req_<32 lowercase hex characters>` when a caller needs retry-safe delivery; reusing the same ID with changed content fails.
+New workflows should record concrete observed outcomes through ordinary checkpoints/Verification evidence and keep causal claims separate. Reintroduce utility/application instrumentation only if a future controlled downstream study shows material value beyond the smaller current continuity surface.
 
 ## Freshness
 

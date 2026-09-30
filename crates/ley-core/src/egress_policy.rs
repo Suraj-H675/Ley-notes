@@ -511,6 +511,7 @@ impl EgressPolicyRegistry {
         }
     }
 
+    #[doc(hidden)]
     pub fn set_specification_policy(
         &self,
         project_start: impl AsRef<Path>,
@@ -541,6 +542,15 @@ impl EgressPolicyRegistry {
         })
     }
 
+    pub fn clear_specification_override(
+        &self,
+        project_start: impl AsRef<Path>,
+        specification_id: &str,
+    ) -> Result<AgentEgressPolicyMutation, LeyCoreError> {
+        self.set_specification_policy(project_start, specification_id, AgentEgressPolicy::AgentOk)
+    }
+
+    #[doc(hidden)]
     pub fn set_mount_policy(
         &self,
         project_start: impl AsRef<Path>,
@@ -568,6 +578,15 @@ impl EgressPolicyRegistry {
         })
     }
 
+    pub fn clear_mount_override(
+        &self,
+        project_start: impl AsRef<Path>,
+        mount_id: &str,
+    ) -> Result<AgentEgressPolicyMutation, LeyCoreError> {
+        self.set_mount_policy(project_start, mount_id, AgentEgressPolicy::AgentOk)
+    }
+
+    #[doc(hidden)]
     pub fn set_connector_policy(
         &self,
         project_start: impl AsRef<Path>,
@@ -593,6 +612,14 @@ impl EgressPolicyRegistry {
                 },
             })
         })
+    }
+
+    pub fn clear_connector_override(
+        &self,
+        project_start: impl AsRef<Path>,
+        connector_id: &str,
+    ) -> Result<AgentEgressPolicyMutation, LeyCoreError> {
+        self.set_connector_policy(project_start, connector_id, AgentEgressPolicy::AgentOk)
     }
 
     pub fn list(
