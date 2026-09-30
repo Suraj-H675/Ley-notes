@@ -97,9 +97,10 @@ outcome counts, links back to the originating session, and repeats the caller-de
 boundary. It does not classify a Procedure as reverified/failed and exposes no automatic trust or
 ranking action.
 
-Once a learning is verified, trusted, current, and fully visible, **Promote to note** creates an ordinary Markdown note under `Agent Memory/Lessons`. The note contains the exact reviewed guidance, portable YAML provenance, confidence and validity at promotion, and bounded source identifiers. Supporting evidence notes are not copied. The learning ledger remains unchanged, while the new note becomes user-owned and participates in normal search, links, tags, graph, revisions, moves, and deletion.
-
-Promotion is duplicate-safe by learning ID. Repeating it opens the existing promoted note even after that note was renamed or moved. An unrelated note with the requested title is never overwritten. Before writing or reopening, Ley verifies that the open note vault canonically matches the project’s private Agent Memory binding; it refuses to copy memory into another currently open vault. Later learning corrections do not silently rewrite a promoted note; promotion is an attributed snapshot, not hidden synchronization. See [ADR 0021](../adr/0021-vault-verified-agent-memory-note-links.md).
+The focused Desktop no longer promotes learnings into a Ley-managed Markdown note workspace. Learning review,
+correction, trust state, provenance, and supersession remain continuity concerns; human-authored Markdown stays
+outside that authority. Notes created by older versions remain ordinary user-owned files and are not silently
+rewritten or deleted. ADR 0021 records the retired note-link design as historical context.
 
 Use `--json` with propose, correct, review, list, or show for an automation-safe response. Supply `--request-id req_<32 lowercase hex characters>` when a caller needs retry-safe delivery; reusing the same ID with changed content fails.
 

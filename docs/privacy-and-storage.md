@@ -81,9 +81,17 @@ The SQLite migration must prove:
 - cleanup of unreferenced content-addressed evidence;
 - no resurrection of deleted data through stale derived indexes.
 
-## Native filesystem safety
+## Retired notebook filesystem surface
 
-While the legacy note workspace remains runnable, native relative-path operations stay inside the selected vault through capability-rooted no-follow traversal rather than textual `..` rejection alone. Targeted reads/writes/renames/trash operations and recursive scans refuse or skip symlink/reparse redirection, including the reserved `attachments`, `canvases`, and `.trash` roots. Hosted run `36151215222` passed these confinement attacks on Linux/macOS/Windows x64+ARM64, including real Windows directory junctions. That is evidence for the tested hosted filesystems/reparse shapes, not a universal guarantee for every filesystem implementation.
+The old desktop note/Canvas filesystem engine and watcher are no longer executable product surfaces. Its
+capability-rooted no-follow implementation and six-lane hosted confinement evidence from run `36151215222`
+remain historical evidence for the retired implementation, not a current Ley security boundary.
+
+User-owned Markdown, Canvas, attachments, and other files in a former Ley vault remain ordinary user data and
+are not deleted when Ley continuity is erased or the notebook implementation is removed. The active legacy
+migration boundary is narrower: when an older project needs its moved Agent Memory vault, Ley accepts the
+selected directory only if existing captured memory validates for that exact project before any ingest or
+binding change.
 
 ## Website boundary
 

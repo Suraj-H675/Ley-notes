@@ -109,9 +109,8 @@ The legacy Markdown editor, note graph, Canvas, bookmarks, daily notes, workspac
 ## Current transition state
 
 The native Desktop now boots directly into the focused continuity control center. The retired filesystem-note
-workspace, Canvas, note graph, and related notebook UI are no longer part of the shipped Desktop path. Their
-remaining source implementation is migration-era cleanup debt and is being removed separately rather than kept
-as a second product surface.
+workspace, Canvas, note graph, and related notebook UI and native filesystem engine have been removed rather
+than kept as a second product surface.
 
 Canonical continuity for native-born and successfully cut-over projects lives in Ley's owner-private
 SQLite/CAS state. Older JSON/session/learning/artifact/vault data remains a compatibility and migration source
@@ -119,9 +118,9 @@ only where the corresponding native authority has not yet been established. A mo
 contain valid captured memory for the same project before Ley accepts it as a reconnect source; reconnect must
 not manufacture a new legacy store and silently treat it as historical continuity.
 
-Old browser-local Dexie stores are not current continuity authority. Preserve their schemas/data until Ley has
-an explicit import/export/erasure decision for that historical local state rather than deleting user data as a
-side effect of retiring the notebook UI.
+Old browser-local Dexie stores are not current continuity authority. A minimal schema/opening compatibility
+island remains solely so their existing records are not destructively dropped before Ley has an explicit
+import/export/erasure decision for that historical local state.
 
 The first migration slice can now snapshot the validated legacy **session and learning event ledgers** into
 SQLite. It deliberately reuses the legacy readers/replay validators instead of reimplementing the

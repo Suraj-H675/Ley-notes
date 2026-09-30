@@ -138,20 +138,22 @@ privacy, latency, and operational cost.
   reserved directories. The targeted read/write/rename/trash paths and recursive vault scans therefore
   have hosted evidence that they do not follow these tested link/reparse escape shapes outside the
   selected vault. This remains evidence for the fixed hosted filesystems/runner families rather than a
-  proof covering every possible filesystem or reparse tag.
+  proof covering every possible filesystem or reparse tag. The notebook filesystem engine covered by this
+  run has since been retired; this is historical evidence, not a current product gate.
 - Pinned-toolchain follow-up runs exposed a narrower desktop portability boundary: the project catalog
   passes on hosted Linux/macOS/Windows x64+ARM64, while Notify 8.2.0 native watcher delivery repeatedly
   produced no callback on GitHub-hosted macOS 15 Intel or Apple Silicon within an 8-second bounded
-  readiness probe. Linux/Windows hosted lanes and local Linux observed the event. The workflow therefore
-  keeps project-catalog portability blocking on all six lanes but scopes raw watcher-delivery blocking to
-  Linux/Windows. This is not evidence that real-machine macOS watcher delivery is broken or proven; it is
-  an explicit hosted-runner evidence gap. Do not erase that distinction by adding arbitrary sleeps or a
-  production polling backend solely for CI.
+  readiness probe. Linux/Windows hosted lanes and local Linux observed the event. That was the explicit
+  evidence boundary while the notebook watcher existed. The watcher has since been retired with the notebook
+  filesystem surface, so the hosted-macOS callback gap is historical rather than an open focused-product
+  requirement.
 - Scoped portability/security run `36168018632` then passed all six hosted jobs under that explicit
   evidence boundary: macOS Intel/Apple Silicon skipped only raw watcher callback delivery while still
   passing vault confinement, project-catalog portability, cross-process registry contention, production
   private-config permissions, and revision compatibility; Linux/Windows x64+ARM64 also passed the watcher
-  gate. Routine CI run `36168018551` independently passed frontend plus the full pinned Rust workspace.
+  gate. Routine CI run `36168018551` independently passed frontend plus the full pinned Rust workspace. The
+  current manual matrix replaces the retired notebook gates with moved-legacy-vault reconnect safety and
+  user-owned-file preservation during Agent Memory erasure.
 - The divergent-branch real-agent fixture subsequently found a compiler admission gap that narrower
   component tests had missed: divergent Session/Problem historical memory could still reach active task
   context even though divergent Decision/Revision/Learning candidates were withheld. Ley now treats all

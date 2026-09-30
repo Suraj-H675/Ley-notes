@@ -4,7 +4,7 @@ Status: project initialization, capture preview, private vault binding, determin
 
 ## Assets
 
-- User notes, attachments, canvases, and agent memories in the selected vault
+- Ley continuity/evidence state plus user-owned historical Markdown/Canvas copies that migration and erasure must not delete
 - Project source, documentation, local Git state, and session evidence
 - Capture consent and ignore rules
 - User-authored Specification notes and private exact-revision approval pins
@@ -12,7 +12,7 @@ Status: project initialization, capture preview, private vault binding, determin
 
 ## Trust boundaries
 
-1. User-selected filesystem vault
+1. Explicitly selected legacy Agent Memory vault when an older project still needs migration
 2. Explicitly initialized project root
 3. Private OS-local project-to-vault binding and Specification-approval registries
 4. Local CLI/desktop/MCP process
@@ -26,7 +26,7 @@ Repository content, transcripts, tool output, generated summaries, MCP arguments
 | Threat | Initial control | Required future proof |
 | --- | --- | --- |
 | Scanning outside the project | Only project-relative approved roots; reject root, prefix, and parent components; refuse symlinked metadata/approved roots; never follow content symlinks; ingest through a sandboxed directory capability with final symlink following disabled | Cross-platform adversarial path fixtures and continuous dependency review |
-| Native desktop vault path escapes through symlinks/reparse points | The legacy desktop vault opens one capability-rooted directory, walks parent components with `open_dir_nofollow`, opens final files with symlink following disabled, performs writes/renames relative to the capability, and recursively scans only through no-follow directory handles. Reserved `attachments`, `canvases`, and `.trash` roots fail closed when redirected. Hosted run `36151215222` passed Unix symlink attacks on Linux/macOS x64+ARM64 and real Windows directory-junction attacks on x64+ARM64, including assertions that external targets were neither modified nor returned by scans | Re-run after filesystem/capability dependency changes; add fixtures only when supporting materially different filesystem/reparse semantics |
+| Moved legacy migration source is replaced with an unrelated directory | Reconnect validates that the selected directory already contains valid captured memory for the exact project before ingestion or binding mutation. An empty or unrelated directory fails closed and the previous binding remains unchanged | Six-lane reconnect regression plus corrupt/wrong-project legacy-store fixtures when the migration format changes |
 | Metadata memory exhaustion | Regular metadata files are limited to 1 MiB before reading | Fuzz malformed and boundary-sized metadata |
 | Partial/corrupt initialization | Stage the complete `.ley/` directory and atomically rename | Crash/fault-injection test |
 | Capture escalation on repeat init | Existing identity and policy are read without rewriting | Explicit, reviewed policy-update command |

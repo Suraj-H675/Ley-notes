@@ -44,24 +44,13 @@
   --success: 150 18% 62%;
   --warning: 35 42% 64%;
 
-  /* Graph node colors (shared with light theme — these are desaturated). */
-  --node-document: 41 34% 66%;
-  --node-task: 155 16% 62%;
-  --node-project: 210 20% 64%;
-  --node-concept: 25 30% 63%;
-
-  --edge-wiki: 205 18% 61%;
-  --edge-explicit: 155 16% 60%;
-  --edge-depends: 8 48% 59%;
-  --edge-related: 42 5% 56%;
-
   /* Shadows — tinted, not black. */
   --shadow-panel: 0 1px 0 hsl(225 10% 3% / 0.38), 0 0 0 1px hsl(45 10% 100% / 0.035);
   --shadow-popover: 0 8px 24px hsl(225 12% 3% / 0.3), 0 0 0 1px hsl(45 10% 100% / 0.05);
   --shadow-menu: 0 12px 32px hsl(225 12% 3% / 0.36), 0 0 0 1px hsl(45 10% 100% / 0.055);
 
   /* Functional materials. Opacity is centralized so desktop chrome and
-     floating workspaces retain the same depth language. */
+     floating surfaces retain the same depth language. */
   --material-chrome: 225 6% 10.5% / 0.86;
   --material-sidebar: 225 6% 10.5% / 0.95;
   --material-floating: 225 6% 10.5% / 0.91;

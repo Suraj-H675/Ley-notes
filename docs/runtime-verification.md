@@ -172,13 +172,17 @@ Builds and unit tests do not prove that Ley is usable. Every release-oriented UI
 - On 2026-08-25, opening Settings moved focus inside the dialog, and twenty-five Tab presses kept focus within its focusable controls.
 - Closing with Escape returned focus to the Settings launcher. A runtime defect where focus fell back to `BODY` was fixed by wiring `onCloseAutoFocus` to the actual opener; the same behavior now works from the toolbar button and the `Ctrl/Cmd+,` hotkey. Type checking and lint pass.
 
-- Open a project whose Agent Memory is bound to the active filesystem vault. Promote a current trusted lesson and export a completed session through **To notes**; each creates and opens ordinary Markdown with the expected portable project/source ID, timestamp, tag, provenance warning, and visible content.
-- Rename and move both notes, repeat each action, and verify Ley opens the existing note without creating a duplicate. Create an unrelated title collision and verify the proposed link refuses to overwrite it.
-- Open a catalog project bound to another available vault while the first notes vault remains active. Both learning promotion and session export must fail before any note/index mutation, name both vault folders without revealing absolute paths, and succeed only after the bound vault is deliberately opened.
-- Export a truncated session projection and verify the note and preview disclose omitted checkpoints/clipped text rather than implying complete history. Stored headings, callouts, links, remote images, raw HTML, control characters, and prompt-injection strings remain escaped quoted evidence and cannot alter the provenance warning or trigger external content.
-- At desktop, short-window, and 390×844 sizes, the **Link session to notes** action (visually **To notes** when space permits), title preview, Cancel, and Create remain reachable; unsaved title edits require confirmation before dismissal, and no application console error is produced.
+The former learning/session Markdown-promotion workflow was retired with the notebook surface. Historical
+verification of that export path remains in repository history and ADR 0021, but it is no longer a current
+Desktop acceptance gate. User-owned Markdown/Canvas copies created by older versions remain independent files
+and must not be deleted by continuity erasure or migration cleanup.
 
 ## Agent Memory graph history
+
+This section records historical verification for the retired Desktop Project Graph UI. The underlying captured
+revision/evidence metadata may remain migration input, but opening or navigating a Project Graph is no longer a
+current Desktop product requirement. Treat the UI-specific bullets below as historical evidence, not release
+gates for the focused continuity control center.
 
 - Ingest a real initialized and bound project, change a captured symbol or relationship, and ingest again. The history index gains one graph/artifact pair; an identical third ingestion does not add another entry.
 - Open the project graph in Ley Desktop. Switch from Current to the earlier capture and confirm the historical banner, counts, nodes, edges, Git identity, and capture time all come from that immutable snapshot while the working tree remains untouched.

@@ -336,7 +336,6 @@ export interface SessionContext {
   sourceBoundary: string;
   instructionWarning: string;
 }
-
 export interface SessionTurnsContext {
   projectionSchemaVersion: number;
   schemaVersion: number;
@@ -985,20 +984,4 @@ export interface LearningContext {
   truncated: boolean;
   sourceBoundary: string;
   instructionWarning: string;
-}
-
-export interface AgentMemoryNoteDraft {
-  title: string;
-  folder: string;
-  content: string;
-  frontmatter: Record<string, unknown>;
-}
-
-export interface PromotedLearningNoteDraft extends AgentMemoryNoteDraft {
-  learningId: string;
-}
-
-export interface PromotedSessionNoteDraft extends AgentMemoryNoteDraft {
-  sessionId: string;
-  projectId: string;
 }

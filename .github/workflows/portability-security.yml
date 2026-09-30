@@ -64,20 +64,22 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
-      - name: Verify native vault confinement
-        run: cargo test --locked -p ley-desktop vault_confinement_ -- --nocapture
+      - name: Verify moved legacy vault reconnect fails closed
+        run: >-
+          cargo test --locked -p ley-desktop
+          unavailable_binding_reconnect_requires_matching_legacy_memory_before_rebind
+          -- --nocapture
+
+      - name: Verify memory erasure preserves user-owned files
+        run: >-
+          cargo test --locked -p ley-desktop
+          desktop_project_erasure_preserves_user_owned_markdown_canvas_and_binding
+          -- --nocapture
 
       - name: Verify native project-catalog portability
         run: >-
           cargo test --locked -p ley-desktop
           portability_project_catalog_summarizes_ready_unbound_and_unavailable_projects
-          -- --nocapture
-
-      - name: Verify native watcher event delivery
-        if: runner.os != 'macOS'
-        run: >-
-          cargo test --locked -p ley-desktop
-          portability_native_watcher_reports_external_markdown_changes_and_ignores_hidden_files
           -- --nocapture
 
       - name: Verify cross-process private registry contention
