@@ -30,7 +30,8 @@ use ley_core::{
     read_session_turns_context_with_continuity_transition,
     rename_session_with_continuity_transition, review_learning_with_continuity_transition,
     search_observed_projects, search_project_memory_with_continuity_transition,
-    update_capture_mode, ApprovedSourceAuthorityList, ApprovedSourceRegistry, ArtifactMediaType,
+    update_capture_mode, validate_project_memory, ApprovedSourceAuthorityList,
+    ApprovedSourceRegistry, ArtifactMediaType,
     BindingRegistry, BindingSource, CaptureFile, CaptureMode, CapturePolicy, ContinuityStore,
     CorrectLearningInput, CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt,
     GraphCitation, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
@@ -610,28 +611,6 @@ fn with_transition_agent_session_read_from<T>(
     with_transition_agent_access_from(project_path, None, registry, store, |access, store| {
         operation(project_path, &access.legacy_vault_path, store)
     })
-}
-
-fn verify_open_vault_binding(
-    binding: &ProjectVaultBinding,
-    open_vault_path: &str,
-) -> Result<(), String> {
-    let open_vault = canonical_vault(open_vault_path)?;
-    if binding.vault_path == open_vault {
-        return Ok(());
-    }
-    let bound_name = binding
-        .vault_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("the bound vault");
-    let open_name = open_vault
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("the open vault");
-    Err(format!(
-        "This project’s Agent Memory belongs to “{bound_name}”, but notes are open in “{open_name}”. Open the bound vault before creating a linked note."
-    ))
 }
 
 fn agent_project_catalog_item(
@@ -1335,16 +1314,6 @@ fn agent_capture_approval_fingerprint(
     Ok(format!("sha256:{:x}", digest.finalize()))
 }
 
-#[tauri::command]
-fn verify_agent_project_note_vault(
-    project_path: String,
-    open_vault_path: String,
-) -> Result<(), String> {
-    let binding =
-        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
-    verify_open_vault_binding(&binding, &open_vault_path)
-}
-
 fn native_approved_source_registry(project_path: &Path) -> Result<ApprovedSourceRegistry, String> {
     let registry = ApprovedSourceRegistry::system_default().map_err(|error| error.to_string())?;
     if !registry
@@ -1544,8 +1513,20 @@ fn connect_agent_project_binding_with_registry(
                 store,
             )?;
         }
-        Err(LeyCoreError::BoundVaultUnavailable { .. }) | Ok(_) => {
+        Err(LeyCoreError::BoundVaultUnavailable { .. }) => {
+            validate_project_memory(&diagnostic.root, vault_path).map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(
+                    "selected legacy vault cannot be verified for this project; choose the original or moved Ley vault containing this project's captured memory"
+                        .to_owned(),
+                )
+            })?;
             ingest_project_with_continuity_transition(&diagnostic.root, vault_path, store)?;
+        }
+        Ok(_) => {
+            return Err(LeyCoreError::InvalidBindingRequest(
+                "project is already bound to an available legacy vault; refresh it instead of reconnecting"
+                    .to_owned(),
+            ));
         }
         Err(error) => return Err(error),
     }
@@ -2822,7 +2803,6 @@ fn restore_trashed_vault_file(vault_path: String, trashed_path: String) -> Resul
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(VaultWatcherState::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             list_agent_projects,
@@ -2835,7 +2815,6 @@ pub fn run() {
             search_agent_projects,
             search_agent_project_memory,
             inspect_agent_project,
-            verify_agent_project_note_vault,
             read_agent_project_approved_sources,
             approve_agent_project_file_source,
             reapprove_agent_project_file_source,
@@ -2857,21 +2836,7 @@ pub fn run() {
             read_agent_artifacts,
             read_agent_cited_evidence,
             read_agent_media_evidence,
-            read_agent_project_activity,
-            scan_vault,
-            scan_trashed_vault_files,
-            read_vault_file,
-            restore_trashed_vault_file,
-            scan_canvases,
-            write_canvas_file,
-            trash_canvas_file,
-            write_vault_file,
-            write_vault_attachment,
-            read_vault_attachment,
-            rename_vault_file,
-            trash_vault_file,
-            watch_vault,
-            stop_watching_vault
+            read_agent_project_activity
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ley");
@@ -3289,32 +3254,6 @@ mod tests {
             fs::read_to_string(vault.join("canvases/User board.canvas")).unwrap(),
             canvas_body
         );
-
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn linked_agent_notes_require_the_canonically_bound_vault() {
-        let root = std::env::temp_dir().join(format!(
-            "ley-native-agent-note-vault-test-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        let bound = root.join("Bound vault");
-        let other = root.join("Other vault");
-        fs::create_dir_all(&bound).unwrap();
-        fs::create_dir_all(&other).unwrap();
-        let binding = ProjectVaultBinding {
-            project_id: "prj_1234567890abcdef1234567890abcdef".to_owned(),
-            vault_path: bound.canonicalize().unwrap(),
-            source: BindingSource::Persisted,
-        };
-
-        verify_open_vault_binding(&binding, bound.to_str().unwrap()).unwrap();
-        let error = verify_open_vault_binding(&binding, other.to_str().unwrap()).unwrap_err();
-        assert!(error.contains("Bound vault"));
-        assert!(error.contains("Other vault"));
-        assert!(!error.contains(root.to_str().unwrap()));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -4094,6 +4033,79 @@ mod tests {
         };
         assert_eq!(project_id, diagnostic.identity.project_id);
         assert!(vault.join(".ley").exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unavailable_binding_reconnect_requires_matching_legacy_memory_before_rebind() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-unavailable-reconnect-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("project");
+        let original_vault = root.join("original-vault");
+        let moved_vault = root.join("moved-vault");
+        let wrong_vault = root.join("wrong-vault");
+        let config = root.join("config");
+        let _ = fs::remove_dir_all(&root);
+        for directory in [&project, &original_vault, &wrong_vault, &config] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        fs::write(project.join("README.md"), "# Legacy continuity\n").unwrap();
+        initialize_project(
+            &project,
+            Some("Unavailable reconnect"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let diagnostic = diagnose_project(&project).unwrap();
+        ingest_project(&project, &original_vault).unwrap();
+        let registry = BindingRegistry::at(config.join("bindings.json"));
+        let original_binding = registry.bind(&project, &original_vault).unwrap();
+        fs::rename(&original_vault, &moved_vault).unwrap();
+
+        assert!(matches!(
+            registry.resolve_observed(&diagnostic),
+            Err(LeyCoreError::BoundVaultUnavailable { ref path, .. })
+                if path == &original_binding.vault_path
+        ));
+
+        let error = match connect_agent_project_with_registry(
+            &project,
+            &wrong_vault,
+            None,
+            &registry,
+        ) {
+            Ok(_) => panic!("wrong legacy vault unexpectedly reconnected the project"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, LeyCoreError::InvalidContinuityStore(_)));
+        assert!(error
+            .to_string()
+            .contains("selected legacy vault cannot be verified for this project"));
+        assert!(fs::read_dir(&wrong_vault).unwrap().next().is_none());
+        assert!(matches!(
+            registry.resolve_observed(&diagnostic),
+            Err(LeyCoreError::BoundVaultUnavailable { ref path, .. })
+                if path == &original_binding.vault_path
+        ));
+
+        let dashboard =
+            connect_agent_project_with_registry(&project, &moved_vault, None, &registry).unwrap();
+        assert!(matches!(
+            dashboard.storage,
+            AgentMemoryStorage::LegacyVault { ref project_id, .. }
+                if project_id == &diagnostic.identity.project_id
+        ));
+        assert_eq!(
+            registry.resolve_observed(&diagnostic).unwrap().vault_path,
+            moved_vault.canonicalize().unwrap()
+        );
 
         fs::remove_dir_all(root).unwrap();
     }

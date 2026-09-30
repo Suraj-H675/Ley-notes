@@ -108,18 +108,20 @@ The legacy Markdown editor, note graph, Canvas, bookmarks, daily notes, workspac
 
 ## Current transition state
 
-The native app still contains the legacy filesystem-note workspace while the continuity engine is migrated. For that temporary workspace:
+The native Desktop now boots directly into the focused continuity control center. The retired filesystem-note
+workspace, Canvas, note graph, and related notebook UI are no longer part of the shipped Desktop path. Their
+remaining source implementation is migration-era cleanup debt and is being removed separately rather than kept
+as a second product surface.
 
-- Markdown/Canvas files in the selected desktop folder remain authoritative;
-- Dexie is a rebuildable UI projection/cache;
-- native file operations go through Tauri commands;
-- one recursive watcher tracks external changes;
-- browser storage fallbacks are removed;
-- old browser-local Dexie tables remain inert until the SQLite migration defines explicit legacy-data handling.
+Canonical continuity for native-born and successfully cut-over projects lives in Ley's owner-private
+SQLite/CAS state. Older JSON/session/learning/artifact/vault data remains a compatibility and migration source
+only where the corresponding native authority has not yet been established. A moved legacy vault must already
+contain valid captured memory for the same project before Ley accepts it as a reconnect source; reconnect must
+not manufacture a new legacy store and silently treat it as historical continuity.
 
-The new Phase-1 SQLite kernel is not yet the live authority for existing installations. Current JSON/session/
-vault state remains a read-only migration source until import, equivalence, export, and erasure behavior are
-proved end to end. Do not silently dual-write both systems without an explicit migration plan.
+Old browser-local Dexie stores are not current continuity authority. Preserve their schemas/data until Ley has
+an explicit import/export/erasure decision for that historical local state rather than deleting user data as a
+side effect of retiring the notebook UI.
 
 The first migration slice can now snapshot the validated legacy **session and learning event ledgers** into
 SQLite. It deliberately reuses the legacy readers/replay validators instead of reimplementing the

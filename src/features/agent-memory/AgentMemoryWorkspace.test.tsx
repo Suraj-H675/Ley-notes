@@ -5,6 +5,7 @@ import type { AgentMemoryDashboard } from "./types";
 
 const api = vi.hoisted(() => ({
   chooseAgentProject: vi.fn(),
+  chooseLegacyAgentVault: vi.fn(),
   connectAgentProject: vi.fn(),
   correctAgentLearning: vi.fn(),
   eraseAgentProjectMemory: vi.fn(),
@@ -25,12 +26,12 @@ const api = vi.hoisted(() => ({
   searchAgentProjects: vi.fn(),
   searchAgentProjectMemory: vi.fn(),
   updateAgentCaptureMode: vi.fn(),
-  verifyAgentProjectNoteVault: vi.fn(),
   reviewAgentLearning: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   chooseAgentProject: api.chooseAgentProject,
+  chooseLegacyAgentVault: api.chooseLegacyAgentVault,
   connectAgentProject: api.connectAgentProject,
   correctAgentLearning: api.correctAgentLearning,
   eraseAgentProjectMemory: api.eraseAgentProjectMemory,
@@ -51,7 +52,6 @@ vi.mock("./api", () => ({
   searchAgentProjects: api.searchAgentProjects,
   searchAgentProjectMemory: api.searchAgentProjectMemory,
   updateAgentCaptureMode: api.updateAgentCaptureMode,
-  verifyAgentProjectNoteVault: api.verifyAgentProjectNoteVault,
   refreshAgentProject: vi.fn(),
   reviewAgentLearning: api.reviewAgentLearning,
 }));
@@ -166,7 +166,6 @@ describe("Agent Memory workspace boundaries", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
-    api.verifyAgentProjectNoteVault.mockResolvedValue(undefined);
   });
 
   it("reviews first capture and requires fresh approval after initialization drift", async () => {
@@ -179,6 +178,7 @@ describe("Agent Memory workspace boundaries", () => {
       privacyNotice: "Only explicitly opened projects.",
     });
     api.chooseAgentProject.mockResolvedValue("/projects/new-app");
+    api.chooseLegacyAgentVault.mockResolvedValue("/vault");
     const initialPreview = {
       mode: "structured" as const,
       approvedRoots: ["."],
@@ -230,12 +230,7 @@ describe("Agent Memory workspace boundaries", () => {
     render(
       <AgentMemoryWorkspace
         open
-        vaultPath="/vault"
-        vaultName="Private vault"
         onClose={vi.fn()}
-        onPromoteLearning={vi.fn()}
-        onPromoteSession={vi.fn()}
-        onLinkSessionCanvas={vi.fn()}
       />,
     );
     await screen.findByRole("heading", {
@@ -262,7 +257,7 @@ describe("Agent Memory workspace boundaries", () => {
     );
     expect(
       await screen.findByRole("heading", {
-        name: "Review capture before connecting",
+        name: "Review legacy migration",
       }),
     ).toBeVisible();
     expect(screen.getByText("src/new.ts")).toBeVisible();
@@ -271,6 +266,7 @@ describe("Agent Memory workspace boundaries", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Approve, connect & capture" }),
     );
+    await waitFor(() => expect(api.chooseLegacyAgentVault).toHaveBeenCalled());
     await waitFor(() =>
       expect(api.connectAgentProject).toHaveBeenCalledWith(
         "/projects/new-app",
@@ -278,6 +274,44 @@ describe("Agent Memory workspace boundaries", () => {
         "sha256:approval-after",
       ),
     );
+  });
+
+  it("leaves an unavailable legacy binding untouched when vault selection is cancelled", async () => {
+    api.listAgentProjects.mockResolvedValue({
+      projects: [],
+      totalProjects: 0,
+      omittedProjects: 0,
+      readyProjects: 0,
+      attentionProjects: 0,
+      privacyNotice: "Only explicitly opened projects.",
+    });
+    api.chooseAgentProject.mockResolvedValue("/projects/moved-app");
+    api.inspectAgentProject.mockResolvedValue({
+      status: "vault-unavailable",
+      projectId: "prj_moved",
+      projectName: "moved-app",
+      captureMode: "structured",
+      previousVaultName: "Old Ley vault",
+    });
+    api.chooseLegacyAgentVault.mockResolvedValue(null);
+
+    render(<AgentMemoryWorkspace open onClose={vi.fn()} />);
+    await screen.findByRole("heading", {
+      name: "Pick up any project without starting over",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+    expect(
+      await screen.findByRole("heading", {
+        name: "Reconnect legacy migration source",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText(/Old Ley vault/)).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Reconnect & capture" }),
+    );
+    await waitFor(() => expect(api.chooseLegacyAgentVault).toHaveBeenCalled());
+    expect(api.connectAgentProject).not.toHaveBeenCalled();
   });
 
   it("migrates the last selection into Projects and opens a scrollable dashboard", { timeout: 10_000 }, async () => {
@@ -923,21 +957,10 @@ describe("Agent Memory workspace boundaries", () => {
       })),
     });
 
-    const promoteLearning = vi.fn().mockResolvedValue(undefined);
-    const linkSessionCanvas = vi
-      .fn()
-      .mockRejectedValue(
-        new Error("Keep the inspector open after the boundary check."),
-      );
     render(
       <AgentMemoryWorkspace
         open
-        vaultPath="/vault"
-        vaultName="Private vault"
         onClose={vi.fn()}
-        onPromoteLearning={promoteLearning}
-        onPromoteSession={vi.fn()}
-        onLinkSessionCanvas={linkSessionCanvas}
       />,
     );
 
@@ -1057,37 +1080,12 @@ describe("Agent Memory workspace boundaries", () => {
       ),
     ).toBeVisible();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Link session to notes" }),
-    );
     expect(
-      await screen.findByText("Destination · Agent Memory/Sessions"),
-    ).toBeVisible();
+      screen.queryByRole("button", { name: "Link session to notes" }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/verifies that the open notes vault/i),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Link session to Canvas" }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Link & open Canvas" }),
-      ).toBeEnabled(),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Link & open Canvas" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Keep the inspector open",
-    );
-    expect(api.verifyAgentProjectNoteVault).toHaveBeenCalledWith(
-      "/projects/ley",
-      "/vault",
-    );
-    expect(
-      api.verifyAgentProjectNoteVault.mock.invocationCallOrder[0],
-    ).toBeLessThan(linkSessionCanvas.mock.invocationCallOrder[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      screen.queryByRole("button", { name: "Link session to Canvas" }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Erase session memory…" }),
@@ -1242,48 +1240,9 @@ describe("Agent Memory workspace boundaries", () => {
     expect(
       screen.getByText(/Caller-declared application only/i),
     ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Promote to note" }));
     expect(
-      await screen.findByRole("button", { name: "Create & open note" }),
-    ).toBeEnabled();
-    expect(
-      screen.getByText("Destination · Agent Memory/Lessons"),
-    ).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Create & open note" }));
-    await waitFor(() =>
-      expect(promoteLearning).toHaveBeenCalledWith(
-        expect.objectContaining({
-          learningId: "lrn_test",
-          title: "Verify the complete workspace",
-          folder: "Agent Memory/Lessons",
-          content: expect.stringContaining(
-            "Run every workspace check before release.",
-          ),
-          frontmatter: expect.objectContaining({
-            "ley-source": "agent-memory",
-            "ley-project-id": "prj_test",
-            "ley-learning-id": "lrn_test",
-            "ley-trust-state": "trusted",
-          }),
-        }),
-      ),
-    );
-    expect(api.verifyAgentProjectNoteVault).toHaveBeenCalledWith(
-      "/projects/ley",
-      "/vault",
-    );
-    expect(
-      api.verifyAgentProjectNoteVault.mock.invocationCallOrder[0],
-    ).toBeLessThan(promoteLearning.mock.invocationCallOrder[0]);
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: "Close learning inspector" }),
-      ).not.toBeInTheDocument(),
-    );
-    fireEvent.click(screen.getByText("Verify the complete workspace"));
-    await screen.findByRole("heading", {
-      name: "Verify the complete workspace",
-    });
+      screen.queryByRole("button", { name: "Promote to note" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Correct" }));
     expect(
       await screen.findByRole("button", { name: "Append correction" }),

@@ -588,6 +588,8 @@ pub enum LeyCoreError {
     InvalidCapturePolicy(String),
     #[error("invalid Ley vault binding registry: {0}")]
     InvalidBindingRegistry(String),
+    #[error("invalid Ley vault binding request: {0}")]
+    InvalidBindingRequest(String),
     #[error("invalid Ley project catalog: {0}")]
     InvalidProjectCatalog(String),
     #[error("invalid Ley Context Mount registry: {0}")]

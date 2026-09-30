@@ -60,16 +60,6 @@ import { useIsPageBookmarked } from "@/features/bookmarks/useNoteBookmarks";
 import { togglePageBookmark } from "@/core/vault/note-bookmarks";
 import { startNavigationSession } from "@/core/vault/navigation-session";
 import type { CollectionRequest } from "@/features/collections/CollectionModal";
-import type {
-  PromotedLearningNoteDraft,
-  PromotedSessionNoteDraft,
-} from "@/features/agent-memory/types";
-import { promoteLearningNote } from "@/features/agent-memory/promote-learning-note";
-import { promoteSessionNote } from "@/features/agent-memory/promote-session-note";
-import {
-  linkSessionToCanvas,
-  type SessionCanvasLinkRequest,
-} from "@/features/agent-memory/link-session-canvas";
 import { primaryModifierLabel, shortcutLabel } from "@/shared/lib/shortcut";
 import { useMediaQuery } from "@/shared/hooks/useMediaQuery";
 import type { Page } from "@/infrastructure/database/schema";
@@ -244,29 +234,6 @@ export function Layout({
     const nav = useNavStore.getState();
     nav.openPage(note.pageId);
     nav.pushRecent(note.pageId);
-  }
-
-  async function promoteLearningToNote(draft: PromotedLearningNoteDraft) {
-    const { page: note } = await promoteLearningNote(draft);
-    const nav = useNavStore.getState();
-    nav.openPage(note.id);
-    nav.pushRecent(note.id);
-    setAgentMemoryOpen(false);
-  }
-
-  async function promoteSessionToNote(draft: PromotedSessionNoteDraft) {
-    const { page: note } = await promoteSessionNote(draft);
-    const nav = useNavStore.getState();
-    nav.openPage(note.id);
-    nav.pushRecent(note.id);
-    setAgentMemoryOpen(false);
-  }
-
-  async function linkAgentSessionToCanvas(request: SessionCanvasLinkRequest) {
-    const result = await linkSessionToCanvas(request);
-    setAgentMemoryOpen(false);
-    setCanvasTargetPath(result.canvas.path);
-    setCanvasOpen(true);
   }
 
   function openCanvas() {
@@ -485,13 +452,7 @@ export function Layout({
           >
             <AgentMemoryWorkspace
               open
-              vaultPath={vaultKey}
-              vaultName={vaultName}
-              activeNote={activePage}
               onClose={() => setAgentMemoryOpen(false)}
-              onPromoteLearning={promoteLearningToNote}
-              onPromoteSession={promoteSessionToNote}
-              onLinkSessionCanvas={linkAgentSessionToCanvas}
             />
           </Suspense>
         </FeatureErrorBoundary>

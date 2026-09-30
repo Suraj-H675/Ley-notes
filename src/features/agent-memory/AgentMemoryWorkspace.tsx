@@ -13,13 +13,11 @@ import {
   Clock3,
   FileCheck2,
   FileCode2,
-  FilePlus2,
   Files,
   FolderOpen,
   GitBranch,
   History,
   Inbox,
-  LayoutDashboard,
   LockKeyhole,
   MessageSquareWarning,
   PencilLine,
@@ -34,10 +32,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { Button } from "@/shared/components/Button";
-import type { Page } from "@/infrastructure/database/schema";
 import { cn } from "@/shared/lib/classnames";
 import {
   chooseAgentProject,
+  chooseLegacyAgentVault,
   connectAgentProject,
   forgetAgentProject,
   initializeAgentProject,
@@ -48,7 +46,6 @@ import {
   readAgentSessionTurns,
   refreshAgentProject,
   reviewAgentLearning,
-  verifyAgentProjectNoteVault,
 } from "./api";
 import { ProjectsHub } from "./ProjectsHub";
 import type {
@@ -62,8 +59,6 @@ import type {
   LearningAction,
   LearningContext,
   LearningSummary,
-  PromotedLearningNoteDraft,
-  PromotedSessionNoteDraft,
   ProjectMemorySearchResult,
   ProjectRevisionFreshness,
   RevisionApplicability,
@@ -73,7 +68,6 @@ import type {
   SessionSummary,
   SessionTurnsContext,
 } from "./types";
-import type { SessionCanvasLinkRequest } from "./link-session-canvas";
 
 const LAST_AGENT_PROJECT_KEY = "ley:last-agent-project";
 type Section =
@@ -124,16 +118,6 @@ const SessionRenameEditor = lazy(() =>
     default: module.SessionRenameEditor,
   })),
 );
-const SessionPromotionEditor = lazy(() =>
-  import("./SessionPromotionEditor").then((module) => ({
-    default: module.SessionPromotionEditor,
-  })),
-);
-const SessionCanvasEditor = lazy(() =>
-  import("./SessionCanvasEditor").then((module) => ({
-    default: module.SessionCanvasEditor,
-  })),
-);
 const SessionErasureEditor = lazy(() =>
   import("./SessionErasureEditor").then((module) => ({
     default: module.SessionErasureEditor,
@@ -144,30 +128,14 @@ const LearningCorrectionEditor = lazy(() =>
     default: module.LearningCorrectionEditor,
   })),
 );
-const LearningPromotionEditor = lazy(() =>
-  import("./LearningPromotionEditor").then((module) => ({
-    default: module.LearningPromotionEditor,
-  })),
-);
-
 export function AgentMemoryWorkspace({
   open,
-  vaultPath,
-  vaultName,
-  activeNote,
   onClose,
-  onPromoteLearning,
-  onPromoteSession,
-  onLinkSessionCanvas,
+  closable = true,
 }: {
   open: boolean;
-  vaultPath: string;
-  vaultName: string;
-  activeNote?: Page;
   onClose: () => void;
-  onPromoteLearning: (draft: PromotedLearningNoteDraft) => Promise<void>;
-  onPromoteSession: (draft: PromotedSessionNoteDraft) => Promise<void>;
-  onLinkSessionCanvas: (request: SessionCanvasLinkRequest) => Promise<void>;
+  closable?: boolean;
 }) {
   const [section, setSection] = useState<Section>("overview");
   const [projectPath, setProjectPath] = useState<string | null>(null);
@@ -356,9 +324,11 @@ export function AgentMemoryWorkspace({
           inspection.preview.approvalFingerprint,
         );
       } else if (kind === "connect") {
+        const legacyVaultPath = await chooseLegacyAgentVault();
+        if (!legacyVaultPath) return;
         dashboard = await connectAgentProject(
           projectPath,
-          vaultPath,
+          legacyVaultPath,
           inspection?.status === "unbound"
             ? inspection.preview.approvalFingerprint
             : undefined,
@@ -386,25 +356,6 @@ export function AgentMemoryWorkspace({
 
   async function refresh() {
     await makeReady("capture");
-  }
-
-  async function promoteLearningToBoundVault(draft: PromotedLearningNoteDraft) {
-    if (!projectPath) throw new Error("Open a project before linking a note.");
-    await verifyAgentProjectNoteVault(projectPath, vaultPath);
-    await onPromoteLearning(draft);
-  }
-
-  async function promoteSessionToBoundVault(draft: PromotedSessionNoteDraft) {
-    if (!projectPath) throw new Error("Open a project before linking a note.");
-    await verifyAgentProjectNoteVault(projectPath, vaultPath);
-    await onPromoteSession(draft);
-  }
-
-  async function linkSessionToBoundCanvas(request: SessionCanvasLinkRequest) {
-    if (!projectPath)
-      throw new Error("Open a project before linking a Canvas.");
-    await verifyAgentProjectNoteVault(projectPath, vaultPath);
-    await onLinkSessionCanvas(request);
   }
 
   function returnToProjects() {
@@ -467,10 +418,8 @@ export function AgentMemoryWorkspace({
   return (
     <AgentMemoryWorkspaceView
       open={open}
-      vaultName={vaultName}
-      vaultPath={vaultPath}
-      activeNote={activeNote}
       onClose={onClose}
+      closable={closable}
       projectPath={projectPath}
       projectLabel={projectLabel}
       catalog={catalog}
@@ -511,19 +460,14 @@ export function AgentMemoryWorkspace({
       onLearningReviewed={reviewLearning}
       onPrivacyUpdated={updateInspection}
       onPrivacyErased={erasePrivacy}
-      onPromoteLearning={promoteLearningToBoundVault}
-      onPromoteSession={promoteSessionToBoundVault}
-      onLinkSessionCanvas={linkSessionToBoundCanvas}
     />
   );
 }
 
 interface AgentMemoryWorkspaceViewProps {
   open: boolean;
-  vaultName: string;
-  vaultPath: string;
-  activeNote?: Page;
   onClose: () => void;
+  closable: boolean;
   projectPath: string | null;
   projectLabel: string | null;
   catalog: AgentProjectCatalog | null;
@@ -559,15 +503,12 @@ interface AgentMemoryWorkspaceViewProps {
   onLearningReviewed: (dashboard: AgentMemoryDashboard) => void;
   onPrivacyUpdated: (dashboard: AgentMemoryDashboard) => void;
   onPrivacyErased: (inspection: AgentProjectInspection) => void;
-  onPromoteLearning: (draft: PromotedLearningNoteDraft) => Promise<void>;
-  onPromoteSession: (draft: PromotedSessionNoteDraft) => Promise<void>;
-  onLinkSessionCanvas: (request: SessionCanvasLinkRequest) => Promise<void>;
 }
 
 function AgentMemoryWorkspaceView({
   open,
-  vaultName,
   onClose,
+  closable,
   projectPath,
   projectLabel,
   catalog,
@@ -600,9 +541,6 @@ function AgentMemoryWorkspaceView({
   onLearningReviewed,
   onPrivacyUpdated,
   onPrivacyErased,
-  onPromoteLearning,
-  onPromoteSession,
-  onLinkSessionCanvas,
 }: AgentMemoryWorkspaceViewProps) {
   return (
     <Dialog.Root
@@ -627,9 +565,9 @@ function AgentMemoryWorkspaceView({
             onReturnToProjects={onReturnToProjects}
             onRefresh={onRefresh}
             onClose={onClose}
+            closable={closable}
           />
           <AgentMemoryBody
-            vaultName={vaultName}
             projectPath={projectPath}
             catalog={catalog}
             catalogBusy={catalogBusy}
@@ -657,11 +595,8 @@ function AgentMemoryWorkspaceView({
               key={`session-${sessionId ?? "closed"}`}
               sessionId={sessionId}
               projectPath={projectPath}
-              projectName={dashboard.overview.projectName}
               onClose={onSessionClose}
               onEvidence={onEvidence}
-              onPromote={onPromoteSession}
-              onLinkCanvas={onLinkSessionCanvas}
               onRenamed={onSessionRenamed}
               onErased={onSessionErased}
             />
@@ -671,11 +606,9 @@ function AgentMemoryWorkspaceView({
               key={`learning-${learningId ?? "closed"}`}
               learningId={learningId}
               projectPath={projectPath}
-              projectName={dashboard.overview.projectName}
               onClose={onLearningClose}
               onSession={onLearningSession}
               onEvidence={onEvidence}
-              onPromote={onPromoteLearning}
               onReviewed={onLearningReviewed}
             />
           )}
@@ -694,6 +627,7 @@ function AgentMemoryHeader({
   onReturnToProjects,
   onRefresh,
   onClose,
+  closable,
 }: {
   projectPath: string | null;
   projectLabel: string | null;
@@ -703,6 +637,7 @@ function AgentMemoryHeader({
   onReturnToProjects: () => void;
   onRefresh: () => Promise<void>;
   onClose: () => void;
+  closable: boolean;
 }) {
   return (
     <header className="app-chrome flex h-14 shrink-0 items-center justify-between px-3 sm:px-5">
@@ -752,22 +687,23 @@ function AgentMemoryHeader({
             <span className="hidden sm:inline">Refresh snapshot</span>
           </Button>
         )}
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={onClose}
-          aria-label="Close Agent Memory"
-          title="Close Agent Memory"
-        >
-          <X size={16} />
-        </Button>
+        {closable && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onClose}
+            aria-label="Close Agent Memory"
+            title="Close Agent Memory"
+          >
+            <X size={16} />
+          </Button>
+        )}
       </div>
     </header>
   );
 }
 
 function AgentMemoryBody({
-  vaultName,
   projectPath,
   catalog,
   catalogBusy,
@@ -791,7 +727,6 @@ function AgentMemoryBody({
   onPrivacyErased,
 }: Pick<
   AgentMemoryWorkspaceViewProps,
-  | "vaultName"
   | "projectPath"
   | "catalog"
   | "catalogBusy"
@@ -832,7 +767,6 @@ function AgentMemoryBody({
       <ProjectOnboarding
         inspection={inspection}
         projectPath={projectPath}
-        vaultName={vaultName}
         busy={busy}
         error={error}
         onChoose={() => void onChooseProject()}
@@ -1475,21 +1409,15 @@ function ReviewInbox({
 function SessionInspector({
   sessionId,
   projectPath,
-  projectName,
   onClose,
   onEvidence,
-  onPromote,
-  onLinkCanvas,
   onRenamed,
   onErased,
 }: {
   sessionId: string | null;
   projectPath: string;
-  projectName: string;
   onClose: () => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
-  onPromote: (draft: PromotedSessionNoteDraft) => Promise<void>;
-  onLinkCanvas: (request: SessionCanvasLinkRequest) => Promise<void>;
   onRenamed: (dashboard: AgentMemoryDashboard) => void;
   onErased: (dashboard: AgentMemoryDashboard) => void;
 }) {
@@ -1499,10 +1427,6 @@ function SessionInspector({
   const [turnsError, setTurnsError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [renameDirty, setRenameDirty] = useState(false);
-  const [promoting, setPromoting] = useState(false);
-  const [promotionDirty, setPromotionDirty] = useState(false);
-  const [canvasLinking, setCanvasLinking] = useState(false);
-  const [canvasDirty, setCanvasDirty] = useState(false);
   const [erasing, setErasing] = useState(false);
   const [erasureDirty, setErasureDirty] = useState(false);
   const [busy, setBusy] = useState(Boolean(sessionId));
@@ -1539,62 +1463,16 @@ function SessionInspector({
       .finally(() => setTurnsBusy(false));
   }
 
-  function togglePromotion() {
-    if (
-      ((promoting && promotionDirty) ||
-        (renaming && renameDirty) ||
-        (canvasLinking && canvasDirty) ||
-        (erasing && erasureDirty)) &&
-      !window.confirm("Discard your unsaved changes?")
-    ) {
-      return;
-    }
-    setPromotionDirty(false);
-    setRenameDirty(false);
-    setCanvasDirty(false);
-    setErasureDirty(false);
-    setRenaming(false);
-    setCanvasLinking(false);
-    setErasing(false);
-    setPromoting((current) => !current);
-  }
-
-  function toggleCanvasLinking() {
-    if (
-      ((canvasLinking && canvasDirty) ||
-        (renaming && renameDirty) ||
-        (promoting && promotionDirty) ||
-        (erasing && erasureDirty)) &&
-      !window.confirm("Discard your unsaved changes?")
-    ) {
-      return;
-    }
-    setCanvasDirty(false);
-    setRenameDirty(false);
-    setPromotionDirty(false);
-    setErasureDirty(false);
-    setRenaming(false);
-    setPromoting(false);
-    setErasing(false);
-    setCanvasLinking((current) => !current);
-  }
-
   function toggleRenaming() {
     if (
       ((renaming && renameDirty) ||
-        (promoting && promotionDirty) ||
-        (canvasLinking && canvasDirty) ||
         (erasing && erasureDirty)) &&
       !window.confirm("Discard your unsaved changes?")
     ) {
       return;
     }
     setRenameDirty(false);
-    setPromotionDirty(false);
-    setCanvasDirty(false);
     setErasureDirty(false);
-    setPromoting(false);
-    setCanvasLinking(false);
     setErasing(false);
     setRenaming((current) => !current);
   }
@@ -1602,20 +1480,14 @@ function SessionInspector({
   function toggleErasing() {
     if (
       ((erasing && erasureDirty) ||
-        (renaming && renameDirty) ||
-        (promoting && promotionDirty) ||
-        (canvasLinking && canvasDirty)) &&
+        (renaming && renameDirty)) &&
       !window.confirm("Discard your unsaved changes?")
     ) {
       return;
     }
     setErasureDirty(false);
     setRenameDirty(false);
-    setPromotionDirty(false);
-    setCanvasDirty(false);
     setRenaming(false);
-    setPromoting(false);
-    setCanvasLinking(false);
     setErasing((current) => !current);
   }
 
@@ -1626,8 +1498,6 @@ function SessionInspector({
         if (
           !next &&
           ((!(renaming && renameDirty) &&
-            !(promoting && promotionDirty) &&
-            !(canvasLinking && canvasDirty) &&
             !(erasing && erasureDirty)) ||
             window.confirm("Discard your unsaved session changes?"))
         ) {
@@ -1643,11 +1513,7 @@ function SessionInspector({
         >
           <SessionInspectorHeader
             session={session}
-            promoting={promoting}
-            canvasLinking={canvasLinking}
             renaming={renaming}
-            onTogglePromotion={togglePromotion}
-            onToggleCanvasLinking={toggleCanvasLinking}
             onToggleRenaming={toggleRenaming}
           />
 
@@ -1691,56 +1557,6 @@ function SessionInspector({
                       .catch((cause) => setError(errorMessage(cause)))
                       .finally(() => setBusy(false));
                   }}
-                />
-              </Suspense>
-            </div>
-          )}
-          {promoting && session && (
-            <div
-              id="session-note-link-panel"
-              className="shrink-0 border-t border-border bg-surface-1"
-            >
-              <Suspense fallback={<KnowledgeSurfaceFallback />}>
-                <SessionPromotionEditor
-                  projectName={projectName}
-                  session={session}
-                  onCancel={() => {
-                    if (
-                      promotionDirty &&
-                      !window.confirm("Discard your unsaved session note?")
-                    ) {
-                      return;
-                    }
-                    setPromotionDirty(false);
-                    setPromoting(false);
-                  }}
-                  onDirtyChange={setPromotionDirty}
-                  onPromote={onPromote}
-                />
-              </Suspense>
-            </div>
-          )}
-          {canvasLinking && session && (
-            <div
-              id="session-canvas-link-panel"
-              className="shrink-0 border-t border-border bg-surface-1"
-            >
-              <Suspense fallback={<KnowledgeSurfaceFallback />}>
-                <SessionCanvasEditor
-                  projectName={projectName}
-                  session={session}
-                  onCancel={() => {
-                    if (
-                      canvasDirty &&
-                      !window.confirm("Discard your unsaved Canvas link?")
-                    ) {
-                      return;
-                    }
-                    setCanvasDirty(false);
-                    setCanvasLinking(false);
-                  }}
-                  onDirtyChange={setCanvasDirty}
-                  onLink={onLinkCanvas}
                 />
               </Suspense>
             </div>
@@ -2402,19 +2218,11 @@ function SessionCheckpointCard({
 
 function SessionInspectorHeader({
   session,
-  promoting,
-  canvasLinking,
   renaming,
-  onTogglePromotion,
-  onToggleCanvasLinking,
   onToggleRenaming,
 }: {
   session: SessionContext | null;
-  promoting: boolean;
-  canvasLinking: boolean;
   renaming: boolean;
-  onTogglePromotion: () => void;
-  onToggleCanvasLinking: () => void;
   onToggleRenaming: () => void;
 }) {
   return (
@@ -2428,34 +2236,6 @@ function SessionInspectorHeader({
         </Dialog.Title>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {session && (
-          <Button
-            size="sm"
-            variant={promoting ? "outline" : "ghost"}
-            className="h-8"
-            aria-expanded={promoting}
-            aria-controls="session-note-link-panel"
-            aria-label="Link session to notes"
-            onClick={onTogglePromotion}
-          >
-            <FilePlus2 size={13} aria-hidden="true" />
-            <span className="hidden min-[420px]:inline">To notes</span>
-          </Button>
-        )}
-        {session && (
-          <Button
-            size="sm"
-            variant={canvasLinking ? "outline" : "ghost"}
-            className="h-8"
-            aria-expanded={canvasLinking}
-            aria-controls="session-canvas-link-panel"
-            aria-label="Link session to Canvas"
-            onClick={onToggleCanvasLinking}
-          >
-            <LayoutDashboard size={13} aria-hidden="true" />
-            <span className="hidden min-[520px]:inline">To Canvas</span>
-          </Button>
-        )}
         {session && (
           <Button
             size="sm"
@@ -2572,27 +2352,22 @@ function revisionCompatibilityLabel(value: RevisionCompatibility): string {
 function LearningInspector({
   learningId,
   projectPath,
-  projectName,
   onClose,
   onSession,
   onEvidence,
-  onPromote,
   onReviewed,
 }: {
   learningId: string | null;
   projectPath: string;
-  projectName: string;
   onClose: () => void;
   onSession: (sessionId: string) => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
-  onPromote: (draft: PromotedLearningNoteDraft) => Promise<void>;
   onReviewed: (dashboard: AgentMemoryDashboard) => void;
 }) {
   const [learning, setLearning] = useState<LearningContext | null>(null);
   const [action, setAction] = useState<LearningAction | null>(null);
   const [note, setNote] = useState("");
   const [correcting, setCorrecting] = useState(false);
-  const [promoting, setPromoting] = useState(false);
   const [busy, setBusy] = useState(Boolean(learningId));
   const [error, setError] = useState<string | null>(null);
 
@@ -2648,15 +2423,6 @@ function LearningInspector({
     setError(null);
   }
 
-  function beginPromotion() {
-    if (!learning?.trustedForReuse) return;
-    setAction(null);
-    setNote("");
-    setCorrecting(false);
-    setPromoting(true);
-    setError(null);
-  }
-
   return (
     <Dialog.Root
       open={Boolean(learningId)}
@@ -2697,7 +2463,6 @@ function LearningInspector({
             learning={learning}
             terminal={terminal}
             correcting={correcting}
-            promoting={promoting}
             action={action}
             note={note}
             noteRequired={noteRequired}
@@ -2705,17 +2470,12 @@ function LearningInspector({
             busy={busy}
             error={error}
             projectPath={projectPath}
-            projectName={projectName}
-            onClose={onClose}
-            onPromote={onPromote}
             onReviewed={onReviewed}
             onBeginCorrection={beginCorrection}
-            onBeginPromotion={beginPromotion}
             onSetAction={setAction}
             onSetNote={setNote}
             onSetError={setError}
             onSetCorrecting={setCorrecting}
-            onSetPromoting={setPromoting}
             onSubmitReview={submitReview}
           />
         </Dialog.Content>
@@ -3192,7 +2952,6 @@ function LearningInspectorFooter({
   learning,
   terminal,
   correcting,
-  promoting,
   action,
   note,
   noteRequired,
@@ -3200,23 +2959,17 @@ function LearningInspectorFooter({
   busy,
   error,
   projectPath,
-  projectName,
-  onClose,
-  onPromote,
   onReviewed,
   onBeginCorrection,
-  onBeginPromotion,
   onSetAction,
   onSetNote,
   onSetError,
   onSetCorrecting,
-  onSetPromoting,
   onSubmitReview,
 }: {
   learning: LearningContext | null;
   terminal: boolean;
   correcting: boolean;
-  promoting: boolean;
   action: LearningAction | null;
   note: string;
   noteRequired: boolean;
@@ -3224,17 +2977,12 @@ function LearningInspectorFooter({
   busy: boolean;
   error: string | null;
   projectPath: string;
-  projectName: string;
-  onClose: () => void;
-  onPromote: (draft: PromotedLearningNoteDraft) => Promise<void>;
   onReviewed: (dashboard: AgentMemoryDashboard) => void;
   onBeginCorrection: () => void;
-  onBeginPromotion: () => void;
   onSetAction: (action: LearningAction | null) => void;
   onSetNote: (note: string) => void;
   onSetError: (error: string | null) => void;
   onSetCorrecting: (correcting: boolean) => void;
-  onSetPromoting: (promoting: boolean) => void;
   onSubmitReview: () => Promise<void>;
 }) {
   if (!learning) return null;
@@ -3268,36 +3016,9 @@ function LearningInspectorFooter({
             onCorrected={onReviewed}
           />
         </Suspense>
-      ) : promoting ? (
-        <Suspense
-          fallback={
-            <p className="py-4 text-center text-meta text-muted-foreground">
-              Loading note preview…
-            </p>
-          }
-        >
-          <LearningPromotionEditor
-            projectName={projectName}
-            learning={learning}
-            onCancel={() => {
-              onSetPromoting(false);
-              onSetError(null);
-            }}
-            onPromote={async (draft) => {
-              await onPromote(draft);
-              onClose();
-            }}
-          />
-        </Suspense>
       ) : !action ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="mr-auto text-meta font-medium">Your decision</span>
-          {learning.trustedForReuse && (
-            <Button size="sm" variant="outline" onClick={onBeginPromotion}>
-              <FilePlus2 size={13} aria-hidden="true" />
-              Promote to note
-            </Button>
-          )}
           <Button size="sm" variant="outline" onClick={onBeginCorrection}>
             <PencilLine size={13} />
             Correct
@@ -3392,7 +3113,6 @@ function LearningInspectorFooter({
 function onboardingCopy(
   inspection: AgentProjectInspection | null,
   projectPath: string | null,
-  vaultName: string,
 ): { title: string; body: string } {
   if (!inspection) {
     return projectPath
@@ -3413,13 +3133,13 @@ function onboardingCopy(
       };
     case "unbound":
       return {
-        title: "Review capture before connecting",
-        body: `“${inspection.projectName}” is initialized but has no private vault binding. Review its current capture boundary before connecting durable memory to “${vaultName}”.`,
+        title: "Review legacy migration",
+        body: `“${inspection.projectName}” is an older initialized project without migrated native continuity. Review its current capture boundary, then choose its legacy Ley vault explicitly for one-time migration.`,
       };
     case "vault-unavailable":
       return {
-        title: "Reconnect this project",
-        body: `“${inspection.projectName}” was connected to “${inspection.previousVaultName}”, which moved or is unavailable. Reconnect it to the open vault, “${vaultName}”, and rebuild its local snapshot.`,
+        title: "Reconnect legacy migration source",
+        body: `“${inspection.projectName}” was connected to “${inspection.previousVaultName}”, which moved or is unavailable. Choose that legacy Ley vault explicitly to finish migration into native continuity.`,
       };
     case "needs-capture":
       return {
@@ -3521,7 +3241,6 @@ function InitialCapturePreviewCard({
 function ProjectOnboarding({
   inspection,
   projectPath,
-  vaultName,
   busy,
   error,
   onChoose,
@@ -3532,7 +3251,6 @@ function ProjectOnboarding({
 }: {
   inspection: AgentProjectInspection | null;
   projectPath: string | null;
-  vaultName: string;
   busy: boolean;
   error: string | null;
   onChoose: () => void;
@@ -3541,7 +3259,7 @@ function ProjectOnboarding({
   onConnect: () => void;
   onCapture: () => void;
 }) {
-  const copy = onboardingCopy(inspection, projectPath, vaultName);
+  const copy = onboardingCopy(inspection, projectPath);
   const primaryAction = inspection
     ? onboardingPrimaryAction(inspection, onInitialize, onConnect, onCapture)
     : null;
@@ -3573,7 +3291,7 @@ function ProjectOnboarding({
               storageLabel={
                 inspection.status === "uninitialized"
                   ? "Ley’s private local app storage"
-                  : `“${vaultName}” during legacy migration`
+                  : "the legacy vault you explicitly choose for migration"
               }
             />
           )}

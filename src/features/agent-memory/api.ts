@@ -33,6 +33,15 @@ export async function chooseAgentProject(): Promise<string | null> {
   return selected ?? null;
 }
 
+export async function chooseLegacyAgentVault(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Choose the legacy Ley vault to migrate",
+  });
+  return selected ?? null;
+}
+
 export function listAgentProjects(
   legacyProjectPath?: string,
 ): Promise<AgentProjectCatalog> {
@@ -101,16 +110,6 @@ export function inspectAgentProject(
   projectPath: string,
 ): Promise<AgentProjectInspection> {
   return invoke("inspect_agent_project", { projectPath });
-}
-
-export function verifyAgentProjectNoteVault(
-  projectPath: string,
-  openVaultPath: string,
-): Promise<void> {
-  return invoke("verify_agent_project_note_vault", {
-    projectPath,
-    openVaultPath,
-  });
 }
 
 export function readAgentProjectApprovedSources(
