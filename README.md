@@ -26,7 +26,7 @@ The target agent-facing contract is intentionally small:
 
 The target human-facing desktop is a focused control center for project setup/status, integrations, brief preview, recall, session/handoff history, review/correction, evidence, privacy, export, and erasure.
 
-General-purpose note editing, backlinks, Canvas, daily notes, browser-local storage, and other notebook features still present in parts of the migration tree are being retired rather than expanded.
+General-purpose note editing, backlinks, Canvas, daily notes, and the retired notebook runtime have been removed from the shipped product tree. A minimal browser-local schema compatibility island remains only so historical local data is not destructively dropped before its explicit import/export/erasure decision.
 
 ## Important principles
 
@@ -54,9 +54,8 @@ See [`LEY.md`](LEY.md) in a local development checkout for the current execution
 ├── schemas/              # Stable public/import-export payload contracts
 ├── src/
 │   ├── app/              # Native desktop React composition
-│   ├── core/             # Legacy note domain + migration-era shared logic
-│   ├── features/         # Desktop feature slices
-│   ├── infrastructure/   # Desktop projection/cache adapters
+│   ├── features/         # Focused continuity desktop feature slices
+│   ├── infrastructure/   # Historical local-data compatibility schema
 │   ├── shared/           # Reusable UI/state/utilities
 │   └── website/          # Public marketing site
 └── src-tauri/            # Native shell and local filesystem/project commands
@@ -95,7 +94,7 @@ its Linux/macOS/Windows x64+ARM64 matrix is intentionally more expensive and evi
 
 ## Migration status
 
-This is an incremental reset rather than a blind rewrite. The current tree still contains substantial legacy notebook and Agent Memory implementation so the new design can be benchmarked and migrated without throwing away user data or hard-won safety work.
+This is an incremental reset rather than a blind rewrite. The retired notebook implementation has been removed. Remaining compatibility code is kept only where it still protects migration, recovery, privacy/erasure, or historical local data while the focused continuity surface is narrowed.
 
 Work being retained or adapted includes:
 

@@ -120,8 +120,8 @@ fn cli_retires_scope_growth_but_lists_and_detaches_legacy_scope_without_path_lea
     );
     assert!(!create_rejected.status.success());
     let create_stderr = String::from_utf8_lossy(&create_rejected.stderr);
-    assert!(create_stderr.contains("Knowledge Scope creation is retired"));
-    assert!(create_stderr.contains("per-task source selection"));
+    assert!(create_stderr.contains("unknown scope command 'create'"));
+    assert!(create_stderr.contains("use list, attached, or detach"));
 
     let scope_id = "ksc_11111111111111111111111111111111";
     seed_legacy_scope(
@@ -154,8 +154,8 @@ fn cli_retires_scope_growth_but_lists_and_detaches_legacy_scope_without_path_lea
     );
     assert!(!attach_rejected.status.success());
     let attach_stderr = String::from_utf8_lossy(&attach_rejected.stderr);
-    assert!(attach_stderr.contains("Knowledge Scope attachment is retired"));
-    assert!(attach_stderr.contains("per-task source selection"));
+    assert!(attach_stderr.contains("unknown scope command 'attach'"));
+    assert!(attach_stderr.contains("use list, attached, or detach"));
 
     let active_scopes = json_stdout(ley(
         &config,

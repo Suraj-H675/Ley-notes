@@ -493,8 +493,8 @@ fn cli_retires_bootstrap_reference_growth_but_preserves_legacy_read_detach_and_i
     );
     assert!(!attach_rejected.status.success());
     let attach_stderr = String::from_utf8_lossy(&attach_rejected.stderr);
-    assert!(attach_stderr.contains("Bootstrap Reference attachment is retired"));
-    assert!(attach_stderr.contains("per-task selection"));
+    assert!(attach_stderr.contains("unknown bootstrap-ref command 'attach'"));
+    assert!(attach_stderr.contains("use list or detach"));
 
     let grant_id = "brg_2222222222222222222222222222222222222222222222222222222222222222";
     seed_legacy_bootstrap_reference(&config, &target, &source, &source_vault, grant_id);

@@ -105,8 +105,8 @@ fn cli_retires_mount_creation_but_lists_and_removes_legacy_mount_without_path_le
     );
     assert!(!rejected.status.success());
     let stderr = String::from_utf8_lossy(&rejected.stderr);
-    assert!(stderr.contains("standing Context Mount creation is retired"));
-    assert!(stderr.contains("per-task source selection"));
+    assert!(stderr.contains("unknown mount command 'add'"));
+    assert!(stderr.contains("use list or remove"));
 
     let empty_before = json_stdout(ley(
         &config,

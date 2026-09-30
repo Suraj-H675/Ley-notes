@@ -1767,49 +1767,6 @@ fn correct_agent_learning_with_access_and_store(
 }
 
 #[tauri::command]
-fn bind_agent_project(
-    project_path: String,
-    vault_path: String,
-) -> Result<ProjectVaultBinding, String> {
-    let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
-    prepare_legacy_project_binding(Path::new(&project_path), &store)
-        .map_err(|error| error.to_string())?;
-    BindingRegistry::system_default()
-        .and_then(|registry| registry.bind(project_path, vault_path))
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn resolve_agent_project_vault(
-    project_path: String,
-    vault_override: Option<String>,
-) -> Result<ProjectVaultBinding, String> {
-    let override_path = vault_override.as_deref().map(Path::new);
-    BindingRegistry::system_default()
-        .and_then(|registry| registry.resolve(project_path, override_path))
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn unbind_agent_project(project_path: String) -> Result<Option<ProjectVaultBinding>, String> {
-    BindingRegistry::system_default()
-        .and_then(|registry| registry.unbind(project_path))
-        .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn ingest_agent_project(
-    project_path: String,
-    vault_override: Option<String>,
-) -> Result<IngestionResult, String> {
-    let override_path = vault_override.as_deref().map(Path::new);
-    with_transition_agent_access(Path::new(&project_path), override_path, |access, store| {
-        ingest_agent_project_with_access(Path::new(&project_path), access, store)
-    })
-    .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
 fn read_agent_artifacts(
     project_path: String,
     vault_override: Option<String>,
@@ -1944,10 +1901,6 @@ pub fn run() {
             erase_agent_session,
             review_agent_learning,
             correct_agent_learning,
-            bind_agent_project,
-            resolve_agent_project_vault,
-            unbind_agent_project,
-            ingest_agent_project,
             read_agent_artifacts,
             read_agent_cited_evidence,
             read_agent_media_evidence,

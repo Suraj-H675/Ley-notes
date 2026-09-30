@@ -76,8 +76,9 @@ fn cli_retires_connector_creation_and_refresh_but_lists_and_removes_legacy_autho
         ],
     );
     assert!(!add_rejected.status.success());
-    assert!(String::from_utf8_lossy(&add_rejected.stderr)
-        .contains("External Connector creation is retired"));
+    assert!(
+        String::from_utf8_lossy(&add_rejected.stderr).contains("unknown connector command 'add'")
+    );
 
     let refresh_rejected = run_ley(
         &config,
@@ -91,7 +92,7 @@ fn cli_retires_connector_creation_and_refresh_but_lists_and_removes_legacy_autho
     );
     assert!(!refresh_rejected.status.success());
     assert!(String::from_utf8_lossy(&refresh_rejected.stderr)
-        .contains("External Connector refresh is retired"));
+        .contains("unknown connector command 'refresh'"));
 
     let registry = ExternalConnectorRegistry::at(
         config

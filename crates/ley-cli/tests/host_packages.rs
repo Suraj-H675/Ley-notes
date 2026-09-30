@@ -48,12 +48,7 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
     assert_eq!(mcp["mcpServers"]["ley"]["command"], "ley");
     assert_eq!(
         mcp["mcpServers"]["ley"]["args"],
-        serde_json::json!([
-            "mcp",
-            "${CLAUDE_PROJECT_DIR}",
-            "--allow-session-writes",
-            "--allow-learning-proposals"
-        ])
+        serde_json::json!(["mcp", "${CLAUDE_PROJECT_DIR}", "--allow-session-writes"])
     );
 
     let hooks = json(plugin.join("hooks/hooks.json"));
@@ -97,6 +92,11 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
 fn codex_prompt_hook_keeps_automatic_context_inside_an_explicit_host_bound() {
     let root = repository_root();
     let plugin = root.join("integrations/codex/plugins/ley-memory");
+    let mcp = json(plugin.join(".mcp.json"));
+    assert_eq!(
+        mcp["mcpServers"]["ley"]["args"],
+        serde_json::json!(["mcp", ".", "--allow-session-writes"])
+    );
     let hooks = json(plugin.join("hooks/hooks.json"));
     let handler = &hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0];
 

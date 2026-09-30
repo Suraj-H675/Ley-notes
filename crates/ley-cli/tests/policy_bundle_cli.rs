@@ -132,7 +132,7 @@ fn cli_retires_policy_bundle_growth_but_preserves_legacy_inspection_and_detach()
     );
     assert!(!create_scope_rejected.status.success());
     assert!(String::from_utf8_lossy(&create_scope_rejected.stderr)
-        .contains("Knowledge Scope creation is retired"));
+        .contains("unknown scope command 'create'"));
 
     let scope_id = "ksc_22222222222222222222222222222222";
     seed_legacy_scope(&config, &active, &source, scope_id);
@@ -152,7 +152,7 @@ fn cli_retires_policy_bundle_growth_but_preserves_legacy_inspection_and_detach()
     );
     assert!(!create_bundle_rejected.status.success());
     assert!(String::from_utf8_lossy(&create_bundle_rejected.stderr)
-        .contains("Policy Bundle creation is retired"));
+        .contains("unknown policy-bundle command 'create'"));
 
     let bundle_id = "pbd_11111111111111111111111111111111";
     let source_project_id = diagnose_project(&source).unwrap().identity.project_id;
@@ -229,7 +229,7 @@ fn cli_retires_policy_bundle_growth_but_preserves_legacy_inspection_and_detach()
     );
     assert!(!attach_rejected.status.success());
     assert!(String::from_utf8_lossy(&attach_rejected.stderr)
-        .contains("Policy Bundle attachment is retired"));
+        .contains("unknown policy-bundle command 'attach'"));
 
     let attached_list = json_stdout(ley(
         &config,

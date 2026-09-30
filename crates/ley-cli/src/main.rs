@@ -424,16 +424,11 @@ fn print_egress_mutation(
 fn connector(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "connector requires list, show, or remove; connector creation/refresh is retired"
-                .to_owned(),
+            "connector requires list, show, or remove".to_owned(),
         ));
     };
     let registry = ExternalConnectorRegistry::system_default()?;
     match command {
-        "add" => Err(CliError::Usage(
-            "External Connector creation is retired; existing local connector state may be listed, shown, or removed during compatibility cleanup"
-                .to_owned(),
-        )),
         "list" => {
             let mut project = None;
             let mut json = false;
@@ -472,10 +467,6 @@ fn connector(arguments: &[String]) -> Result<(), CliError> {
             }
             Ok(())
         }
-        "refresh" => Err(CliError::Usage(
-            "External Connector refresh is retired; Ley no longer performs provider lifecycle/network refresh for this legacy connector model"
-                .to_owned(),
-        )),
         "show" => {
             let (connector_id, project, vault, json) = parse_connector_store_arguments(
                 &arguments[1..],
@@ -550,7 +541,7 @@ fn connector(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!(
-            "unknown connector command '{other}'; use list, show, or remove (add/refresh are retired)"
+            "unknown connector command '{other}'; use list, show, or remove"
         ))),
     }
 }
@@ -601,16 +592,10 @@ fn terminal_safe(value: &str) -> String {
 
 fn mount(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
-        return Err(CliError::Usage(
-            "mount requires list or remove; standing Context Mount creation is retired".to_owned(),
-        ));
+        return Err(CliError::Usage("mount requires list or remove".to_owned()));
     };
     let registry = ContextMountRegistry::system_default()?;
     match command {
-        "add" => Err(CliError::Usage(
-            "standing Context Mount creation is retired; existing mounts may be listed or removed while Ley moves to explicit per-task source selection"
-                .to_owned(),
-        )),
         "list" => {
             let mut active = None;
             let mut json = false;
@@ -687,7 +672,7 @@ fn mount(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!(
-            "unknown mount command '{other}'; use list or remove (add is retired)"
+            "unknown mount command '{other}'; use list or remove"
         ))),
     }
 }
@@ -837,16 +822,11 @@ fn bootstrap_specification(arguments: &[String]) -> Result<(), CliError> {
 fn bootstrap_reference(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "bootstrap-ref requires list or detach; Bootstrap Reference attachment is retired"
-                .to_owned(),
+            "bootstrap-ref requires list or detach".to_owned(),
         ));
     };
     let registry = BootstrapSpecificationRegistry::system_default()?;
     match command {
-        "attach" => Err(CliError::Usage(
-            "Bootstrap Reference attachment is retired; existing grants may be listed or detached while uninitialized-workspace reuse moves to approved sources and explicit per-task selection"
-                .to_owned(),
-        )),
         "list" => {
             let mut workspace = None;
             let mut json = false;
@@ -920,25 +900,20 @@ fn bootstrap_reference(arguments: &[String]) -> Result<(), CliError> {
             }
             Ok(())
         }
-        _ => Err(CliError::Usage(
-            "bootstrap-ref requires list or detach (attach is retired)".to_owned(),
-        )),
+        other => Err(CliError::Usage(format!(
+            "unknown bootstrap-ref command '{other}'; use list or detach"
+        ))),
     }
 }
 
 fn scope(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "scope requires list, attached, or detach; Knowledge Scope creation/attachment is retired"
-                .to_owned(),
+            "scope requires list, attached, or detach".to_owned(),
         ));
     };
     let registry = KnowledgeScopeRegistry::system_default()?;
     match command {
-        "create" => Err(CliError::Usage(
-            "Knowledge Scope creation is retired; existing scopes remain listable/detachable during migration to explicit per-task source selection"
-                .to_owned(),
-        )),
         "list" => {
             let mut json = false;
             for argument in &arguments[1..] {
@@ -970,10 +945,6 @@ fn scope(arguments: &[String]) -> Result<(), CliError> {
             }
             Ok(())
         }
-        "attach" => Err(CliError::Usage(
-            "Knowledge Scope attachment is retired; existing attachments may be inspected or detached while Ley moves to explicit per-task source selection"
-                .to_owned(),
-        )),
         "attached" => {
             let mut active = None;
             let mut json = false;
@@ -1044,7 +1015,7 @@ fn scope(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!(
-            "unknown scope command '{other}'; use list, attached, or detach (create/attach are retired)"
+            "unknown scope command '{other}'; use list, attached, or detach"
         ))),
     }
 }
@@ -1052,17 +1023,12 @@ fn scope(arguments: &[String]) -> Result<(), CliError> {
 fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "policy-bundle requires list, attached, status, or detach; creation/attachment is retired"
-                .to_owned(),
+            "policy-bundle requires list, attached, status, or detach".to_owned(),
         ));
     };
     let registry = PolicyBundleRegistry::system_default()?;
     let scopes = KnowledgeScopeRegistry::system_default()?;
     match command {
-        "create" => Err(CliError::Usage(
-            "Policy Bundle creation is retired; existing bundles remain inspectable/detachable while Ley retires the persistent bundle authority graph"
-                .to_owned(),
-        )),
         "list" => {
             let mut json = false;
             for argument in &arguments[1..] {
@@ -1086,9 +1052,7 @@ fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
                     let ready = bundle
                         .sources
                         .iter()
-                        .filter(|source| {
-                            source.status == ley_core::PolicyBundleSourceStatus::Ready
-                        })
+                        .filter(|source| source.status == ley_core::PolicyBundleSourceStatus::Ready)
                         .count();
                     println!(
                         "  {}  {:?}  {}  scope:{}  sources:{}/{} ready",
@@ -1104,10 +1068,6 @@ fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
             }
             Ok(())
         }
-        "attach" => Err(CliError::Usage(
-            "Policy Bundle attachment is retired; existing attachments may be inspected or detached during compatibility cleanup"
-                .to_owned(),
-        )),
         "attached" | "status" => {
             let mut active = None;
             let mut json = false;
@@ -1121,8 +1081,7 @@ fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
                     value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
                 }
             }
-            let active =
-                active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
             let result = registry.attached(&active, &scopes)?;
             if json {
                 println!(
@@ -1166,8 +1125,7 @@ fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
             let bundle_id = bundle_id.ok_or_else(|| {
                 CliError::Usage("policy-bundle detach requires BUNDLE_ID".to_owned())
             })?;
-            let active =
-                active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
+            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
             let removed = registry.detach(&active, &bundle_id)?;
             if json {
                 println!(
@@ -1183,7 +1141,7 @@ fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!(
-            "unknown policy-bundle command '{other}'; use list, attached, status, or detach (create/attach are retired)"
+            "unknown policy-bundle command '{other}'; use list, attached, status, or detach"
         ))),
     }
 }
