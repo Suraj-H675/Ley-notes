@@ -51,8 +51,8 @@ after eligible typed checkpoint/finish outcomes exist. `ley_session_get` exposes
 coverage, unique observed-binding coverage, and at most five recent body-free unobserved binding
 metadata rows. For a terminal session, `finish.eventId` and the row's `terminalFinishEventId` expose
 the exact retained finish event that can be deliberately passed to the observe tool. A terminal
-`unobserved-context-utility-binding` Memory Health signal is a measurement-gap reminder only; it is not
-evidence that the model used or ignored the context and must not alter trust/ranking automatically.
+An unobserved binding row is a measurement-gap record only; it is not evidence that the model used or
+ignored the context and must not alter trust/ranking automatically.
 
 ## Codex
 
@@ -84,9 +84,7 @@ When egress blocks historical context, hooks inject only bounded/content-free di
 
 Codex also supports the separate **Bootstrap Specification** mode. A local user must first attach already-approved bootstrap authority. The still-uninitialized target creates no Ley project/session history, while its MCP server advertises exactly one read-only tool: `ley_compile_context`. Normal initialization retires the bootstrap authority and returns the workspace to the ordinary four-tool project lifecycle.
 
-Retained Context Mount, Bootstrap Reference, Knowledge Scope, Policy Bundle, external-connector, and fine-grained egress records remain compatibility/privacy state. They can still constrain what `ley_brief` may admit, even after the agent-facing surface is small. New creation/attachment routes are retired; surviving local CLI inspection/removal/detach routes exist so old authority can be cleaned up without silently laundering provenance or weakening egress policy. Codex cannot mutate those authorities through normal MCP or hooks.
-
-Reviewed runbook/Skill conversion remains an explicit local-user CLI workflow and is not part of Codex MCP authority. Exported content is non-installing and grants no tool, filesystem, network, review, write, or egress permission.
+Retained Context Mount, Knowledge Scope, Policy Bundle, external-connector, and fine-grained egress records remain compatibility/privacy state. They can still constrain what `ley_brief` may admit, even after the agent-facing surface is small. Legacy Bootstrap Reference grants are narrower cleanup-only state: they do not activate or contribute bootstrap context and survive only so local users can list/detach them before initialization cleanup. Codex cannot mutate these authorities through normal MCP or hooks.
 
 ## Claude Code
 
@@ -112,7 +110,7 @@ Use the automatic block directly when adequate. `ley_brief` is the normal fallba
 
 Claude Code has the same fail-closed Bootstrap Specification exception as Codex: an uninitialized target with explicit bootstrap authority advertises exactly one read-only `ley_compile_context` tool and creates no normal Ley project/session history. Initializing the target retires bootstrap authority.
 
-Retained mounts/references/scopes/bundles/connectors and finer-grained egress ancestry remain compatibility/privacy state that may constrain compiled context. Claude cannot create/attach/mutate those authorities through the canonical MCP surface; local CLI cleanup routes remain available until F4 proves the retained state can be safely removed. Reviewed runbook/Skill export likewise remains a separate explicit local-user workflow.
+Retained mounts/references/scopes/bundles/connectors and finer-grained egress ancestry remain compatibility/privacy state that may constrain compiled context. Claude cannot create/attach/mutate those authorities through the canonical MCP surface; local CLI cleanup routes remain available until F4 proves the retained state can be safely removed.
 
 ## What automatic capture does
 
@@ -179,6 +177,6 @@ checkpoints.
 
 An ordinary uninitialized workspace with no Bootstrap Specification authority, or an initialized-but-unbound project, returns `{}` and remains untouched. An uninitialized workspace with only Bootstrap Reference authority also remains a hook no-op. The narrow prompt-time exception requires current Bootstrap Specification authority: non-prompt events still return `{}`, but `UserPromptSubmit` may return read-only whole-Specification context without a Ley session or turn capture. In normal project mode, a stable host session maps to the same Ley session after process restart. Codex pairs retries with its documented stable `turn_id`; Claude Code uses the append-only Ley session state because their pre/post events do not share a stable turn identifier. Exact prompt/response retries replay the existing bounded turn evidence instead of duplicating it. Prompt-time automatic context is recomputed from the current permitted Ley state rather than persisted as a retry cache, so an unchanged retry returns the same logical pack while a real intervening authority/memory change may truthfully produce a newer pack. The same prompt submitted after a completed response remains a new turn. A new normal-project host session receives the bounded resume pack, including earlier checkpoint evidence and only user-trusted, artifact-current learnings—not captured prompt/response bodies.
 
-The bundled MCP process also starts cleanly in an ordinary workspace, but advertises zero capabilities and no tools or resources. It never initializes or scans that directory. If and only if the local user has explicitly attached Bootstrap Specification **or Bootstrap Reference** authority, that same uninitialized workspace instead receives the one-tool read-only bootstrap MCP server. This keeps a globally installed integration quiet and harmless until the user either sets up a normal Ley project or explicitly grants a narrow bootstrap source.
+The bundled MCP process also starts cleanly in an ordinary workspace, but advertises zero capabilities and no tools or resources. It never initializes or scans that directory. If and only if the local user has explicitly attached Bootstrap Specification authority, that same uninitialized workspace instead receives the one-tool read-only bootstrap MCP server. A legacy Reference-only workspace remains inactive. This keeps a globally installed integration quiet and harmless until the user either sets up a normal Ley project or explicitly grants the narrow Specification bootstrap source.
 
 If a captured snapshot is missing or inconsistent, the hook fails rather than inventing context. Run `ley doctor`, restore the binding if needed, then `ley ingest` deliberately.

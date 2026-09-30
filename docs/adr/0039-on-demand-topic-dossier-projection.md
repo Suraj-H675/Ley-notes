@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Superseded by the focused-product reset on 2026-09-30. The named Topic Dossier product/API is retired;
+bounded `ley_brief` / `ley_search` / `ley_evidence` is the current topic-oriented continuity surface.
+This ADR remains historical evidence for the evaluated derived-projection experiment.
 
 ## Context
 

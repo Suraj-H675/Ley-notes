@@ -66,22 +66,10 @@ METRIC_NAMES = (
     "budget_full_history_efficiency",
     "retrieval_robustness",
     "privacy_violation_rate",
-    "topic_dossier",
-    "current_project_state",
-    "context_pack_inspector",
     "failure_attribution",
-    "memory_health",
-    "agent_legibility",
-    "reviewed_runbook",
     "verification_evidence_links",
     "live_source_honesty",
     "branch_worktree_controls",
-    "graph_relation_retrieval",
-    "trace_to_code_retrieval",
-    "ripple_effect_retrieval",
-    "context_memory_utility",
-    "procedure_application_history",
-    "procedure_outcome_health_attention",
     "external_connector",
     "multimodal_evidence",
     "knowledge_scope",
@@ -89,7 +77,6 @@ METRIC_NAMES = (
     "historical_host_import",
     "consolidation_inbox",
     "bootstrap_specification",
-    "bootstrap_reference",
 )
 
 P0_CAPABILITY_COVERAGE = {
@@ -282,11 +269,6 @@ P0_INDEPENDENT_DOWNSTREAM_CAPABILITIES = frozenset(
 P1_INDEPENDENT_DOWNSTREAM_CAPABILITIES = frozenset(
     {
         "bootstrap-specifications",
-        "bootstrap-reference-projects",
-        "topic-dossiers",
-        "current-project-state",
-        "reviewed-runbook-skill-export",
-        "richer-graph-relations",
     }
 )
 
@@ -319,156 +301,6 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "empty-workspace-bootstrap-specification",
             "bootstrap_specification",
-            "truthy",
-        ),
-    },
-    "bootstrap-reference-projects": {
-        "adversarial": (
-            "empty-workspace-bootstrap-reference",
-            "bootstrap_reference",
-            "truthy",
-        ),
-        "downstream": (
-            "empty-workspace-bootstrap-reference",
-            "downstream_task_contract",
-            "truthy",
-        ),
-        "privacy": (
-            "empty-workspace-bootstrap-reference",
-            "privacy_violation_rate",
-            "zero",
-        ),
-        "regression": (
-            "empty-workspace-bootstrap-reference",
-            "bootstrap_reference",
-            "truthy",
-        ),
-    },
-    "topic-dossiers": {
-        "adversarial": (
-            "session-erasure-derived-residue",
-            "forgetting_residue_rate",
-            "zero",
-        ),
-        "downstream": (
-            "topic-dossier-authentication",
-            "downstream_task_contract",
-            "truthy",
-        ),
-        "privacy": (
-            "topic-dossier-authentication",
-            "privacy_violation_rate",
-            "zero",
-        ),
-        "regression": ("topic-dossier-authentication", "topic_dossier", "truthy"),
-    },
-    "current-project-state": {
-        "adversarial": (
-            "session-erasure-derived-residue",
-            "forgetting_residue_rate",
-            "zero",
-        ),
-        "downstream": (
-            "current-project-state-storage",
-            "downstream_task_contract",
-            "truthy",
-        ),
-        "privacy": (
-            "current-project-state-storage",
-            "privacy_violation_rate",
-            "zero",
-        ),
-        "regression": (
-            "current-project-state-storage",
-            "current_project_state",
-            "truthy",
-        ),
-    },
-    "context-pack-inspector": {
-        "adversarial": (
-            "context-pack-inspector-attribution",
-            "context_pack_inspector",
-            "truthy",
-        ),
-        "downstream": (
-            "context-pack-inspector-attribution",
-            "context_pack_inspector",
-            "truthy",
-        ),
-        "privacy": (
-            "context-pack-inspector-attribution",
-            "privacy_violation_rate",
-            "zero",
-        ),
-        "regression": (
-            "context-pack-inspector-attribution",
-            "context_pack_inspector",
-            "truthy",
-        ),
-    },
-    "memory-health": {
-        "adversarial": (
-            "session-erasure-derived-residue",
-            "forgetting_residue_rate",
-            "zero",
-        ),
-        "downstream": (
-            "memory-health-hygiene",
-            "memory_health",
-            "truthy",
-        ),
-        "privacy": (
-            "memory-health-hygiene",
-            "privacy_violation_rate",
-            "zero",
-        ),
-        "regression": (
-            "procedure-application-outcome-history",
-            "procedure_outcome_health_attention",
-            "truthy",
-        ),
-    },
-    "agent-legibility-map": {
-        "adversarial": (
-            "session-erasure-derived-residue",
-            "forgetting_residue_rate",
-            "zero",
-        ),
-        "downstream": (
-            "agent-legibility-project-map",
-            "agent_legibility",
-            "truthy",
-        ),
-        "privacy": (
-            "agent-legibility-project-map",
-            "privacy_violation_rate",
-            "zero",
-        ),
-        "regression": (
-            "agent-legibility-project-map",
-            "agent_legibility",
-            "truthy",
-        ),
-    },
-    "reviewed-runbook-skill-export": {
-        "adversarial": (
-            "reviewed-runbook-skill-export",
-            "reviewed_runbook",
-            "truthy",
-        ),
-        "downstream": (
-            "reviewed-runbook-skill-export",
-            "downstream_task_contract",
-            "truthy",
-        ),
-        "privacy": (
-            "reviewed-runbook-skill-export",
-            "privacy_violation_rate",
-            "zero",
-        ),
-        "regression": (
-            "reviewed-runbook-skill-export",
-            "reviewed_runbook",
             "truthy",
         ),
     },
@@ -513,50 +345,6 @@ P1_CAPABILITY_COVERAGE = {
         "regression": (
             "divergent-branch-state-adjudication",
             "branch_worktree_controls",
-            "truthy",
-        ),
-    },
-    "richer-graph-relations": {
-        "adversarial": (
-            "graph-relative-import-test-impact",
-            "graph_relation_retrieval",
-            "truthy",
-        ),
-        "downstream": (
-            "graph-relative-import-test-impact",
-            "downstream_task_contract",
-            "truthy",
-        ),
-        "privacy": (
-            "graph-relative-import-test-impact",
-            "privacy_violation_rate",
-            "zero",
-        ),
-        "regression": (
-            "graph-ripple-transitive-impact",
-            "ripple_effect_retrieval",
-            "truthy",
-        ),
-    },
-    "context-memory-utility-feedback": {
-        "adversarial": (
-            "procedure-application-outcome-history",
-            "procedure_application_history",
-            "truthy",
-        ),
-        "downstream": (
-            "context-memory-utility-feedback",
-            "context_memory_utility",
-            "truthy",
-        ),
-        "privacy": (
-            "context-memory-utility-feedback",
-            "privacy_violation_rate",
-            "zero",
-        ),
-        "regression": (
-            "procedure-application-outcome-history",
-            "procedure_application_history",
             "truthy",
         ),
     },
@@ -1403,9 +1191,7 @@ def capture_events(
 
 def search_payloads(project: Path, query: str) -> list[dict[str, object]]:
     return [
-        mcp_call(project, "ley_search_memory", {"query": query, "maxResults": K, "maxTokens": 500}),
-        mcp_call(project, "ley_search_context", {"query": query, "maxResults": K, "maxTokens": 500}),
-        mcp_call(project, "ley_search_activity", {"query": query, "maxResults": K}),
+        mcp_call(project, "ley_search", {"query": query, "maxResults": K, "maxTokens": 500}),
     ]
 
 
@@ -1577,100 +1363,6 @@ def evaluate_bootstrap_specification_scenario(
         and isinstance(initial_specifications[0], dict)
         else {}
     )
-    expected_acceptance = expectation.get("acceptance_criteria", [])
-    acceptance_projection = initial_spec.get("acceptanceCriteria", {})
-    acceptance_rows = (
-        acceptance_projection.get("criteria", [])
-        if isinstance(acceptance_projection, dict)
-        else []
-    )
-    acceptance_ok = True
-    if isinstance(expected_acceptance, list) and expected_acceptance:
-        acceptance_ok = (
-            isinstance(acceptance_projection, dict)
-            and acceptance_projection.get("state") == "available"
-            and acceptance_projection.get("totalCriteria") == len(expected_acceptance)
-            and acceptance_projection.get("returnedCriteria") == len(expected_acceptance)
-            and acceptance_projection.get("omittedCriteria") == 0
-            and acceptance_projection.get("sourceRevisionBound") is True
-            and acceptance_projection.get("statusInterpreted") is False
-            and acceptance_projection.get("persisted") is False
-            and isinstance(acceptance_rows, list)
-            and len(acceptance_rows) == len(expected_acceptance)
-            and int(initial_spec.get("acceptanceCriteriaTokens", 0)) > 0
-        )
-        if acceptance_ok:
-            for expected, actual in zip(expected_acceptance, acceptance_rows):
-                if not isinstance(expected, dict) or not isinstance(actual, dict):
-                    acceptance_ok = False
-                    break
-                if not (
-                    actual.get("text") == expected.get("text")
-                    and actual.get("startLine") == expected.get("start_line")
-                    and actual.get("endLine") == expected.get("end_line")
-                    and str(actual.get("criterionId", "")).startswith("acr_")
-                    and all(
-                        field not in actual
-                        for field in (
-                            "checked",
-                            "completed",
-                            "verified",
-                            "satisfied",
-                            "remaining",
-                            "status",
-                        )
-                    )
-                ):
-                    acceptance_ok = False
-                    break
-    expected_methods = expectation.get("verification_methods", [])
-    methods_projection = initial_spec.get("verificationMethods", {})
-    method_rows = (
-        methods_projection.get("methods", [])
-        if isinstance(methods_projection, dict)
-        else []
-    )
-    verification_methods_ok = True
-    if isinstance(expected_methods, list) and expected_methods:
-        verification_methods_ok = (
-            isinstance(methods_projection, dict)
-            and methods_projection.get("state") == "available"
-            and methods_projection.get("totalMethods") == len(expected_methods)
-            and methods_projection.get("returnedMethods") == len(expected_methods)
-            and methods_projection.get("omittedMethods") == 0
-            and methods_projection.get("sourceRevisionBound") is True
-            and methods_projection.get("criterionBindingProven") is False
-            and methods_projection.get("observedResultBindingProven") is False
-            and methods_projection.get("statusInterpreted") is False
-            and methods_projection.get("persisted") is False
-            and isinstance(method_rows, list)
-            and len(method_rows) == len(expected_methods)
-            and int(initial_spec.get("verificationMethodsTokens", 0)) > 0
-        )
-        if verification_methods_ok:
-            for expected, actual in zip(expected_methods, method_rows):
-                if not isinstance(expected, dict) or not isinstance(actual, dict):
-                    verification_methods_ok = False
-                    break
-                if not (
-                    actual.get("text") == expected.get("text")
-                    and actual.get("startLine") == expected.get("start_line")
-                    and actual.get("endLine") == expected.get("end_line")
-                    and str(actual.get("methodId", "")).startswith("vmd_")
-                    and all(
-                        field not in actual
-                        for field in (
-                            "criterionId",
-                            "verificationRecordId",
-                            "passed",
-                            "verified",
-                            "satisfied",
-                            "status",
-                        )
-                    )
-                ):
-                    verification_methods_ok = False
-                    break
     initial_ok = (
         isinstance(attached, dict)
         and attached.get("created") is True
@@ -1683,8 +1375,6 @@ def evaluate_bootstrap_specification_scenario(
         and compiled.get("targetInitialized") is False
         and initial_spec.get("source") == source_text
         and initial_spec.get("specificationId") == specification_id
-        and acceptance_ok
-        and verification_methods_ok
         and codex_start == {}
         and claude_start == {}
         and codex_context.startswith("# Ley bootstrap task context (automatic)")
@@ -1728,8 +1418,7 @@ def evaluate_bootstrap_specification_scenario(
     cli_json(
         [
             "egress",
-            "specification",
-            specification_id,
+            "project",
             "never-send",
             str(source),
             "--json",
@@ -1750,13 +1439,12 @@ def evaluate_bootstrap_specification_scenario(
         and marker not in serialized(blocked)
     )
     if not blocked_ok:
-        failures.append("source Specification never-send policy did not fail closed in bootstrap MCP")
+        failures.append("source-project never-send policy did not fail closed in bootstrap MCP")
 
     cli_json(
         [
             "egress",
-            "specification",
-            specification_id,
+            "project",
             "agent-ok",
             str(source),
             "--json",
@@ -1814,194 +1502,6 @@ def evaluate_bootstrap_specification_scenario(
     )
     if privacy != 0.0:
         failures.append("bootstrap Specification agent output leaked a private path or prompt/live-target canary")
-
-    return not failures, downstream_ok, privacy, failures
-
-
-def evaluate_bootstrap_reference_scenario(
-    scenario: dict[str, object],
-    base_dir: Path,
-    target: Path,
-    expectation: dict[str, object],
-) -> tuple[bool, bool, float, list[str]]:
-    failures: list[str] = []
-    source = base_dir / "bootstrap-reference-source"
-    source_vault = base_dir / "bootstrap-reference-vault"
-    unrelated = base_dir / "bootstrap-reference-unrelated"
-    unrelated_vault = base_dir / "bootstrap-reference-unrelated-vault"
-    for path in (source, source_vault, unrelated, unrelated_vault):
-        path.mkdir(parents=True)
-
-    marker = str(expectation.get("marker", ""))
-    task = str(expectation.get("task", marker))
-    unrelated_marker = str(expectation.get("unrelated_marker", ""))
-    target_private_marker = str(expectation.get("target_private_marker", ""))
-    if not marker or not task or not unrelated_marker or not target_private_marker:
-        raise RuntimeError("bootstrap Reference eval fixture is incomplete")
-
-    write_project_files(
-        source,
-        {
-            "REFERENCE.md": (
-                "Captured reference implementation evidence.\n"
-                f"{marker} is the reusable source-project pattern for this task.\n"
-            )
-        },
-    )
-    init_project(source, "Bootstrap Reference source", source_vault)
-    write_project_files(
-        unrelated,
-        {
-            "UNRELATED.md": (
-                "Unattached project with deliberately similar text.\n"
-                f"{marker} {unrelated_marker} must never enter bootstrap context.\n"
-            )
-        },
-    )
-    init_project(unrelated, "Unrelated bootstrap reference", unrelated_vault)
-
-    try:
-        attached = cli_json(
-            [
-                "bootstrap-ref",
-                "attach",
-                str(source),
-                str(target),
-                "--json",
-            ]
-        )
-    except RuntimeError as error:
-        if BOOTSTRAP_UNSUPPORTED_MARKER in str(error):
-            raise BootstrapScenarioUnsupported(
-                "bootstrap Reference authority is unsupported on this platform/filesystem"
-            ) from error
-        raise
-    listed = cli_json(["bootstrap-ref", "list", str(target), "--json"])
-    if (target / ".ley").exists():
-        failures.append("bootstrap Reference attachment initialized target .ley metadata")
-
-    tools = mcp_tools_list(target)
-    tool_names = [str(item.get("name", "")) for item in tools]
-    compiled = mcp_call(
-        target,
-        "ley_compile_context",
-        {"task": task, "maxResults": 8, "maxTokens": 2000},
-    )
-    references = compiled.get("references", [])
-    reference_text = serialized(references)
-    hook = hook_call(
-        target,
-        "codex",
-        {
-            "hook_event_name": "UserPromptSubmit",
-            "session_id": "bootstrap-reference-eval",
-            "turn_id": "bootstrap-reference-eval-turn-1",
-            "prompt": task,
-        },
-    )
-    initial_ok = (
-        isinstance(attached, dict)
-        and attached.get("created") is True
-        and isinstance(listed, dict)
-        and listed.get("targetInitialized") is False
-        and listed.get("totalGrants") == 1
-        and listed.get("ready") == 1
-        and tool_names == ["ley_compile_context"]
-        and compiled.get("projectMemoryAvailable") is False
-        and compiled.get("referenceMemoryAuthorized") is True
-        and compiled.get("automaticWriteAllowed") is False
-        and compiled.get("targetInitialized") is False
-        and isinstance(references, list)
-        and marker in reference_text
-        and unrelated_marker not in serialized(compiled)
-        and target_private_marker not in serialized(compiled)
-        and hook == {}
-        and not (target / ".ley").exists()
-    )
-    downstream_required = [
-        str(value)
-        for value in expectation.get(
-            "downstream_required",
-            [marker],
-        )
-    ]
-    downstream_forbidden = [
-        str(value)
-        for value in expectation.get(
-            "downstream_forbidden",
-            [unrelated_marker, target_private_marker],
-        )
-    ]
-    downstream_ok = task_contract_success(
-        compiled,
-        downstream_required,
-        downstream_forbidden,
-    )
-    if not initial_ok:
-        failures.append(
-            "explicit Bootstrap Reference did not provide isolated captured MCP context while keeping hooks/target inactive"
-        )
-    if not downstream_ok:
-        failures.append(
-            "Bootstrap Reference context did not satisfy the independent downstream isolated-reference contract"
-        )
-
-    cli_json(["egress", "project", "never-send", str(source), "--json"])
-    blocked = mcp_call(
-        target,
-        "ley_compile_context",
-        {"task": task, "maxResults": 8, "maxTokens": 2000},
-    )
-    blocked_references = blocked.get("references", [])
-    blocked_coverage = blocked.get("referenceCoverage", {})
-    blocked_ok = (
-        isinstance(blocked_references, list)
-        and len(blocked_references) == 0
-        and isinstance(blocked_coverage, dict)
-        and blocked_coverage.get("egressBlocked") == 1
-        and blocked_coverage.get("searchedSources") == 0
-        and marker not in serialized(blocked_references)
-    )
-    if not blocked_ok:
-        failures.append("source-project never-send policy did not block Bootstrap Reference search")
-
-    cli_json(["egress", "project", "agent-ok", str(source), "--json"])
-    cli_json(
-        [
-            "init",
-            str(target),
-            "--name",
-            "Bootstrap Reference eval target",
-            "--json",
-        ]
-    )
-    after_init = cli_json(["bootstrap-ref", "list", str(target), "--json"])
-    post_init_tools = mcp_tools_list(target)
-    transition_ok = (
-        isinstance(after_init, dict)
-        and after_init.get("targetInitialized") is True
-        and after_init.get("totalGrants") == 0
-        and post_init_tools == []
-        and (target / ".ley").is_dir()
-    )
-    if not transition_ok:
-        failures.append("normal initialization did not retire Bootstrap Reference authority/tooling")
-
-    agent_outputs: list[object] = [tools, compiled, hook, blocked, post_init_tools]
-    privacy = privacy_violation_rate(
-        [
-            str(target),
-            str(source),
-            str(source_vault),
-            str(unrelated),
-            str(unrelated_vault),
-            unrelated_marker,
-            target_private_marker,
-        ],
-        agent_outputs,
-    )
-    if privacy != 0.0:
-        failures.append("Bootstrap Reference agent output leaked a private path or unrelated/target canary")
 
     return not failures, downstream_ok, privacy, failures
 
@@ -2134,26 +1634,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "failures": failures,
         }
 
-    bootstrap_reference_expectation = scenario.get("expected_bootstrap_reference")
-    if isinstance(bootstrap_reference_expectation, dict):
-        passed, downstream, privacy, bootstrap_failures = evaluate_bootstrap_reference_scenario(
-            scenario,
-            base_dir,
-            project,
-            bootstrap_reference_expectation,
-        )
-        scores["bootstrap_reference"] = passed
-        scores["downstream_task_contract"] = downstream
-        scores["privacy_violation_rate"] = privacy
-        failures.extend(bootstrap_failures)
-        return {
-            "id": str(scenario["id"]),
-            "category": str(scenario.get("category", "")),
-            **scores,
-            "passed": not failures,
-            "failures": failures,
-        }
-
     init_project(
         project,
         str(scenario["goal"]),
@@ -2179,10 +1659,18 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     if session_id:
         evidence_text.append(cli_json(["session", "show", session_id, str(project), "--json"]))
         evidence_text.append(
-            mcp_call(
-                project,
-                "ley_session_turns_get",
-                {"sessionId": session_id, "maxResults": 20, "maxCharacters": 8000},
+            cli_json(
+                [
+                    "session",
+                    "turns",
+                    session_id,
+                    str(project),
+                    "--max-results",
+                    "20",
+                    "--max-characters",
+                    "8000",
+                    "--json",
+                ]
             )
         )
 
@@ -2480,7 +1968,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         query = str(premise_expectation.get("query", ""))
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
         )
         adjudication = compiled.get("premiseAdjudication", {})
@@ -2553,210 +2041,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "premise adjudication did not resist an explicitly superseded task assumption"
             )
 
-    runbook_expectation = scenario.get("expected_reviewed_runbook")
-    if isinstance(runbook_expectation, dict):
-        learning_receipts = [
-            receipt
-            for receipt in receipts
-            if isinstance(receipt, dict) and isinstance(receipt.get("learningId"), str)
-        ]
-        if not learning_receipts:
-            raise RuntimeError("reviewed runbook fixture created no learning proposals")
-        learning_ids = [str(receipt["learningId"]) for receipt in learning_receipts]
-        for index, learning_id in enumerate(learning_ids):
-            cli_json(
-                [
-                    "learning",
-                    "review",
-                    learning_id,
-                    str(project),
-                    "--actor",
-                    "user",
-                    "--action",
-                    "confirm",
-                    "--note",
-                    "Reviewed for explicit runbook evaluation.",
-                    "--request-id",
-                    request_id(f"{scenario['id']}:runbook:confirm:{index}"),
-                    "--json",
-                ]
-            )
-
-        title = str(runbook_expectation.get("title", "Reviewed project runbook"))
-        compile_args = ["runbook", "compile", str(project), "--title", title]
-        for learning_id in learning_ids:
-            compile_args.extend(["--learning", learning_id])
-        compile_args.append("--json")
-        compiled_runbook = cli_json(compile_args)
-        rebuilt_runbook = cli_json(compile_args)
-        reordered_compile_args = ["runbook", "compile", str(project), "--title", title]
-        for learning_id in reversed(learning_ids):
-            reordered_compile_args.extend(["--learning", learning_id])
-        reordered_compile_args.append("--json")
-        reordered_runbook = cli_json(reordered_compile_args)
-        if (
-            not isinstance(compiled_runbook, dict)
-            or not isinstance(rebuilt_runbook, dict)
-            or not isinstance(reordered_runbook, dict)
-        ):
-            raise RuntimeError("runbook compile returned a non-object payload")
-        runbook_id = str(compiled_runbook.get("runbookId", ""))
-        markers = [str(value) for value in runbook_expectation.get("markers", [])]
-        hidden_marker = str(runbook_expectation.get("hidden_marker", ""))
-        serialized_runbook = json.dumps(compiled_runbook, sort_keys=True)
-        runbook_ok = (
-            compiled_runbook.get("schemaVersion") == 1
-            and compiled_runbook.get("projection") == "on-demand-reviewed-runbook"
-            and compiled_runbook.get("persisted") is False
-            and compiled_runbook.get("authorityIncreasedThroughProjection") is False
-            and compiled_runbook.get("requiresExplicitSkillExport") is True
-            and compiled_runbook.get("liveSourceChecked") is False
-            and runbook_id.startswith("rbk_")
-            and compiled_runbook.get("runbookId") == rebuilt_runbook.get("runbookId")
-            and compiled_runbook.get("sourceFingerprint")
-            == rebuilt_runbook.get("sourceFingerprint")
-            and compiled_runbook.get("runbookId") == reordered_runbook.get("runbookId")
-            and compiled_runbook.get("sourceFingerprint")
-            == reordered_runbook.get("sourceFingerprint")
-            and compiled_runbook.get("sourceLearningIds")
-            == reordered_runbook.get("sourceLearningIds")
-            and compiled_runbook.get("markdown") == reordered_runbook.get("markdown")
-            and all(marker in serialized_runbook for marker in markers)
-            and (not hidden_marker or hidden_marker not in serialized_runbook)
-        )
-
-        export_args = [
-            "runbook",
-            "export-skill",
-            str(project),
-            "--title",
-            title,
-        ]
-        for learning_id in learning_ids:
-            export_args.extend(["--learning", learning_id])
-        export_args.extend(
-            [
-                "--expected-runbook",
-                runbook_id,
-                "--host",
-                str(runbook_expectation.get("host", "codex")),
-                "--egress-target",
-                "cloud",
-                "--json",
-            ]
-        )
-        exported_skill = cli_json(export_args)
-        if not isinstance(exported_skill, dict):
-            raise RuntimeError("runbook Skill export returned a non-object payload")
-        skill_content = str(exported_skill.get("content", ""))
-        export_ok = (
-            exported_skill.get("runbookId") == runbook_id
-            and exported_skill.get("persisted") is False
-            and exported_skill.get("installed") is False
-            and exported_skill.get("explicitUserActionRequired") is True
-            and exported_skill.get("liveSourceChecked") is False
-            and all(marker in skill_content for marker in markers)
-            and (not hidden_marker or hidden_marker not in skill_content)
-        )
-
-        reordered_export_args = [
-            "runbook",
-            "export-skill",
-            str(project),
-            "--title",
-            title,
-        ]
-        for learning_id in reversed(learning_ids):
-            reordered_export_args.extend(["--learning", learning_id])
-        reordered_export_args.extend(
-            [
-                "--expected-runbook",
-                runbook_id,
-                "--host",
-                str(runbook_expectation.get("host", "codex")),
-                "--egress-target",
-                "cloud",
-                "--json",
-            ]
-        )
-        reordered_export = cli_json(reordered_export_args)
-        export_ok = (
-            export_ok
-            and isinstance(reordered_export, dict)
-            and reordered_export.get("runbookId") == runbook_id
-            and reordered_export.get("sourceFingerprint")
-            == compiled_runbook.get("sourceFingerprint")
-            and reordered_export.get("content") == exported_skill.get("content")
-        )
-
-        stale_id = "rbk_" + ("0" * 64)
-        stale_blocked = False
-        try:
-            stale_args = list(export_args)
-            stale_args[stale_args.index(runbook_id)] = stale_id
-            run(stale_args)
-        except RuntimeError as error:
-            stale_blocked = "reviewed runbook changed" in str(error)
-
-        run(["egress", "project", "local-model-only", str(project), "--json"])
-        cloud_blocked = False
-        try:
-            run(export_args)
-        except RuntimeError as error:
-            cloud_blocked = (
-                "egress policy 'local-model-only' does not allow target 'cloud'" in str(error)
-            )
-        finally:
-            run(["egress", "project", "agent-ok", str(project), "--json"])
-
-        config_root = Path(EVAL_ENV["XDG_CONFIG_HOME"])
-        installed_skill = any(
-            path.name == "SKILL.md"
-            for root in (project, vault, config_root)
-            for path in root.rglob("SKILL.md")
-        )
-        path_leakage = privacy_violation_rate(
-            [str(project), str(vault), str(config_root)],
-            [compiled_runbook, reordered_runbook, exported_skill, reordered_export],
-        )
-        scores["reviewed_runbook"] = (
-            runbook_ok and export_ok and stale_blocked and cloud_blocked and not installed_skill
-        )
-        downstream_required = [
-            str(value)
-            for value in runbook_expectation.get(
-                "downstream_required",
-                markers,
-            )
-        ]
-        downstream_forbidden = [
-            str(value)
-            for value in runbook_expectation.get(
-                "downstream_forbidden",
-                [hidden_marker] if hidden_marker else [],
-            )
-        ]
-        record_downstream_task_contract(
-            scores,
-            failures,
-            text_contract_success(
-                skill_content,
-                downstream_required,
-                downstream_forbidden,
-            ),
-            "reviewed Runbook Skill content did not satisfy the independent downstream reusable-procedure contract",
-        )
-        scores["privacy_violation_rate"] = path_leakage
-        evidence_text.extend(
-            [compiled_runbook, reordered_runbook, exported_skill, reordered_export]
-        )
-        if not scores["reviewed_runbook"]:
-            failures.append(
-                "reviewed runbook/Skill export did not preserve source binding, explicit export, egress, or non-installation semantics"
-            )
-        if path_leakage != 0.0:
-            failures.append("reviewed runbook or Skill export leaked a local path")
-
     revision_expectation = scenario.get("expected_revision_adjudication")
     if isinstance(revision_expectation, dict):
         if not isinstance(revision_flow, dict):
@@ -2770,7 +2054,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         query = str(revision_expectation.get("query", ""))
         divergent = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
         )
         divergent_adjudication = divergent.get("premiseAdjudication", {})
@@ -2897,7 +2181,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         merged = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
         )
         merged_decision = next(
@@ -3029,7 +2313,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         query = str(specification_expectation.get("query", ""))
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
         )
         relevant_index = int(specification_expectation.get("relevant_index", 0))
@@ -3075,268 +2359,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and item.get("reason") == "low-relevance"
             for item in specification_exclusions
         )
-        expected_criterion = str(
-            specification_expectation.get("acceptance_criterion", "")
-        )
-        acceptance_projection = relevant_specification.get("acceptanceCriteria", {})
-        acceptance_rows = (
-            acceptance_projection.get("criteria", [])
-            if isinstance(acceptance_projection, dict)
-            else []
-        )
-        acceptance_row = (
-            acceptance_rows[0]
-            if isinstance(acceptance_rows, list)
-            and acceptance_rows
-            and isinstance(acceptance_rows[0], dict)
-            else {}
-        )
-        acceptance_criteria_ok = (
-            not expected_criterion
-            or (
-                isinstance(acceptance_projection, dict)
-                and acceptance_projection.get("state") == "available"
-                and acceptance_projection.get("totalCriteria") == 1
-                and acceptance_projection.get("returnedCriteria") == 1
-                and acceptance_projection.get("omittedCriteria") == 0
-                and acceptance_projection.get("sourceRevisionBound") is True
-                and acceptance_projection.get("statusInterpreted") is False
-                and acceptance_projection.get("persisted") is False
-                and acceptance_projection.get("authority") == "human-intent"
-                and acceptance_projection.get("sourceBoundary")
-                == "derived-from-approved-specification"
-                and acceptance_row.get("text") == expected_criterion
-                and acceptance_row.get("startLine")
-                == specification_expectation.get("acceptance_start_line")
-                and acceptance_row.get("endLine")
-                == specification_expectation.get("acceptance_end_line")
-                and str(acceptance_row.get("criterionId", "")).startswith("acr_")
-                and all(
-                    field not in acceptance_row
-                    for field in (
-                        "checked",
-                        "completed",
-                        "verified",
-                        "satisfied",
-                        "remaining",
-                        "status",
-                    )
-                )
-                and int(relevant_specification.get("acceptanceCriteriaTokens", 0)) > 0
-            )
-        )
-        expected_method = str(
-            specification_expectation.get("verification_method", "")
-        )
-        verification_methods_projection = relevant_specification.get(
-            "verificationMethods", {}
-        )
-        verification_method_rows = (
-            verification_methods_projection.get("methods", [])
-            if isinstance(verification_methods_projection, dict)
-            else []
-        )
-        verification_method_row = (
-            verification_method_rows[0]
-            if isinstance(verification_method_rows, list)
-            and verification_method_rows
-            and isinstance(verification_method_rows[0], dict)
-            else {}
-        )
-        verification_methods_ok = (
-            not expected_method
-            or (
-                isinstance(verification_methods_projection, dict)
-                and verification_methods_projection.get("state") == "available"
-                and verification_methods_projection.get("totalMethods") == 1
-                and verification_methods_projection.get("returnedMethods") == 1
-                and verification_methods_projection.get("omittedMethods") == 0
-                and verification_methods_projection.get("sourceRevisionBound") is True
-                and verification_methods_projection.get("criterionBindingProven") is False
-                and verification_methods_projection.get("observedResultBindingProven")
-                is False
-                and verification_methods_projection.get("statusInterpreted") is False
-                and verification_methods_projection.get("persisted") is False
-                and verification_methods_projection.get("authority") == "human-intent"
-                and verification_methods_projection.get("sourceBoundary")
-                == "derived-from-approved-specification"
-                and verification_method_row.get("text") == expected_method
-                and verification_method_row.get("startLine")
-                == specification_expectation.get("verification_start_line")
-                and verification_method_row.get("endLine")
-                == specification_expectation.get("verification_end_line")
-                and str(verification_method_row.get("methodId", "")).startswith("vmd_")
-                and all(
-                    field not in verification_method_row
-                    for field in (
-                        "criterionId",
-                        "verificationRecordId",
-                        "passed",
-                        "verified",
-                        "satisfied",
-                        "status",
-                    )
-                )
-                and int(
-                    relevant_specification.get("verificationMethodsTokens", 0)
-                )
-                > 0
-            )
-        )
-        expected_verification_summary = str(
-            specification_expectation.get("acceptance_verification_summary", "")
-        )
-        acceptance_verification_ok = True
-        if expected_verification_summary:
-            acceptance_verification_ok = False
-            criterion_id = str(acceptance_row.get("criterionId", ""))
-            verification_method_id = str(
-                verification_method_row.get("methodId", "")
-            )
-            if session_id and criterion_id:
-                verification_session = mcp_call(
-                    project,
-                    "ley_session_get",
-                    {
-                        "sessionId": session_id,
-                        "maxCheckpoints": 5,
-                        "maxCharacters": 8_000,
-                    },
-                )
-                verification_row = next(
-                    (
-                        verification
-                        for checkpoint in verification_session.get("checkpoints", [])
-                        if isinstance(checkpoint, dict)
-                        for verification in checkpoint.get("verification", [])
-                        if isinstance(verification, dict)
-                        and verification.get("summary") == expected_verification_summary
-                    ),
-                    {},
-                )
-                verification_record_id = str(verification_row.get("id", ""))
-                if verification_record_id:
-                    acceptance_verification_review = mcp_call(
-                        project,
-                        "ley_acceptance_criterion_verification_review",
-                        {
-                            "specificationId": relevant_id,
-                            "criterionId": criterion_id,
-                            **(
-                                {"verificationMethodId": verification_method_id}
-                                if verification_method_id
-                                else {}
-                            ),
-                            "sessionId": session_id,
-                            "verificationRecordId": verification_record_id,
-                        },
-                    )
-                    acceptance_verification_ok = (
-                        acceptance_verification_review.get("specificationId")
-                        == relevant_id
-                        and acceptance_verification_review.get("criterion", {}).get(
-                            "criterionId"
-                        )
-                        == criterion_id
-                        and (
-                            not verification_method_id
-                            or acceptance_verification_review.get(
-                                "verificationMethod", {}
-                            ).get("methodId")
-                            == verification_method_id
-                        )
-                        and acceptance_verification_review.get("sessionId") == session_id
-                        and acceptance_verification_review.get("verification", {}).get(
-                            "id"
-                        )
-                        == verification_record_id
-                        and acceptance_verification_review.get("verification", {}).get(
-                            "status"
-                        )
-                        == "passed"
-                        and acceptance_verification_review.get("verification", {}).get(
-                            "summary"
-                        )
-                        == expected_verification_summary
-                        and str(
-                            acceptance_verification_review.get("linkFingerprint", "")
-                        ).startswith("sha256:")
-                        and acceptance_verification_review.get(
-                            "specificationSourceRevisionChecked"
-                        )
-                        is True
-                        and acceptance_verification_review.get(
-                            "verificationMethodChecked"
-                        )
-                        is bool(verification_method_id)
-                        and acceptance_verification_review.get(
-                            "verificationRecordChecked"
-                        )
-                        is True
-                        and acceptance_verification_review.get(
-                            "relationshipSuppliedByCaller"
-                        )
-                        is True
-                        and acceptance_verification_review.get(
-                            "verificationMethodRelationshipSuppliedByCaller"
-                        )
-                        is bool(verification_method_id)
-                        and acceptance_verification_review.get(
-                            "verificationMethodExecutionProven"
-                        )
-                        is False
-                        and acceptance_verification_review.get(
-                            "verificationMethodOutcomeProven"
-                        )
-                        is False
-                        and acceptance_verification_review.get(
-                            "verificationStatusInterpretedAsSatisfaction"
-                        )
-                        is False
-                        and acceptance_verification_review.get(
-                            "criterionSatisfactionProven"
-                        )
-                        is False
-                        and acceptance_verification_review.get(
-                            "semanticCoverageProven"
-                        )
-                        is False
-                        and acceptance_verification_review.get(
-                            "currentImplementationProven"
-                        )
-                        is False
-                        and acceptance_verification_review.get("persisted") is False
-                        and acceptance_verification_review.get(
-                            "automaticWriteAllowed"
-                        )
-                        is False
-                        and acceptance_verification_review.get("liveSourceChecked")
-                        is False
-                        and acceptance_verification_review.get("criterionAuthority")
-                        == "human-intent"
-                        and acceptance_verification_review.get(
-                            "verificationSourceBoundary"
-                        )
-                        == "untrusted-historical-verification"
-                        and acceptance_verification_review.get("relationshipBoundary")
-                        == (
-                            "caller-supplied-criterion-method-verification-review-link"
-                            if verification_method_id
-                            else "caller-supplied-criterion-verification-review-link"
-                        )
-                    )
-                    evidence_text.extend(
-                        [verification_session, acceptance_verification_review]
-                    )
         specification_ok = (
             relevant_id in admitted_ids
             and unrelated_id not in admitted_ids
             and unrelated_omitted
             and historical_withheld
             and direct_evidence_preserved
-            and acceptance_criteria_ok
-            and verification_methods_ok
-            and acceptance_verification_ok
             and compiled.get("authorityPrecedence") == "human-intent-over-historical-memory"
             and compiled.get("sourceBoundary") == "mixed-authority-context"
         )
@@ -3364,14 +2392,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not specification_ok:
             failures.append(
                 "task-conditioned Specification admission did not preserve authority/budget/conflict semantics"
-            )
-        if not acceptance_verification_ok:
-            failures.append(
-                "acceptance-criterion Verification review did not preserve exact provenance/non-satisfaction semantics"
-            )
-        if not verification_methods_ok:
-            failures.append(
-                "Specification Verification-method projection did not preserve exact human-intent/non-binding semantics"
             )
 
     egress_expectation = scenario.get("expected_egress_policy")
@@ -3417,7 +2437,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         cloud_compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
         )
         cloud_hook = hook_call(
@@ -3454,7 +2474,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         local_compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
             flags=local_flags,
         )
@@ -3495,7 +2515,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         confirm_compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
             flags=local_flags,
         )
@@ -3533,7 +2553,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         never_compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
             flags=local_flags,
         )
@@ -3721,7 +2741,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
         cloud_compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
         )
         cloud_coverage = cloud_compiled.get("egressCoverage")
@@ -3777,7 +2797,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         local_compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
             flags=local_flags,
         )
@@ -4078,7 +3098,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
         before = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 2_000},
         )
         mounted_project, _ = mounted_projects[mount_index]
@@ -4093,7 +3113,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         mount_id = str(mount.get("mountId", ""))
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 2_000},
         )
         references = [
@@ -4245,7 +3265,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             identity_changed = mcp_call(
                 project,
-                "ley_compile_context",
+                "ley_brief",
                 {"task": query, "maxResults": 8, "maxTokens": 2_000},
             )
             identity_scopes = [
@@ -4307,7 +3327,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             moved_project.rename(unavailable_parked)
             project_unavailable = mcp_call(
                 project,
-                "ley_compile_context",
+                "ley_brief",
                 {"task": query, "maxResults": 8, "maxTokens": 2_000},
             )
             project_unavailable_scopes = [
@@ -4368,7 +3388,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             shutil.rmtree(mounted_vault)
             unavailable = mcp_call(
                 project,
-                "ley_compile_context",
+                "ley_brief",
                 {"task": query, "maxResults": 8, "maxTokens": 2_000},
             )
             unavailable_scopes = [
@@ -4410,7 +3430,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         run(["mount", "remove", mount_id, str(project), "--json"])
         after = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 2_000},
         )
         after_clean = not after.get("mountedReferenceScopes") and not after.get("mountedReferences")
@@ -4713,7 +3733,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
         before = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
         )
         create_args = [
@@ -4738,7 +3758,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
         )
         scope_inspection = mcp_call(
@@ -4880,7 +3900,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         cloud_restricted = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
         )
         cloud_restricted_text = json.dumps(cloud_restricted, sort_keys=True)
@@ -4908,7 +3928,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         local_flags = ("--egress-target", "local")
         local_restricted = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
             flags=local_flags,
         )
@@ -4921,7 +3941,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         after = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
         )
         after_clean = (
@@ -4930,7 +3950,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         cloud_history = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": historical_query, "maxResults": 8, "maxTokens": 1_500},
         )
         cloud_history_text = json.dumps(cloud_history, sort_keys=True)
@@ -4957,7 +3977,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         local_history = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": historical_query, "maxResults": 8, "maxTokens": 1_500},
             flags=local_flags,
         )
@@ -5135,7 +4155,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
         before = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
         )
         create_scope = cli_json(
@@ -5158,7 +4178,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         scope_only = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
         )
 
@@ -5205,7 +4225,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
         )
         inspection = mcp_call(
@@ -5350,7 +4370,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         restricted_path.unlink()
         cloud_restricted = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
         )
         cloud_restricted_text = json.dumps(cloud_restricted, sort_keys=True)
@@ -5384,7 +4404,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         local_flags = ("--egress-target", "local")
         local_restricted = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
             flags=local_flags,
         )
@@ -5403,7 +4423,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         after = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 12, "maxTokens": 3_000},
         )
         after_clean = (
@@ -5412,7 +4432,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         cloud_history = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": historical_query, "maxResults": 8, "maxTokens": 1_500},
         )
         cloud_history_text = json.dumps(cloud_history, sort_keys=True)
@@ -5448,7 +4468,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         local_history = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": historical_query, "maxResults": 8, "maxTokens": 1_500},
             flags=local_flags,
         )
@@ -6216,774 +5236,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "local consolidation inbox failed: " + ", ".join(failed_checks)
             )
 
-    dossier_expectation = scenario.get("expected_topic_dossier")
-    if isinstance(dossier_expectation, dict):
-        topic = str(dossier_expectation.get("topic", ""))
-        max_tokens = int(dossier_expectation.get("max_tokens", 2_000))
-        arguments = {
-            "topic": topic,
-            "maxResults": int(dossier_expectation.get("max_results", 12)),
-            "maxTokens": max_tokens,
-            "maxSupportingSessions": int(
-                dossier_expectation.get("max_supporting_sessions", 6)
-            ),
-        }
-        dossier = mcp_call(project, "ley_topic_dossier", arguments)
-        rebuilt = mcp_call(project, "ley_topic_dossier", arguments)
-        dossier_text = json.dumps(dossier, sort_keys=True)
-        evidence_markers = [
-            str(value) for value in dossier_expectation.get("evidence_markers", [])
-        ]
-        open_markers = [
-            str(value) for value in dossier_expectation.get("open_markers", [])
-        ]
-        verification_marker = str(
-            dossier_expectation.get("verification_marker", "")
-        )
-        artifact_path = str(dossier_expectation.get("artifact_path", ""))
-        dossier_ok = (
-            dossier.get("schemaVersion") == 3
-            and dossier.get("persisted") is False
-            and dossier.get("projection") == "on-demand-rebuildable-topic-dossier"
-            and str(dossier.get("sourceFingerprint", "")).startswith("sha256:")
-            and dossier.get("sourceFingerprint") == rebuilt.get("sourceFingerprint")
-            and dossier.get("liveSourceChecked") is False
-            and int(dossier.get("coverage", {}).get("sourceSearchCandidateLimit", 0)) > 0
-            and int(
-                dossier.get("coverage", {}).get("sourceSearchCollectedCandidates", 0)
-            )
-            >= int(dossier.get("coverage", {}).get("sourceSearchResults", 0))
-            and int(
-                dossier.get("coverage", {}).get("sourceSearchOmittedCandidates", 0)
-            )
-            >= 0
-            and isinstance(
-                dossier.get("coverage", {}).get("sourceSearchSourceTruncated"), bool
-            )
-            and int(dossier.get("estimatedTokens", 0)) <= max_tokens
-            and all(marker in dossier_text for marker in evidence_markers)
-            and all(
-                marker in json.dumps(dossier.get("openItems", []), sort_keys=True)
-                for marker in open_markers
-            )
-            and all(
-                not isinstance(item, dict)
-                or item.get("kind") != "unresolved"
-                or str(item.get("itemId", "")).startswith("unr_")
-                for item in dossier.get("openItems", [])
-            )
-            and (
-                not verification_marker
-                or verification_marker
-                in json.dumps(dossier.get("recentVerification", []), sort_keys=True)
-            )
-            and (
-                not artifact_path
-                or any(
-                    isinstance(item, dict)
-                    and item.get("artifactPath") == artifact_path
-                    for item in dossier.get("importantArtifacts", [])
-                )
-            )
-            and bool(dossier.get("supportingSessions"))
-            and str(project) not in dossier_text
-            and str(vault) not in dossier_text
-        )
-        scores["topic_dossier"] = dossier_ok
-        downstream_required = [
-            str(value)
-            for value in dossier_expectation.get("downstream_required", [])
-        ]
-        downstream_forbidden = [
-            str(value)
-            for value in dossier_expectation.get("downstream_forbidden", [])
-        ]
-        if downstream_required or downstream_forbidden:
-            record_downstream_task_contract(
-                scores,
-                failures,
-                text_contract_success(
-                    dossier_text,
-                    downstream_required,
-                    downstream_forbidden,
-                ),
-                "Topic Dossier did not satisfy the independent downstream bounded-briefing contract",
-            )
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)], [dossier]
-        )
-        evidence_text.extend([dossier, rebuilt])
-        if not dossier_ok:
-            failures.append(
-                "topic dossier did not preserve deterministic source binding, evidence structure, privacy, or budget"
-            )
-
-    current_state_expectation = scenario.get("expected_current_project_state")
-    if isinstance(current_state_expectation, dict):
-        arguments = {
-            "maxSessions": int(current_state_expectation.get("max_sessions", 5)),
-            "maxKnowledge": int(current_state_expectation.get("max_knowledge", 12)),
-            "maxCharacters": int(current_state_expectation.get("max_characters", 16_000)),
-        }
-        state = mcp_call(project, "ley_project_state", arguments)
-        rebuilt = mcp_call(project, "ley_project_state", arguments)
-        state_text = json.dumps(state, sort_keys=True)
-        specification_index = int(
-            current_state_expectation.get("specification_index", -1)
-        )
-        specification_definition = (
-            specification_definitions[specification_index]
-            if 0 <= specification_index < len(specification_definitions)
-            else None
-        )
-        specification_id = (
-            str(specification_definition.get("resolved_specification_id", ""))
-            if isinstance(specification_definition, dict)
-            else ""
-        )
-        specification_path = str(
-            current_state_expectation.get("specification_path", "")
-        )
-        specification_body_marker = str(
-            current_state_expectation.get("specification_body_marker", "")
-        )
-        authoritative_specifications = [
-            item
-            for item in state.get("authoritativeSpecifications", [])
-            if isinstance(item, dict)
-        ]
-        matching_specification = next(
-            (
-                item
-                for item in authoritative_specifications
-                if item.get("specificationId") == specification_id
-            ),
-            None,
-        )
-        specification_authority_ok = (
-            not specification_id
-            or (
-                matching_specification is not None
-                and matching_specification.get("relativePath") == specification_path
-                and matching_specification.get("state") == "current"
-                and matching_specification.get("exactApprovedRevisionAvailable") is True
-                and matching_specification.get("sourceIncluded") is False
-                and matching_specification.get("authority") == "human-intent"
-                and matching_specification.get("sourceBoundary")
-                == "user-approved-specification"
-                and matching_specification.get("followupTool")
-                == "ley_project_specifications"
-                and state.get("specificationAuthorityPrecedence")
-                == "human-intent-over-historical-memory"
-                and (
-                    not specification_body_marker
-                    or specification_body_marker not in state_text
-                )
-            )
-        )
-        changed_specification_ok = True
-        changed_state = None
-        changed_specification_source = current_state_expectation.get(
-            "changed_specification_source"
-        )
-        changed_specification_body_marker = str(
-            current_state_expectation.get("changed_specification_body_marker", "")
-        )
-        if (
-            specification_id
-            and specification_path
-            and isinstance(changed_specification_source, str)
-            and changed_specification_source
-        ):
-            changed_path = vault / specification_path
-            changed_path.write_text(changed_specification_source, encoding="utf-8")
-            changed_state = mcp_call(project, "ley_project_state", arguments)
-            changed_text = json.dumps(changed_state, sort_keys=True)
-            changed_authoritative = [
-                item
-                for item in changed_state.get("authoritativeSpecifications", [])
-                if isinstance(item, dict)
-            ]
-            changed_attention = [
-                item
-                for item in changed_state.get("specificationAttention", [])
-                if isinstance(item, dict)
-            ]
-            matching_attention = next(
-                (
-                    item
-                    for item in changed_attention
-                    if item.get("specificationId") == specification_id
-                ),
-                None,
-            )
-            changed_specification_ok = (
-                not any(
-                    item.get("specificationId") == specification_id
-                    for item in changed_authoritative
-                )
-                and matching_attention is not None
-                and matching_attention.get("relativePath") == specification_path
-                and matching_attention.get("state") == "changed"
-                and matching_attention.get("exactApprovedRevisionAvailable") is False
-                and matching_attention.get("sourceIncluded") is False
-                and matching_attention.get("currentContentHash")
-                and matching_attention.get("followupTool")
-                == "ley_project_specifications"
-                and changed_state.get("stateFingerprint")
-                != state.get("stateFingerprint")
-                and (
-                    not specification_body_marker
-                    or specification_body_marker not in changed_text
-                )
-                and (
-                    not changed_specification_body_marker
-                    or changed_specification_body_marker not in changed_text
-                )
-            )
-        working_marker = str(current_state_expectation.get("working_marker", ""))
-        open_markers = [
-            str(value) for value in current_state_expectation.get("open_markers", [])
-        ]
-        decision_marker = str(current_state_expectation.get("decision_marker", ""))
-        verification_marker = str(
-            current_state_expectation.get("verification_marker", "")
-        )
-        decision_rows = state.get("recentDecisions", [])
-        matching_decision = next(
-            (
-                item
-                for item in decision_rows
-                if isinstance(item, dict)
-                and (not decision_marker or decision_marker in json.dumps(item, sort_keys=True))
-            ),
-            None,
-        )
-        state_ok = (
-            state.get("schemaVersion") == 2
-            and state.get("persisted") is False
-            and state.get("projection") == "on-demand-current-project-state"
-            and str(state.get("stateFingerprint", "")).startswith("sha256:")
-            and state.get("stateFingerprint") == rebuilt.get("stateFingerprint")
-            and state.get("liveSourceChecked") is False
-            and bool(state.get("workingSessions"))
-            and (not working_marker or working_marker in state_text)
-            and all(
-                marker in json.dumps(state.get("openWork", []), sort_keys=True)
-                for marker in open_markers
-            )
-            and all(
-                not isinstance(item, dict)
-                or item.get("kind") != "unresolved"
-                or str(item.get("recordId", "")).startswith("unr_")
-                for item in state.get("openWork", [])
-            )
-            and matching_decision is not None
-            and matching_decision.get("authority") == "historical-project-memory"
-            and matching_decision.get("currentStateProven") is False
-            and (
-                not verification_marker
-                or verification_marker
-                in json.dumps(state.get("recentVerification", []), sort_keys=True)
-            )
-            and specification_authority_ok
-            and changed_specification_ok
-            and str(project) not in state_text
-            and str(vault) not in state_text
-        )
-        scores["current_project_state"] = state_ok
-        downstream_required = [
-            str(value)
-            for value in current_state_expectation.get("downstream_required", [])
-        ]
-        downstream_forbidden = [
-            str(value)
-            for value in current_state_expectation.get("downstream_forbidden", [])
-        ]
-        if downstream_required or downstream_forbidden:
-            record_downstream_task_contract(
-                scores,
-                failures,
-                text_contract_success(
-                    state_text,
-                    downstream_required,
-                    downstream_forbidden,
-                ),
-                "Current Project State did not satisfy the independent downstream working-state contract",
-            )
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)],
-            [state, rebuilt] + ([changed_state] if changed_state is not None else []),
-        )
-        evidence_text.extend(
-            [state, rebuilt] + ([changed_state] if changed_state is not None else [])
-        )
-        if not state_ok:
-            failures.append(
-                "Current Project State did not preserve working-state boundaries, Specification authority/revision attention, historical decision semantics, privacy, or source binding"
-            )
-
-    graph_relation_expectation = scenario.get("expected_graph_relation_retrieval")
-    if isinstance(graph_relation_expectation, dict):
-        implementation_path = str(
-            graph_relation_expectation.get("implementation_path", "")
-        )
-        relevant_test_path = str(
-            graph_relation_expectation.get("relevant_test_path", "")
-        )
-        unrelated_test_path = str(
-            graph_relation_expectation.get("unrelated_test_path", "")
-        )
-        baseline_query = str(graph_relation_expectation.get("baseline_query", ""))
-        edge_label = str(
-            graph_relation_expectation.get("edge_label", "../src/renderer")
-        )
-        implementation_query = str(
-            graph_relation_expectation.get(
-                "implementation_query",
-                Path(implementation_path).name,
-            )
-        )
-        relevant_test_query = str(
-            graph_relation_expectation.get(
-                "relevant_test_query",
-                Path(relevant_test_path).name,
-            )
-        )
-        if not all(
-            [
-                implementation_path,
-                relevant_test_path,
-                unrelated_test_path,
-                baseline_query,
-                edge_label,
-                implementation_query,
-                relevant_test_query,
-            ]
-        ):
-            raise RuntimeError(
-                "graph relation fixture requires implementation/test paths and baseline query"
-            )
-
-        baseline = mcp_call(
-            project,
-            "ley_search_context",
-            {"query": baseline_query, "maxResults": 8, "maxTokens": 1_500},
-        )
-        neighbors = mcp_call(
-            project,
-            "ley_graph_neighbors",
-            {
-                "node": implementation_query,
-                "depth": 1,
-                "maxNodes": 20,
-                "direction": "incoming",
-                "edgeKinds": ["imports"],
-            },
-        )
-        path = mcp_call(
-            project,
-            "ley_graph_path",
-            {
-                "from": relevant_test_query,
-                "to": implementation_query,
-                "maxDepth": 1,
-                "maxVisitedNodes": 20,
-                "direction": "outgoing",
-                "edgeKinds": ["imports"],
-            },
-        )
-
-        neighbor_nodes = [
-            item for item in neighbors.get("nodes", []) if isinstance(item, dict)
-        ]
-        neighbor_edges = [
-            item for item in neighbors.get("edges", []) if isinstance(item, dict)
-        ]
-        neighbor_paths = {
-            str(item.get("path"))
-            for item in neighbor_nodes
-            if isinstance(item.get("path"), str)
-        }
-        relation_edge = next(
-            (
-                item
-                for item in neighbor_edges
-                if item.get("kind") == "imports"
-                and item.get("label") == edge_label
-            ),
-            None,
-        )
-        path_nodes = [item for item in path.get("nodes", []) if isinstance(item, dict)]
-        path_edges = [item for item in path.get("edges", []) if isinstance(item, dict)]
-        path_paths = [
-            str(item.get("path"))
-            for item in path_nodes
-            if isinstance(item.get("path"), str)
-        ]
-        baseline_text = json.dumps(baseline, sort_keys=True)
-        graph_relation_ok = (
-            baseline.get("liveSourceChecked") is False
-            and relevant_test_path not in baseline_text
-            and neighbors.get("ambiguous") is False
-            and neighbors.get("liveSourceChecked") is False
-            and implementation_path in neighbor_paths
-            and relevant_test_path in neighbor_paths
-            and unrelated_test_path not in neighbor_paths
-            and relation_edge is not None
-            and relation_edge.get("provenance") == "deterministic"
-            and relation_edge.get("confidence") == 1.0
-            and relation_edge.get("citation", {}).get("artifactPath")
-            == relevant_test_path
-            and path.get("found") is True
-            and path.get("ambiguous") is False
-            and path.get("liveSourceChecked") is False
-            and path_paths == [relevant_test_path, implementation_path]
-            and len(path_edges) == 1
-            and path_edges[0].get("kind") == "imports"
-            and path_edges[0].get("provenance") == "deterministic"
-        )
-        scores["graph_relation_retrieval"] = graph_relation_ok
-        downstream_required = [
-            str(value)
-            for value in graph_relation_expectation.get(
-                "downstream_required",
-                [relevant_test_path],
-            )
-        ]
-        downstream_forbidden = [
-            str(value)
-            for value in graph_relation_expectation.get(
-                "downstream_forbidden",
-                [unrelated_test_path],
-            )
-        ]
-        record_downstream_task_contract(
-            scores,
-            failures,
-            text_contract_success(
-                json.dumps({"neighbors": neighbors, "path": path}, sort_keys=True),
-                downstream_required,
-                downstream_forbidden,
-            )
-            and not text_contract_success(
-                baseline_text,
-                downstream_required,
-                [],
-            ),
-            "graph relations did not independently surface the related test beyond the direct-search baseline",
-        )
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)], [baseline, neighbors, path]
-        )
-        evidence_text.extend([baseline, neighbors, path])
-        if not graph_relation_ok:
-            failures.append(
-                "deterministic captured relative-import graph relation did not improve implementation-to-test retrieval over the direct context-search baseline"
-                f" (neighbors.ambiguous={neighbors.get('ambiguous')!r}, "
-                f"neighborPaths={sorted(neighbor_paths)!r}, relationEdge={relation_edge!r}, "
-                f"path.found={path.get('found')!r}, path.ambiguous={path.get('ambiguous')!r}, "
-                f"pathPaths={path_paths!r}, pathEdges={path_edges!r})"
-            )
-
-    trace_to_code_expectation = scenario.get("expected_trace_to_code_retrieval")
-    if isinstance(trace_to_code_expectation, dict):
-        trace_query = str(trace_to_code_expectation.get("trace_query", ""))
-        trace_path = str(trace_to_code_expectation.get("trace_path", ""))
-        symbol = str(trace_to_code_expectation.get("symbol", ""))
-        code_path = str(trace_to_code_expectation.get("code_path", ""))
-        unrelated_path = str(trace_to_code_expectation.get("unrelated_path", ""))
-        if not all([trace_query, trace_path, symbol, code_path, unrelated_path]):
-            raise RuntimeError(
-                "trace-to-code fixture requires trace query/path, symbol, code path, and unrelated path"
-            )
-
-        trace_search = mcp_call(
-            project,
-            "ley_search_context",
-            {
-                "query": trace_query,
-                "maxResults": 8,
-                "maxTokens": 1_500,
-            },
-        )
-        trace_items = [
-            item
-            for item in trace_search.get("items", [])
-            if isinstance(item, dict)
-        ]
-        trace_item = next(
-            (
-                item
-                for item in trace_items
-                if item.get("path") == trace_path
-            ),
-            {},
-        )
-        trace_citation = (
-            trace_item.get("citation", {})
-            if isinstance(trace_item, dict)
-            else {}
-        )
-        trace_evidence = mcp_call(
-            project,
-            "ley_read_evidence",
-            {
-                "artifactPath": trace_path,
-                "startLine": int(trace_citation.get("startLine", 1)),
-                "endLine": int(trace_citation.get("endLine", 20)),
-                "maxCharacters": 2_000,
-            },
-        )
-        symbol_neighbors = mcp_call(
-            project,
-            "ley_graph_neighbors",
-            {
-                "node": symbol,
-                "depth": 1,
-                "maxNodes": 20,
-                "direction": "incoming",
-                "edgeKinds": ["defines"],
-            },
-        )
-        neighbor_nodes = [
-            item
-            for item in symbol_neighbors.get("nodes", [])
-            if isinstance(item, dict)
-        ]
-        neighbor_edges = [
-            item
-            for item in symbol_neighbors.get("edges", [])
-            if isinstance(item, dict)
-        ]
-        neighbor_paths = {
-            str(item.get("path"))
-            for item in neighbor_nodes
-            if isinstance(item.get("path"), str)
-        }
-        defines_edge = next(
-            (
-                item
-                for item in neighbor_edges
-                if item.get("kind") == "defines"
-                and item.get("citation", {}).get("artifactPath") == code_path
-            ),
-            None,
-        )
-        trace_search_text = json.dumps(trace_search, sort_keys=True)
-        trace_evidence_text = str(trace_evidence.get("text", ""))
-        trace_outputs_text = json.dumps(
-            [trace_search, trace_evidence, symbol_neighbors],
-            sort_keys=True,
-        )
-        trace_to_code_checks = {
-            "trace-search-snapshot-only":
-                trace_search.get("liveSourceChecked") is False,
-            "trace-artifact-returned":
-                trace_item.get("kind") == "artifact"
-                and trace_item.get("path") == trace_path,
-            "trace-body-has-symbol": symbol in trace_evidence_text,
-            "trace-body-has-marker": trace_query in trace_evidence_text,
-            "trace-read-bound":
-                trace_evidence.get("artifactPath") == trace_path
-                and trace_evidence.get("liveSourceChecked") is False,
-            "direct-search-does-not-cheat": code_path not in trace_search_text,
-            "symbol-resolution-unambiguous":
-                symbol_neighbors.get("ambiguous") is False,
-            "graph-snapshot-only":
-                symbol_neighbors.get("liveSourceChecked") is False,
-            "defining-file-found": code_path in neighbor_paths,
-            "unrelated-file-absent": unrelated_path not in neighbor_paths,
-            "defines-edge-present": defines_edge is not None,
-            "defines-edge-deterministic":
-                isinstance(defines_edge, dict)
-                and defines_edge.get("provenance") == "deterministic"
-                and defines_edge.get("confidence") == 1.0,
-            "project-path-private": str(project) not in trace_outputs_text,
-            "vault-path-private": str(vault) not in trace_outputs_text,
-        }
-        trace_to_code_ok = all(trace_to_code_checks.values())
-        scores["trace_to_code_retrieval"] = trace_to_code_ok
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)],
-            [trace_search, trace_evidence, symbol_neighbors],
-        )
-        evidence_text.extend(
-            [trace_search, trace_evidence, symbol_neighbors]
-        )
-        if not trace_to_code_ok:
-            failed_trace_checks = [
-                label
-                for label, passed in trace_to_code_checks.items()
-                if not passed
-            ]
-            failures.append(
-                "trace-to-code retrieval did not preserve the captured-trace -> symbol -> defining-file progressive-disclosure chain: "
-                + ", ".join(failed_trace_checks)
-            )
-
-    ripple_expectation = scenario.get("expected_ripple_effect_retrieval")
-    if isinstance(ripple_expectation, dict):
-        root_path = str(ripple_expectation.get("root_path", ""))
-        service_path = str(ripple_expectation.get("service_path", ""))
-        api_path = str(ripple_expectation.get("api_path", ""))
-        relevant_test_path = str(
-            ripple_expectation.get("relevant_test_path", "")
-        )
-        unrelated_test_path = str(
-            ripple_expectation.get("unrelated_test_path", "")
-        )
-        baseline_query = str(ripple_expectation.get("baseline_query", ""))
-        if not all(
-            [
-                root_path,
-                service_path,
-                api_path,
-                relevant_test_path,
-                unrelated_test_path,
-                baseline_query,
-            ]
-        ):
-            raise RuntimeError(
-                "ripple-effect fixture requires root/service/api/test paths and baseline query"
-            )
-
-        baseline = mcp_call(
-            project,
-            "ley_search_context",
-            {
-                "query": baseline_query,
-                "maxResults": 8,
-                "maxTokens": 1_500,
-            },
-        )
-        shallow = mcp_call(
-            project,
-            "ley_graph_neighbors",
-            {
-                "node": Path(root_path).name,
-                "depth": 1,
-                "maxNodes": 30,
-                "direction": "incoming",
-                "edgeKinds": ["imports"],
-            },
-        )
-        expanded = mcp_call(
-            project,
-            "ley_graph_neighbors",
-            {
-                "node": Path(root_path).name,
-                "depth": 3,
-                "maxNodes": 50,
-                "direction": "incoming",
-                "edgeKinds": ["imports"],
-            },
-        )
-        path = mcp_call(
-            project,
-            "ley_graph_path",
-            {
-                "from": Path(relevant_test_path).name,
-                "to": Path(root_path).name,
-                "maxDepth": 3,
-                "maxVisitedNodes": 100,
-                "direction": "outgoing",
-                "edgeKinds": ["imports"],
-            },
-        )
-        shallow_paths = {
-            str(item.get("path"))
-            for item in shallow.get("nodes", [])
-            if isinstance(item, dict)
-            and isinstance(item.get("path"), str)
-        }
-        expanded_paths = {
-            str(item.get("path"))
-            for item in expanded.get("nodes", [])
-            if isinstance(item, dict)
-            and isinstance(item.get("path"), str)
-        }
-        path_nodes = [
-            item for item in path.get("nodes", []) if isinstance(item, dict)
-        ]
-        path_edges = [
-            item for item in path.get("edges", []) if isinstance(item, dict)
-        ]
-        path_paths = [
-            str(item.get("path"))
-            for item in path_nodes
-            if isinstance(item.get("path"), str)
-        ]
-        baseline_text = json.dumps(baseline, sort_keys=True)
-        expected_path = [
-            relevant_test_path,
-            api_path,
-            service_path,
-            root_path,
-        ]
-        ripple_ok = (
-            baseline.get("liveSourceChecked") is False
-            and relevant_test_path not in baseline_text
-            and shallow.get("ambiguous") is False
-            and shallow.get("liveSourceChecked") is False
-            and root_path in shallow_paths
-            and service_path in shallow_paths
-            and api_path not in shallow_paths
-            and relevant_test_path not in shallow_paths
-            and expanded.get("ambiguous") is False
-            and expanded.get("liveSourceChecked") is False
-            and all(
-                expected in expanded_paths
-                for expected in (
-                    root_path,
-                    service_path,
-                    api_path,
-                    relevant_test_path,
-                )
-            )
-            and unrelated_test_path not in expanded_paths
-            and path.get("found") is True
-            and path.get("ambiguous") is False
-            and path.get("liveSourceChecked") is False
-            and path_paths == expected_path
-            and len(path_edges) == 3
-            and all(
-                edge.get("kind") == "imports"
-                and edge.get("provenance") == "deterministic"
-                for edge in path_edges
-            )
-        )
-        scores["ripple_effect_retrieval"] = ripple_ok
-        record_downstream_task_contract(
-            scores,
-            failures,
-            text_contract_success(
-                json.dumps({"expanded": expanded, "path": path}, sort_keys=True),
-                [relevant_test_path],
-                [unrelated_test_path],
-            )
-            and not text_contract_success(
-                json.dumps(shallow, sort_keys=True),
-                [relevant_test_path],
-                [],
-            )
-            and not text_contract_success(
-                baseline_text,
-                [relevant_test_path],
-                [],
-            ),
-            "ripple-effect traversal did not surface the transitive impacted test beyond shallow/direct retrieval",
-        )
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)],
-            [baseline, shallow, expanded, path],
-        )
-        evidence_text.extend([baseline, shallow, expanded, path])
-        if not ripple_ok:
-            failures.append(
-                "multi-hop import graph did not preserve the expected core -> service -> API -> test impact chain"
-            )
-
     verification_evidence_expectation = scenario.get("expected_verification_evidence")
     if isinstance(verification_evidence_expectation, dict):
         if not session_id:
@@ -6997,6 +5249,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         evidence_file = project / evidence_path
         captured_bytes = evidence_file.read_bytes()
+        captured_text = captured_bytes.decode("utf-8").strip()
         captured_hash = "sha256:" + hashlib.sha256(captured_bytes).hexdigest()
         if live_mutation_marker:
             evidence_file.write_text(
@@ -7008,11 +5261,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             project,
             "ley_session_get",
             {"sessionId": session_id, "maxCheckpoints": 5, "maxCharacters": 12000},
-        )
-        state = mcp_call(
-            project,
-            "ley_project_state",
-            {"maxSessions": 5, "maxKnowledge": 12, "maxCharacters": 12000},
         )
         checkpoint_rows = session_context.get("checkpoints", [])
         verification_rows = [
@@ -7042,29 +5290,27 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             ),
             None,
         )
-        state_verification = next(
-            (
-                item
-                for item in state.get("recentVerification", [])
-                if isinstance(item, dict)
-                and (
-                    not verification_marker
-                    or verification_marker in json.dumps(item, sort_keys=True)
-                )
-            ),
-            None,
-        )
-        state_citation = next(
-            (
-                item
-                for item in (
-                    state_verification.get("evidenceArtifacts", [])
-                    if isinstance(state_verification, dict)
-                    else []
-                )
-                if isinstance(item, dict) and item.get("artifactPath") == evidence_path
-            ),
-            None,
+        exact_evidence = (
+            mcp_call(
+                project,
+                "ley_evidence",
+                {
+                    "reference": {
+                        "artifactPath": citation.get("artifactPath"),
+                        "startLine": int(citation.get("startLine", 0) or 0),
+                        "startColumn": int(citation.get("startColumn", 0) or 0),
+                        "endLine": int(citation.get("endLine", 0) or 0),
+                        "endColumn": int(citation.get("endColumn", 0) or 0),
+                        "artifactSnapshotId": citation.get("artifactSnapshotId"),
+                        "contentHash": citation.get("contentHash"),
+                        "mediaType": citation.get("mediaType"),
+                    },
+                    "contextLines": 0,
+                    "maxCharacters": 8_000,
+                },
+            )
+            if isinstance(citation, dict)
+            else {}
         )
         host_external_session_id = f"{scenario['id']}-live-source-host"
         host_startup = hook_call(
@@ -7157,7 +5403,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             f"metadata.exit_code: {live_read.returncode}\noutput: {live_read_output}"
         ).strip()
         session_text = json.dumps(session_context, sort_keys=True)
-        state_text = json.dumps(state, sort_keys=True)
+        evidence_result_text = json.dumps(exact_evidence, sort_keys=True)
         host_context_lower = host_task_context.lower()
         live_host_honesty_ok = (
             host_ley_session_id.startswith("ses_")
@@ -7195,17 +5441,18 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and str(citation.get("artifactSnapshotId", "")).startswith("snp_")
             and int(citation.get("startLine", 0)) >= 1
             and int(citation.get("endLine", 0)) >= int(citation.get("startLine", 0))
-            and state_citation is not None
-            and state_citation.get("contentHash") == captured_hash
+            and exact_evidence.get("artifactSnapshotId") == citation.get("artifactSnapshotId")
+            and isinstance(exact_evidence.get("citation"), dict)
+            and exact_evidence["citation"].get("contentHash") == captured_hash
+            and captured_text in str(exact_evidence.get("text", ""))
             and captured_hash != live_hash
             and session_context.get("liveSourceChecked") is False
-            and state.get("liveSourceChecked") is False
             and (not live_mutation_marker or live_mutation_marker not in session_text)
-            and (not live_mutation_marker or live_mutation_marker not in state_text)
+            and (not live_mutation_marker or live_mutation_marker not in evidence_result_text)
             and str(project) not in session_text
             and str(vault) not in session_text
-            and str(project) not in state_text
-            and str(vault) not in state_text
+            and str(project) not in evidence_result_text
+            and str(vault) not in evidence_result_text
             and live_host_honesty_ok
         )
         scores["verification_evidence_links"] = verification_evidence_ok
@@ -7214,10 +5461,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if live_mutation_marker:
             privacy_canaries.append(live_mutation_marker)
         scores["privacy_violation_rate"] = privacy_violation_rate(
-            privacy_canaries, [session_context, state, host_task_context]
+            privacy_canaries, [session_context, exact_evidence, host_task_context]
         )
         evidence_text.extend(
-            [session_context, state, host_startup, host_prompt, host_turns, host_session]
+            [session_context, exact_evidence, host_startup, host_prompt, host_turns, host_session]
         )
         if not verification_evidence_ok:
             failures.append(
@@ -7273,29 +5520,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         live_marker = b"live-source-drift-after-media-capture"
         (project / evidence_path).write_bytes(live_marker)
 
-        context_search = mcp_call(
-            project,
-            "ley_search_context",
-            {"query": evidence_path, "maxResults": 5, "maxTokens": 1200},
-        )
-        context_citation = next(
-            (
-                item.get("citation")
-                for item in context_search.get("items", [])
-                if isinstance(item, dict)
-                and item.get("path") == evidence_path
-                and isinstance(item.get("citation"), dict)
-            ),
-            None,
-        )
         memory_search: dict[str, object] = {}
         memory_citation: dict[str, object] | None = None
-        dossier: dict[str, object] = {}
-        dossier_artifact: dict[str, object] | None = None
         if search_marker:
             memory_search = mcp_call(
                 project,
-                "ley_search_memory",
+                "ley_search",
                 {"query": search_marker, "maxResults": 8, "maxTokens": 2000},
             )
             memory_citation = next(
@@ -7308,33 +5538,21 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 ),
                 None,
             )
-            dossier = mcp_call(
-                project,
-                "ley_topic_dossier",
-                {
-                    "topic": search_marker,
-                    "maxResults": 8,
-                    "maxTokens": 3000,
-                    "maxSupportingSessions": 4,
-                },
-            )
-            dossier_artifact = next(
-                (
-                    artifact
-                    for artifact in dossier.get("importantArtifacts", [])
-                    if isinstance(artifact, dict)
-                    and artifact.get("artifactPath") == evidence_path
-                ),
-                None,
-            )
 
         media_payload, media_result = mcp_call_result(
             project,
-            "ley_read_media_evidence",
+            "ley_evidence",
             {
-                "artifactPath": evidence_path,
-                "artifactSnapshotId": citation.get("artifactSnapshotId"),
-                "contentHash": citation.get("contentHash"),
+                "reference": {
+                    "artifactPath": evidence_path,
+                    "startLine": int(citation.get("startLine", 0) or 0),
+                    "startColumn": int(citation.get("startColumn", 0) or 0),
+                    "endLine": int(citation.get("endLine", 0) or 0),
+                    "endColumn": int(citation.get("endColumn", 0) or 0),
+                    "artifactSnapshotId": citation.get("artifactSnapshotId"),
+                    "contentHash": citation.get("contentHash"),
+                    "mediaType": citation.get("mediaType"),
+                },
                 "maxBytes": len(expected_bytes),
             },
         )
@@ -7356,28 +5574,17 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         }
         serialized_media = json.dumps(media_payload, sort_keys=True)
         search_routes_ok = (
-            isinstance(context_citation, dict)
-            and context_citation.get("contentHash") == expected_hash
-            and context_citation.get("mediaType") == expected_media_type
-            and context_citation.get("startLine") == 0
-            and context_citation.get("endLine") == 0
-            and (
-                not search_marker
-                or (
-                    isinstance(memory_citation, dict)
-                    and memory_citation.get("contentHash") == expected_hash
-                    and memory_citation.get("mediaType") == expected_media_type
-                    and memory_citation.get("startLine") == 0
-                    and memory_citation.get("endLine") == 0
-                    and dossier.get("schemaVersion") == 3
-                    and isinstance(dossier_artifact, dict)
-                    and dossier_artifact.get("contentHash") == expected_hash
-                    and dossier_artifact.get("mediaType") == expected_media_type
-                )
+            not search_marker
+            or (
+                isinstance(memory_citation, dict)
+                and memory_citation.get("contentHash") == expected_hash
+                and memory_citation.get("mediaType") == expected_media_type
+                and memory_citation.get("startLine") == 0
+                and memory_citation.get("endLine") == 0
             )
         )
         multimodal_ok = (
-            "ley_read_media_evidence" in tool_names
+            "ley_evidence" in tool_names
             and session_context.get("schemaVersion") == 6
             and citation.get("contentHash") == expected_hash
             and citation.get("mediaType") == expected_media_type
@@ -7405,1260 +5612,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         scores["multimodal_evidence"] = multimodal_ok
         scores["privacy_violation_rate"] = privacy_violation_rate(
             [str(project), str(vault), live_marker.decode("ascii")],
-            [
-                session_context,
-                context_search,
-                memory_search,
-                dossier,
-                media_payload,
-            ],
+            [session_context, memory_search, media_payload],
         )
-        evidence_text.extend(
-            [session_context, context_search, memory_search, dossier, media_payload]
-        )
+        evidence_text.extend([session_context, memory_search, media_payload])
         if not multimodal_ok:
             failures.append(
-                "multimodal evidence did not preserve exact original media, immutable citation provenance, search/derived-view media routing, non-text semantics, or bounded MCP image delivery"
-            )
-
-    context_utility_expectation = scenario.get("expected_context_utility")
-    if isinstance(context_utility_expectation, dict):
-        task = str(context_utility_expectation.get("task", ""))
-        hidden_marker = str(context_utility_expectation.get("hidden_marker", ""))
-        max_results = int(context_utility_expectation.get("max_results", 8))
-        max_tokens = int(context_utility_expectation.get("max_tokens", 1_500))
-        started = mcp_call(
-            project,
-            "ley_session_start",
-            {
-                "requestId": request_id(f"{scenario['id']}:utility:start"),
-                "name": "Context utility evaluation",
-                "goal": str(scenario["goal"]),
-                "host": "codex",
-            },
-            WRITE_FLAGS,
-        )
-        utility_session_id = str(started.get("sessionId", ""))
-        start_event_id = str(started.get("eventId", ""))
-        compiled = mcp_call(
-            project,
-            "ley_compile_context",
-            {"task": task, "maxResults": max_results, "maxTokens": max_tokens},
-        )
-        context_pack_id = str(compiled.get("contextPackId", ""))
-        compiled_text = json.dumps(compiled, sort_keys=True)
-        bind_args = {
-            "sessionId": utility_session_id,
-            "requestId": request_id(f"{scenario['id']}:utility:bind"),
-            "expectedEventCount": 1,
-            "contextPackId": context_pack_id,
-            "task": task,
-            "maxResults": max_results,
-            "maxTokens": max_tokens,
-        }
-        bound = mcp_call(
-            project,
-            "ley_context_utility_bind",
-            bind_args,
-            WRITE_FLAGS,
-        )
-        bound_retry = mcp_call(
-            project,
-            "ley_context_utility_bind",
-            bind_args,
-            WRITE_FLAGS,
-        )
-        binding_id = str(bound.get("bindingId", ""))
-        checkpoint = mcp_call(
-            project,
-            "ley_session_checkpoint",
-            {
-                "sessionId": utility_session_id,
-                "requestId": request_id(f"{scenario['id']}:utility:checkpoint"),
-                "expectedEventCount": 2,
-                "summary": "Applied the bound context to the downstream utility task.",
-                "tasks": [
-                    {
-                        "title": "Complete utility-bound implementation",
-                        "status": "completed",
-                        "details": "The downstream implementation slice completed.",
-                    }
-                ],
-                "problems": [
-                    {
-                        "title": "Verify utility-bound outcome",
-                        "symptom": "The downstream result needed typed verification evidence.",
-                        "expected": "The verification should pass.",
-                        "attempts": [
-                            {
-                                "action": "Run the bounded downstream verification",
-                                "outcome": "helped",
-                                "evidence": "The typed verification completed.",
-                            }
-                        ],
-                        "resolution": {
-                            "rootCause": "Outcome correlation was previously absent.",
-                            "change": "Bind the supplied context before the work.",
-                            "verification": "The downstream verification passed.",
-                        },
-                    }
-                ],
-                "verification": [
-                    {
-                        "kind": "test",
-                        "status": "passed",
-                        "summary": "Context utility downstream verification passed.",
-                    }
-                ],
-            },
-            WRITE_FLAGS,
-        )
-        checkpoint_event_id = str(checkpoint.get("eventId", ""))
-        finished = mcp_call(
-            project,
-            "ley_session_finish",
-            {
-                "sessionId": utility_session_id,
-                "requestId": request_id(f"{scenario['id']}:utility:finish"),
-                "status": "completed",
-                "summary": "The utility-bound downstream task completed.",
-                "finalResponse": "Completed and verified the downstream task.",
-                "handoff": "",
-                "unresolved": [],
-            },
-            WRITE_FLAGS,
-        )
-        finish_event_id = str(finished.get("eventId", ""))
-
-        pre_binding_rejected = False
-        try:
-            mcp_call(
-                project,
-                "ley_context_utility_observe",
-                {
-                    "sessionId": utility_session_id,
-                    "requestId": request_id(f"{scenario['id']}:utility:invalid-before-binding"),
-                    "expectedEventCount": 4,
-                    "bindingId": binding_id,
-                    "downstreamEventIds": [start_event_id],
-                },
-                WRITE_FLAGS,
-            )
-        except RuntimeError as error:
-            pre_binding_rejected = "does not occur after its bound context pack" in str(error)
-
-        observe_args = {
-            "sessionId": utility_session_id,
-            "requestId": request_id(f"{scenario['id']}:utility:observe"),
-            "expectedEventCount": 4,
-            "bindingId": binding_id,
-            "downstreamEventIds": [checkpoint_event_id, finish_event_id],
-        }
-        observed = mcp_call(
-            project,
-            "ley_context_utility_observe",
-            observe_args,
-            WRITE_FLAGS,
-        )
-        observed_retry = mcp_call(
-            project,
-            "ley_context_utility_observe",
-            observe_args,
-            WRITE_FLAGS,
-        )
-        session_context = mcp_call(
-            project,
-            "ley_session_get",
-            {
-                "sessionId": utility_session_id,
-                "maxCheckpoints": 5,
-                "maxCharacters": 12_000,
-            },
-        )
-        utility_rows = [
-            item
-            for item in session_context.get("contextUtilityObservations", [])
-            if isinstance(item, dict)
-        ]
-        utility = utility_rows[0] if len(utility_rows) == 1 else None
-        outcomes = (
-            [
-                item
-                for item in utility.get("downstreamOutcomes", [])
-                if isinstance(item, dict)
-            ]
-            if isinstance(utility, dict)
-            else []
-        )
-        checkpoint_outcome = next(
-            (item for item in outcomes if item.get("kind") == "checkpoint"), None
-        )
-        finish_outcome = next(
-            (item for item in outcomes if item.get("kind") == "session-finish"), None
-        )
-        session_text = json.dumps(session_context, sort_keys=True)
-        context_utility_ok = (
-            context_pack_id.startswith("cpk_")
-            and len(context_pack_id) == 68
-            and (not hidden_marker or hidden_marker in compiled_text)
-            and binding_id.startswith("cub_")
-            and bound.get("contextPackId") == context_pack_id
-            and bound.get("eventCount") == 2
-            and bound.get("replayed") is False
-            and bound_retry.get("bindingId") == binding_id
-            and bound_retry.get("eventCount") == 2
-            and bound_retry.get("replayed") is True
-            and checkpoint.get("eventCount") == 3
-            and finished.get("eventCount") == 4
-            and pre_binding_rejected
-            and observed.get("eventCount") == 5
-            and observed.get("replayed") is False
-            and observed_retry.get("eventId") == observed.get("eventId")
-            and observed_retry.get("eventCount") == 5
-            and observed_retry.get("replayed") is True
-            and session_context.get("schemaVersion") == 5
-            and session_context.get("projectionSchemaVersion") == 1
-            and session_context.get("contextUtilityBindingCount") == 1
-            and session_context.get("contextUtilityObservationCount") == 1
-            and session_context.get("omittedContextUtilityObservations") == 0
-            and isinstance(utility, dict)
-            and utility.get("bindingId") == binding_id
-            and utility.get("contextPackId") == context_pack_id
-            and utility.get("contextPackRevalidated") is True
-            and utility.get("contextUsageProven") is False
-            and utility.get("causalUtilityProven") is False
-            and utility.get("trustChangesApplied") is False
-            and utility.get("rankingChangesApplied") is False
-            and bool(utility.get("includedRecords"))
-            and isinstance(checkpoint_outcome, dict)
-            and checkpoint_outcome.get("completedTasks") == 1
-            and checkpoint_outcome.get("resolvedProblems") == 1
-            and checkpoint_outcome.get("helpedAttempts") == 1
-            and checkpoint_outcome.get("passedVerifications") == 1
-            and isinstance(finish_outcome, dict)
-            and finish_outcome.get("sessionStatus") == "completed"
-            and session_context.get("liveSourceChecked") is False
-            and (not hidden_marker or hidden_marker not in session_text)
-            and str(project) not in session_text
-            and str(vault) not in session_text
-        )
-        scores["context_memory_utility"] = context_utility_ok
-        utility_privacy_canaries = [str(project), str(vault)]
-        if hidden_marker:
-            utility_privacy_canaries.append(hidden_marker)
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            utility_privacy_canaries,
-            [bound, bound_retry, checkpoint, finished, observed, observed_retry, session_context],
-        )
-        evidence_text.extend(
-            [compiled, bound, bound_retry, checkpoint, finished, observed, observed_retry, session_context]
-        )
-        if not context_utility_ok:
-            failures.append(
-                "context/memory utility feedback did not preserve exact pre-work pack binding, downstream-only outcome attribution, metadata-only privacy, retry safety, and non-authority semantics"
-            )
-
-    unobserved_utility_expectation = scenario.get(
-        "expected_unobserved_context_utility_health"
-    )
-    if isinstance(unobserved_utility_expectation, dict):
-        task = str(unobserved_utility_expectation.get("task", ""))
-        hidden_marker = str(unobserved_utility_expectation.get("hidden_marker", ""))
-        max_results = int(unobserved_utility_expectation.get("max_results", 8))
-        max_tokens = int(unobserved_utility_expectation.get("max_tokens", 1_500))
-        started = mcp_call(
-            project,
-            "ley_session_start",
-            {
-                "requestId": request_id(f"{scenario['id']}:unobserved:start"),
-                "name": "Unobserved context utility evaluation",
-                "goal": str(scenario["goal"]),
-                "host": "codex",
-            },
-            WRITE_FLAGS,
-        )
-        utility_session_id = str(started.get("sessionId", ""))
-        compiled = mcp_call(
-            project,
-            "ley_compile_context",
-            {"task": task, "maxResults": max_results, "maxTokens": max_tokens},
-        )
-        compiled_text = json.dumps(compiled, sort_keys=True)
-        context_pack_id = str(compiled.get("contextPackId", ""))
-        bound = mcp_call(
-            project,
-            "ley_context_utility_bind",
-            {
-                "sessionId": utility_session_id,
-                "requestId": request_id(f"{scenario['id']}:unobserved:bind"),
-                "expectedEventCount": 1,
-                "contextPackId": context_pack_id,
-                "task": task,
-                "maxResults": max_results,
-                "maxTokens": max_tokens,
-            },
-            WRITE_FLAGS,
-        )
-        binding_id = str(bound.get("bindingId", ""))
-        finished = mcp_call(
-            project,
-            "ley_session_finish",
-            {
-                "sessionId": utility_session_id,
-                "requestId": request_id(f"{scenario['id']}:unobserved:finish"),
-                "status": "completed",
-                "summary": "The work ended without attaching a context utility observation.",
-                "finalResponse": "Terminal context utility measurement fixture.",
-                "handoff": "",
-                "unresolved": [],
-            },
-            WRITE_FLAGS,
-        )
-        session_context = mcp_call(
-            project,
-            "ley_session_get",
-            {
-                "sessionId": utility_session_id,
-                "maxCheckpoints": 5,
-                "maxCharacters": 12_000,
-            },
-        )
-        health = mcp_call(
-            project,
-            "ley_memory_health",
-            {
-                "maxSignals": int(unobserved_utility_expectation.get("max_signals", 100)),
-                "maxSessions": int(unobserved_utility_expectation.get("max_sessions", 20)),
-                "maxCharacters": int(
-                    unobserved_utility_expectation.get("max_characters", 16_000)
-                ),
-            },
-        )
-        health_text = json.dumps(health, sort_keys=True)
-        signals = [
-            item
-            for item in health.get("signals", [])
-            if isinstance(item, dict)
-            and item.get("kind") == "unobserved-context-utility-binding"
-        ]
-        signal = signals[0] if len(signals) == 1 else {}
-        unobserved_binding_rows = [
-            item
-            for item in session_context.get("unobservedContextUtilityBindings", [])
-            if isinstance(item, dict)
-        ]
-        unobserved_binding = (
-            unobserved_binding_rows[0] if len(unobserved_binding_rows) == 1 else {}
-        )
-        finish_event_id = str(finished.get("eventId", ""))
-        finish_context = session_context.get("finish", {})
-        health_coverage = health.get("coverage", {})
-        unobserved_ok = (
-            context_pack_id.startswith("cpk_")
-            and binding_id.startswith("cub_")
-            and bool(compiled.get("items"))
-            and finished.get("eventCount") == 3
-            and session_context.get("contextUtilityBindingCount") == 1
-            and session_context.get("contextUtilityObservationCount") == 0
-            and session_context.get("observedContextUtilityBindingCount") == 0
-            and session_context.get("unobservedContextUtilityBindingCount") == 1
-            and isinstance(finish_context, dict)
-            and finish_context.get("eventId") == finish_event_id
-            and len(unobserved_binding_rows) == 1
-            and unobserved_binding.get("bindingId") == binding_id
-            and unobserved_binding.get("contextPackId") == context_pack_id
-            and unobserved_binding.get("terminalFinishEventId") == finish_event_id
-            and unobserved_binding.get("contextPackRevalidated") is True
-            and unobserved_binding.get("contextUsageProven") is False
-            and int(unobserved_binding.get("includedRecordCount", 0)) > 0
-            and health.get("schemaVersion") == 5
-            and health_coverage.get("contextUtilityBindingsInspected") == 1
-            and health_coverage.get("observedContextUtilityBindingsInspected") == 0
-            and health_coverage.get("unobservedContextUtilityBindingsInspected") == 1
-            and health_coverage.get("procedureApplicationClaimsInspected") == 0
-            and health_coverage.get("exactCurrentProcedureApplicationClaimsInspected") == 0
-            and health.get("persisted") is False
-            and health.get("destructiveActionsTaken") is False
-            and health.get("liveSourceChecked") is False
-            and len(signals) == 1
-            and signal.get("severity") == "review"
-            and signal.get("relatedLearningIds") == []
-            and signal.get("relatedSessionIds") == [utility_session_id]
-            and signal.get("relatedRecordIds") == [binding_id]
-            and "does not prove" in str(signal.get("detail", ""))
-            and (not hidden_marker or hidden_marker in compiled_text)
-            and (not hidden_marker or hidden_marker not in health_text)
-            and str(project) not in health_text
-            and str(vault) not in health_text
-        )
-        scores["unobserved_context_utility_health"] = unobserved_ok
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault), hidden_marker],
-            [session_context, health],
-        )
-        evidence_text.extend([compiled, bound, finished, session_context, health])
-        if not unobserved_ok:
-            failures.append(
-                "terminal unobserved context utility binding was not surfaced as body-free measurement coverage and advisory Memory Health attention"
-            )
-
-    procedure_history_expectation = scenario.get("expected_procedure_application_history")
-    if isinstance(procedure_history_expectation, dict):
-        title = str(
-            procedure_history_expectation.get(
-                "title",
-                "Release verification procedure",
-            )
-        )
-        guidance = str(
-            procedure_history_expectation.get(
-                "guidance",
-                "Run release verification before shipping.",
-            )
-        )
-        runs = [
-            item
-            for item in procedure_history_expectation.get("runs", [])
-            if isinstance(item, dict)
-        ]
-        if len(runs) != 3:
-            raise RuntimeError(
-                "procedure application history fixture must define exactly three runs"
-            )
-
-        evidence_started = mcp_call(
-            project,
-            "ley_session_start",
-            {
-                "requestId": request_id(
-                    f"{scenario['id']}:procedure-history:evidence:start"
-                ),
-                "name": "Procedure review evidence",
-                "goal": "Create durable evidence for one user-reviewed procedure.",
-                "host": "codex",
-            },
-            WRITE_FLAGS,
-        )
-        evidence_session_id = str(evidence_started.get("sessionId", ""))
-        mcp_call(
-            project,
-            "ley_session_checkpoint",
-            {
-                "sessionId": evidence_session_id,
-                "requestId": request_id(
-                    f"{scenario['id']}:procedure-history:evidence:checkpoint"
-                ),
-                "expectedEventCount": 1,
-                "summary": "Verified the reusable release procedure source.",
-                "touchedArtifacts": ["src/release.rs"],
-                "verification": [
-                    {
-                        "kind": "test",
-                        "status": "passed",
-                        "summary": "Procedure source evidence reviewed.",
-                    }
-                ],
-            },
-            WRITE_FLAGS,
-        )
-        evidence_context = mcp_call(
-            project,
-            "ley_session_get",
-            {
-                "sessionId": evidence_session_id,
-                "maxCheckpoints": 5,
-                "maxCharacters": 8_000,
-            },
-        )
-        evidence_checkpoints = [
-            item
-            for item in evidence_context.get("checkpoints", [])
-            if isinstance(item, dict)
-        ]
-        if not evidence_checkpoints:
-            raise RuntimeError(
-                "procedure application history fixture created no checkpoint evidence"
-            )
-        evidence_record_id = str(evidence_checkpoints[-1].get("checkpointId", ""))
-        proposed = mcp_call(
-            project,
-            "ley_learning_propose",
-            {
-                "requestId": request_id(
-                    f"{scenario['id']}:procedure-history:proposal"
-                ),
-                "kind": "procedure",
-                "title": title,
-                "guidance": guidance,
-                "confidencePercent": 90,
-                "provenance": "agent-authored",
-                "evidence": [
-                    {
-                        "sessionId": evidence_session_id,
-                        "recordId": evidence_record_id,
-                        "note": "Evaluation evidence for reviewed procedure application history.",
-                    }
-                ],
-            },
-            WRITE_FLAGS,
-        )
-        learning_id = str(proposed.get("learningId", ""))
-        reviewed = cli_json(
-            [
-                "learning",
-                "review",
-                learning_id,
-                str(project),
-                "--actor",
-                "user",
-                "--action",
-                "confirm",
-                "--note",
-                "Explicitly reviewed procedure for application-history evaluation.",
-                "--request-id",
-                request_id(f"{scenario['id']}:procedure-history:review"),
-                "--json",
-            ]
-        )
-        reviewed_learning = (
-            reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
-        )
-        reviewed_event_count = int(reviewed_learning.get("eventCount", 0))
-        run_outputs: list[object] = [evidence_context, proposed, reviewed]
-        run_checks: list[bool] = []
-        procedure_run_records: list[dict[str, str]] = []
-        invalid_claim_rejected = False
-
-        for index, run_spec in enumerate(runs):
-            task = str(run_spec.get("task", ""))
-            verification_status = str(run_spec.get("verification_status", ""))
-            expected_passed = int(run_spec.get("passed_verifications", 0))
-            expected_failed = int(run_spec.get("failed_verifications", 0))
-            if not task or verification_status not in {"passed", "failed"}:
-                raise RuntimeError(
-                    "procedure application history run requires task and passed/failed verification_status"
-                )
-
-            started = mcp_call(
-                project,
-                "ley_session_start",
-                {
-                    "requestId": request_id(
-                        f"{scenario['id']}:procedure-history:{index}:start"
-                    ),
-                    "name": f"Procedure application run {index + 1}",
-                    "goal": task,
-                    "host": "codex",
-                },
-                WRITE_FLAGS,
-            )
-            work_session_id = str(started.get("sessionId", ""))
-            compiled = mcp_call(
-                project,
-                "ley_compile_context",
-                {"task": task, "maxResults": 8, "maxTokens": 1_500},
-            )
-            learning_items = [
-                item
-                for item in compiled.get("items", [])
-                if isinstance(item, dict)
-                and item.get("learningId") == learning_id
-            ]
-            learning_item = learning_items[0] if len(learning_items) == 1 else {}
-            context_pack_id = str(compiled.get("contextPackId", ""))
-            bound = mcp_call(
-                project,
-                "ley_context_utility_bind",
-                {
-                    "sessionId": work_session_id,
-                    "requestId": request_id(
-                        f"{scenario['id']}:procedure-history:{index}:bind"
-                    ),
-                    "expectedEventCount": 1,
-                    "contextPackId": context_pack_id,
-                    "task": task,
-                    "maxResults": 8,
-                    "maxTokens": 1_500,
-                },
-                WRITE_FLAGS,
-            )
-            binding_id = str(bound.get("bindingId", ""))
-            checkpoint = mcp_call(
-                project,
-                "ley_session_checkpoint",
-                {
-                    "sessionId": work_session_id,
-                    "requestId": request_id(
-                        f"{scenario['id']}:procedure-history:{index}:checkpoint"
-                    ),
-                    "expectedEventCount": 2,
-                    "summary": (
-                        "Caller claims the reviewed procedure was applied under this run's "
-                        "recorded task/condition; preserve the typed outcome separately."
-                    ),
-                    "verification": [
-                        {
-                            "kind": "test",
-                            "status": verification_status,
-                            "summary": f"Procedure application run {index + 1} verification {verification_status}.",
-                        }
-                    ],
-                },
-                WRITE_FLAGS,
-            )
-            checkpoint_event_id = str(checkpoint.get("eventId", ""))
-
-            if index == 0:
-                try:
-                    mcp_call(
-                        project,
-                        "ley_context_utility_observe",
-                        {
-                            "sessionId": work_session_id,
-                            "requestId": request_id(
-                                f"{scenario['id']}:procedure-history:invalid-claim"
-                            ),
-                            "expectedEventCount": 3,
-                            "bindingId": binding_id,
-                            "downstreamEventIds": [checkpoint_event_id],
-                            "claimedAppliedLearningIds": [
-                                "lrn_" + ("f" * 32)
-                            ],
-                        },
-                        WRITE_FLAGS,
-                    )
-                except RuntimeError as error:
-                    invalid_claim_rejected = (
-                        "not an exact active-project procedure" in str(error)
-                    )
-
-            observed = mcp_call(
-                project,
-                "ley_context_utility_observe",
-                {
-                    "sessionId": work_session_id,
-                    "requestId": request_id(
-                        f"{scenario['id']}:procedure-history:{index}:observe"
-                    ),
-                    "expectedEventCount": 3,
-                    "bindingId": binding_id,
-                    "downstreamEventIds": [checkpoint_event_id],
-                    "claimedAppliedLearningIds": [learning_id],
-                },
-                WRITE_FLAGS,
-            )
-            session_context = mcp_call(
-                project,
-                "ley_session_get",
-                {
-                    "sessionId": work_session_id,
-                    "maxCheckpoints": 5,
-                    "maxCharacters": 8_000,
-                },
-            )
-            utility_rows = [
-                item
-                for item in session_context.get("contextUtilityObservations", [])
-                if isinstance(item, dict)
-            ]
-            utility = utility_rows[0] if len(utility_rows) == 1 else {}
-            outcomes = [
-                item
-                for item in utility.get("downstreamOutcomes", [])
-                if isinstance(item, dict)
-            ]
-            outcome = outcomes[0] if len(outcomes) == 1 else {}
-            run_checks.append(
-                bool(
-                    learning_item.get("learningKind") == "procedure"
-                    and learning_item.get("learningEventCount") == reviewed_event_count
-                    and learning_item.get("trustedForReuse") is True
-                    and context_pack_id.startswith("cpk_")
-                    and binding_id.startswith("cub_")
-                    and observed.get("eventCount") == 4
-                    and session_context.get("schemaVersion") == 15
-                    and session_context.get("projectionSchemaVersion") == 1
-                    and utility.get("claimedAppliedLearningIds") == [learning_id]
-                    and outcome.get("passedVerifications") == expected_passed
-                    and outcome.get("failedVerifications") == expected_failed
-                    and utility.get("contextUsageProven") is False
-                    and utility.get("causalUtilityProven") is False
-                    and utility.get("trustChangesApplied") is False
-                    and utility.get("rankingChangesApplied") is False
-                )
-            )
-            procedure_run_records.append(
-                {
-                    "session_id": work_session_id,
-                    "observation_id": str(utility.get("id", "")),
-                    "task": task,
-                    "verification_status": verification_status,
-                }
-            )
-            run_outputs.extend(
-                [started, compiled, bound, checkpoint, observed, session_context]
-            )
-
-        final_learning = mcp_call(
-            project,
-            "ley_learning_get",
-            {
-                "learningId": learning_id,
-                "maxEvidence": 10,
-                "maxHistory": 10,
-                "maxArtifactsPerEvidence": 10,
-                "maxCharacters": 16_000,
-            },
-        )
-        application_rows = [
-            item
-            for item in final_learning.get("applicationObservations", [])
-            if isinstance(item, dict)
-        ]
-        applications_by_task = {
-            str(item.get("taskExcerpt", "")): item for item in application_rows
-        }
-        expected_tasks = {str(item.get("task", "")) for item in runs}
-        expected_outcomes = {
-            str(item.get("task", "")): (
-                int(item.get("passed_verifications", 0)),
-                int(item.get("failed_verifications", 0)),
-            )
-            for item in runs
-        }
-        history_rows_ok = len(application_rows) == 3 and set(
-            applications_by_task
-        ) == expected_tasks
-        if history_rows_ok:
-            history_rows_ok = all(
-                application.get("learningEventCount") == reviewed_event_count
-                and application.get("learningVersionMatchesCurrent") is True
-                and application.get("passedVerifications")
-                == expected_outcomes[task][0]
-                and application.get("failedVerifications")
-                == expected_outcomes[task][1]
-                and application.get("procedureFollowedProven") is False
-                and application.get("conditionApplicabilityProven") is False
-                and application.get("contextUsageProven") is False
-                and application.get("causalUtilityProven") is False
-                and application.get("trustChangesApplied") is False
-                and application.get("rankingChangesApplied") is False
-                for task, application in applications_by_task.items()
-            )
-        final_text = json.dumps(final_learning, sort_keys=True)
-        procedure_history_ok = (
-            learning_id.startswith("lrn_")
-            and proposed.get("eventCount") == 1
-            and reviewed_event_count == 2
-            and final_learning.get("schemaVersion") == 3
-            and final_learning.get("projectionSchemaVersion") == 1
-            and final_learning.get("eventCount") == 2
-            and final_learning.get("state") == "verified"
-            and final_learning.get("trustState") == "trusted"
-            and final_learning.get("applicationObservationCount") == 3
-            and final_learning.get("omittedApplicationObservations") == 0
-            and "caller-declared"
-            in str(final_learning.get("applicationClaimNotice", ""))
-            and invalid_claim_rejected
-            and all(run_checks)
-            and history_rows_ok
-            and str(project) not in final_text
-            and str(vault) not in final_text
-        )
-        scores["procedure_application_history"] = procedure_history_ok
-        run_outputs.append(final_learning)
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)],
-            run_outputs,
-        )
-        evidence_text.extend(run_outputs)
-        if not procedure_history_ok:
-            failures.append(
-                "procedure application history did not preserve exact reviewed-version binding, mixed typed outcomes, changed-condition task excerpts, invalid-claim rejection, or non-authority semantics"
-            )
-
-        procedure_health_expectation = scenario.get(
-            "expected_procedure_outcome_health_attention"
-        )
-        if isinstance(procedure_health_expectation, dict):
-            failed_runs = [
-                item
-                for item in procedure_run_records
-                if item.get("verification_status") == "failed"
-            ]
-            passed_runs = [
-                item
-                for item in procedure_run_records
-                if item.get("verification_status") == "passed"
-            ]
-            procedure_health = mcp_call(
-                project,
-                "ley_memory_health",
-                {
-                    "maxSignals": int(
-                        procedure_health_expectation.get("max_signals", 100)
-                    ),
-                    "maxSessions": int(
-                        procedure_health_expectation.get("max_sessions", 20)
-                    ),
-                    "maxCharacters": int(
-                        procedure_health_expectation.get("max_characters", 16_000)
-                    ),
-                },
-            )
-            procedure_health_text = json.dumps(procedure_health, sort_keys=True)
-            procedure_health_coverage = procedure_health.get("coverage", {})
-            attention_signals = [
-                item
-                for item in procedure_health.get("signals", [])
-                if isinstance(item, dict)
-                and item.get("kind")
-                == procedure_health_expectation.get(
-                    "signal_kind", "procedure-application-outcome-attention"
-                )
-            ]
-            attention = attention_signals[0] if len(attention_signals) == 1 else {}
-            detail = str(attention.get("detail", ""))
-            required_detail_fragments = [
-                str(item)
-                for item in procedure_health_expectation.get("detail_fragments", [])
-            ]
-            forbidden_markers = [
-                str(item)
-                for item in procedure_health_expectation.get("forbidden_markers", [])
-                if str(item)
-            ]
-            failed_run = failed_runs[0] if len(failed_runs) == 1 else {}
-            procedure_health_privacy = privacy_violation_rate(
-                [str(project), str(vault), *forbidden_markers],
-                [procedure_health],
-            )
-            expected_unsupported_signal = str(
-                procedure_health_expectation.get(
-                    "unsupported_signal",
-                    "old-procedure-never-successfully-reverified",
-                )
-            )
-            procedure_health_ok = (
-                len(procedure_run_records) == 3
-                and len(failed_runs) == 1
-                and len(passed_runs) == 2
-                and bool(failed_run.get("session_id"))
-                and bool(failed_run.get("observation_id"))
-                and all(
-                    attention.get("relatedSessionIds")
-                    != [passed_run.get("session_id")]
-                    and attention.get("relatedRecordIds")
-                    != [passed_run.get("observation_id")]
-                    for passed_run in passed_runs
-                )
-                and procedure_health.get("schemaVersion")
-                == int(procedure_health_expectation.get("schema_version", 5))
-                and procedure_health_coverage.get("procedureApplicationClaimsInspected")
-                == int(
-                    procedure_health_expectation.get(
-                        "procedure_application_claims_inspected", 3
-                    )
-                )
-                and procedure_health_coverage.get(
-                    "exactCurrentProcedureApplicationClaimsInspected"
-                )
-                == int(
-                    procedure_health_expectation.get(
-                        "exact_current_procedure_application_claims_inspected", 3
-                    )
-                )
-                and procedure_health.get("persisted") is False
-                and procedure_health.get("destructiveActionsTaken") is False
-                and procedure_health.get("liveSourceChecked") is False
-                and len(attention_signals) == 1
-                and attention.get("severity")
-                == procedure_health_expectation.get("severity", "review")
-                and attention.get("relatedLearningIds") == [learning_id]
-                and attention.get("relatedSessionIds") == [failed_run.get("session_id")]
-                and attention.get("relatedRecordIds")
-                == [failed_run.get("observation_id")]
-                and all(fragment in detail for fragment in required_detail_fragments)
-                and expected_unsupported_signal
-                in {
-                    str(item.get("signal"))
-                    for item in procedure_health.get("unsupportedSignals", [])
-                    if isinstance(item, dict)
-                }
-                and not any(marker in procedure_health_text for marker in forbidden_markers)
-                and procedure_health_privacy == 0.0
-            )
-            scores["procedure_outcome_health_attention"] = procedure_health_ok
-            run_outputs.append(procedure_health)
-            evidence_text.append(procedure_health)
-            if not procedure_health_ok:
-                failures.append(
-                    "procedure application outcome Memory Health did not isolate the failed run's attention signal, preserve advisory semantics, or withhold task/path/body details"
-                )
-
-    inspector_expectation = scenario.get("expected_context_pack_inspector")
-    if isinstance(inspector_expectation, dict):
-        task = str(inspector_expectation.get("task", ""))
-        max_results = int(inspector_expectation.get("max_results", 8))
-        max_tokens = int(inspector_expectation.get("max_tokens", 1_500))
-        hidden_marker = str(inspector_expectation.get("hidden_marker", ""))
-        if inspector_expectation.get("require_search_loss") is not True:
-            raise RuntimeError(
-                "Context Pack Inspector fixture requires require_search_loss=true"
-            )
-        require_search_loss = True
-        compiled = mcp_call(
-            project,
-            "ley_compile_context",
-            {
-                "task": task,
-                "maxResults": max_results,
-                "maxTokens": max_tokens,
-            },
-        )
-        pack_id = str(compiled.get("contextPackId", ""))
-        inspection = mcp_call(
-            project,
-            "ley_context_pack_inspect",
-            {
-                "task": task,
-                "maxResults": max_results,
-                "maxTokens": max_tokens,
-                "expectedContextPackId": pack_id,
-            },
-        )
-        mismatch = mcp_call(
-            project,
-            "ley_context_pack_inspect",
-            {
-                "task": task,
-                "maxResults": max_results,
-                "maxTokens": max_tokens,
-                "expectedContextPackId": "cpk_" + ("0" * 64),
-            },
-        )
-        compiled_text = json.dumps(compiled, sort_keys=True)
-        inspection_text = json.dumps(inspection, sort_keys=True)
-        compiled_coverage = compiled.get("coverage", {})
-        inspection_coverage = inspection.get("coverage", {})
-        concrete_search_loss = (
-            isinstance(inspection_coverage, dict)
-            and (
-                inspection_coverage.get("sourceTruncated") is True
-                or int(inspection_coverage.get("searchOmittedCandidates", 0)) > 0
-                or int(inspection_coverage.get("searchOmittedResults", 0)) > 0
-                or int(inspection_coverage.get("searchOmittedConflicts", 0)) > 0
-                or int(inspection_coverage.get("searchTruncatedResultContent", 0)) > 0
-            )
-        )
-        search_loss_ok = (
-            not require_search_loss
-            or (
-                isinstance(compiled_coverage, dict)
-                and isinstance(inspection_coverage, dict)
-                and inspection_coverage.get("searchTruncated") is True
-                and concrete_search_loss
-                and inspection.get("budget", {}).get("omittedOrTruncated") is True
-            )
-        )
-        inspector_ok = (
-            pack_id.startswith("cpk_")
-            and len(pack_id) == 68
-            and int(compiled.get("createdAtUnixMs", 0)) > 0
-            and compiled.get("liveSourceChecked") is False
-            and inspection.get("schemaVersion") == 4
-            and inspection.get("persisted") is False
-            and inspection.get("inspectionBasis")
-            == "current-recompiled-context-pack-manifest"
-            and inspection.get("contextPackId") == pack_id
-            and inspection.get("matchesExpectedContextPack") is True
-            and not inspection.get("mismatchWarning")
-            and bool(inspection.get("includedRecords"))
-            and inspection.get("budget", {}).get("maxTokens") == max_tokens
-            and inspection.get("budget", {}).get("estimatedTokens")
-            == compiled.get("estimatedTokens")
-            and inspection_coverage == compiled_coverage
-            and int(inspection.get("coverage", {}).get("searchCandidateLimit", 0)) > 0
-            and int(
-                inspection.get("coverage", {}).get("searchCollectedCandidates", 0)
-            )
-            >= int(inspection.get("coverage", {}).get("searchedResults", 0))
-            and int(
-                inspection.get("coverage", {}).get("searchOmittedCandidates", 0)
-            )
-            >= 0
-            and int(
-                inspection.get("coverage", {}).get("searchOmittedResults", 0)
-            )
-            >= 0
-            and int(
-                inspection.get("coverage", {}).get("searchOmittedConflicts", 0)
-            )
-            >= 0
-            and int(
-                inspection.get("coverage", {}).get("searchTruncatedResultContent", 0)
-            )
-            >= 0
-            and inspection.get("liveSourceChecked") is False
-            and search_loss_ok
-            and (
-                not hidden_marker
-                or (
-                    hidden_marker in compiled_text
-                    and hidden_marker not in inspection_text
-                )
-            )
-            and mismatch.get("matchesExpectedContextPack") is False
-            and "does not match" in str(mismatch.get("mismatchWarning", ""))
-            and str(project) not in inspection_text
-            and str(vault) not in inspection_text
-        )
-        scores["context_pack_inspector"] = inspector_ok
-        scores["failure_attribution"] = search_loss_ok
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)], [inspection, mismatch]
-        )
-        evidence_text.extend([compiled, inspection, mismatch])
-        if not inspector_ok:
-            diagnostic = ""
-            if require_search_loss:
-                diagnostic = (
-                    f"; compiledCoverage={json.dumps(compiled_coverage, sort_keys=True)}, "
-                    f"inspectionCoverage={json.dumps(inspection_coverage, sort_keys=True)}, "
-                    f"budget={json.dumps(inspection.get('budget', {}), sort_keys=True)}, "
-                    f"searchLossOk={search_loss_ok}"
-                )
-            failures.append(
-                "Context Pack Inspector did not preserve pack identity, attribution, body omission, mismatch honesty, or privacy"
-                + diagnostic
-            )
-
-    health_expectation = scenario.get("expected_memory_health")
-    if isinstance(health_expectation, dict):
-        if not session_id:
-            raise RuntimeError("memory health fixture created no structured session")
-        hidden_turn_marker = str(
-            health_expectation.get("hidden_turn_marker", "memory_health_hidden_turn")
-        )
-        run(
-            [
-                "session",
-                "prompt",
-                session_id,
-                str(project),
-                "--stdin",
-                "--request-id",
-                request_id(f"{scenario['id']}:health:prompt"),
-                "--json",
-            ],
-            stdin=f"{hidden_turn_marker} prompt body",
-        )
-        run(
-            [
-                "session",
-                "response",
-                session_id,
-                str(project),
-                "--stdin",
-                "--request-id",
-                request_id(f"{scenario['id']}:health:response"),
-                "--json",
-            ],
-            stdin=f"{hidden_turn_marker} response body",
-        )
-        arguments = {
-            "maxSignals": int(health_expectation.get("max_signals", 100)),
-            "maxSessions": int(health_expectation.get("max_sessions", 20)),
-            "maxCharacters": int(health_expectation.get("max_characters", 16_000)),
-        }
-        health = mcp_call(project, "ley_memory_health", arguments)
-        rebuilt = mcp_call(project, "ley_memory_health", arguments)
-        health_text = json.dumps(health, sort_keys=True)
-        signal_kinds = {
-            str(signal.get("kind"))
-            for signal in health.get("signals", [])
-            if isinstance(signal, dict)
-        }
-        expected_kinds = {
-            str(value) for value in health_expectation.get("signal_kinds", [])
-        }
-        unsupported = {
-            str(item.get("signal"))
-            for item in health.get("unsupportedSignals", [])
-            if isinstance(item, dict)
-        }
-        expected_unsupported = {
-            "old-procedure-never-successfully-reverified",
-            "failed-consolidations",
-            "chronically-retrieved-but-unhelpful-memory",
-        }
-        health_ok = (
-            health.get("schemaVersion") == 5
-            and health.get("projection") == "on-demand-memory-health"
-            and health.get("persisted") is False
-            and health.get("destructiveActionsTaken") is False
-            and health.get("hasActionableSignals") is True
-            and str(health.get("healthFingerprint", "")).startswith("sha256:")
-            and health.get("healthFingerprint") == rebuilt.get("healthFingerprint")
-            and expected_kinds.issubset(signal_kinds)
-            and expected_unsupported.issubset(unsupported)
-            and health.get("liveSourceChecked") is False
-            and int(health.get("coverage", {}).get("textCharacters", 0))
-            <= arguments["maxCharacters"]
-            and hidden_turn_marker not in health_text
-            and str(project) not in health_text
-            and str(vault) not in health_text
-        )
-        scores["memory_health"] = health_ok
-        privacy_canaries = [str(project), str(vault)]
-        if hidden_turn_marker:
-            privacy_canaries.append(hidden_turn_marker)
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            privacy_canaries, [health]
-        )
-        evidence_text.extend([health, rebuilt])
-        if not health_ok:
-            failures.append(
-                "Memory Health did not preserve advisory/non-destructive semantics, typed signal coverage, private turn-body omission, or unsupported-signal honesty"
-            )
-
-    legibility_expectation = scenario.get("expected_agent_legibility")
-    if isinstance(legibility_expectation, dict):
-        arguments = {
-            "maxEntriesPerSection": int(
-                legibility_expectation.get("max_entries_per_section", 12)
-            ),
-            "maxSessions": int(legibility_expectation.get("max_sessions", 8)),
-            "maxCharacters": int(
-                legibility_expectation.get("max_characters", 12_000)
-            ),
-        }
-        legibility = mcp_call(project, "ley_agent_legibility", arguments)
-        rebuilt = mcp_call(project, "ley_agent_legibility", arguments)
-        legibility_text = json.dumps(legibility, sort_keys=True)
-        hidden_spec_marker = str(
-            legibility_expectation.get("hidden_spec_marker", "")
-        )
-        architecture_path = str(
-            legibility_expectation.get("architecture_path", "")
-        )
-        directory_path = str(legibility_expectation.get("directory_path", ""))
-        policy_path = str(legibility_expectation.get("policy_path", ""))
-        schema_path = str(legibility_expectation.get("schema_path", ""))
-        observability_path = str(
-            legibility_expectation.get("observability_path", "")
-        )
-        api_path = str(legibility_expectation.get("api_path", ""))
-        declared_command = str(
-            legibility_expectation.get("declared_command", "")
-        )
-        observed_command = str(
-            legibility_expectation.get("observed_command", "")
-        )
-        plan_marker = str(legibility_expectation.get("plan_marker", ""))
-        specification_path = str(
-            legibility_expectation.get("specification_path", "")
-        )
-        legibility_ok = (
-            legibility.get("schemaVersion") == 2
-            and legibility.get("projection") == "on-demand-agent-legibility-map"
-            and legibility.get("persisted") is False
-            and legibility.get("tableOfContentsNotScore") is True
-            and "score" not in legibility
-            and str(legibility.get("mapFingerprint", "")).startswith("sha256:")
-            and legibility.get("mapFingerprint") == rebuilt.get("mapFingerprint")
-            and legibility.get("liveSourceChecked") is False
-            and legibility.get("egressTarget") == "cloud"
-            and legibility.get("coverage", {}).get("allSessionsInspected") is True
-            and int(
-                legibility.get("coverage", {}).get(
-                    "inspectedSessionObservedCommandCandidates", 0
-                )
-            )
-            >= 1
-            and int(
-                legibility.get("coverage", {}).get(
-                    "inspectedSessionCurrentPlanCandidates", 0
-                )
-            )
-            >= 1
-            and (
-                not architecture_path
-                or architecture_path
-                in json.dumps(legibility.get("architectureDocs", []), sort_keys=True)
-            )
-            and (
-                not directory_path
-                or directory_path
-                in json.dumps(
-                    legibility.get("importantDirectories", []), sort_keys=True
-                )
-            )
-            and (
-                not policy_path
-                or policy_path
-                in json.dumps(legibility.get("projectPolicies", []), sort_keys=True)
-            )
-            and (
-                not schema_path
-                or schema_path
-                in json.dumps(legibility.get("schemaMigrations", []), sort_keys=True)
-            )
-            and (
-                not observability_path
-                or observability_path
-                in json.dumps(
-                    legibility.get("observabilityReferences", []), sort_keys=True
-                )
-            )
-            and (
-                not api_path
-                or api_path
-                in json.dumps(
-                    legibility.get("primaryApiCandidates", []), sort_keys=True
-                )
-            )
-            and (
-                not declared_command
-                or declared_command
-                in json.dumps(legibility.get("declaredCommands", []), sort_keys=True)
-            )
-            and (
-                not observed_command
-                or observed_command
-                in json.dumps(legibility.get("observedCommands", []), sort_keys=True)
-            )
-            and (
-                not plan_marker
-                or plan_marker
-                in json.dumps(legibility.get("currentPlans", []), sort_keys=True)
-            )
-            and (
-                not specification_path
-                or specification_path
-                in json.dumps(
-                    legibility.get("importantSpecifications", []), sort_keys=True
-                )
-            )
-            and (
-                not hidden_spec_marker or hidden_spec_marker not in legibility_text
-            )
-            and int(legibility.get("coverage", {}).get("textCharacters", 0))
-            <= arguments["maxCharacters"]
-            and str(project) not in legibility_text
-            and str(vault) not in legibility_text
-        )
-        scores["agent_legibility"] = legibility_ok
-        privacy_canaries = [str(project), str(vault)]
-        if hidden_spec_marker:
-            privacy_canaries.append(hidden_spec_marker)
-        scores["privacy_violation_rate"] = privacy_violation_rate(
-            privacy_canaries, [legibility]
-        )
-        evidence_text.extend([legibility, rebuilt])
-        if not legibility_ok:
-            failures.append(
-                "Agent Legibility Map did not preserve TOC-only semantics, source binding, section coverage, Specification-body omission, or privacy"
+                "multimodal evidence did not preserve exact original media, immutable citation provenance, canonical search/evidence routing, non-text semantics, or bounded MCP image delivery"
             )
 
     abstention_expectation = scenario.get("expected_selective_abstention")
@@ -8666,7 +5625,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         query = str(abstention_expectation.get("query", ""))
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {
                 "task": query,
                 "maxResults": int(abstention_expectation.get("max_results", 8)),
@@ -8741,7 +5700,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": title, "maxResults": 8, "maxTokens": 1_500},
         )
         text_a = json.dumps(context_a, sort_keys=True)
@@ -8937,7 +5896,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             compiled_after = mcp_call(
                 project,
-                "ley_compile_context",
+                "ley_brief",
                 {"task": query_reconciled, "maxResults": 10, "maxTokens": 2_000},
             )
             context_a_after = mcp_call(
@@ -9451,7 +6410,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {
                 "task": query,
                 "maxResults": 12,
@@ -9628,7 +6587,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         continuation_task_context = automatic_hook_context(continuation_prompt)
         continuation_fallback = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {
                 "task": (
                     "Continue the approved offline startup requirement and inspect the current "
@@ -9721,7 +6680,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "automatic-overflow-honest":
                 "compact host projection exceeded ley's 3500-byte injection bound"
                 in task_lower
-                and "call `ley_compile_context`" in continuation_task_context,
+                and "call `ley_brief`" in continuation_task_context,
             "automatic-no-live-marker":
                 live_mutation_marker not in continuation_task_context,
             "fallback-current-spec":
@@ -9878,66 +6837,15 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         probes: list[object] = [
             mcp_call(
                 project,
-                "ley_search_memory",
+                "ley_search",
                 {"query": "private deletion memory", "maxResults": 20, "maxTokens": 1_000},
             ),
             mcp_call(
                 project,
-                "ley_search_context",
-                {"query": "private deletion memory", "maxResults": 20, "maxTokens": 1_000},
+                "ley_brief",
+                {"task": "private deletion memory", "maxResults": 20, "maxTokens": 1_000},
             ),
-            mcp_call(
-                project,
-                "ley_search_activity",
-                {"query": "private deletion memory", "maxResults": 20},
-            ),
-            mcp_call(
-                project,
-                "ley_project_resume",
-                {"maxSessions": 10, "maxLearnings": 20, "maxCharacters": 8_000},
-            ),
-            mcp_call(
-                project,
-                "ley_learnings_list",
-                {"scope": "all", "maxResults": 50},
-            ),
-            mcp_call(
-                project,
-                "ley_topic_dossier",
-                {
-                    "topic": "private deletion memory",
-                    "maxResults": 12,
-                    "maxTokens": 2_000,
-                    "maxSupportingSessions": 6,
-                },
-            ),
-            mcp_call(
-                project,
-                "ley_project_state",
-                {
-                    "maxSessions": 10,
-                    "maxKnowledge": 20,
-                    "maxCharacters": 8_000,
-                },
-            ),
-            mcp_call(
-                project,
-                "ley_memory_health",
-                {
-                    "maxSignals": 100,
-                    "maxSessions": 20,
-                    "maxCharacters": 8_000,
-                },
-            ),
-            mcp_call(
-                project,
-                "ley_agent_legibility",
-                {
-                    "maxEntriesPerSection": 12,
-                    "maxSessions": 8,
-                    "maxCharacters": 8_000,
-                },
-            ),
+            cli_json(["learning", "list", str(project), "--json"]),
             cli_json(["session", "list", str(project), "--json"]),
         ]
         vault_text = "\n".join(
@@ -10152,7 +7060,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
         compiler = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": max_tokens},
         )
         resume = mcp_call(
@@ -10307,7 +7215,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             compiler_payload = mcp_call(
                 project,
-                "ley_compile_context",
+                "ley_brief",
                 {
                     "task": query,
                     "maxResults": max_results,
@@ -10764,7 +7672,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {
                 "task": query,
                 "maxResults": 8,
@@ -11135,7 +8043,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             alpha_compiled = mcp_call(
                 alpha,
-                "ley_compile_context",
+                "ley_brief",
                 {"task": isolation_query, "maxResults": 20, "maxTokens": 2_000},
             )
             alpha_sessions = mcp_call(
@@ -11227,15 +8135,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     stale_use_time_learning_id = ""
     if isinstance(stale_use_time, dict):
         stale_title = str(stale_use_time.get("title", ""))
-        pre_change = mcp_call(
-            project,
-            "ley_learnings_list",
-            {"scope": "all", "maxResults": 50},
-        )
+        pre_change = cli_json(["learning", "list", str(project), "--json"])
         pre_change_learning = next(
             (
                 item
-                for item in pre_change.get("learnings", [])
+                for item in pre_change
                 if isinstance(item, dict) and item.get("title") == stale_title
             ),
             None,
@@ -11676,9 +8580,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
 
     if scenario.get("expected_stale_learning"):
-        learnings = mcp_call(project, "ley_learnings_list", {"scope": "all", "maxResults": 50})
+        learnings = cli_json(["learning", "list", str(project), "--json"])
         title = str(scenario["expected_stale_learning"])
-        matches = [item for item in learnings.get("learnings", []) if isinstance(item, dict) and item.get("title") == title]
+        matches = [item for item in learnings if isinstance(item, dict) and item.get("title") == title]
         stale = bool(matches) and any(item.get("freshness") == "source-changed" or item.get("state") == "stale" for item in matches)
         scores["stale_learning"] = stale
         if not stale:
@@ -11689,62 +8593,20 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         stale_guidance = str(stale_use_time.get("guidance", ""))
         stale_query = str(stale_use_time.get("query", ""))
         stale_task = str(stale_use_time.get("task", ""))
-        all_learnings = mcp_call(
-            project,
-            "ley_learnings_list",
-            {"scope": "all", "maxResults": 50},
-        )
-        trusted_learnings = mcp_call(
-            project,
-            "ley_learnings_list",
-            {"maxResults": 50},
+        all_learning = cli_json(
+            ["learning", "show", stale_use_time_learning_id, str(project), "--json"]
         )
         stale_search = mcp_call(
             project,
-            "ley_search_memory",
+            "ley_search",
             {"query": stale_query, "maxResults": K, "maxTokens": 1_500},
         )
         compiled = mcp_call(
             project,
-            "ley_compile_context",
+            "ley_brief",
             {"task": stale_task, "maxResults": 8, "maxTokens": 1_500},
         )
-        stale_pack_id = str(compiled.get("contextPackId", ""))
-        stale_inspection = mcp_call(
-            project,
-            "ley_context_pack_inspect",
-            {
-                "task": stale_task,
-                "maxResults": 8,
-                "maxTokens": 1_500,
-                "expectedContextPackId": stale_pack_id,
-            },
-        )
-        health = mcp_call(
-            project,
-            "ley_memory_health",
-            {"maxSignals": 100, "maxSessions": 20, "maxCharacters": 16_000},
-        )
-        evidence_text.extend(
-            [
-                all_learnings,
-                trusted_learnings,
-                stale_search,
-                compiled,
-                stale_inspection,
-                health,
-            ]
-        )
-
-        all_learning = next(
-            (
-                item
-                for item in all_learnings.get("learnings", [])
-                if isinstance(item, dict)
-                and item.get("learningId") == stale_use_time_learning_id
-            ),
-            None,
-        )
+        evidence_text.extend([all_learning, stale_search, compiled])
         stale_result = next(
             (
                 result
@@ -11758,15 +8620,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         disclosed_stale_ok = (
             isinstance(all_learning, dict)
             and all_learning.get("title") == stale_title
+            and all_learning.get("trustState") == "trusted"
             and (
                 all_learning.get("freshness") == "source-changed"
                 or all_learning.get("state") == "stale"
             )
-        )
-        trusted_suppressed_ok = not any(
-            isinstance(item, dict)
-            and item.get("learningId") == stale_use_time_learning_id
-            for item in trusted_learnings.get("learnings", [])
         )
         search_marks_stale_ok = (
             isinstance(stale_result, dict)
@@ -11774,66 +8632,18 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and stale_result.get("trustedForReuse") is False
         )
         compiled_suppressed_ok = stale_guidance not in serialized([compiled])
-        stale_exclusions = [
-            item
-            for item in stale_inspection.get("activeProjectExclusions", [])
-            if isinstance(item, dict)
-        ]
-        stale_premise = stale_inspection.get("premiseAdjudication", {})
-        stale_warnings = (
-            stale_premise.get("warnings", [])
-            if isinstance(stale_premise, dict)
-            else []
-        )
-        stale_coverage = stale_inspection.get("coverage", {})
-        stale_failure_attribution_ok = (
-            stale_pack_id.startswith("cpk_")
-            and stale_inspection.get("contextPackId") == stale_pack_id
-            and stale_inspection.get("matchesExpectedContextPack") is True
-            and any(
-                item.get("entityId") == stale_use_time_learning_id
-                and item.get("stage") == "admission"
-                and item.get("reason") == "stale-learning"
-                and item.get("trustSignal") == "stale"
-                for item in stale_exclusions
-            )
-            and isinstance(stale_premise, dict)
-            and stale_premise.get("state") == "uncertain-state"
-            and any(
-                isinstance(warning, dict)
-                and warning.get("kind") == "stale-learning"
-                and stale_use_time_learning_id in warning.get("learningIds", [])
-                for warning in stale_warnings
-            )
-            and isinstance(stale_coverage, dict)
-            and stale_coverage.get("searchTruncated") is False
-            and stale_inspection.get("liveSourceChecked") is False
-        )
-        health_signal_ok = any(
-            isinstance(signal, dict)
-            and signal.get("kind") in {"source-changed-learning", "stale-learning"}
-            and stale_use_time_learning_id in signal.get("relatedLearningIds", [])
-            for signal in health.get("signals", [])
-        )
         stale_recovery_ok = (
             disclosed_stale_ok
-            and trusted_suppressed_ok
             and search_marks_stale_ok
             and compiled_suppressed_ok
-            and stale_failure_attribution_ok
-            and health_signal_ok
         )
         scores["stale_learning_recovery"] = stale_recovery_ok
-        scores["failure_attribution"] = stale_failure_attribution_ok
         if not stale_recovery_ok:
             failures.append(
                 "stale-learning recovery incomplete: "
                 f"disclosed={disclosed_stale_ok}, "
-                f"trustedSuppressed={trusted_suppressed_ok}, "
                 f"searchStale={search_marks_stale_ok}, "
-                f"compiledSuppressed={compiled_suppressed_ok}, "
-                f"failureAttribution={stale_failure_attribution_ok}, "
-                f"healthAttention={health_signal_ok}"
+                f"compiledSuppressed={compiled_suppressed_ok}"
             )
 
     if scenario.get("expected_redactions"):
@@ -12075,7 +8885,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     )
                     downstream_lineage_context = mcp_call(
                         project,
-                        "ley_compile_context",
+                        "ley_brief",
                         {
                             "task": prompt_text or "Fix the login bug",
                             "maxResults": 8,

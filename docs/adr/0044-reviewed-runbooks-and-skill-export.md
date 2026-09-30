@@ -1,6 +1,9 @@
 # ADR 0044: Reviewed runbooks and explicit host Skill export
 
-Status: Accepted
+Status: Superseded by the focused-product reset on 2026-09-30. The runbook/Skill export product and CLI
+surface were removed because they duplicate host-native Skills and risk promoting remembered project
+history into instructions. Reviewed learnings remain continuity evidence; this ADR is retained only as
+historical design context.
 
 ## Context
 

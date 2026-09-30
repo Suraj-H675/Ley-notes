@@ -239,8 +239,8 @@ Codex history changed, Ley creates a new immutable imported Ley session while pr
 same opaque source reference. Deleting or changing the external history file later does not
 mutate an already imported snapshot.
 
-Imported sessions do not become automatic Resume context and are not flagged by Memory Health
-as a missed-checkpoint backlog. Use explicit session list/show/turn inspection, project-memory
+Imported sessions do not become automatic Resume context or an automatic missed-checkpoint recovery
+target. Use explicit session list/show/turn inspection, project-memory
 search, or the read-only per-session recovery compiler when the history is relevant. Imported
 sessions are deliberately excluded from the local Consolidation Inbox. Existing explicit
 inspection/proposal workflows remain separate; Ley does not sweep imported history for reusable

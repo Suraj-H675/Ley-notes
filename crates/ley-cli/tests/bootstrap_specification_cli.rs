@@ -510,10 +510,10 @@ fn cli_retires_bootstrap_reference_growth_but_preserves_legacy_read_detach_and_i
     assert_eq!(listed["ready"], 1);
     assert_eq!(listed["grants"][0]["grantId"], grant_id);
 
-    let (mcp_surface, messages) = bootstrap_mcp_surface(&config, &target);
+    let (mcp_surface, messages) = inactive_mcp_tools(&config, &target);
     assert!(
         mcp_surface.status.success(),
-        "bootstrap reference MCP failed: {}",
+        "reference-only MCP fallback failed: {}",
         String::from_utf8_lossy(&mcp_surface.stderr)
     );
     let tools = messages
@@ -521,19 +521,8 @@ fn cli_retires_bootstrap_reference_growth_but_preserves_legacy_read_detach_and_i
         .find(|message| message.get("id") == Some(&json!(2)))
         .and_then(|message| message.pointer("/result/tools"))
         .and_then(Value::as_array)
-        .expect("bootstrap reference MCP tools/list response");
-    assert_eq!(tools.len(), 1);
-    assert_eq!(tools[0]["name"], "ley_compile_context");
-    let resources_response = messages
-        .iter()
-        .find(|message| message.get("id") == Some(&json!(3)))
-        .expect("bootstrap reference MCP resources/list response");
-    let resources_empty = resources_response
-        .pointer("/result/resources")
-        .and_then(Value::as_array)
-        .is_some_and(Vec::is_empty);
-    let resources_unsupported = resources_response.get("error").is_some();
-    assert!(resources_empty || resources_unsupported);
+        .expect("reference-only MCP tools/list response");
+    assert!(tools.is_empty());
 
     let hook = json_stdout(ley_with_input(
         &config,

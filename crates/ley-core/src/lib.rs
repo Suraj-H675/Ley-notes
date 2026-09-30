@@ -39,7 +39,6 @@ mod project_memory_search;
 mod resume_context;
 mod retrieval;
 mod revision;
-mod runbook;
 mod semantic_retrieval;
 mod session;
 mod session_context;
@@ -327,13 +326,6 @@ pub use retrieval::{
     MAX_MEDIA_EVIDENCE_BYTES,
 };
 pub use revision::{ProjectRevisionFreshness, RevisionApplicability, RevisionCompatibility};
-pub use runbook::{
-    compile_reviewed_runbook, compile_reviewed_runbook_with_continuity_transition,
-    export_reviewed_runbook_skill, export_reviewed_runbook_skill_transition, ReviewedRunbook,
-    ReviewedRunbookEntry, ReviewedRunbookInput, RunbookSkillExport, RunbookSkillExportInput,
-    RunbookSkillHost, MAX_REVIEWED_RUNBOOK_CHARACTERS, MAX_REVIEWED_RUNBOOK_SOURCES,
-    REVIEWED_RUNBOOK_SCHEMA_VERSION,
-};
 pub use semantic_retrieval::{
     default_semantic_model_cache_path, install_semantic_model_from_staging,
     install_semantic_model_from_staging_at, semantic_model_status, semantic_model_status_at,

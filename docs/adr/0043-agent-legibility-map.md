@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Superseded by the focused-product reset on 2026-09-30. The named Agent Legibility Map product/API is
+retired; agents use bounded continuity plus their host's live repository inspection instead of a second
+derived project-navigation product. This ADR remains historical evidence.
 
 ## Context
 

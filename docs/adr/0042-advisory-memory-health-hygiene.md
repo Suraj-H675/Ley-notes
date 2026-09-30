@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Superseded by the focused-product reset on 2026-09-30. The standalone Memory Health/Hygiene product/API
+is retired. Durable session/learning/context-utility evidence and direct review state remain, but are no
+longer mirrored into a separate agent-facing health projection. This ADR remains historical evidence.
 
 Later extension: ADR 0073 adds version-bound caller-declared Procedure application observations with
 typed downstream outcomes. The stronger health claim discussed here—successful/failed reverification

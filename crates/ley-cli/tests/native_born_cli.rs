@@ -187,22 +187,6 @@ fn fresh_cli_project_stays_native_without_a_vault_binding() {
     assert_eq!(resume["totalCurrentTrustedLearnings"], 1);
     assert_eq!(resume["learnings"][0]["learningId"], learning_id);
 
-    let runbook = json_stdout(ley(
-        &config,
-        &[
-            "runbook",
-            "compile",
-            project.to_str().unwrap(),
-            "--title",
-            "Native continuity runbook",
-            "--learning",
-            learning_id,
-            "--json",
-        ],
-    ));
-    assert_eq!(runbook["title"], "Native continuity runbook");
-    assert_eq!(runbook["sourceLearningIds"][0], learning_id);
-
     fs::create_dir(&legacy_vault).unwrap();
     let rejected = run_ley(
         &config,

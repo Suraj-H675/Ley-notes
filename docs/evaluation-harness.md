@@ -96,10 +96,8 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 - a deterministic downstream task-evidence contract and a bounded recent-resume baseline comparison;
 - explicit missing-semantic-model lexical fallback plus sparse-repository quality across strict
   500/1,500/3,000/8,000-token budgets;
-- deterministic code→test, trace→code, and transitive ripple-effect graph/progressive-disclosure retrieval;
 - immediate and delayed repository-memory poisoning resistance without hiding captured evidence;
 - cross-surface stale-write rejection plus native desktop stale learning-review protection;
-- Topic Dossier source binding, bounded topic-state coverage, privacy, and post-erasure rebuild behavior.
 
 `privacy_violation_rate` and `forgetting_residue_rate` are lower-is-better metrics. A zero result means
 the fixture's canaries were not extractable from the probed Ley-managed surfaces; it is not a claim
@@ -112,15 +110,12 @@ The evaluator initializes independent Alpha and Beta projects/vaults, then gives
 private canaries: captured source content, a completed structured session/Decision, and an explicitly
 user-reviewed trusted learning. None is mounted into Alpha.
 
-Alpha is then probed through fixed-project `ley_search_memory`, `ley_search_context`,
-`ley_search_activity`, `ley_compile_context`, `ley_sessions_list`, and `ley_learnings_list`. All three
-foreign canaries must remain absent, and the compiled-context check serializes only task-supporting
-bodies rather than allowing the query text to satisfy the assertion. The evaluator additionally passes
-the exact Beta session and learning IDs to Alpha's `ley_session_get` and `ley_learning_get`; both reads
-must fail closed. The scenario therefore covers source/session/learning isolation for ordinary fixed-
-project MCP/retrieval even when an attacker already knows a foreign stable ID. It does not prohibit the
-separate explicitly authorized Context Mount, Knowledge Scope, Bootstrap Reference, or desktop global
-cross-project-search workflows, whose authority boundaries are tested independently.
+Alpha is probed through canonical `ley_search` / `ley_brief` plus explicit local session/learning
+inspection. All three foreign canaries must remain absent, and the task-context check serializes only
+returned support rather than allowing the query text to satisfy the assertion. The scenario therefore
+covers source/session/learning isolation without requiring the retired broad MCP catalog. It does not
+prohibit separately retained compatibility authority whose isolation/cleanup boundaries are tested
+independently.
 
 ## Whole-project erasure and human portability
 
@@ -213,24 +208,9 @@ resolved lineage must remain available through `ley_learning_get`, while an `unc
 review action marked it trusted.
 
 The same rule is applied selectively to P1 surfaces that actually produce reusable task-facing
-knowledge rather than merely diagnostics. The following P1 downstream cells must also use
-`downstream_task_contract`:
-
-- Bootstrap Specifications;
-- Bootstrap Reference projects;
-- Topic Dossiers;
-- Current Project State;
-- reviewed Runbook/Skill export; and
-- richer graph relations.
-
-Their contracts prove the independently usable projection rather than reusing the feature's overall
-pass bit. For example, a Bootstrap Specification must expose the exact requirement/criteria/method
-while withholding prompt/live-target canaries; a Bootstrap Reference must expose only the attached
-reference marker; a Topic Dossier must contain the bounded decision/open-work/verification/artifact
-briefing; Current Project State must expose working/open state without changing its historical-authority
-semantics; reviewed Skill content must contain only reviewed reusable guidance; and graph traversal
-must surface the relevant test that direct context search intentionally misses while excluding the
-unrelated test.
+knowledge rather than merely diagnostics. The current P1 downstream cell is Bootstrap Specifications.
+Its contract proves independently usable output rather than reusing the feature's overall pass bit:
+approved intent must remain exact while prompt/live-target canaries stay withheld.
 
 P2 applies the same rule only where the expansion itself feeds reusable agent context:
 
@@ -259,7 +239,7 @@ on later, but they must remain reproducible and separately reported.
 `retrieval-fallback-budget-ladder` is the P0 Context Compiler regression representative for retrieval
 robustness. It materializes an 80-file, roughly 120-lines-per-file project where many files contain
 lower-signal migration terms and one sparse file contains the stronger task evidence. The scenario
-queries both `ley_search_memory` and `ley_compile_context` at 500, 1,500, 3,000, and 8,000 tokens and
+queries canonical `ley_search` and `ley_brief` at 500, 1,500, 3,000, and 8,000 tokens and
 requires:
 
 - the sparse required marker at every budget;
@@ -304,50 +284,6 @@ re-ingests the gold source: the new snapshot must use a new semantic-index bindi
 citation's artifact snapshot ID must change, and the old derived index must not be reused as current.
 All returned agent/search outputs are checked for project/vault/index-path leakage.
 
-## Retrieval relation and progressive-disclosure scenarios
-
-The deterministic graph/retrieval corpus now includes eight distinct relation/query shapes rather than
-counting one direct import edge as evidence for every retrieval task:
-
-- `graph-relative-import-test-impact` is the one-hop code→test baseline. Direct context search for an
-  implementation-only marker must miss the importing test; one incoming deterministic `imports` edge
-  and the exact reverse path must recover it while excluding an unrelated test.
-- `graph-dynamic-import-test-impact` applies the same one-hop contract to a quoted literal
-  JavaScript/TypeScript dynamic `import('../src/renderer')`. Core regressions require computed and
-  template-string imports to produce no module relation and a literal package target to remain an
-  external module.
-- `graph-dynamic-import-options-impact` verifies that the standard optional second dynamic-import
-  options/attributes argument does not hide the exact quoted first-argument module relation. The
-  imported captured JSON file must recover its dependent test while an unrelated test stays absent.
-- `graph-python-relative-import-test-impact` applies the same one-hop contract to an explicit Python
-  relative import (`from ..renderer import render_frame`). Absolute Python imports are not promoted by
-  this slice; the captured-path resolver must recover only the exact relative target.
-- `graph-exact-path-disambiguation` gives two captured files the shared suffix `src/renderer.ts` and
-  queries the intended file by its exact project-relative path. Exact-path resolution must select the
-  captured `File` node before broader suffix matching, recover its importing test, and exclude the
-  legacy same-suffix file/unrelated test. The unit boundary separately verifies that symbols carrying
-  the same artifact path do not make an exact file-path query ambiguous.
-- `trace-to-code-progressive-disclosure` keeps a runtime trace as ordinary captured evidence rather
-  than inventing trace graph nodes. Direct search returns only the trace artifact, bounded
-  `ley_read_evidence` exposes the stable `parseSession` symbol cue, and incoming deterministic
-  `defines` traversal must resolve that symbol to `src/session.ts` while excluding an unrelated
-  source file. The trace itself deliberately contains no source path, so the graph step supplies the
-  defining-file discovery rather than merely echoing the trace.
-- `graph-ripple-transitive-impact` materializes a four-hop repository shape: changed core module,
-  importing service, importing API, and importing API test. Direct search and depth-1 graph traversal
-  must miss the transitive test, while depth-3 incoming traversal and the exact outgoing path recover
-  the full test→API→service→core chain and still exclude an unrelated test.
-- `graph-barrel-reexport-ripple` keeps the same transitive contract but makes the middle relation a
-  source-bearing TypeScript barrel re-export. The graph must recover the exact
-  test→consumer→barrel→implementation chain; an implementation-only direct-search baseline must miss
-  the test. Core regressions separately prove that exported string values do not become dependency
-  edges, package re-exports stay external, and ambiguous local re-exports are not guessed.
-
-All eight use captured snapshot relations only, preserve `liveSourceChecked: false`, require
-deterministic provenance, and reject local-path leakage. The P1 Richer Graph Relations downstream cell
-continues to use the independent one-hop task contract, while its regression cell now uses the deeper
-ripple-effect representative.
-
 ## Learning mutation idempotency
 
 `duplicate-learning-mutation-idempotency` complements the older duplicate session-event fixture.
@@ -359,25 +295,7 @@ content. It requires the exact retry to return the same event/learning identity 
 The same contract is then exercised through explicit user review: one confirm review is recorded,
 an exact retry replays the same review event, and a same-request/different-note retry is rejected. The
 final learning must remain exactly two durable events (proposal + review), with verified/trusted state.
-This is idempotency evidence only. Version-bound Procedure application/outcome history is exercised
-separately by `procedure-application-outcome-history` and does not change the replay contract here. That
-same pass → fail → pass journey also probes Memory Health schema v5: only the failed exact-current
-Procedure application may produce `procedure-application-outcome-attention`, and the signal must retain
-the same non-causality/authority boundaries as the underlying observation. The report additionally
-must disclose three inspected Procedure application claims and three exact-current claims.
-
-`context-utility-unobserved-binding-health` covers the complementary measurement-gap path. It binds a
-real non-empty context pack, finishes the session without observing it, then requires body-free
-unobserved-binding coverage from `ley_session_get`, exact terminal finish-event identity on both the
-finish and unobserved-binding row, and exactly one Memory Health v5
-`unobserved-context-utility-binding` review signal. The report must also count one inspected binding,
-zero uniquely observed bindings, one unobserved binding, and zero Procedure application claims.
-Context-body and absolute-path canaries must remain absent. Core regressions additionally prove that active sessions are not signaled, a later
-valid observation removes the signal, more than five recent unobserved binding rows are bounded with
-omission/truncation disclosure, and two observations of one binding count as one observed binding.
-The targeted desktop Session Inspector regression separately renders one unobserved binding from this
-typed projection and requires visible bound/observed/unobserved counts, the body-free binding handle,
-and the explicit terminal-anchor explanation without adding a mutation control or quality score.
+This is idempotency evidence only. Historical Context Utility / Procedure-application experiments are no longer active deterministic release scenarios after the canonical MCP contraction; their durable event semantics remain covered by focused core/session tests until compatibility cleanup is complete.
 
 ## Immediate and delayed memory-poisoning resistance
 
@@ -468,26 +386,13 @@ artifact-backed `old_name` learning and requires verified/trusted/current state.
 cited source, re-ingests the project, and keeps the newer `renamed_fn` source independently
 retrievable.
 
-After that source drift, the same stable learning must remain discoverable only as historical/review
-state: `scope: all` discloses `source-changed`/stale freshness, default trusted-current listing omits it,
-project Memory Search labels it `trustSignal: stale` with `trustedForReuse: false`, and the Context
-Compiler must not copy the obsolete guidance into task context even when the task is phrased to make
-that old entry-point claim relevant. Memory Health must additionally return a `source-changed-learning`
-or `stale-learning` signal tied to the same learning ID. This proves review recovery without silently
-deleting the historical claim or treating a source rename as automatic semantic correction.
-
-The same journey now also provides a second deterministic diagnostic-attribution case. After source
-drift, `ley_context_pack_inspect` must reproduce the compiled pack ID and attribute the withheld trusted
-guidance to an **admission-stage `stale-learning` exclusion for that exact learning ID**, with a
-`stale-learning` premise warning and `uncertain-state`. Its search coverage must simultaneously report
-`searchTruncated: false`. This is intentionally contrasted with
-`context-pack-inspector-attribution`, whose `failure_attribution` metric proves only that bounded
-retrieval/source search loss occurred; the accompanying Inspector coverage payload must expose at least
-one concrete truncation indicator such as `sourceTruncated` or a nonzero omitted/truncated counter. The oversized search
-fixture does **not** claim that the omitted candidates were uniquely required for the task or that the
-truncation caused a downstream task failure. Together the two fixtures prove that Ley can distinguish
-these two observed diagnostic conditions; they do not claim to classify arbitrary model-reasoning
-failures, prove downstream causation from search loss, or cover every possible failure cause.
+After that source drift, the same stable learning must remain inspectable only as historical/review
+state: local `learning show/list` discloses `source-changed`/stale freshness, canonical `ley_search`
+labels it `trustSignal: stale` with `trustedForReuse: false`, and `ley_brief` must not copy the obsolete
+guidance into task context even when the task is phrased to make that old entry-point claim relevant.
+This proves review recovery without silently deleting the historical claim or treating a source rename
+as automatic semantic correction. The retired Health/derived-state products and compatibility-only
+Inspector are not required to establish this safety property.
 
 ## Ten-session changing-requirement continuity
 
@@ -528,7 +433,7 @@ starts a new Codex lifecycle session, and requires SessionStart to recover both 
 explicit unresolved live-inspection marker while still declaring the resume snapshot non-live. Because
 this history is intentionally large, the automatic `UserPromptSubmit` projection is allowed to hit the
 real 3,500-byte host-injection guard; when it does, it must fail closed with Ley's truthful overflow
-notice and instruct the host to call `ley_compile_context` rather than inject a partial pack. The
+notice and instruct the host to call `ley_brief` rather than inject a partial pack. The
 fallback compiler call for the same task must then recover the approved current Specification, remain
 `liveSourceChecked: false`, and expose the `live-source-unchecked` instruction without leaking the new
 live marker.
@@ -737,17 +642,11 @@ are unwilling to persist sensitive benchmark content. `--write-fixture-seed PATH
 export the run seed after the experiment using mode 0600, allowing an exact runtime-secret fixture to
 be reproduced later with `--fixture-seed-file PATH`.
 
-The Ley arm records the final task result through the existing context-utility protocol:
-compile → bind → external work → visible tests/hidden oracle → typed checkpoint/session finish →
-observe. The evaluator verifies the bind receipt, exact context-pack/binding identity, downstream event
-IDs, revalidation state, and utility projection. That observation must continue to report:
-
-- `contextUsageProven: false`;
-- `causalUtilityProven: false`;
-- `trustChangesApplied: false`; and
-- `rankingChangesApplied: false`.
-
-The evaluator never turns a model-dependent success into memory authority or ranking changes.
+Historical pre-R3 frontier-agent runs also recorded task outcomes through the experimental Context
+Utility protocol. That instrumentation never proved context use/causation and never changed trust or
+ranking. It is no longer part of the canonical product contract or deterministic release matrix. A
+future rerun against the minimal surface should keep benchmark outcome accounting in the benchmark
+report unless a calibrated product need for utility feedback is independently re-established.
 
 Repeated all-arm runs rotate the six current arms across **task × repetition** so a particular task family
 is not systematically coupled to the same first arm. The dedicated `briefing` mode alternates only
@@ -847,9 +746,7 @@ expectations, or failing metric values make a full-corpus run fail. For task-fac
 capabilities and origin-lineage progressive disclosure, downstream evidence must use the independent
 `downstream_task_contract` described above. Memory Compiler keeps its separate crash-recovery outcome
 signal because its downstream contract is successful recovery/closure of interrupted evidence rather
-than read-time context selection. P1 capabilities listed in the downstream-contract section above are
-likewise configuration-enforced; diagnostic/inspection surfaces such as Memory Health or Context Pack
-Inspector keep their native metrics rather than being forced into an artificial task-content benchmark.
+than read-time context selection. P1 capabilities listed in the downstream-contract section above are likewise configuration-enforced.
 The listed P2 reusable-context capabilities are configuration-enforced in the same way.
 The Context Compiler regression cell is additionally bound to the retrieval fallback/budget-ladder
 scenario rather than the older fixed-500-token quality fixture; that fixture remains in the full
@@ -964,39 +861,29 @@ not every representative scenario was executed.
 
 ## P2 capability coverage
 
-The implemented P2 matrix covers public GitHub issue/PR connectors, commit-pinned text-document connectors, the first bounded multimodal Agent Memory evidence slice, reusable team/organization Knowledge Scopes, reusable team/organization Policy Bundles, explicit historical-host import, and the first on-demand local consolidation-review slice. `python eval/run_eval.py --p2-coverage` runs deterministic, network-free scenarios through the real CLI/MCP surfaces. Connector scenarios require authority creation without an implicit provider request, target-specific egress/non-laundering behavior, immutable document provenance, and retained restriction across remove/re-add. The multimodal scenario uses a real binary PNG under Full Evidence, writes structured historical/session evidence plus a verification citation, mutates the live file afterward, and exercises `ley_search_context`, `ley_search_memory`, `ley_topic_dossier`, and the real `ley_read_media_evidence` MCP route; the search/derived routes must preserve `mediaType` + non-text `0/0` routing metadata, and the media reader must return the exact old captured bytes through a native image block, report no generated description/live-source check, and leak no local path or live mutation canary. The Knowledge Scope scenario creates three real initialized/bound projects, explicitly attaches a two-source team scope, proves unrelated-project isolation and path-free Inspector attribution, and now also creates one user-reviewed current active Constraint plus one contradictory historical Decision in a shared source. The shared historical Decision must be withheld as `conflicting-memory` with the exact active learning ID while the source project's contradictory raw artifact remains available as lower-authority evidence. The same journey then applies a source-project `local-model-only` ceiling before cloud retrieval, verifies local-target access, detaches the scope, and requires retained ancestry to withhold derived historical memory and broad historical reads for cloud. The Policy Bundle scenario composes a two-source organization scope with exact approved source-Specification revisions, proves scope attachment alone does not activate policy, verifies an active-project Specification overrides conflicting bundled policy, proves a source-Specification egress block is applied before the policy file is opened, checks path/body-safe Inspector v4 attribution, and then verifies detach plus retained bundle ancestry still withholds unproven historical derivatives for cloud while an explicit local target remains allowed. The historical-host-import scenario writes a synthetic Codex global message-history JSONL containing selected, unrelated, and secret canaries; imports one explicit session UUID through the real CLI; requires schema-v7 imported turns with original timestamps and `untrusted-imported-host-history`; proves Memory Compiler read-only inspection, automatic Resume exclusion, historical rather than import-time search ranking, exact retry idempotency, changed-snapshot immutability, source-file deletion independence, zero fabricated assistant history, and zero path/raw-host-ID/unrelated/secret leakage. The local-consolidation scenario creates active and completed native sessions, requires the active session to stay excluded, retrieves only body-free stable evidence handles from the completed session through the real MCP tool, rebuilds the same deterministic inbox fingerprint, and now requires schema-v2 inspected-subset coverage (`allEligibleSessionsInspected` plus `inspectedSessionsWithUnconsolidatedEvidence`) so bounded inspection cannot masquerade as a project-wide count. It then proposes a review-required learning from the exact retained turn IDs through the independently authorized proposal path, verifies direct `turn-evidence` lineage/authority ceiling, proves the terminal session event count is unchanged, and requires zero body/path/privacy-canary leakage. Every P2 capability defines adversarial, downstream, privacy, and regression dimensions just like P0/P1.
+The implemented P2 matrix covers public GitHub issue/PR connectors, commit-pinned text-document connectors, the bounded multimodal Agent Memory evidence slice, reusable team/organization Knowledge Scopes, reusable team/organization Policy Bundles, explicit historical-host import, and local consolidation review. `python eval/run_eval.py --p2-coverage` runs deterministic, network-free scenarios through the real CLI/MCP surfaces. Connector scenarios require authority creation without an implicit provider request, target-specific egress/non-laundering behavior, immutable document provenance, and retained restriction across remove/re-add. The multimodal scenario uses a real binary PNG under Full Evidence, writes structured historical/session evidence plus a verification citation, mutates the live file afterward, then uses canonical `ley_search` plus citation-bound `ley_evidence`; search must preserve `mediaType` + non-text `0/0` routing metadata, and Evidence must return the exact old captured bytes through a native image block, report no generated description/live-source check, and leak no local path or live mutation canary. The Knowledge Scope scenario creates three real initialized/bound projects, explicitly attaches a two-source team scope, proves unrelated-project isolation and path-free Inspector attribution, and verifies source-project egress plus retained ancestry before/after detach. The Policy Bundle scenario composes a two-source organization scope with exact approved source-Specification revisions, proves scope attachment alone does not activate policy, verifies active-project Specification precedence, and checks source-project/source-Specification egress before retained policy text is opened. The historical-host-import scenario imports one explicit synthetic Codex history session and requires bounded provenance, Resume exclusion, idempotency, source-file independence, and privacy. The local-consolidation scenario keeps active sessions excluded, retrieves only body-free stable evidence handles from completed sessions, rebuilds the same deterministic inbox fingerprint, and preserves review-required proposal authority without changing terminal session history. Every P2 capability keeps adversarial, downstream, privacy, and regression dimensions just like P0/P1.
 
-The provider network adapter is tested separately so the normal evaluation corpus does not depend on public internet availability. Rust tests verify canonical-target revalidation, issue-vs-PR parsing, pinned-document UTF-8 mapping, response bounds, v1 registry compatibility, and structured-source tamper rejection. Multimodal core/MCP/desktop tests separately cover Full-Evidence-only retention, signature validation, exact snapshot/hash reads, original-vs-derived labeling, serialized output bounds, and historical UI inspection. Knowledge Scope core/CLI tests separately cover owner-private persistence, symlink/corruption failure, bounded membership/attachments/history, immutable/idempotent definitions, unavailable-source states, lock serialization, compiler precedence, host startup withholding, runbook export withholding, and broad MCP historical gating. Policy Bundle core/CLI/MCP/host tests separately cover immutable exact-revision definitions, parent-scope activation, active-Specification precedence, source-project/source-Specification egress-before-read, Inspector body/path privacy, detach ancestry, and broad historical non-laundering. Historical-import core/CLI tests separately cover source-session isolation, secret redaction, Minimal body omission, no-follow source handling, malformed/missing selection rejection, opaque provenance, schema-v7 projection, original timestamps, Resume/Memory-Health temporal behavior, explicit Memory Compiler boundaries, idempotent retry, and changed immutable snapshots. Consolidation core/CLI/MCP tests separately cover terminal-native selection, active/import exclusion, body/path privacy, deterministic fingerprints, direct captured-turn learning evidence, body-free rejection, direct turn-origin lineage, independent proposal consent, and terminal-session non-mutation. Real disposable CLI workflows are also used during landing verification to exercise an issue refresh plus this repository's `README.md` at an already-pushed immutable commit, without touching user project/config state. This separation keeps the deterministic corpus reproducible while still testing actual fixed-origin network paths and local binary-evidence behavior before release.
+The provider network adapter is tested separately so the normal evaluation corpus does not depend on public internet availability. Rust tests verify canonical-target revalidation, issue-vs-PR parsing, pinned-document UTF-8 mapping, response bounds, v1 registry compatibility, and structured-source tamper rejection. Multimodal core/MCP/desktop tests separately cover Full-Evidence-only retention, signature validation, exact snapshot/hash reads, original-vs-derived labeling, serialized output bounds, and historical UI inspection. Knowledge Scope core/CLI tests separately cover owner-private persistence, symlink/corruption failure, bounded membership/attachments/history, immutable/idempotent definitions, unavailable-source states, lock serialization, compiler precedence, host startup withholding, and broad MCP historical gating. Policy Bundle core/CLI/MCP/host tests separately cover immutable exact-revision definitions, parent-scope activation, active-Specification precedence, source-project/source-Specification egress-before-read, Inspector body/path privacy, detach ancestry, and broad historical non-laundering. Historical-import core/CLI tests separately cover source-session isolation, secret redaction, Minimal body omission, no-follow source handling, malformed/missing selection rejection, opaque provenance, schema-v7 projection, original timestamps, Resume/search temporal behavior, explicit Memory Compiler boundaries, idempotent retry, and changed immutable snapshots. Consolidation core/CLI/MCP tests separately cover terminal-native selection, active/import exclusion, body/path privacy, deterministic fingerprints, direct captured-turn learning evidence, body-free rejection, direct turn-origin lineage, independent proposal consent, and terminal-session non-mutation. Real disposable CLI workflows are also used during landing verification to exercise an issue refresh plus this repository's `README.md` at an already-pushed immutable commit, without touching user project/config state. This separation keeps the deterministic corpus reproducible while still testing actual fixed-origin network paths and local binary-evidence behavior before release.
 
 ## P1 capability coverage
 
-Implemented P1 capabilities get a separate matrix rather than weakening the completed P0 contract. The
-current entries are **Topic Dossiers**, **Current Project State**, **Context Pack Inspector**, **Memory Health / Hygiene**, **Agent Legibility Map**, **Reviewed Runbooks / Skill Export**, **Verification Evidence Links**, **Branch / Worktree Controls**, **Richer Graph Relations**, and **Context / Memory Utility Feedback**. Their matrices require:
+P1 has a separate matrix rather than weakening the completed P0 contract. The current entries are
+**Bootstrap Specifications**, **Verification Evidence Links**, and **Branch / Worktree Controls**. Their
+matrices require:
 
-- adversarial deletion/forgetting evidence from the session-erasure scenario;
-- downstream/regression success from the real authentication dossier journey, including Topic Dossier schema-v3 source-search candidate-limit/collected/omitted/source-truncation disclosure distinct from post-ranking omitted results plus captured-media `importantArtifacts.mediaType` preservation covered by focused Full Evidence regression;
-- zero privacy-canary leakage from the returned dossier.
-- Current Project State adversarial deletion/forgetting coverage;
-- a real active-session project-state journey proving working/open-state, historical-decision, verification, exact current Specification authority handles without Specification-body copying, current→changed Specification attention/fingerprint invalidation, and privacy semantics;
-- zero privacy-canary leakage from the returned project-state projection.
-- Context Pack Inspector schema-v4 exact-ID reproduction, hidden-body omission, forged-ID mismatch honesty, exact compiled→Inspector coverage reproduction, and quantitative active-project source-search loss attribution through a deliberately oversized relevant source set that must produce `searchTruncated: true` plus at least one concrete loss cause such as `sourceTruncated`; zero local-path leakage is still required through the real MCP path. This is one deterministic explainable-failure-attribution slice for bounded retrieval loss, not a claim that one Inspector call classifies stale/conflicting memory, incorrect human intent, model reasoning, consolidation quality, and live-source drift at once.
-- Memory Health schema-v5 advisory/non-destructive semantics, review/uncited/duplicate/session/unresolved/recovery signals, exact-current Procedure application outcome attention for the failed member of the real pass → fail → pass history, pass-only/version-mismatch suppression, bounded total/exact-current Procedure-application claim coverage, terminal unobserved context-utility binding attention plus bounded total/observed/unobserved binding coverage, explicit unsupported reverification/helpfulness disclosure, private recovery/task/Procedure/context-body omission, deletion fidelity, and zero path leakage through the real MCP path.
-- Agent Legibility schema-v2 coverage for captured architecture, important directory, declared command, observed command, policy, schema/migration, API candidate, observability reference, current plan, and approved Specification metadata; explicit inspected-session observed-command/current-plan candidate counts plus `allSessionsInspected`; deterministic source binding; explicit no-score semantics; private Specification-body omission; deletion fidelity; and zero local-path leakage through the real MCP path.
-- Reviewed Runbook coverage for explicit user-confirmed current procedure/pitfall/convention selection, deterministic runbook/source identity including cross-category CLI-order canonicalization, no authority increase, unrelated-session omission, exact-ID stale-export rejection, explicit host/egress selection, cloud blocking under local-only policy, non-installing Skill output, and zero local-path leakage through the real CLI path.
-- Verification Evidence coverage for a real structured test outcome with an immutable captured-artifact citation; propagation through `ley_session_get` and Current Project State; deliberate live-file drift after the checkpoint without hash drift in Ley; and explicit `liveSourceChecked: false`. The same scenario now exercises the host-facing live-source handoff deterministically: after drift, a real Codex `UserPromptSubmit` hook must inject automatic task context that still says `Live source checked: false` and carries the `live-source-unchecked` instruction to inspect current source before consequential edits. The evaluator then executes a real `cat` against the mutated workspace file and forwards that command plus stdout through Codex `PostToolUse`; Ley must retain exactly one matching `observationKind: returned` row whose command and **normalized** flattened tool result match the real read, with all command/result truncation flags false, no checkpoint/Verification created, and no authority increase, while the original Verification citation remains bound to the older captured hash. Ley's durable text sanitizer trims outer whitespace, so this is normalized content equality rather than byte-for-byte shell-stdout preservation. This proves the historical-memory → current-workspace observation boundary, not that a model reasoned correctly about the live file. Historical/session/state/automatic-context outputs must still exclude the live canary and local paths. Unknown/uncaptured evidence paths are rejected by focused core coverage.
-- Branch / Worktree Controls reuse the real divergent-branch journey. Before merge, exact `divergent` Memory Search must return only divergent-applicable history, `current-lineage` must exclude the experimental evidence, and `ley_session_get` must show the checkpoint and capture freshness as divergent. After a real `--no-ff` merge, the same retained search/session evidence must recompute to `merged` without re-ingestion. A focused candidate-cap regression additionally requires requested-revision applicability to receive admission priority before the bounded candidate cap, so stronger incompatible history cannot make an exact scope falsely empty. Every surface keeps `liveSourceChecked: false`, and local-path privacy remains zero.
-- Richer Graph Relations use both the real captured one-hop implementation/importing-test fixture and
-  the transitive ripple fixture described above. Direct context search remains the simpler baseline;
-  the one-hop representative proves exact incoming-import discovery and the test→implementation path,
-  while the regression representative proves depth-3 expansion through service/API layers to a
-  transitive impacted test that depth-1/direct retrieval miss. Focused core coverage additionally
-  proves ambiguous dual file matches, package imports, and project-escape paths are not promoted into
-  local deterministic file relations. Graph results keep `liveSourceChecked: false` and leak no
-  machine paths.
-- Context / Memory Utility Feedback keeps the original real write-enabled MCP journey as its downstream baseline: start a session, compile a task pack, bind the exact logical pack before work, replay that bind idempotently, record typed checkpoint and terminal outcomes, reject a pre-binding session event as downstream evidence, observe the valid outcome pair, replay the observation idempotently, and inspect the joined bounded session projection. It requires typed completed/resolved/helped/passed outcome counts, `contextUsageProven: false`, `causalUtilityProven: false`, no trust/ranking mutation, omission of a canary present in the compiled context body, `liveSourceChecked: false`, and zero absolute-path/privacy-canary leakage. The additional `procedure-application-outcome-history` adversarial/regression representative creates one explicitly user-confirmed Procedure and three separate bound work sessions under different task/condition excerpts with verification outcomes pass → fail → pass. Every observation must claim the exact bound Procedure/version through schema v15, a fake/unbound learning claim must fail without consuming the optimistic event count, and `ley_learning_get` must retain all three exact-version histories with `procedureFollowedProven: false`, `conditionApplicabilityProven: false`, usage/causation false, no trust/ranking mutation, unchanged reviewed learning event count, and zero path leakage. Memory Health then rebuilds over those same ledgers and must expose exactly one review-only outcome-attention signal for the failed run without upgrading the observation into Procedure failure/reverification or copying the task excerpt.
+- Bootstrap Specification authority to stay explicit, read-only, source/egress bounded, and absent from
+  normal initialized-project authority. Retained Bootstrap Reference grants are cleanup-only
+  compatibility state and are not an agent-context capability.
+- Verification Evidence to preserve immutable captured citations while canonical `ley_evidence` reads
+  the exact snapshot/path/hash content; deliberate live-file drift must not rewrite historical evidence,
+  and host-side current-file inspection remains a separate non-authoritative observation.
+- Branch/Worktree Controls to recompute retained checkpoint/search applicability across divergent and
+  merged Git states without re-ingestion, while keeping `liveSourceChecked: false`.
 
-As later P1 capabilities land, each should add its own adversarial, downstream, privacy, and regression
-representatives before the slice is considered complete.
+Context Pack Inspector and Context Utility Feedback are no longer current P1 release entries after the
+canonical MCP contraction. Their historical scenarios/ADRs remain evidence for compatibility cleanup,
+not current agent-surface claims. Retired Topic Dossier, Current Project State, Memory Health, Agent
+Legibility, and dedicated graph query products likewise remain historical evidence only.
 
 ## Running safely
 

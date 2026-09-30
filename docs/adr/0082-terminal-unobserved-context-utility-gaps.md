@@ -1,6 +1,11 @@
 # ADR 0082: Surface terminal unobserved context-utility measurement gaps
 
-Status: Accepted
+Status: Partially superseded (2026-09-30)
+
+Current note: the durable context-utility events and body-free Session coverage described here remain in
+force. The separate Memory Health projection was later retired during the focused-product reset, so current
+evaluation reads unobserved binding state directly from the Session projection instead of requiring a second
+health signal.
 
 ## Context
 
@@ -95,7 +100,7 @@ prevents a bounded health read from being mistaken for whole-history analysis.
 
 ## Evaluation
 
-`context-utility-unobserved-binding-health` runs the real MCP flow:
+`context-utility-unobserved-binding` runs the real MCP flow:
 
 1. compile a pack that contains real admitted context;
 2. bind it to an active session;
@@ -103,8 +108,8 @@ prevents a bounded health read from being mistaken for whole-history analysis.
 4. require `ley_session_get` to report one unobserved binding plus one bounded body-free metadata row;
 5. require the projected terminal finish ID and the unobserved binding's suggested finish anchor to
    equal the immutable finish event returned by the writer;
-6. require Memory Health v4 to emit exactly one review signal tied to that session/binding and report
-   one inspected/unobserved utility binding with zero observed bindings;
+6. require the Session projection to report one binding, zero observations, one unobserved binding, and
+   the body-free provenance row without claiming context use;
 7. require the context-body canary and absolute project/vault paths to remain absent.
 
 Core tests additionally prove active sessions are not signaled, a later valid observation removes the

@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Superseded by the focused-product reset on 2026-09-30. The named Current Project State projection/API
+is retired; useful working-state context is folded into the focused Desktop/Brief surfaces without a
+separate agent-facing projection. This ADR remains historical design evidence.
 
 Later extension: ADR 0076 upgrades the projection to schema v2 with compact exact-revision
 active-project Specification authority handles plus changed/missing Specification attention. It does
