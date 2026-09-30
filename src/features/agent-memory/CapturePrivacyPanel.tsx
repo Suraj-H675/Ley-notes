@@ -257,8 +257,11 @@ function CapturePrivacyContent({
           <p className="mt-3 text-body leading-6 text-muted-foreground-strong">
             The policy lives in this project’s small{" "}
             <span className="font-mono text-meta">.ley/capture.json</span> file.
-            Applying a change rebuilds the cited snapshot inside{" "}
-            {dashboard.binding.vaultName}; it never uploads project data.
+            Applying a change rebuilds the cited snapshot in{" "}
+            {dashboard.storage.kind === "native"
+              ? "Ley’s private local app storage"
+              : dashboard.storage.vaultName}
+            ; it never uploads project data.
           </p>
         </div>
       </section>
@@ -506,13 +509,13 @@ function CapturePrivacyContent({
                 Erase this project’s Agent Memory
               </h3>
               <p className="mt-1 text-meta leading-5 text-muted-foreground">
-                Permanently removes captured artifacts, graph history, sessions,
-                and lessons from this vault. Your project files, ordinary
-                Markdown notes, Canvas documents,{" "}
-                <span className="font-mono text-micro">.ley</span> settings, and
-                private vault binding stay in place. Any user-owned note or
-                Canvas copy of erased Agent Memory remains until you delete that
-                copy through the normal vault workflow.
+                Permanently removes captured artifacts, sessions, and lessons
+                from Ley’s local continuity store. Your project files, ordinary
+                Markdown notes, Canvas documents, and{" "}
+                <span className="font-mono text-micro">.ley</span> settings stay
+                in place. Any user-owned note or Canvas copy of erased Agent
+                Memory remains until you delete that copy through the normal
+                note workflow.
               </p>
             </div>
             <Button

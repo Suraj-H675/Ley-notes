@@ -1,11 +1,12 @@
 use crate::retrieval::project_captured_git_state;
 use crate::revision::RevisionResolver;
 use crate::{
-    list_sessions, read_session, AgentEgressTarget, AgentSession, ArtifactMediaType,
-    AttemptOutcome, ContextUtilityIncludedRecord, ContextUtilityOutcomeEvidence, LeyCoreError,
-    ProjectRevisionFreshness, RevisionApplicability, SessionArtifactCitation, SessionSource,
-    SessionStatus, TaskStatus, ToolObservationKind, TurnEvidenceOrigin, TurnEvidenceRetention,
-    VerificationStatus,
+    list_sessions, list_sessions_with_continuity_transition, read_session,
+    read_session_with_continuity_transition, AgentEgressTarget, AgentSession, ArtifactMediaType,
+    AttemptOutcome, ContextUtilityIncludedRecord, ContextUtilityOutcomeEvidence, ContinuityStore,
+    LeyCoreError, ProjectRevisionFreshness, RevisionApplicability, SessionArtifactCitation,
+    SessionSource, SessionStatus, SessionSummary, TaskStatus, ToolObservationKind,
+    TurnEvidenceOrigin, TurnEvidenceRetention, VerificationStatus,
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -382,6 +383,30 @@ pub fn list_session_contexts(
     }
     let project_id = crate::diagnose_project(&project_start)?.identity.project_id;
     let summaries = list_sessions(&project_start, vault)?;
+    session_list_from_summaries(project_id, summaries, max_results)
+}
+
+pub fn list_session_contexts_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    max_results: usize,
+) -> Result<SessionList, LeyCoreError> {
+    if max_results == 0 || max_results > MAX_SESSION_LIST_RESULTS {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "session list maxResults must be between 1 and {MAX_SESSION_LIST_RESULTS}"
+        )));
+    }
+    let project_id = crate::diagnose_project(&project_start)?.identity.project_id;
+    let summaries = list_sessions_with_continuity_transition(project_start, legacy_vault, store)?;
+    session_list_from_summaries(project_id, summaries, max_results)
+}
+
+fn session_list_from_summaries(
+    project_id: String,
+    summaries: Vec<SessionSummary>,
+    max_results: usize,
+) -> Result<SessionList, LeyCoreError> {
     let total_sessions = summaries.len();
     let sessions = summaries
         .into_iter()
@@ -435,6 +460,32 @@ pub fn read_session_turns_context(
     ))
 }
 
+pub fn read_session_turns_context_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    max_results: usize,
+    max_text_characters: usize,
+) -> Result<SessionTurnsContextPack, LeyCoreError> {
+    if max_results == 0 || max_results > MAX_SESSION_TURN_RESULTS {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "session turns maxResults must be between 1 and {MAX_SESSION_TURN_RESULTS}"
+        )));
+    }
+    if !(MIN_SESSION_TURN_CHARACTERS..=MAX_SESSION_TURN_CHARACTERS).contains(&max_text_characters) {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "session turns maxCharacters must be between {MIN_SESSION_TURN_CHARACTERS} and \
+             {MAX_SESSION_TURN_CHARACTERS}"
+        )));
+    }
+    Ok(turns_context_from_session(
+        read_session_with_continuity_transition(project_start, legacy_vault, store, session_id)?,
+        max_results,
+        max_text_characters,
+    ))
+}
+
 pub fn read_session_context(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -448,6 +499,45 @@ pub fn read_session_context(
     let captured_git = project_captured_git_state(project_start, vault)?;
     let mut revision_resolver = RevisionResolver::new(project_start, captured_git.as_ref())?;
     let session = read_session(project_start, vault, session_id)?;
+    Ok(context_from_session(
+        session,
+        max_checkpoints,
+        max_text_characters,
+        &mut revision_resolver,
+    ))
+}
+
+pub fn read_session_context_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    max_checkpoints: usize,
+    max_text_characters: usize,
+) -> Result<SessionContextPack, LeyCoreError> {
+    validate_context_limits(max_checkpoints, max_text_characters)?;
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let session =
+        read_session_with_continuity_transition(project_start, legacy_vault, store, session_id)?;
+    let captured_git = match project_captured_git_state(project_start, legacy_vault) {
+        Ok(captured_git) => captured_git,
+        Err(error)
+            if matches!(
+                &error,
+                LeyCoreError::Io { source, .. }
+                    if source.kind() == std::io::ErrorKind::NotFound
+            ) && (store.has_legacy_snapshot_import(&session.project_id)?
+                || crate::session::session_authority_cutover_is_complete(
+                    store,
+                    &session.project_id,
+                )?) =>
+        {
+            None
+        }
+        Err(error) => return Err(error),
+    };
+    let mut revision_resolver = RevisionResolver::new(project_start, captured_git.as_ref())?;
     Ok(context_from_session(
         session,
         max_checkpoints,
@@ -2013,13 +2103,34 @@ mod tests {
         );
         assert!(!divergent.live_source_checked);
 
+        let store = ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let imported = read_session_context_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+            DEFAULT_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(
+            imported.checkpoints[0]
+                .revision_applicability
+                .as_ref()
+                .unwrap()
+                .compatibility,
+            RevisionCompatibility::Divergent
+        );
+        std::fs::remove_dir_all(&vault).unwrap();
+
         git(
             &project,
             &["merge", "--no-ff", "experiment", "-m", "merge experiment"],
         );
-        let merged = read_session_context(
+        let merged = read_session_context_with_continuity_transition(
             &project,
             &vault,
+            &store,
             &started.session.session_id,
             DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
             DEFAULT_SESSION_CONTEXT_CHARACTERS,
@@ -2033,6 +2144,9 @@ mod tests {
                 .compatibility,
             RevisionCompatibility::Merged
         );
+        assert!(merged.revision_freshness.live_git_checked);
+        assert!(merged.revision_freshness.captured_head.is_none());
+        assert!(merged.revision_freshness.current_head.is_some());
         assert!(!merged.live_source_checked);
     }
 }

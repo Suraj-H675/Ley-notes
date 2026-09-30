@@ -1,6 +1,9 @@
+use crate::continuity_store::{
+    ArtifactWriteAuthorityOrigin, ContinuityProjectObservation, ContinuityProjectOrigin,
+};
 use crate::{
-    default_binding_registry_path, diagnose_project, validate_project_id, LeyCoreError,
-    ProjectDiagnostic, METADATA_FILE_LIMIT_BYTES,
+    default_binding_registry_path, diagnose_project, validate_project_id, ContinuityStore,
+    LeyCoreError, ProjectDiagnostic, METADATA_FILE_LIMIT_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -96,16 +99,36 @@ impl ProjectCatalogDocument {
 #[derive(Debug, Clone)]
 pub struct ProjectCatalog {
     path: PathBuf,
+    backend: ProjectCatalogBackend,
+}
+
+#[derive(Debug, Clone)]
+enum ProjectCatalogBackend {
+    Legacy,
+    Native(ContinuityStore),
 }
 
 impl ProjectCatalog {
     pub fn system_default() -> Result<Self, LeyCoreError> {
         let binding_path = default_binding_registry_path()?;
-        Ok(Self::at(binding_path.with_file_name(PROJECT_CATALOG_FILE)))
+        Ok(Self::native_at(
+            binding_path.with_file_name(PROJECT_CATALOG_FILE),
+            ContinuityStore::system_default()?,
+        ))
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            backend: ProjectCatalogBackend::Legacy,
+        }
+    }
+
+    pub(crate) fn native_at(path: impl Into<PathBuf>, store: ContinuityStore) -> Self {
+        Self {
+            path: path.into(),
+            backend: ProjectCatalogBackend::Native(store),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -122,6 +145,14 @@ impl ProjectCatalog {
 
     pub(crate) fn get(&self, project_id: &str) -> Result<Option<ObservedProject>, LeyCoreError> {
         validate_project_id(project_id)?;
+        if let ProjectCatalogBackend::Native(store) = &self.backend {
+            self.ensure_native_migrated(store)?;
+            return Ok(store
+                .project_observations()?
+                .into_iter()
+                .find(|observation| observation.project_id == project_id)
+                .map(observed_project_from_continuity));
+        }
         let document = self.read_locked()?;
         Ok(document
             .projects
@@ -139,23 +170,18 @@ impl ProjectCatalog {
                 "maxResults must be between 1 and {MAX_PROJECT_CATALOG_RESULTS}"
             )));
         }
-        let document = self.read_locked()?;
-        let total_projects = document.projects.len();
-        let mut projects = document
-            .projects
-            .into_iter()
-            .map(|(project_id, observation)| ObservedProject {
-                project_id,
-                root_path: PathBuf::from(observation.root_path),
-                last_opened_at_unix_ms: observation.last_opened_at_unix_ms,
-            })
-            .collect::<Vec<_>>();
-        projects.sort_by(|left, right| {
-            right
-                .last_opened_at_unix_ms
-                .cmp(&left.last_opened_at_unix_ms)
-                .then_with(|| left.project_id.cmp(&right.project_id))
-        });
+        let mut projects = match &self.backend {
+            ProjectCatalogBackend::Legacy => observations_from_document(self.read_locked()?),
+            ProjectCatalogBackend::Native(store) => {
+                self.ensure_native_migrated(store)?;
+                store
+                    .project_observations()?
+                    .into_iter()
+                    .map(observed_project_from_continuity)
+                    .collect()
+            }
+        };
+        let total_projects = projects.len();
         projects.truncate(max_results);
         Ok(ObservedProjectList {
             omitted_projects: total_projects.saturating_sub(projects.len()),
@@ -164,8 +190,18 @@ impl ProjectCatalog {
         })
     }
 
+    pub(crate) fn all_for_migration(&self) -> Result<Vec<ObservedProject>, LeyCoreError> {
+        self.read_locked().map(observations_from_document)
+    }
+
     pub fn forget(&self, project_id: &str) -> Result<Option<ObservedProject>, LeyCoreError> {
         validate_project_id(project_id)?;
+        if let ProjectCatalogBackend::Native(store) = &self.backend {
+            self.ensure_native_migrated(store)?;
+            return store
+                .forget_project_observation(project_id)
+                .map(|value| value.map(observed_project_from_continuity));
+        }
         let removed = self.mutate(|document| Ok(document.projects.remove(project_id)))?;
         Ok(removed.map(|observation| ObservedProject {
             project_id: project_id.to_owned(),
@@ -192,6 +228,48 @@ impl ProjectCatalog {
             .to_str()
             .ok_or_else(|| LeyCoreError::NonUtf8Path(root_path.clone()))?
             .to_owned();
+
+        if let ProjectCatalogBackend::Native(store) = &self.backend {
+            self.ensure_native_migrated(store)?;
+            let existing = store
+                .project_observations()?
+                .into_iter()
+                .find(|observation| observation.project_id == project_id);
+            if let Some(existing) = &existing {
+                if existing.root_path != root_path
+                    && path_still_claims_project(&existing.root_path, &project_id)
+                {
+                    return Err(LeyCoreError::DuplicateProjectIdentity {
+                        project_id: project_id.clone(),
+                        observed_root: existing.root_path.clone(),
+                        requested_root: root_path.clone(),
+                    });
+                }
+            }
+            let continuity_origin = match existing.as_ref() {
+                Some(observation) => observation.continuity_origin,
+                None => match store.artifact_write_authority_origin(&project_id)? {
+                    Some(ArtifactWriteAuthorityOrigin::NativeBorn) => {
+                        ContinuityProjectOrigin::NativeBorn
+                    }
+                    Some(ArtifactWriteAuthorityOrigin::LegacyCutover) | None => {
+                        ContinuityProjectOrigin::LegacyUnknown
+                    }
+                },
+            };
+            let observation = ContinuityProjectObservation {
+                project_id: project_id.clone(),
+                root_path: root_path.clone(),
+                last_opened_at_unix_ms: opened_at_unix_ms,
+                continuity_origin,
+            };
+            store.upsert_project_observation(&observation)?;
+            return Ok(ObservedProject {
+                project_id,
+                root_path,
+                last_opened_at_unix_ms: opened_at_unix_ms,
+            });
+        }
 
         self.mutate(|document| {
             if let Some(existing) = document.projects.get(&project_id) {
@@ -224,6 +302,25 @@ impl ProjectCatalog {
             root_path,
             last_opened_at_unix_ms: opened_at_unix_ms,
         })
+    }
+
+    fn ensure_native_migrated(&self, store: &ContinuityStore) -> Result<(), LeyCoreError> {
+        if store.project_catalog_migration_complete()? {
+            return Ok(());
+        }
+        let observations = self
+            .read_locked()?
+            .projects
+            .into_iter()
+            .map(|(project_id, observation)| ContinuityProjectObservation {
+                project_id,
+                root_path: PathBuf::from(observation.root_path),
+                last_opened_at_unix_ms: observation.last_opened_at_unix_ms,
+                continuity_origin: ContinuityProjectOrigin::LegacyUnknown,
+            })
+            .collect::<Vec<_>>();
+        store.import_legacy_project_observations_once(&observations)?;
+        Ok(())
     }
 
     fn read_locked(&self) -> Result<ProjectCatalogDocument, LeyCoreError> {
@@ -389,6 +486,33 @@ impl ProjectCatalog {
     }
 }
 
+fn observations_from_document(document: ProjectCatalogDocument) -> Vec<ObservedProject> {
+    let mut projects = document
+        .projects
+        .into_iter()
+        .map(|(project_id, observation)| ObservedProject {
+            project_id,
+            root_path: PathBuf::from(observation.root_path),
+            last_opened_at_unix_ms: observation.last_opened_at_unix_ms,
+        })
+        .collect::<Vec<_>>();
+    projects.sort_by(|left, right| {
+        right
+            .last_opened_at_unix_ms
+            .cmp(&left.last_opened_at_unix_ms)
+            .then_with(|| left.project_id.cmp(&right.project_id))
+    });
+    projects
+}
+
+fn observed_project_from_continuity(observation: ContinuityProjectObservation) -> ObservedProject {
+    ObservedProject {
+        project_id: observation.project_id,
+        root_path: observation.root_path,
+        last_opened_at_unix_ms: observation.last_opened_at_unix_ms,
+    }
+}
+
 fn path_still_claims_project(path: &Path, project_id: &str) -> bool {
     diagnose_project(path).is_ok_and(|diagnostic| {
         diagnostic.root == path && diagnostic.identity.project_id == project_id
@@ -431,7 +555,7 @@ fn unix_time_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{initialize_project, CaptureMode};
+    use crate::{initialize_project, CaptureMode, ContinuityStore};
     use std::sync::{Arc, Barrier};
     use tempfile::tempdir;
 
@@ -481,6 +605,67 @@ mod tests {
             catalog.list(0),
             Err(LeyCoreError::InvalidProjectCatalog(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_catalog_imports_legacy_once_and_does_not_resurrect_forgotten_projects() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = tempdir().unwrap();
+        let config = base.path().join("config");
+        fs::create_dir(&config).unwrap();
+        fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        let legacy_path = config.join(PROJECT_CATALOG_FILE);
+        let legacy = ProjectCatalog::at(&legacy_path);
+        let first = base.path().join("first-native");
+        let second = base.path().join("second-native");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+        let first_identity =
+            initialize_project(&first, Some("First native"), CaptureMode::Structured).unwrap();
+        initialize_project(&second, Some("Second native"), CaptureMode::Minimal).unwrap();
+        legacy
+            .observe_diagnostic_at(&diagnose_project(&first).unwrap(), 100)
+            .unwrap();
+        legacy
+            .observe_diagnostic_at(&diagnose_project(&second).unwrap(), 200)
+            .unwrap();
+
+        let store = ContinuityStore::at(config.join(crate::CONTINUITY_DATABASE_FILE));
+        let native = ProjectCatalog::native_at(&legacy_path, store.clone());
+        let imported = native.list(DEFAULT_PROJECT_CATALOG_RESULTS).unwrap();
+        assert_eq!(imported.total_projects, 2);
+        assert!(store.project_catalog_migration_complete().unwrap());
+
+        native
+            .forget(&first_identity.identity.project_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            legacy
+                .list(DEFAULT_PROJECT_CATALOG_RESULTS)
+                .unwrap()
+                .total_projects,
+            2,
+            "stale legacy JSON intentionally remains present after cutover"
+        );
+        let after_forget = native.list(DEFAULT_PROJECT_CATALOG_RESULTS).unwrap();
+        assert_eq!(after_forget.total_projects, 1);
+        assert!(after_forget
+            .projects
+            .iter()
+            .all(|project| project.project_id != first_identity.identity.project_id));
+
+        native
+            .observe_diagnostic_at(&diagnose_project(&first).unwrap(), 300)
+            .unwrap();
+        let reopened = native.list(DEFAULT_PROJECT_CATALOG_RESULTS).unwrap();
+        assert_eq!(reopened.total_projects, 2);
+        assert_eq!(
+            reopened.projects[0].project_id,
+            first_identity.identity.project_id
+        );
     }
 
     #[test]

@@ -3,28 +3,43 @@ use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 #[cfg(test)]
-use ley_core::initialize_project;
 use ley_core::{
-    correct_learning, diagnose_project, erase_project_memory, erase_session_memory,
-    generate_learning_request_id, generate_request_id, ingest_project,
-    ingest_project_with_expected_capture_plan, initialize_project_retiring_bootstrap,
-    list_learning_contexts, list_sessions, preview_initial_capture, project_activity_view,
-    project_artifact_inventory, project_graph_history, project_graph_view_filtered,
-    project_memory_overview, project_resume_context, project_session_stats, read_learning,
-    read_learning_context, read_project_cited_evidence, read_project_cited_media,
-    read_project_graph_evidence, read_session_context, read_session_turns_context, rename_session,
-    review_learning, search_observed_projects, search_project_memory, update_capture_mode,
-    ArtifactMediaType, BindingRegistry, BindingSource, CaptureFile, CaptureMode, CapturePolicy,
+    correct_learning, erase_project_memory, ingest_project, initialize_project, read_learning,
+    rename_session, review_learning,
+};
+use ley_core::{
+    correct_learning_with_continuity_transition, diagnose_project,
+    erase_project_memory_with_continuity_transition, erase_project_memory_with_native_authority,
+    erase_session_memory_with_continuity_transition, establish_native_born_project_authorities,
+    generate_learning_request_id, generate_request_id, ingest_project_with_continuity_transition,
+    ingest_project_with_expected_capture_plan_and_continuity_transition,
+    ingest_project_with_expected_capture_plan_and_native_authority,
+    ingest_project_with_native_authority, initialize_project_retiring_bootstrap,
+    list_learning_contexts, list_learning_contexts_with_continuity_transition, list_sessions,
+    list_sessions_with_continuity_transition, native_born_project_registration_exists,
+    prepare_legacy_project_binding, preview_initial_capture,
+    project_activity_view_with_continuity_transition,
+    project_artifact_inventory_with_continuity_transition, project_memory_overview,
+    project_memory_overview_with_continuity_transition, project_resume_context,
+    project_resume_context_with_continuity_transition, project_session_stats,
+    project_session_stats_with_continuity_transition,
+    read_learning_context_with_continuity_transition, read_learning_with_continuity_transition,
+    read_project_cited_evidence_with_continuity_transition,
+    read_project_cited_media_with_continuity_transition,
+    read_session_context_with_continuity_transition,
+    read_session_turns_context_with_continuity_transition,
+    rename_session_with_continuity_transition, review_learning_with_continuity_transition,
+    search_observed_projects, search_project_memory_with_continuity_transition,
+    update_capture_mode, ApprovedSourceAuthorityList, ApprovedSourceRegistry, ArtifactMediaType,
+    BindingRegistry, BindingSource, CaptureFile, CaptureMode, CapturePolicy, ContinuityStore,
     CorrectLearningInput, CrossProjectSearch, EraseSessionMemoryInput, EvidenceExcerpt,
     GraphCitation, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
     LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
     ProjectActivityView, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
-    ProjectGraphFilters, ProjectGraphHistory, ProjectGraphView, ProjectMemorySearch,
-    ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack, ProjectVaultBinding,
-    RenameSessionInput, ReviewLearningInput, RevisionCompatibility, SessionContextPack,
-    SessionMemoryErasure, SessionSummary, SessionTurnsContextPack, SpecificationAuthorityList,
+    ProjectMemorySearch, ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack,
+    ProjectVaultBinding, RenameSessionInput, ReviewLearningInput, RevisionCompatibility,
+    SessionContextPack, SessionMemoryErasure, SessionSummary, SessionTurnsContextPack,
     SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS,
-    DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
     DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
     DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
     DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_PROJECT_CATALOG_RESULTS,
@@ -136,15 +151,20 @@ struct SuppressedChange {
 
 static SUPPRESSED_CHANGES: OnceLock<Mutex<HashMap<PathBuf, SuppressedChange>>> = OnceLock::new();
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AgentMemoryBinding {
-    project_id: String,
-    vault_name: String,
-    source: BindingSource,
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum AgentMemoryStorage {
+    Native {
+        project_id: String,
+    },
+    LegacyVault {
+        project_id: String,
+        vault_name: String,
+        source: BindingSource,
+    },
 }
 
-impl From<ProjectVaultBinding> for AgentMemoryBinding {
+impl From<ProjectVaultBinding> for AgentMemoryStorage {
     fn from(binding: ProjectVaultBinding) -> Self {
         let vault_name = binding
             .vault_path
@@ -152,7 +172,7 @@ impl From<ProjectVaultBinding> for AgentMemoryBinding {
             .and_then(|name| name.to_str())
             .unwrap_or("Ley vault")
             .to_owned();
-        Self {
+        Self::LegacyVault {
             project_id: binding.project_id,
             vault_name,
             source: binding.source,
@@ -160,10 +180,52 @@ impl From<ProjectVaultBinding> for AgentMemoryBinding {
     }
 }
 
+#[derive(Debug, Clone)]
+struct AgentContinuityAccess {
+    project_id: String,
+    legacy_vault_path: PathBuf,
+    storage: AgentMemoryStorage,
+}
+
+impl AgentContinuityAccess {
+    fn from_legacy_binding(binding: ProjectVaultBinding) -> Self {
+        Self {
+            project_id: binding.project_id.clone(),
+            legacy_vault_path: binding.vault_path.clone(),
+            storage: binding.into(),
+        }
+    }
+
+    fn native(project_id: String, store: &ContinuityStore) -> Result<Self, LeyCoreError> {
+        let parent = store.path().parent().ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "continuity database has no parent directory for native transition access"
+                    .to_owned(),
+            )
+        })?;
+        let legacy_vault_path = parent.join("native-no-legacy-vault").join(&project_id);
+        match fs::symlink_metadata(&legacy_vault_path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(LeyCoreError::Io {
+                    path: legacy_vault_path,
+                    source,
+                })
+            }
+            Ok(_) => return Err(LeyCoreError::UnsafeProjectLayout(legacy_vault_path)),
+        }
+        Ok(Self {
+            project_id: project_id.clone(),
+            legacy_vault_path,
+            storage: AgentMemoryStorage::Native { project_id },
+        })
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentMemoryDashboard {
-    binding: AgentMemoryBinding,
+    storage: AgentMemoryStorage,
     overview: MemoryOverview,
     resume: ProjectResumePack,
     sessions: Vec<SessionSummary>,
@@ -234,7 +296,7 @@ enum AgentProjectInspection {
         project_id: String,
         project_name: String,
         capture_mode: CaptureMode,
-        binding: AgentMemoryBinding,
+        storage: AgentMemoryStorage,
     },
     Ready {
         dashboard: Box<AgentMemoryDashboard>,
@@ -308,6 +370,7 @@ fn load_agent_memory_dashboard(
     project_path: &Path,
     binding: ProjectVaultBinding,
 ) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let storage = binding.clone().into();
     let overview = project_memory_overview(project_path, &binding.vault_path)?;
     let resume = project_resume_context(
         project_path,
@@ -330,7 +393,7 @@ fn load_agent_memory_dashboard(
         MAX_LEARNING_LIST_RESULTS,
     )?;
     Ok(AgentMemoryDashboard {
-        binding: binding.into(),
+        storage,
         overview,
         resume,
         sessions,
@@ -339,8 +402,214 @@ fn load_agent_memory_dashboard(
     })
 }
 
+fn load_agent_memory_dashboard_with_continuity_store(
+    project_path: &Path,
+    binding: ProjectVaultBinding,
+    store: &ContinuityStore,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    load_agent_memory_dashboard_with_access(
+        project_path,
+        &AgentContinuityAccess::from_legacy_binding(binding),
+        store,
+    )
+}
+
+fn load_agent_memory_dashboard_with_access(
+    project_path: &Path,
+    access: &AgentContinuityAccess,
+    store: &ContinuityStore,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let overview = project_memory_overview_with_continuity_transition(
+        project_path,
+        &access.legacy_vault_path,
+        store,
+    )?;
+    let resume = project_resume_context_with_continuity_transition(
+        project_path,
+        &access.legacy_vault_path,
+        store,
+        DEFAULT_RESUME_SESSIONS,
+        DEFAULT_RESUME_LEARNINGS,
+        DEFAULT_RESUME_CHARACTERS,
+    )?;
+    let sessions =
+        list_sessions_with_continuity_transition(project_path, &access.legacy_vault_path, store)?;
+    let review_inbox = list_learning_contexts_with_continuity_transition(
+        project_path,
+        &access.legacy_vault_path,
+        store,
+        LearningListScope::NeedsReview,
+        MAX_LEARNING_LIST_RESULTS,
+    )?;
+    let all_learnings = list_learning_contexts_with_continuity_transition(
+        project_path,
+        &access.legacy_vault_path,
+        store,
+        LearningListScope::All,
+        MAX_LEARNING_LIST_RESULTS,
+    )?;
+    Ok(AgentMemoryDashboard {
+        storage: access.storage.clone(),
+        overview,
+        resume,
+        sessions,
+        review_inbox,
+        all_learnings,
+    })
+}
+
+fn load_agent_memory_dashboard_transition(
+    project_path: &Path,
+    binding: ProjectVaultBinding,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let store = ContinuityStore::system_default()?;
+    load_agent_memory_dashboard_with_continuity_store(project_path, binding, &store)
+}
+
+fn load_native_agent_memory_dashboard(
+    project_path: &Path,
+    store: &ContinuityStore,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let project_id = diagnose_project(project_path)?.identity.project_id;
+    let access = AgentContinuityAccess::native(project_id, store)?;
+    load_agent_memory_dashboard_with_access(project_path, &access, store)
+}
+
 fn resolved_agent_binding(project_path: &Path) -> Result<ProjectVaultBinding, LeyCoreError> {
     BindingRegistry::system_default()?.resolve(project_path, None)
+}
+
+fn with_transition_agent_access<T>(
+    project_path: &Path,
+    vault_override: Option<&Path>,
+    operation: impl FnOnce(&AgentContinuityAccess, &ContinuityStore) -> Result<T, LeyCoreError>,
+) -> Result<T, LeyCoreError> {
+    let registry = BindingRegistry::system_default()?;
+    let store = ContinuityStore::system_default()?;
+    with_transition_agent_access_from(project_path, vault_override, &registry, &store, operation)
+}
+
+fn with_transition_agent_access_from<T>(
+    project_path: &Path,
+    vault_override: Option<&Path>,
+    registry: &BindingRegistry,
+    store: &ContinuityStore,
+    operation: impl FnOnce(&AgentContinuityAccess, &ContinuityStore) -> Result<T, LeyCoreError>,
+) -> Result<T, LeyCoreError> {
+    match registry.resolve(project_path, vault_override) {
+        Ok(binding) => operation(&AgentContinuityAccess::from_legacy_binding(binding), store),
+        Err(LeyCoreError::VaultNotBound(project_id)) if vault_override.is_none() => {
+            let native_ready =
+                ley_core::native_canonical_read_authority_available(project_path, store)?;
+            let native_registered = native_born_project_registration_exists(project_path, store)?;
+            if !native_ready && !native_registered {
+                return Err(LeyCoreError::VaultNotBound(project_id));
+            }
+            operation(&AgentContinuityAccess::native(project_id, store)?, store)
+        }
+        Err(LeyCoreError::BoundVaultUnavailable { project_id, path })
+            if vault_override.is_none() =>
+        {
+            let unavailable_path = path.clone();
+            let unavailable = LeyCoreError::BoundVaultUnavailable {
+                project_id: project_id.clone(),
+                path: path.clone(),
+            };
+            let access = AgentContinuityAccess::from_legacy_binding(ProjectVaultBinding {
+                project_id,
+                vault_path: path,
+                source: BindingSource::Persisted,
+            });
+            match operation(&access, store) {
+                Ok(value) => Ok(value),
+                Err(LeyCoreError::Io { path, source })
+                    if source.kind() == ErrorKind::NotFound
+                        && (path == unavailable_path || path.starts_with(&unavailable_path)) =>
+                {
+                    Err(unavailable)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn ingest_agent_project_with_access(
+    project_path: &Path,
+    access: &AgentContinuityAccess,
+    store: &ContinuityStore,
+) -> Result<IngestionResult, LeyCoreError> {
+    match &access.storage {
+        AgentMemoryStorage::Native { .. } => {
+            let result = ingest_project_with_native_authority(project_path, store)?;
+            establish_native_born_project_authorities(project_path, store)?;
+            Ok(result)
+        }
+        AgentMemoryStorage::LegacyVault { .. } => ingest_project_with_continuity_transition(
+            project_path,
+            &access.legacy_vault_path,
+            store,
+        ),
+    }
+}
+
+#[cfg(test)]
+fn with_transition_agent_binding_from<T>(
+    project_path: &Path,
+    vault_override: Option<&Path>,
+    registry: &BindingRegistry,
+    store: &ContinuityStore,
+    operation: impl FnOnce(&ProjectVaultBinding, &ContinuityStore) -> Result<T, LeyCoreError>,
+) -> Result<T, LeyCoreError> {
+    match registry.resolve(project_path, vault_override) {
+        Ok(binding) => operation(&binding, store),
+        Err(LeyCoreError::BoundVaultUnavailable { project_id, path })
+            if vault_override.is_none() =>
+        {
+            let unavailable_path = path.clone();
+            let unavailable = LeyCoreError::BoundVaultUnavailable {
+                project_id: project_id.clone(),
+                path: path.clone(),
+            };
+            let binding = ProjectVaultBinding {
+                project_id,
+                vault_path: path,
+                source: BindingSource::Persisted,
+            };
+            match operation(&binding, store) {
+                Ok(value) => Ok(value),
+                Err(LeyCoreError::Io { path, source })
+                    if source.kind() == ErrorKind::NotFound
+                        && (path == unavailable_path || path.starts_with(&unavailable_path)) =>
+                {
+                    Err(unavailable)
+                }
+                Err(error) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn with_transition_agent_session_read<T>(
+    project_path: &Path,
+    operation: impl FnOnce(&Path, &Path, &ContinuityStore) -> Result<T, LeyCoreError>,
+) -> Result<T, LeyCoreError> {
+    let registry = BindingRegistry::system_default()?;
+    let store = ContinuityStore::system_default()?;
+    with_transition_agent_session_read_from(project_path, &registry, &store, operation)
+}
+
+fn with_transition_agent_session_read_from<T>(
+    project_path: &Path,
+    registry: &BindingRegistry,
+    store: &ContinuityStore,
+    operation: impl FnOnce(&Path, &Path, &ContinuityStore) -> Result<T, LeyCoreError>,
+) -> Result<T, LeyCoreError> {
+    with_transition_agent_access_from(project_path, None, registry, store, |access, store| {
+        operation(project_path, &access.legacy_vault_path, store)
+    })
 }
 
 fn verify_open_vault_binding(
@@ -368,6 +637,7 @@ fn verify_open_vault_binding(
 fn agent_project_catalog_item(
     observed: ley_core::ObservedProject,
     registry: &BindingRegistry,
+    transition_store: Option<&ContinuityStore>,
 ) -> AgentProjectCatalogItem {
     let fallback_name = observed
         .root_path
@@ -407,13 +677,14 @@ fn agent_project_catalog_item(
             "This folder now contains a different Ley project identity.".to_owned(),
         );
     }
-    agent_project_catalog_item_for_diagnostic(observed, diagnostic, registry)
+    agent_project_catalog_item_for_diagnostic(observed, diagnostic, registry, transition_store)
 }
 
 fn agent_project_catalog_item_for_diagnostic(
     observed: ley_core::ObservedProject,
     diagnostic: ProjectDiagnostic,
     registry: &BindingRegistry,
+    transition_store: Option<&ContinuityStore>,
 ) -> AgentProjectCatalogItem {
     let mut item = AgentProjectCatalogItem {
         project_id: observed.project_id,
@@ -431,23 +702,94 @@ fn agent_project_catalog_item_for_diagnostic(
         freshness: None,
         status_detail: "Ready to resume locally.".to_owned(),
     };
-    let binding = match registry.resolve_observed(&diagnostic) {
-        Ok(binding) => binding,
-        Err(LeyCoreError::VaultNotBound(_)) => {
-            item.state = AgentProjectCatalogState::Unbound;
-            item.status_detail = "Choose a filesystem vault before capturing memory.".to_owned();
-            return item;
+    let access = match registry.resolve_observed(&diagnostic) {
+        Ok(binding) => {
+            item.vault_name = Some(
+                binding
+                    .vault_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Ley vault")
+                    .to_owned(),
+            );
+            AgentContinuityAccess::from_legacy_binding(binding)
         }
-        Err(LeyCoreError::BoundVaultUnavailable { path, .. }) => {
-            item.state = AgentProjectCatalogState::VaultUnavailable;
+        Err(LeyCoreError::VaultNotBound(_)) => {
+            let Some(store) = transition_store else {
+                item.state = AgentProjectCatalogState::Unbound;
+                item.status_detail =
+                    "Legacy project requires migration before local continuity is ready."
+                        .to_owned();
+                return item;
+            };
+            match ley_core::native_canonical_read_authority_available(&diagnostic.root, store) {
+                Ok(true) => match AgentContinuityAccess::native(
+                    diagnostic.identity.project_id.clone(),
+                    store,
+                ) {
+                    Ok(access) => access,
+                    Err(error) => {
+                        item.state = AgentProjectCatalogState::MemoryError;
+                        item.status_detail = error.to_string();
+                        return item;
+                    }
+                },
+                Ok(false) => {
+                    match native_born_project_registration_exists(&diagnostic.root, store) {
+                        Ok(true) => {
+                            item.state = AgentProjectCatalogState::NeedsCapture;
+                            item.status_detail =
+                                "Native continuity memory was erased; review capture to enable it again."
+                                    .to_owned();
+                        }
+                        Ok(false) => {
+                            item.state = AgentProjectCatalogState::Unbound;
+                            item.status_detail =
+                                "Legacy project requires migration before local continuity is ready."
+                                    .to_owned();
+                        }
+                        Err(error) => {
+                            item.state = AgentProjectCatalogState::MemoryError;
+                            item.status_detail = error.to_string();
+                        }
+                    }
+                    return item;
+                }
+                Err(error) => {
+                    item.state = AgentProjectCatalogState::MemoryError;
+                    item.status_detail = error.to_string();
+                    return item;
+                }
+            }
+        }
+        Err(LeyCoreError::BoundVaultUnavailable { project_id, path }) => {
             item.vault_name = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .map(str::to_owned);
-            item.status_detail =
-                "The bound vault moved or is currently unavailable. Reconnect it explicitly."
-                    .to_owned();
-            return item;
+            let native_ready = transition_store
+                .map(|store| {
+                    ley_core::native_canonical_read_authority_available(&diagnostic.root, store)
+                })
+                .transpose();
+            match native_ready {
+                Ok(Some(true)) => AgentContinuityAccess::from_legacy_binding(ProjectVaultBinding {
+                    project_id,
+                    vault_path: path,
+                    source: BindingSource::Persisted,
+                }),
+                Ok(_) => {
+                    item.state = AgentProjectCatalogState::VaultUnavailable;
+                    item.status_detail = "The legacy vault is unavailable and this project has not completed native continuity migration."
+                        .to_owned();
+                    return item;
+                }
+                Err(error) => {
+                    item.state = AgentProjectCatalogState::MemoryError;
+                    item.status_detail = error.to_string();
+                    return item;
+                }
+            }
         }
         Err(error) => {
             item.state = AgentProjectCatalogState::MemoryError;
@@ -455,15 +797,15 @@ fn agent_project_catalog_item_for_diagnostic(
             return item;
         }
     };
-    item.vault_name = Some(
-        binding
-            .vault_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("Ley vault")
-            .to_owned(),
-    );
-    let overview = match project_memory_overview(&diagnostic.root, &binding.vault_path) {
+    let overview_result = match transition_store {
+        Some(store) => project_memory_overview_with_continuity_transition(
+            &diagnostic.root,
+            &access.legacy_vault_path,
+            store,
+        ),
+        None => project_memory_overview(&diagnostic.root, &access.legacy_vault_path),
+    };
+    let overview = match overview_result {
         Ok(overview) => overview,
         Err(LeyCoreError::ProjectMemoryUnavailable(_)) => {
             item.state = AgentProjectCatalogState::NeedsCapture;
@@ -476,7 +818,15 @@ fn agent_project_catalog_item_for_diagnostic(
             return item;
         }
     };
-    let sessions = match project_session_stats(&diagnostic.root, &binding.vault_path) {
+    let sessions = match transition_store {
+        Some(store) => project_session_stats_with_continuity_transition(
+            &diagnostic.root,
+            &access.legacy_vault_path,
+            store,
+        ),
+        None => project_session_stats(&diagnostic.root, &access.legacy_vault_path),
+    };
+    let sessions = match sessions {
         Ok(sessions) => sessions,
         Err(error) => {
             item.state = AgentProjectCatalogState::MemoryError;
@@ -484,12 +834,22 @@ fn agent_project_catalog_item_for_diagnostic(
             return item;
         }
     };
-    let review = match list_learning_contexts(
-        &diagnostic.root,
-        &binding.vault_path,
-        LearningListScope::NeedsReview,
-        MAX_LEARNING_LIST_RESULTS,
-    ) {
+    let review = match transition_store {
+        Some(store) => list_learning_contexts_with_continuity_transition(
+            &diagnostic.root,
+            &access.legacy_vault_path,
+            store,
+            LearningListScope::NeedsReview,
+            MAX_LEARNING_LIST_RESULTS,
+        ),
+        None => list_learning_contexts(
+            &diagnostic.root,
+            &access.legacy_vault_path,
+            LearningListScope::NeedsReview,
+            MAX_LEARNING_LIST_RESULTS,
+        ),
+    };
+    let review = match review {
         Ok(review) => review,
         Err(error) => {
             item.state = AgentProjectCatalogState::MemoryError;
@@ -498,7 +858,7 @@ fn agent_project_catalog_item_for_diagnostic(
         }
     };
     item.files = Some(overview.files);
-    item.graph_nodes = Some(overview.graph_nodes);
+    item.graph_nodes = overview.graph_nodes;
     item.sessions = Some(sessions.total_sessions);
     item.active_sessions = Some(sessions.active_sessions + sessions.paused_sessions);
     item.review_items = Some(review.total_matching);
@@ -509,12 +869,13 @@ fn agent_project_catalog_item_for_diagnostic(
 fn load_agent_project_catalog_from(
     catalog: &ProjectCatalog,
     registry: &BindingRegistry,
+    transition_store: Option<&ContinuityStore>,
 ) -> Result<AgentProjectCatalogView, LeyCoreError> {
     let observed = catalog.list(DEFAULT_PROJECT_CATALOG_RESULTS)?;
     let projects = observed
         .projects
         .into_iter()
-        .map(|project| agent_project_catalog_item(project, registry))
+        .map(|project| agent_project_catalog_item(project, registry, transition_store))
         .collect::<Vec<_>>();
     let ready_projects = projects
         .iter()
@@ -531,9 +892,11 @@ fn load_agent_project_catalog_from(
 }
 
 fn load_agent_project_catalog() -> Result<AgentProjectCatalogView, LeyCoreError> {
+    let store = ContinuityStore::system_default()?;
     load_agent_project_catalog_from(
         &ProjectCatalog::system_default()?,
         &BindingRegistry::system_default()?,
+        Some(&store),
     )
 }
 
@@ -560,29 +923,28 @@ fn forget_agent_project(project_id: String) -> Result<AgentProjectCatalogView, S
 
 #[tauri::command]
 fn read_agent_capture_settings(project_path: String) -> Result<AgentCaptureSettings, String> {
-    resolved_agent_binding(Path::new(&project_path))
-        .and_then(|_| {
-            let diagnostic = diagnose_project(&project_path)?;
-            let preview = ley_core::preview_capture(&project_path)?;
-            Ok(AgentCaptureSettings {
-                project_id: diagnostic.identity.project_id,
-                project_name: diagnostic.identity.name,
-                mode: diagnostic.capture.mode,
-                approved_roots: diagnostic.capture.approved_roots,
-                respect_gitignore: diagnostic.capture.respect_gitignore,
-                max_file_bytes: diagnostic.capture.max_file_bytes,
-                max_total_bytes: diagnostic.capture.max_total_bytes,
-                store_raw_transcripts: diagnostic.capture.store_raw_transcripts,
-                ignore_file_present: diagnostic.ignore_file_present,
-                capture_fingerprint: preview.capture_fingerprint,
-                eligible_files: preview.files.len(),
-                eligible_bytes: preview.included_bytes,
-                skipped_oversized: preview.skipped_oversized.len(),
-                skipped_total_limit: preview.skipped_total_limit.len(),
-                skipped_symlinks: preview.skipped_symlinks.len(),
-                privacy_notice: "Preview reads file metadata only. Applying a mode refreshes the redacted local snapshot; Ley never uploads it.",
-            })
+    (|| -> Result<AgentCaptureSettings, LeyCoreError> {
+        let diagnostic = diagnose_project(&project_path)?;
+        let preview = ley_core::preview_capture(&project_path)?;
+        Ok(AgentCaptureSettings {
+            project_id: diagnostic.identity.project_id,
+            project_name: diagnostic.identity.name,
+            mode: diagnostic.capture.mode,
+            approved_roots: diagnostic.capture.approved_roots,
+            respect_gitignore: diagnostic.capture.respect_gitignore,
+            max_file_bytes: diagnostic.capture.max_file_bytes,
+            max_total_bytes: diagnostic.capture.max_total_bytes,
+            store_raw_transcripts: diagnostic.capture.store_raw_transcripts,
+            ignore_file_present: diagnostic.ignore_file_present,
+            capture_fingerprint: preview.capture_fingerprint,
+            eligible_files: preview.files.len(),
+            eligible_bytes: preview.included_bytes,
+            skipped_oversized: preview.skipped_oversized.len(),
+            skipped_total_limit: preview.skipped_total_limit.len(),
+            skipped_symlinks: preview.skipped_symlinks.len(),
+            privacy_notice: "Preview reads file metadata only. Applying a mode refreshes the redacted local snapshot; Ley never uploads it.",
         })
+    })()
         .map_err(|error| error.to_string())
 }
 
@@ -593,31 +955,28 @@ fn update_agent_capture_mode(
     mode: CaptureMode,
     full_evidence_consent: bool,
 ) -> Result<AgentMemoryDashboard, String> {
-    let binding =
-        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
-    update_capture_mode(
-        &project_path,
-        &binding.project_id,
-        expected_mode,
-        mode,
-        full_evidence_consent,
-    )
-    .map_err(|error| error.to_string())?;
-    ingest_project(&project_path, &binding.vault_path).map_err(|error| {
-        format!(
-            "The capture mode was saved, but the local snapshot refresh failed: {error}. Retry Refresh snapshot."
-        )
-    })?;
-    load_agent_memory_dashboard(Path::new(&project_path), binding)
-        .map_err(|error| error.to_string())
+    with_transition_agent_access(Path::new(&project_path), None, |access, store| {
+        update_capture_mode(
+            &project_path,
+            &access.project_id,
+            expected_mode,
+            mode,
+            full_evidence_consent,
+        )?;
+        ingest_agent_project_with_access(Path::new(&project_path), access, store)?;
+        load_agent_memory_dashboard_with_access(Path::new(&project_path), access, store)
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn erase_agent_project_memory(project_path: String) -> Result<AgentProjectInspection, String> {
     let registry = BindingRegistry::system_default().map_err(|error| error.to_string())?;
-    erase_agent_project_memory_with_registry(Path::new(&project_path), &registry)
+    let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
+    erase_agent_project_memory_with_registry_and_store(Path::new(&project_path), &registry, &store)
 }
 
+#[cfg(test)]
 fn erase_agent_project_memory_with_registry(
     project_path: &Path,
     registry: &BindingRegistry,
@@ -628,6 +987,31 @@ fn erase_agent_project_memory_with_registry(
     erase_project_memory(project_path, &binding.vault_path).map_err(|error| error.to_string())?;
     let diagnostic = diagnose_project(project_path).map_err(|error| error.to_string())?;
     inspect_initialized_agent_project_with_registry(diagnostic, registry)
+}
+
+fn erase_agent_project_memory_with_registry_and_store(
+    project_path: &Path,
+    registry: &BindingRegistry,
+    store: &ContinuityStore,
+) -> Result<AgentProjectInspection, String> {
+    with_transition_agent_access_from(project_path, None, registry, store, |access, store| {
+        match &access.storage {
+            AgentMemoryStorage::Native { .. } => {
+                erase_project_memory_with_native_authority(project_path, store).map(|_| ())
+            }
+            AgentMemoryStorage::LegacyVault { .. } => {
+                erase_project_memory_with_continuity_transition(
+                    project_path,
+                    &access.legacy_vault_path,
+                    store,
+                )
+                .map(|_| ())
+            }
+        }
+    })
+    .map_err(|error| error.to_string())?;
+    let diagnostic = diagnose_project(project_path).map_err(|error| error.to_string())?;
+    inspect_initialized_agent_project_with_registry_and_store(diagnostic, registry, Some(store))
 }
 
 #[derive(Serialize)]
@@ -683,17 +1067,19 @@ async fn search_agent_project_memory(
     revision_filter: Option<RevisionCompatibility>,
 ) -> Result<ProjectMemorySearch, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let binding = resolved_agent_binding(Path::new(&project_path))?;
-        search_project_memory(
-            &project_path,
-            &binding.vault_path,
-            &query,
-            ProjectMemorySearchLimits {
-                max_results: DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
-                max_tokens: DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
-            },
-            revision_filter,
-        )
+        with_transition_agent_access(Path::new(&project_path), None, |access, store| {
+            search_project_memory_with_continuity_transition(
+                &project_path,
+                &access.legacy_vault_path,
+                store,
+                &query,
+                ProjectMemorySearchLimits {
+                    max_results: DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+                    max_tokens: DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+                },
+                revision_filter,
+            )
+        })
     })
     .await
     .map_err(|_| "Project memory search was interrupted.".to_owned())?
@@ -720,16 +1106,49 @@ fn inspect_agent_project(project_path: String) -> Result<AgentProjectInspection,
         Err(error) => return Err(error.to_string()),
     };
     let registry = BindingRegistry::system_default().map_err(|error| error.to_string())?;
-    inspect_initialized_agent_project_with_registry(diagnostic, &registry)
+    let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
+    inspect_initialized_agent_project_with_registry_and_store(diagnostic, &registry, Some(&store))
 }
 
+#[cfg(test)]
 fn inspect_initialized_agent_project_with_registry(
     diagnostic: ProjectDiagnostic,
     registry: &BindingRegistry,
 ) -> Result<AgentProjectInspection, String> {
+    inspect_initialized_agent_project_with_registry_and_store(diagnostic, registry, None)
+}
+
+fn inspect_initialized_agent_project_with_registry_and_store(
+    diagnostic: ProjectDiagnostic,
+    registry: &BindingRegistry,
+    transition_store: Option<&ContinuityStore>,
+) -> Result<AgentProjectInspection, String> {
     let binding = match registry.resolve(&diagnostic.root, None) {
         Ok(binding) => binding,
         Err(LeyCoreError::VaultNotBound(_)) => {
+            if let Some(store) = transition_store {
+                if ley_core::native_canonical_read_authority_available(&diagnostic.root, store)
+                    .map_err(|error| error.to_string())?
+                {
+                    let dashboard = load_native_agent_memory_dashboard(&diagnostic.root, store)
+                        .map_err(|error| error.to_string())?;
+                    return Ok(AgentProjectInspection::Ready {
+                        dashboard: Box::new(dashboard),
+                    });
+                }
+                if native_born_project_registration_exists(&diagnostic.root, store)
+                    .map_err(|error| error.to_string())?
+                {
+                    return Ok(AgentProjectInspection::NeedsCapture {
+                        project_id: diagnostic.identity.project_id.clone(),
+                        project_name: diagnostic.identity.name.clone(),
+                        capture_mode: diagnostic.capture.mode,
+                        storage: AgentMemoryStorage::Native {
+                            project_id: diagnostic.identity.project_id,
+                        },
+                    });
+                }
+            }
             let preview =
                 agent_existing_capture_preview(&diagnostic).map_err(|error| error.to_string())?;
             return Ok(AgentProjectInspection::Unbound {
@@ -739,7 +1158,24 @@ fn inspect_initialized_agent_project_with_registry(
                 preview,
             });
         }
-        Err(LeyCoreError::BoundVaultUnavailable { path, .. }) => {
+        Err(LeyCoreError::BoundVaultUnavailable { project_id, path }) => {
+            if let Some(store) = transition_store {
+                if ley_core::native_canonical_read_authority_available(&diagnostic.root, store)
+                    .map_err(|error| error.to_string())?
+                {
+                    let access = AgentContinuityAccess::from_legacy_binding(ProjectVaultBinding {
+                        project_id,
+                        vault_path: path.clone(),
+                        source: BindingSource::Persisted,
+                    });
+                    let dashboard =
+                        load_agent_memory_dashboard_with_access(&diagnostic.root, &access, store)
+                            .map_err(|error| error.to_string())?;
+                    return Ok(AgentProjectInspection::Ready {
+                        dashboard: Box::new(dashboard),
+                    });
+                }
+            }
             return Ok(AgentProjectInspection::VaultUnavailable {
                 project_id: diagnostic.identity.project_id,
                 project_name: diagnostic.identity.name,
@@ -753,7 +1189,15 @@ fn inspect_initialized_agent_project_with_registry(
         }
         Err(error) => return Err(error.to_string()),
     };
-    match load_agent_memory_dashboard(&diagnostic.root, binding.clone()) {
+    let dashboard = match transition_store {
+        Some(store) => load_agent_memory_dashboard_with_continuity_store(
+            &diagnostic.root,
+            binding.clone(),
+            store,
+        ),
+        None => load_agent_memory_dashboard(&diagnostic.root, binding.clone()),
+    };
+    match dashboard {
         Ok(dashboard) => Ok(AgentProjectInspection::Ready {
             dashboard: Box::new(dashboard),
         }),
@@ -762,7 +1206,7 @@ fn inspect_initialized_agent_project_with_registry(
                 project_id: diagnostic.identity.project_id,
                 project_name: diagnostic.identity.name,
                 capture_mode: diagnostic.capture.mode,
-                binding: binding.into(),
+                storage: binding.into(),
             })
         }
         Err(error) => Err(error.to_string()),
@@ -785,7 +1229,7 @@ fn agent_initial_capture_preview(
         preview.skipped_oversized,
         preview.skipped_total_limit,
         preview.skipped_symlinks,
-        "This preview inspects capture paths and file metadata only. It creates no .ley metadata, vault binding, or Agent Memory until you approve initialization.",
+        "This preview inspects capture paths and file metadata only. It creates no .ley metadata or Agent Memory until you approve initialization.",
     )
 }
 
@@ -901,125 +1345,120 @@ fn verify_agent_project_note_vault(
     verify_open_vault_binding(&binding, &open_vault_path)
 }
 
-fn read_project_specifications_with_registry(
+fn native_approved_source_registry(project_path: &Path) -> Result<ApprovedSourceRegistry, String> {
+    let registry = ApprovedSourceRegistry::system_default().map_err(|error| error.to_string())?;
+    if !registry
+        .authority_ready(project_path)
+        .map_err(|error| error.to_string())?
+    {
+        let binding = resolved_agent_binding(project_path).map_err(|error| error.to_string())?;
+        let legacy = SpecificationRegistry::system_default().map_err(|error| error.to_string())?;
+        registry
+            .migrate_legacy_specifications(project_path, &binding.vault_path, &legacy)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(registry)
+}
+
+fn read_project_approved_sources(
     project_path: &Path,
-    binding: &ProjectVaultBinding,
-    registry: &SpecificationRegistry,
-) -> Result<SpecificationAuthorityList, String> {
-    registry
-        .list(project_path, &binding.vault_path)
+) -> Result<ApprovedSourceAuthorityList, String> {
+    native_approved_source_registry(project_path)?
+        .authority(project_path)
         .map_err(|error| error.to_string())
 }
 
-fn approve_project_specification_with_registry(
-    project_path: &Path,
-    binding: &ProjectVaultBinding,
-    open_vault_path: &str,
-    registry: &SpecificationRegistry,
-    specification_id: &str,
-    relative_path: &str,
-) -> Result<SpecificationAuthorityList, String> {
-    verify_open_vault_binding(binding, open_vault_path)?;
-    registry
-        .approve(
-            project_path,
-            &binding.vault_path,
-            specification_id,
-            relative_path,
-        )
-        .map_err(|error| error.to_string())?;
-    read_project_specifications_with_registry(project_path, binding, registry)
-}
-
-fn revoke_project_specification_with_registry(
-    project_path: &Path,
-    binding: &ProjectVaultBinding,
-    open_vault_path: &str,
-    registry: &SpecificationRegistry,
-    specification_id: &str,
-) -> Result<SpecificationAuthorityList, String> {
-    verify_open_vault_binding(binding, open_vault_path)?;
-    registry
-        .revoke(project_path, specification_id)
-        .map_err(|error| error.to_string())?;
-    read_project_specifications_with_registry(project_path, binding, registry)
+#[tauri::command]
+fn read_agent_project_approved_sources(
+    project_path: String,
+) -> Result<ApprovedSourceAuthorityList, String> {
+    read_project_approved_sources(Path::new(&project_path))
 }
 
 #[tauri::command]
-fn read_agent_project_specifications(
+fn approve_agent_project_file_source(
     project_path: String,
-) -> Result<SpecificationAuthorityList, String> {
-    let binding =
-        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
-    let registry = SpecificationRegistry::system_default().map_err(|error| error.to_string())?;
-    read_project_specifications_with_registry(Path::new(&project_path), &binding, &registry)
-}
-
-#[tauri::command]
-fn approve_agent_project_specification(
-    project_path: String,
-    open_vault_path: String,
-    specification_id: String,
     relative_path: String,
-) -> Result<SpecificationAuthorityList, String> {
-    let binding =
-        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
-    let registry = SpecificationRegistry::system_default().map_err(|error| error.to_string())?;
-    approve_project_specification_with_registry(
-        Path::new(&project_path),
-        &binding,
-        &open_vault_path,
-        &registry,
-        &specification_id,
-        &relative_path,
-    )
+) -> Result<ApprovedSourceAuthorityList, String> {
+    let project_path = Path::new(&project_path);
+    let registry = native_approved_source_registry(project_path)?;
+    registry
+        .approve_project_file(project_path, &relative_path)
+        .map_err(|error| error.to_string())?;
+    registry
+        .authority(project_path)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn revoke_agent_project_specification(
+fn reapprove_agent_project_file_source(
     project_path: String,
-    open_vault_path: String,
-    specification_id: String,
-) -> Result<SpecificationAuthorityList, String> {
-    let binding =
-        resolved_agent_binding(Path::new(&project_path)).map_err(|error| error.to_string())?;
-    let registry = SpecificationRegistry::system_default().map_err(|error| error.to_string())?;
-    revoke_project_specification_with_registry(
-        Path::new(&project_path),
-        &binding,
-        &open_vault_path,
-        &registry,
-        &specification_id,
-    )
+    source_id: String,
+) -> Result<ApprovedSourceAuthorityList, String> {
+    let project_path = Path::new(&project_path);
+    let registry = native_approved_source_registry(project_path)?;
+    registry
+        .reapprove_project_file(project_path, &source_id)
+        .map_err(|error| error.to_string())?;
+    registry
+        .authority(project_path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn revoke_agent_project_approved_source(
+    project_path: String,
+    source_id: String,
+) -> Result<ApprovedSourceAuthorityList, String> {
+    let project_path = Path::new(&project_path);
+    let registry = native_approved_source_registry(project_path)?;
+    registry
+        .revoke(project_path, &source_id)
+        .map_err(|error| error.to_string())?;
+    registry
+        .authority(project_path)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn initialize_agent_project(
     project_path: String,
-    vault_path: String,
     expected_approval_fingerprint: String,
 ) -> Result<AgentMemoryDashboard, String> {
-    let reviewed = agent_initial_capture_preview(Path::new(&project_path))
-        .map_err(|error| error.to_string())?;
+    let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
+    let catalog = ProjectCatalog::system_default().map_err(|error| error.to_string())?;
+    initialize_agent_project_with_store_and_catalog(
+        Path::new(&project_path),
+        &expected_approval_fingerprint,
+        &store,
+        &catalog,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn initialize_agent_project_with_store_and_catalog(
+    project_path: &Path,
+    expected_approval_fingerprint: &str,
+    store: &ContinuityStore,
+    catalog: &ProjectCatalog,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let reviewed = agent_initial_capture_preview(project_path)?;
     if reviewed.approval_fingerprint != expected_approval_fingerprint {
-        return Err(LeyCoreError::CapturePreviewChanged.to_string());
+        return Err(LeyCoreError::CapturePreviewChanged);
     }
     let initialization =
-        initialize_project_retiring_bootstrap(&project_path, None, CaptureMode::Structured)
-            .map_err(|error| error.to_string())?;
+        initialize_project_retiring_bootstrap(project_path, None, CaptureMode::Structured)?;
     if !initialization.created {
-        return Err(LeyCoreError::CapturePreviewChanged.to_string());
+        return Err(LeyCoreError::CapturePreviewChanged);
     }
-    ingest_project_with_expected_capture_plan(
+    ingest_project_with_expected_capture_plan_and_native_authority(
         &initialization.root,
-        &vault_path,
         &reviewed.plan_fingerprint,
-    )
-    .map_err(|error| error.to_string())?;
-    let binding = BindingRegistry::system_default()
-        .and_then(|registry| registry.bind(&initialization.root, &vault_path))
-        .map_err(|error| error.to_string())?;
-    load_agent_memory_dashboard(&initialization.root, binding).map_err(|error| error.to_string())
+        store,
+    )?;
+    catalog.observe(&initialization.root)?;
+    establish_native_born_project_authorities(&initialization.root, store)?;
+    load_native_agent_memory_dashboard(&initialization.root, store)
 }
 
 #[tauri::command]
@@ -1029,51 +1468,97 @@ fn connect_agent_project(
     expected_approval_fingerprint: Option<String>,
 ) -> Result<AgentMemoryDashboard, String> {
     let registry = BindingRegistry::system_default().map_err(|error| error.to_string())?;
-    connect_agent_project_with_registry(
+    let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
+    let binding = connect_agent_project_binding_with_registry(
         Path::new(&project_path),
         Path::new(&vault_path),
         expected_approval_fingerprint.as_deref(),
         &registry,
+        &store,
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    load_agent_memory_dashboard_transition(Path::new(&project_path), binding)
+        .map_err(|error| error.to_string())
 }
 
+#[cfg(test)]
 fn connect_agent_project_with_registry(
     project_path: &Path,
     vault_path: &Path,
     expected_approval_fingerprint: Option<&str>,
     registry: &BindingRegistry,
 ) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let continuity_dir = registry
+        .path()
+        .parent()
+        .ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "test binding registry has no private parent directory".to_owned(),
+            )
+        })?
+        .join("continuity-private");
+    fs::create_dir_all(&continuity_dir).map_err(|source| LeyCoreError::Io {
+        path: continuity_dir.clone(),
+        source,
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&continuity_dir, fs::Permissions::from_mode(0o700)).map_err(
+            |source| LeyCoreError::Io {
+                path: continuity_dir.clone(),
+                source,
+            },
+        )?;
+    }
+    let store = ContinuityStore::at(continuity_dir.join("continuity.sqlite3"));
+    let binding = connect_agent_project_binding_with_registry(
+        project_path,
+        vault_path,
+        expected_approval_fingerprint,
+        registry,
+        &store,
+    )?;
+    load_agent_memory_dashboard(project_path, binding)
+}
+
+fn connect_agent_project_binding_with_registry(
+    project_path: &Path,
+    vault_path: &Path,
+    expected_approval_fingerprint: Option<&str>,
+    registry: &BindingRegistry,
+    store: &ContinuityStore,
+) -> Result<ProjectVaultBinding, LeyCoreError> {
     let diagnostic = diagnose_project(project_path)?;
     match registry.resolve_observed(&diagnostic) {
         Err(LeyCoreError::VaultNotBound(_)) => {
+            prepare_legacy_project_binding(&diagnostic.root, store)?;
             let reviewed = agent_existing_capture_preview(&diagnostic)?;
             if expected_approval_fingerprint != Some(reviewed.approval_fingerprint.as_str()) {
                 return Err(LeyCoreError::CapturePreviewChanged);
             }
-            ingest_project_with_expected_capture_plan(
+            ingest_project_with_expected_capture_plan_and_continuity_transition(
                 &diagnostic.root,
                 vault_path,
                 &reviewed.plan_fingerprint,
+                store,
             )?;
         }
         Err(LeyCoreError::BoundVaultUnavailable { .. }) | Ok(_) => {
-            ingest_project(&diagnostic.root, vault_path)?;
+            ingest_project_with_continuity_transition(&diagnostic.root, vault_path, store)?;
         }
         Err(error) => return Err(error),
     }
-    let binding = registry.bind(&diagnostic.root, vault_path)?;
-    load_agent_memory_dashboard(&diagnostic.root, binding)
+    registry.bind(&diagnostic.root, vault_path)
 }
 
 #[tauri::command]
 fn refresh_agent_project(project_path: String) -> Result<AgentMemoryDashboard, String> {
-    resolved_agent_binding(Path::new(&project_path))
-        .and_then(|binding| {
-            ingest_project(&project_path, &binding.vault_path)?;
-            load_agent_memory_dashboard(Path::new(&project_path), binding)
-        })
-        .map_err(|error| error.to_string())
+    with_transition_agent_access(Path::new(&project_path), None, |access, store| {
+        ingest_agent_project_with_access(Path::new(&project_path), access, store)?;
+        load_agent_memory_dashboard_with_access(Path::new(&project_path), access, store)
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1081,19 +1566,19 @@ fn read_agent_learning(
     project_path: String,
     learning_id: String,
 ) -> Result<LearningContextPack, String> {
-    resolved_agent_binding(Path::new(&project_path))
-        .and_then(|binding| {
-            read_learning_context(
-                &project_path,
-                &binding.vault_path,
-                &learning_id,
-                DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-                DEFAULT_LEARNING_CONTEXT_HISTORY,
-                DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
-                DEFAULT_LEARNING_CONTEXT_CHARACTERS,
-            )
-        })
-        .map_err(|error| error.to_string())
+    with_transition_agent_access(Path::new(&project_path), None, |access, store| {
+        read_learning_context_with_continuity_transition(
+            &project_path,
+            &access.legacy_vault_path,
+            store,
+            &learning_id,
+            DEFAULT_LEARNING_CONTEXT_EVIDENCE,
+            DEFAULT_LEARNING_CONTEXT_HISTORY,
+            DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
+            DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+        )
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1101,17 +1586,17 @@ fn read_agent_session(
     project_path: String,
     session_id: String,
 ) -> Result<SessionContextPack, String> {
-    resolved_agent_binding(Path::new(&project_path))
-        .and_then(|binding| {
-            read_session_context(
-                &project_path,
-                &binding.vault_path,
-                &session_id,
-                DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
-                DEFAULT_SESSION_CONTEXT_CHARACTERS,
-            )
-        })
-        .map_err(|error| error.to_string())
+    with_transition_agent_session_read(Path::new(&project_path), |project, vault, store| {
+        read_session_context_with_continuity_transition(
+            project,
+            vault,
+            store,
+            &session_id,
+            DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+            DEFAULT_SESSION_CONTEXT_CHARACTERS,
+        )
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1119,17 +1604,17 @@ fn read_agent_session_turns(
     project_path: String,
     session_id: String,
 ) -> Result<SessionTurnsContextPack, String> {
-    resolved_agent_binding(Path::new(&project_path))
-        .and_then(|binding| {
-            read_session_turns_context(
-                &project_path,
-                &binding.vault_path,
-                &session_id,
-                DEFAULT_SESSION_TURN_RESULTS,
-                DEFAULT_SESSION_TURN_CHARACTERS,
-            )
-        })
-        .map_err(|error| error.to_string())
+    with_transition_agent_session_read(Path::new(&project_path), |project, vault, store| {
+        read_session_turns_context_with_continuity_transition(
+            project,
+            vault,
+            store,
+            &session_id,
+            DEFAULT_SESSION_TURN_RESULTS,
+            DEFAULT_SESSION_TURN_CHARACTERS,
+        )
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1143,22 +1628,22 @@ fn rename_agent_session(
     if note.trim().is_empty() {
         return Err("A rename reason is required.".to_owned());
     }
-    resolved_agent_binding(Path::new(&project_path))
-        .and_then(|binding| {
-            rename_session(
-                &project_path,
-                &binding.vault_path,
-                &session_id,
-                RenameSessionInput {
-                    request_id: generate_request_id(),
-                    expected_event_count: Some(expected_event_count),
-                    name,
-                    note,
-                },
-            )?;
-            load_agent_memory_dashboard(Path::new(&project_path), binding)
-        })
-        .map_err(|error| error.to_string())
+    with_transition_agent_access(Path::new(&project_path), None, |access, store| {
+        rename_session_with_continuity_transition(
+            &project_path,
+            &access.legacy_vault_path,
+            store,
+            &session_id,
+            RenameSessionInput {
+                request_id: generate_request_id(),
+                expected_event_count: Some(expected_event_count),
+                name,
+                note,
+            },
+        )?;
+        load_agent_memory_dashboard_with_access(Path::new(&project_path), access, store)
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1168,21 +1653,22 @@ fn erase_agent_session(
     expected_event_count: u64,
     expected_name: String,
 ) -> Result<AgentSessionErasure, String> {
-    resolved_agent_binding(Path::new(&project_path))
-        .and_then(|binding| {
-            let erasure = erase_session_memory(
-                &project_path,
-                &binding.vault_path,
-                &session_id,
-                EraseSessionMemoryInput {
-                    expected_event_count,
-                    expected_name,
-                },
-            )?;
-            let dashboard = load_agent_memory_dashboard(Path::new(&project_path), binding)?;
-            Ok(AgentSessionErasure { dashboard, erasure })
-        })
-        .map_err(|error| error.to_string())
+    with_transition_agent_access(Path::new(&project_path), None, |access, store| {
+        let erasure = erase_session_memory_with_continuity_transition(
+            &project_path,
+            &access.legacy_vault_path,
+            store,
+            &session_id,
+            EraseSessionMemoryInput {
+                expected_event_count,
+                expected_name,
+            },
+        )?;
+        let dashboard =
+            load_agent_memory_dashboard_with_access(Path::new(&project_path), access, store)?;
+        Ok(AgentSessionErasure { dashboard, erasure })
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1193,20 +1679,47 @@ fn review_agent_learning(
     action: LearningFeedbackAction,
     note: String,
 ) -> Result<AgentMemoryDashboard, String> {
-    resolved_agent_binding(Path::new(&project_path))
-        .and_then(|binding| {
-            review_agent_learning_with_binding(
-                Path::new(&project_path),
-                binding,
-                &learning_id,
-                expected_event_count,
-                action,
-                note,
-            )
-        })
-        .map_err(|error| error.to_string())
+    with_transition_agent_access(Path::new(&project_path), None, |access, store| {
+        review_agent_learning_with_access_and_store(
+            Path::new(&project_path),
+            access,
+            store,
+            &learning_id,
+            expected_event_count,
+            action,
+            note,
+        )
+    })
+    .map_err(|error| error.to_string())
 }
 
+fn review_agent_learning_with_access_and_store(
+    project_path: &Path,
+    access: &AgentContinuityAccess,
+    store: &ContinuityStore,
+    learning_id: &str,
+    expected_event_count: u64,
+    action: LearningFeedbackAction,
+    note: String,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    review_learning_with_continuity_transition(
+        project_path,
+        &access.legacy_vault_path,
+        store,
+        learning_id,
+        ReviewLearningInput {
+            request_id: generate_learning_request_id(),
+            expected_event_count: Some(expected_event_count),
+            actor: LearningActor::User,
+            action,
+            note,
+            replacement_learning_id: None,
+        },
+    )?;
+    load_agent_memory_dashboard_with_access(project_path, access, store)
+}
+
+#[cfg(test)]
 fn review_agent_learning_with_binding(
     project_path: &Path,
     binding: ProjectVaultBinding,
@@ -1244,22 +1757,22 @@ fn correct_agent_learning(
     if note.trim().is_empty() {
         return Err("A correction reason is required.".to_owned());
     }
-    resolved_agent_binding(Path::new(&project_path))
-        .and_then(|binding| {
-            correct_agent_learning_with_binding(
-                Path::new(&project_path),
-                binding,
-                &learning_id,
-                AgentLearningCorrection {
-                    expected_event_count,
-                    title,
-                    guidance,
-                    confidence_percent,
-                    note,
-                },
-            )
-        })
-        .map_err(|error| error.to_string())
+    with_transition_agent_access(Path::new(&project_path), None, |access, store| {
+        correct_agent_learning_with_access_and_store(
+            Path::new(&project_path),
+            access,
+            store,
+            &learning_id,
+            AgentLearningCorrection {
+                expected_event_count,
+                title,
+                guidance,
+                confidence_percent,
+                note,
+            },
+        )
+    })
+    .map_err(|error| error.to_string())
 }
 
 struct AgentLearningCorrection {
@@ -1270,6 +1783,7 @@ struct AgentLearningCorrection {
     note: String,
 }
 
+#[cfg(test)]
 fn correct_agent_learning_with_binding(
     project_path: &Path,
     binding: ProjectVaultBinding,
@@ -1304,11 +1818,55 @@ fn correct_agent_learning_with_binding(
     load_agent_memory_dashboard(project_path, binding)
 }
 
+fn correct_agent_learning_with_access_and_store(
+    project_path: &Path,
+    access: &AgentContinuityAccess,
+    store: &ContinuityStore,
+    learning_id: &str,
+    correction: AgentLearningCorrection,
+) -> Result<AgentMemoryDashboard, LeyCoreError> {
+    let current = read_learning_with_continuity_transition(
+        project_path,
+        &access.legacy_vault_path,
+        store,
+        learning_id,
+    )?;
+    let evidence = current
+        .evidence
+        .into_iter()
+        .map(|item| LearningEvidenceInput {
+            session_id: item.session_id,
+            record_id: item.record_id,
+            note: item.note,
+        })
+        .collect();
+    correct_learning_with_continuity_transition(
+        project_path,
+        &access.legacy_vault_path,
+        store,
+        learning_id,
+        CorrectLearningInput {
+            request_id: generate_learning_request_id(),
+            expected_event_count: Some(correction.expected_event_count),
+            actor: LearningActor::User,
+            title: correction.title,
+            guidance: correction.guidance,
+            confidence_percent: correction.confidence_percent,
+            evidence,
+            note: correction.note,
+        },
+    )?;
+    load_agent_memory_dashboard_with_access(project_path, access, store)
+}
+
 #[tauri::command]
 fn bind_agent_project(
     project_path: String,
     vault_path: String,
 ) -> Result<ProjectVaultBinding, String> {
+    let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
+    prepare_legacy_project_binding(Path::new(&project_path), &store)
+        .map_err(|error| error.to_string())?;
     BindingRegistry::system_default()
         .and_then(|registry| registry.bind(project_path, vault_path))
         .map_err(|error| error.to_string())
@@ -1338,10 +1896,10 @@ fn ingest_agent_project(
     vault_override: Option<String>,
 ) -> Result<IngestionResult, String> {
     let override_path = vault_override.as_deref().map(Path::new);
-    let binding = BindingRegistry::system_default()
-        .and_then(|registry| registry.resolve(&project_path, override_path))
-        .map_err(|error| error.to_string())?;
-    ingest_project(project_path, binding.vault_path).map_err(|error| error.to_string())
+    with_transition_agent_access(Path::new(&project_path), override_path, |access, store| {
+        ingest_agent_project_with_access(Path::new(&project_path), access, store)
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1352,83 +1910,15 @@ fn read_agent_artifacts(
     max_results: Option<usize>,
 ) -> Result<ProjectArtifactInventory, String> {
     let override_path = vault_override.as_deref().map(Path::new);
-    let binding = BindingRegistry::system_default()
-        .and_then(|registry| registry.resolve(&project_path, override_path))
-        .map_err(|error| error.to_string())?;
-    project_artifact_inventory(
-        project_path,
-        binding.vault_path,
-        query.as_deref().unwrap_or_default(),
-        max_results.unwrap_or(DEFAULT_ARTIFACT_RESULTS),
-    )
-    .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn read_agent_project_graph_view(
-    project_path: String,
-    vault_override: Option<String>,
-    graph_snapshot_id: Option<String>,
-    query: Option<String>,
-    max_nodes: Option<usize>,
-    max_edges: Option<usize>,
-    filters: Option<ProjectGraphFilters>,
-) -> Result<ProjectGraphView, String> {
-    let override_path = vault_override.as_deref().map(Path::new);
-    let binding = BindingRegistry::system_default()
-        .and_then(|registry| registry.resolve(&project_path, override_path))
-        .map_err(|error| error.to_string())?;
-    project_graph_view_filtered(
-        project_path,
-        binding.vault_path,
-        graph_snapshot_id.as_deref(),
-        query.as_deref().unwrap_or_default(),
-        max_nodes.unwrap_or(DEFAULT_GRAPH_VIEW_NODES),
-        max_edges.unwrap_or(DEFAULT_GRAPH_VIEW_EDGES),
-        &filters.unwrap_or_default(),
-    )
-    .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn read_agent_project_graph_history(
-    project_path: String,
-    vault_override: Option<String>,
-    max_results: Option<usize>,
-) -> Result<ProjectGraphHistory, String> {
-    let override_path = vault_override.as_deref().map(Path::new);
-    let binding = BindingRegistry::system_default()
-        .and_then(|registry| registry.resolve(&project_path, override_path))
-        .map_err(|error| error.to_string())?;
-    project_graph_history(
-        project_path,
-        binding.vault_path,
-        max_results.unwrap_or(DEFAULT_GRAPH_HISTORY_RESULTS),
-    )
-    .map_err(|error| error.to_string())
-}
-
-#[tauri::command]
-fn read_agent_project_graph_evidence(
-    project_path: String,
-    vault_override: Option<String>,
-    graph_snapshot_id: String,
-    citation: GraphCitation,
-    context_lines: Option<u64>,
-    max_characters: Option<usize>,
-) -> Result<EvidenceExcerpt, String> {
-    let override_path = vault_override.as_deref().map(Path::new);
-    let binding = BindingRegistry::system_default()
-        .and_then(|registry| registry.resolve(&project_path, override_path))
-        .map_err(|error| error.to_string())?;
-    read_project_graph_evidence(
-        project_path,
-        binding.vault_path,
-        &graph_snapshot_id,
-        &citation,
-        context_lines.unwrap_or(3),
-        max_characters.unwrap_or(8_000),
-    )
+    with_transition_agent_access(Path::new(&project_path), override_path, |access, store| {
+        project_artifact_inventory_with_continuity_transition(
+            &project_path,
+            &access.legacy_vault_path,
+            store,
+            query.as_deref().unwrap_or_default(),
+            max_results.unwrap_or(DEFAULT_ARTIFACT_RESULTS),
+        )
+    })
     .map_err(|error| error.to_string())
 }
 
@@ -1441,16 +1931,16 @@ fn read_agent_cited_evidence(
     max_characters: Option<usize>,
 ) -> Result<EvidenceExcerpt, String> {
     let override_path = vault_override.as_deref().map(Path::new);
-    let binding = BindingRegistry::system_default()
-        .and_then(|registry| registry.resolve(&project_path, override_path))
-        .map_err(|error| error.to_string())?;
-    read_project_cited_evidence(
-        project_path,
-        binding.vault_path,
-        &citation,
-        context_lines.unwrap_or(3),
-        max_characters.unwrap_or(8_000),
-    )
+    with_transition_agent_access(Path::new(&project_path), override_path, |access, store| {
+        read_project_cited_evidence_with_continuity_transition(
+            &project_path,
+            &access.legacy_vault_path,
+            store,
+            &citation,
+            context_lines.unwrap_or(3),
+            max_characters.unwrap_or(8_000),
+        )
+    })
     .map_err(|error| error.to_string())
 }
 
@@ -1464,18 +1954,19 @@ fn read_agent_media_evidence(
     max_bytes: Option<usize>,
 ) -> Result<AgentMediaEvidence, String> {
     let override_path = vault_override.as_deref().map(Path::new);
-    let binding = BindingRegistry::system_default()
-        .and_then(|registry| registry.resolve(&project_path, override_path))
+    let media =
+        with_transition_agent_access(Path::new(&project_path), override_path, |access, store| {
+            read_project_cited_media_with_continuity_transition(
+                &project_path,
+                &access.legacy_vault_path,
+                store,
+                &artifact_path,
+                &artifact_snapshot_id,
+                &content_hash,
+                max_bytes.unwrap_or(MAX_MEDIA_EVIDENCE_BYTES),
+            )
+        })
         .map_err(|error| error.to_string())?;
-    let media = read_project_cited_media(
-        project_path,
-        binding.vault_path,
-        &artifact_path,
-        &artifact_snapshot_id,
-        &content_hash,
-        max_bytes.unwrap_or(MAX_MEDIA_EVIDENCE_BYTES),
-    )
-    .map_err(|error| error.to_string())?;
     let mime_type = media.media_type.mime_type().to_owned();
     Ok(AgentMediaEvidence {
         artifact_path: media.artifact_path,
@@ -1504,16 +1995,16 @@ fn read_agent_project_activity(
     max_results: Option<usize>,
 ) -> Result<ProjectActivityView, String> {
     let override_path = vault_override.as_deref().map(Path::new);
-    let binding = BindingRegistry::system_default()
-        .and_then(|registry| registry.resolve(&project_path, override_path))
-        .map_err(|error| error.to_string())?;
-    project_activity_view(
-        project_path,
-        binding.vault_path,
-        query.as_deref().unwrap_or_default(),
-        problem_scope.unwrap_or(ProjectProblemScope::All),
-        max_results.unwrap_or(DEFAULT_PROJECT_ACTIVITY_RESULTS),
-    )
+    with_transition_agent_access(Path::new(&project_path), override_path, |access, store| {
+        project_activity_view_with_continuity_transition(
+            &project_path,
+            &access.legacy_vault_path,
+            store,
+            query.as_deref().unwrap_or_default(),
+            problem_scope.unwrap_or(ProjectProblemScope::All),
+            max_results.unwrap_or(DEFAULT_PROJECT_ACTIVITY_RESULTS),
+        )
+    })
     .map_err(|error| error.to_string())
 }
 
@@ -2345,9 +2836,10 @@ pub fn run() {
             search_agent_project_memory,
             inspect_agent_project,
             verify_agent_project_note_vault,
-            read_agent_project_specifications,
-            approve_agent_project_specification,
-            revoke_agent_project_specification,
+            read_agent_project_approved_sources,
+            approve_agent_project_file_source,
+            reapprove_agent_project_file_source,
+            revoke_agent_project_approved_source,
             initialize_agent_project,
             connect_agent_project,
             refresh_agent_project,
@@ -2363,9 +2855,6 @@ pub fn run() {
             unbind_agent_project,
             ingest_agent_project,
             read_agent_artifacts,
-            read_agent_project_graph_history,
-            read_agent_project_graph_view,
-            read_agent_project_graph_evidence,
             read_agent_cited_evidence,
             read_agent_media_evidence,
             read_agent_project_activity,
@@ -2391,6 +2880,233 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_session_reads_use_proven_native_snapshot_after_vault_disappears() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-desktop-session-transition-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let project = root.join("project");
+        let vault = root.join("vault");
+        let config = root.join("config");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(project.join("README.md"), "# Desktop transition\n").unwrap();
+        initialize_project(
+            &project,
+            Some("Desktop session transition"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let registry = BindingRegistry::at(config.join("bindings.json"));
+        registry.bind(&project, &vault).unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let started = ley_core::start_session(
+            &project,
+            &vault,
+            ley_core::StartSessionInput {
+                request_id: format!("req_{}", "d".repeat(32)),
+                name: "Desktop native read".to_owned(),
+                goal: "Keep session detail readable after the legacy vault disappears".to_owned(),
+                source: ley_core::SessionSource::default(),
+            },
+        )
+        .unwrap();
+        ley_core::record_session_prompt(
+            &project,
+            &vault,
+            &started.session.session_id,
+            ley_core::TurnEvidenceInput {
+                request_id: format!("req_{}", "e".repeat(32)),
+                origin: ley_core::TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("desktop-transition-turn".to_owned()),
+                text: "Preserve this bounded prompt.".to_owned(),
+            },
+        )
+        .unwrap();
+        let store = ContinuityStore::at(config.join("continuity.sqlite3"));
+
+        let imported = with_transition_agent_session_read_from(
+            &project,
+            &registry,
+            &store,
+            |project, vault, store| {
+                read_session_context_with_continuity_transition(
+                    project,
+                    vault,
+                    store,
+                    &started.session.session_id,
+                    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+                    DEFAULT_SESSION_CONTEXT_CHARACTERS,
+                )
+            },
+        )
+        .unwrap();
+        assert_eq!(imported.prompt_count, 1);
+
+        fs::remove_dir_all(&vault).unwrap();
+        let context = with_transition_agent_session_read_from(
+            &project,
+            &registry,
+            &store,
+            |project, vault, store| {
+                read_session_context_with_continuity_transition(
+                    project,
+                    vault,
+                    store,
+                    &started.session.session_id,
+                    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+                    DEFAULT_SESSION_CONTEXT_CHARACTERS,
+                )
+            },
+        )
+        .unwrap();
+        assert_eq!(context.session_id, started.session.session_id);
+        assert_eq!(context.prompt_count, 1);
+        assert!(context.revision_freshness.captured_head.is_none());
+
+        let turns = with_transition_agent_session_read_from(
+            &project,
+            &registry,
+            &store,
+            |project, vault, store| {
+                read_session_turns_context_with_continuity_transition(
+                    project,
+                    vault,
+                    store,
+                    &started.session.session_id,
+                    DEFAULT_SESSION_TURN_RESULTS,
+                    DEFAULT_SESSION_TURN_CHARACTERS,
+                )
+            },
+        )
+        .unwrap();
+        assert_eq!(turns.prompt_count, 1);
+        assert_eq!(
+            turns.turns[0].text.as_deref(),
+            Some("Preserve this bounded prompt.")
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn desktop_artifact_refresh_uses_native_authority_after_vault_disappears() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-desktop-artifact-transition-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let project = root.join("project");
+        let vault = root.join("vault");
+        let pending_project = root.join("pending-project");
+        let pending_vault = root.join("pending-vault");
+        let config = root.join("config");
+        for directory in [&project, &vault, &pending_project, &pending_vault, &config] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(
+            project.join("README.md"),
+            "# Native desktop artifact\nfirst\n",
+        )
+        .unwrap();
+        fs::write(
+            pending_project.join("README.md"),
+            "# Pending desktop artifact\n",
+        )
+        .unwrap();
+        initialize_project(
+            &project,
+            Some("Desktop artifact transition"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        initialize_project(
+            &pending_project,
+            Some("Desktop pending artifact transition"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+
+        let registry = BindingRegistry::at(config.join("bindings.json"));
+        registry.bind(&project, &vault).unwrap();
+        registry.bind(&pending_project, &pending_vault).unwrap();
+        let store = ContinuityStore::at(config.join("continuity.sqlite3"));
+
+        let first = with_transition_agent_binding_from(
+            &project,
+            None,
+            &registry,
+            &store,
+            |binding, store| {
+                ingest_project_with_continuity_transition(&project, &binding.vault_path, store)
+            },
+        )
+        .unwrap();
+        assert!(first.manifest_path.is_none());
+
+        fs::remove_dir_all(&vault).unwrap();
+        fs::write(
+            project.join("README.md"),
+            "# Native desktop artifact\nsecond after vault loss\n",
+        )
+        .unwrap();
+        let refreshed = with_transition_agent_binding_from(
+            &project,
+            None,
+            &registry,
+            &store,
+            |binding, store| {
+                ingest_project_with_continuity_transition(&project, &binding.vault_path, store)
+            },
+        )
+        .unwrap();
+        assert_ne!(refreshed.snapshot_id, first.snapshot_id);
+        assert!(refreshed.changed);
+        assert!(refreshed.manifest_path.is_none());
+
+        fs::remove_dir_all(&pending_vault).unwrap();
+        assert!(matches!(
+            with_transition_agent_binding_from(
+                &pending_project,
+                None,
+                &registry,
+                &store,
+                |binding, store| {
+                    ingest_project_with_continuity_transition(
+                        &pending_project,
+                        &binding.vault_path,
+                        store,
+                    )
+                },
+            ),
+            Err(LeyCoreError::BoundVaultUnavailable { .. })
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn desktop_project_erasure_preserves_user_owned_markdown_canvas_and_binding() {
@@ -2530,7 +3246,7 @@ mod tests {
         let AgentProjectInspection::NeedsCapture {
             project_id,
             project_name,
-            binding: preserved_binding,
+            storage: preserved_storage,
             ..
         } = inspection
         else {
@@ -2538,7 +3254,14 @@ mod tests {
         };
         assert_eq!(project_id, initialized.identity.project_id);
         assert_eq!(project_name, "Portable erasure project");
-        assert_eq!(preserved_binding.project_id, binding.project_id);
+        let AgentMemoryStorage::LegacyVault {
+            project_id: preserved_project_id,
+            ..
+        } = preserved_storage
+        else {
+            panic!("legacy erasure compatibility should preserve the legacy vault storage marker");
+        };
+        assert_eq!(preserved_project_id, binding.project_id);
         assert!(!project_store.exists());
         assert!(matches!(
             ley_core::project_memory_overview(&project, &vault),
@@ -2597,7 +3320,7 @@ mod tests {
     }
 
     #[test]
-    fn specification_authority_requires_bound_vault_and_tracks_exact_revision() {
+    fn approved_source_authority_migrates_legacy_then_tracks_project_file_revision() {
         let root = std::env::temp_dir().join(format!(
             "ley-native-specification-authority-test-{}",
             std::process::id()
@@ -2605,80 +3328,77 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let project = root.join("project");
         let vault = root.join("vault");
-        let other_vault = root.join("other-vault");
         fs::create_dir_all(&project).unwrap();
         fs::create_dir_all(&vault).unwrap();
-        fs::create_dir_all(&other_vault).unwrap();
-        let initialized = initialize_project(
+        initialize_project(
             &project,
-            Some("Specification project"),
+            Some("Approved source project"),
             CaptureMode::Structured,
         )
         .unwrap();
         fs::create_dir_all(vault.join("Specs")).unwrap();
         fs::write(
             vault.join("Specs/Product.md"),
-            "---\nley-type: specification\n---\n# Product\n\n## Acceptance criteria\n\n- Works offline.\n",
+            "# Legacy product intent\n\n- Works offline.\n",
         )
         .unwrap();
-        let binding = ProjectVaultBinding {
-            project_id: initialized.identity.project_id.clone(),
-            vault_path: vault.canonicalize().unwrap(),
-            source: BindingSource::Persisted,
-        };
-        let registry = SpecificationRegistry::at(root.join("config/specifications.json"));
-        let specification_id = ley_core::generate_specification_id();
-
-        let wrong_vault = approve_project_specification_with_registry(
-            &project,
-            &binding,
-            other_vault.to_str().unwrap(),
-            &registry,
-            &specification_id,
-            "Specs/Product.md",
-        )
-        .unwrap_err();
-        assert!(wrong_vault.contains("other-vault"));
-        assert!(registry
-            .list(&project, &vault)
-            .unwrap()
-            .specifications
-            .is_empty());
-
-        let approved = approve_project_specification_with_registry(
-            &project,
-            &binding,
-            vault.to_str().unwrap(),
-            &registry,
-            &specification_id,
-            "Specs/Product.md",
-        )
-        .unwrap();
-        assert_eq!(approved.current, 1);
+        let legacy = SpecificationRegistry::at(root.join("config/specifications.json"));
+        let legacy_id = ley_core::generate_specification_id();
+        legacy
+            .approve(&project, &vault, &legacy_id, "Specs/Product.md")
+            .unwrap();
+        let registry = ApprovedSourceRegistry::at(ley_core::ContinuityStore::at(
+            root.join("private/continuity.sqlite3"),
+        ));
+        let migrated = registry
+            .migrate_legacy_specifications(&project, &vault, &legacy)
+            .unwrap();
+        assert!(migrated.authority_migrated);
+        let authority = registry.authority(&project).unwrap();
+        assert_eq!(authority.current, 1);
+        assert_eq!(authority.sources[0].approval.source_id, legacy_id);
         assert_eq!(
-            approved.specifications[0].approval.specification_id,
-            specification_id
+            authority.sources[0].approval.source_kind,
+            ley_core::ApprovedSourceKind::ImportedSnapshot
         );
 
         fs::write(
             vault.join("Specs/Product.md"),
-            "---\nley-type: specification\n---\n# Product\n\n## Acceptance criteria\n\n- Works offline.\n- Syncs later.\n",
+            "# Legacy product intent\n\n- Changed after migration.\n",
         )
         .unwrap();
-        let changed =
-            read_project_specifications_with_registry(&project, &binding, &registry).unwrap();
-        assert_eq!(changed.current, 0);
+        assert_eq!(registry.authority(&project).unwrap().current, 1);
+
+        fs::create_dir_all(project.join("docs")).unwrap();
+        fs::write(
+            project.join("docs/requirements.md"),
+            "# Current project intent\n\n- Stay offline.\n",
+        )
+        .unwrap();
+        let project_file = registry
+            .approve_project_file(&project, "docs/requirements.md")
+            .unwrap();
+        let authority = registry.authority(&project).unwrap();
+        assert_eq!(authority.current, 2);
+        assert_eq!(authority.changed, 0);
+
+        fs::write(
+            project.join("docs/requirements.md"),
+            "# Current project intent\n\n- Changed without approval.\n",
+        )
+        .unwrap();
+        let changed = registry.authority(&project).unwrap();
+        assert_eq!(changed.current, 1);
         assert_eq!(changed.changed, 1);
 
-        let revoked = revoke_project_specification_with_registry(
-            &project,
-            &binding,
-            vault.to_str().unwrap(),
-            &registry,
-            &specification_id,
-        )
-        .unwrap();
-        assert!(revoked.specifications.is_empty());
+        let reapproved = registry
+            .reapprove_project_file(&project, &project_file.source_id)
+            .unwrap();
+        assert_eq!(reapproved.source_id, project_file.source_id);
+        assert_eq!(registry.authority(&project).unwrap().current, 2);
+        assert!(registry.revoke(&project, &project_file.source_id).unwrap());
+        assert!(registry.revoke(&project, &legacy_id).unwrap());
+        assert!(registry.authority(&project).unwrap().sources.is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -3160,6 +3880,129 @@ mod tests {
     }
 
     #[test]
+    fn fresh_agent_project_initializes_native_continuity_without_vault_binding() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-native-initialize-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("project");
+        let private = root.join("private");
+        let config = root.join("config");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&private).unwrap();
+        fs::create_dir_all(&config).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(project.join("README.md"), "# Native project\n").unwrap();
+
+        let reviewed = agent_initial_capture_preview(&project).unwrap();
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        let catalog = ProjectCatalog::at(config.join(ley_core::PROJECT_CATALOG_FILE));
+        let dashboard = initialize_agent_project_with_store_and_catalog(
+            &project,
+            &reviewed.approval_fingerprint,
+            &store,
+            &catalog,
+        )
+        .unwrap();
+
+        let AgentMemoryStorage::Native { project_id } = dashboard.storage else {
+            panic!("fresh projects must use native continuity storage");
+        };
+        let diagnostic = diagnose_project(&project).unwrap();
+        assert_eq!(project_id, diagnostic.identity.project_id);
+        assert!(ley_core::native_canonical_read_authority_available(&project, &store).unwrap());
+        let registry = BindingRegistry::at(config.join(ley_core::BINDING_REGISTRY_FILE));
+        assert!(matches!(
+            registry.resolve_observed(&diagnostic),
+            Err(LeyCoreError::VaultNotBound(_))
+        ));
+        let late_vault = root.join("late-legacy-vault");
+        fs::create_dir_all(&late_vault).unwrap();
+        let late_connect = connect_agent_project_binding_with_registry(
+            &project,
+            &late_vault,
+            None,
+            &registry,
+            &store,
+        );
+        assert!(matches!(
+            late_connect,
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("cannot bind a legacy vault after native artifact authority is established")
+        ));
+        assert!(matches!(
+            registry.resolve_observed(&diagnostic),
+            Err(LeyCoreError::VaultNotBound(_))
+        ));
+        assert_eq!(
+            catalog
+                .list(ley_core::DEFAULT_PROJECT_CATALOG_RESULTS)
+                .unwrap()
+                .projects
+                .len(),
+            1
+        );
+
+        let erased =
+            erase_agent_project_memory_with_registry_and_store(&project, &registry, &store)
+                .unwrap();
+        let AgentProjectInspection::NeedsCapture { storage, .. } = erased else {
+            panic!("erased native projects must remain native and require recapture");
+        };
+        assert!(matches!(storage, AgentMemoryStorage::Native { .. }));
+        assert!(!ley_core::native_canonical_read_authority_available(&project, &store).unwrap());
+        assert!(native_born_project_registration_exists(&project, &store).unwrap());
+        assert!(matches!(
+            registry.resolve_observed(&diagnostic),
+            Err(LeyCoreError::VaultNotBound(_))
+        ));
+
+        let catalog_view =
+            load_agent_project_catalog_from(&catalog, &registry, Some(&store)).unwrap();
+        let catalog_item = catalog_view
+            .projects
+            .iter()
+            .find(|item| item.project_id == diagnostic.identity.project_id)
+            .unwrap();
+        assert_eq!(catalog_item.state, AgentProjectCatalogState::NeedsCapture);
+
+        let (recaptured, dashboard) = with_transition_agent_access_from(
+            &project,
+            None,
+            &registry,
+            &store,
+            |access, store| {
+                let recaptured = ingest_agent_project_with_access(&project, access, store)?;
+                let dashboard = load_agent_memory_dashboard_with_access(&project, access, store)?;
+                Ok((recaptured, dashboard))
+            },
+        )
+        .unwrap();
+        assert!(recaptured.changed);
+        assert!(matches!(
+            dashboard.storage,
+            AgentMemoryStorage::Native { .. }
+        ));
+        assert!(ley_core::native_canonical_read_authority_available(&project, &store).unwrap());
+        assert!(matches!(
+            registry.resolve_observed(&diagnostic),
+            Err(LeyCoreError::VaultNotBound(_))
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn stale_initial_capture_approval_rejects_before_project_or_vault_write() {
         let root = std::env::temp_dir().join(format!(
             "ley-stale-initial-preview-test-{}-{}",
@@ -3170,10 +4013,9 @@ mod tests {
                 .as_nanos()
         ));
         let project = root.join("project");
-        let vault = root.join("vault");
+        let vault = root.join("vault-must-not-be-created");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&project).unwrap();
-        fs::create_dir_all(&vault).unwrap();
         fs::write(project.join("README.md"), "# Reviewed\n").unwrap();
         let reviewed = agent_initial_capture_preview(&project).unwrap();
         fs::write(
@@ -3184,7 +4026,6 @@ mod tests {
 
         let error = match initialize_agent_project(
             project.to_string_lossy().into_owned(),
-            vault.to_string_lossy().into_owned(),
             reviewed.approval_fingerprint,
         ) {
             Ok(_) => panic!("stale approval unexpectedly initialized the project"),
@@ -3192,7 +4033,7 @@ mod tests {
         };
         assert!(error.contains("capture plan changed"));
         assert!(!project.join(ley_core::LEY_DIRECTORY).exists());
-        assert!(fs::read_dir(&vault).unwrap().next().is_none());
+        assert!(!vault.exists());
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -3248,7 +4089,10 @@ mod tests {
             &registry,
         )
         .unwrap();
-        assert_eq!(dashboard.binding.project_id, diagnostic.identity.project_id);
+        let AgentMemoryStorage::LegacyVault { project_id, .. } = dashboard.storage else {
+            panic!("legacy unbound migration should still report legacy-vault storage");
+        };
+        assert_eq!(project_id, diagnostic.identity.project_id);
         assert!(vault.join(".ley").exists());
 
         fs::remove_dir_all(root).unwrap();
@@ -3303,7 +4147,7 @@ mod tests {
         fs::remove_dir_all(&unavailable).unwrap();
         fs::rename(&moved_vault, root.join("vault-after-move")).unwrap();
 
-        let view = load_agent_project_catalog_from(&catalog, &registry).unwrap();
+        let view = load_agent_project_catalog_from(&catalog, &registry, None).unwrap();
         assert_eq!(view.total_projects, 4);
         assert_eq!(view.ready_projects, 1);
         assert_eq!(view.attention_projects, 3);
@@ -3329,6 +4173,71 @@ mod tests {
             project.state == AgentProjectCatalogState::ProjectUnavailable
                 && project.project_path == unavailable_canonical
         }));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_catalog_counts_native_sessions_after_session_authority_cutover() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-project-catalog-native-session-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let config = root.join("config");
+        let continuity = root.join("continuity");
+        let vault = root.join("vault");
+        let project = root.join("project");
+        for directory in [&config, &continuity, &vault, &project] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&continuity, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(project.join("main.rs"), "fn native_session_marker() {}\n").unwrap();
+        initialize_project(
+            &project,
+            Some("Native session catalog"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let catalog = ProjectCatalog::at(config.join(ley_core::PROJECT_CATALOG_FILE));
+        let registry = BindingRegistry::at(config.join(ley_core::BINDING_REGISTRY_FILE));
+        registry.bind(&project, &vault).unwrap();
+        ingest_project(&project, &vault).unwrap();
+        catalog.observe(&project).unwrap();
+        let store = ContinuityStore::at(continuity.join("continuity.sqlite3"));
+
+        let started = ley_core::start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            ley_core::StartSessionInput {
+                request_id: generate_request_id(),
+                name: "Native catalog session".to_owned(),
+                goal: "Keep project-card session counts on native authority".to_owned(),
+                source: ley_core::SessionSource::default(),
+            },
+        )
+        .unwrap();
+        assert_eq!(started.session.event_count, 1);
+        assert_eq!(
+            project_session_stats(&project, &vault)
+                .unwrap()
+                .total_sessions,
+            0
+        );
+
+        let view = load_agent_project_catalog_from(&catalog, &registry, Some(&store)).unwrap();
+        let item = view
+            .projects
+            .iter()
+            .find(|item| item.project_name == "Native session catalog")
+            .unwrap();
+        assert_eq!(item.sessions, Some(1));
+        assert_eq!(item.active_sessions, Some(1));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -3477,6 +4386,160 @@ mod tests {
             correction.evidence[0].note,
             "Captured in the dashboard implementation session."
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn desktop_learning_transition_helpers_write_and_refresh_native_authority() {
+        use ley_core::{
+            checkpoint_session, start_session, CheckpointInput, LearningEvidenceInput,
+            LearningKind, LearningProvenance, ProposeLearningInput, SessionSource,
+            StartSessionInput,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "ley-desktop-learning-transition-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("project");
+        let vault = root.join("vault");
+        let continuity = root.join("continuity");
+        let _ = fs::remove_dir_all(&root);
+        for directory in [&project, &vault, &continuity] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&continuity, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(
+            project.join("README.md"),
+            "# Desktop transition learning\n\nKeep learning writes on continuity.",
+        )
+        .unwrap();
+        let initialized = initialize_project(
+            &project,
+            Some("Desktop transition learning"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let session = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "Capture native learning evidence".into(),
+                goal: "Exercise the production desktop learning transition helpers.".into(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &session.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "Captured one desktop learning source.".into(),
+                plan: vec![],
+                decisions: vec![],
+                tasks: vec![],
+                problems: vec![],
+                touched_artifacts: vec!["README.md".into()],
+                commands: vec![],
+                verification: vec![],
+                unresolved: vec![],
+            },
+        )
+        .unwrap();
+        let store = ContinuityStore::at(continuity.join("continuity.sqlite3"));
+        let proposed = ley_core::propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            ProposeLearningInput {
+                request_id: format!("req_{}", "3".repeat(32)),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Use transition learning authority".into(),
+                guidance: "Refresh the desktop from native learning continuity.".into(),
+                confidence_percent: 82,
+                provenance: LearningProvenance::AgentAuthored,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: session.session.session_id,
+                    record_id: checkpoint.session.checkpoints.last().unwrap().id.clone(),
+                    note: "Desktop production-helper evidence.".into(),
+                }],
+            },
+        )
+        .unwrap();
+        let binding = ProjectVaultBinding {
+            project_id: initialized.identity.project_id,
+            vault_path: vault.canonicalize().unwrap(),
+            source: BindingSource::Override,
+        };
+        let access = AgentContinuityAccess::from_legacy_binding(binding);
+
+        let corrected = correct_agent_learning_with_access_and_store(
+            &project,
+            &access,
+            &store,
+            &proposed.learning.learning_id,
+            AgentLearningCorrection {
+                expected_event_count: 1,
+                title: "Use native transition learning authority".into(),
+                guidance: "Read, correct, and review learning state from continuity.".into(),
+                confidence_percent: 91,
+                note: "Clarify the authority boundary.".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(corrected.review_inbox.total_matching, 1);
+        assert_eq!(
+            corrected.all_learnings.learnings[0].title,
+            "Use native transition learning authority"
+        );
+        let current = ley_core::read_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &proposed.learning.learning_id,
+        )
+        .unwrap();
+        assert_eq!(current.event_count, 2);
+
+        let reviewed = review_agent_learning_with_access_and_store(
+            &project,
+            &access,
+            &store,
+            &proposed.learning.learning_id,
+            current.event_count,
+            LearningFeedbackAction::Confirm,
+            "Confirmed after reading the native correction.".into(),
+        )
+        .unwrap();
+        assert_eq!(reviewed.review_inbox.total_matching, 0);
+        assert_eq!(reviewed.resume.total_current_trusted_learnings, 1);
+        let final_learning = ley_core::read_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &proposed.learning.learning_id,
+        )
+        .unwrap();
+        assert_eq!(final_learning.event_count, 3);
+        assert_eq!(
+            final_learning.trust_state,
+            ley_core::LearningTrustState::Trusted
+        );
+        assert!(read_learning(&project, &vault, &proposed.learning.learning_id).is_err());
 
         fs::remove_dir_all(root).unwrap();
     }

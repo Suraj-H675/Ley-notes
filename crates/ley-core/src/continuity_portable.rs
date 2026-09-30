@@ -1,14 +1,14 @@
 use crate::continuity_store::project_events_from_portable_database;
 use crate::ingestion::{
-    read_portable_artifact_snapshots, validate_relative_artifact_path, PortableArtifactBlob,
-    PortableArtifactCitation, PortableArtifactReference, PortableArtifactSnapshot,
+    collect_artifact_citations, read_portable_artifact_snapshots, validate_relative_artifact_path,
+    PortableArtifactBlob, PortableArtifactCitation, PortableArtifactReference,
+    PortableArtifactSnapshot,
 };
-use crate::{validate_project_id, ContinuityEvent, ContinuityStore, LeyCoreError};
+use crate::{validate_project_id, ContinuityStore, LeyCoreError};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -88,8 +88,13 @@ pub fn export_portable_continuity(
     destination: impl AsRef<Path>,
 ) -> Result<PortableContinuityBundleManifest, LeyCoreError> {
     let legacy_vault = legacy_vault.as_ref();
-    export_portable_with_evidence(store, project_id, destination.as_ref(), |citations| {
-        read_portable_artifact_snapshots(legacy_vault, project_id, citations)
+    store.with_artifact_authority_lock(|| {
+        export_portable_with_evidence(store, project_id, destination.as_ref(), |citations| {
+            match store.read_native_portable_artifact_snapshots(project_id, citations)? {
+                Some(snapshots) => Ok(snapshots),
+                None => read_portable_artifact_snapshots(legacy_vault, project_id, citations),
+            }
+        })
     })
 }
 
@@ -573,66 +578,6 @@ fn validate_evidence_tree(
                 entry.content_hash
             )));
         }
-    }
-    Ok(())
-}
-
-fn collect_artifact_citations(
-    events: &[ContinuityEvent],
-) -> Result<Vec<PortableArtifactCitation>, LeyCoreError> {
-    let mut citations = BTreeSet::new();
-    for event in events {
-        collect_citations_from_value(&event.payload, &mut citations)?;
-    }
-    Ok(citations.into_iter().collect())
-}
-
-fn collect_citations_from_value(
-    value: &Value,
-    citations: &mut BTreeSet<PortableArtifactCitation>,
-) -> Result<(), LeyCoreError> {
-    match value {
-        Value::Object(object) => {
-            let snapshot = object.get("artifactSnapshotId");
-            let path = object.get("artifactPath");
-            let hash = object.get("contentHash");
-            let present = usize::from(snapshot.is_some())
-                + usize::from(path.is_some())
-                + usize::from(hash.is_some());
-            if present >= 2 && present < 3 {
-                return Err(invalid_bundle(
-                    "continuity event contains an incomplete artifact citation".to_owned(),
-                ));
-            }
-            if present == 3 {
-                let citation = PortableArtifactCitation {
-                    artifact_snapshot_id: snapshot
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| {
-                            invalid_bundle("artifactSnapshotId must be text".to_owned())
-                        })?
-                        .to_owned(),
-                    artifact_path: path
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| invalid_bundle("artifactPath must be text".to_owned()))?
-                        .to_owned(),
-                    content_hash: hash
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| invalid_bundle("contentHash must be text".to_owned()))?
-                        .to_owned(),
-                };
-                citations.insert(citation);
-            }
-            for nested in object.values() {
-                collect_citations_from_value(nested, citations)?;
-            }
-        }
-        Value::Array(values) => {
-            for nested in values {
-                collect_citations_from_value(nested, citations)?;
-            }
-        }
-        _ => {}
     }
     Ok(())
 }
@@ -1152,12 +1097,18 @@ fn invalid_bundle(message: String) -> LeyCoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        checkpoint_session, import_legacy_continuity, ingest_project, initialize_project,
-        start_session, CaptureMode, CheckpointInput, ContinuityEventInput, ProjectIdentity,
-        SessionSource, SessionSourceKind, StartSessionInput, VerificationInput, VerificationStatus,
-        PROJECT_SCHEMA_VERSION,
+    use crate::continuity_store::{
+        ContinuityApprovedSourceSnapshotInput, ContinuityProjectObservation,
     };
+    use crate::{
+        checkpoint_session, checkpoint_session_with_continuity_transition,
+        import_legacy_continuity, ingest_project, ingest_project_with_continuity_transition,
+        initialize_project, start_session, start_session_with_continuity_transition,
+        AgentEgressPolicy, CaptureMode, CheckpointInput, ContinuityEventInput, ProjectIdentity,
+        SessionSource, SessionSourceKind, StartSessionInput, VerificationInput, VerificationStatus,
+        CONTINUITY_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION,
+    };
+    use rusqlite::Connection;
     use serde_json::json;
     use std::process::Command;
     use tempfile::tempdir;
@@ -1178,6 +1129,107 @@ mod tests {
 
     fn request_id(digit: char) -> String {
         format!("req_{}", digit.to_string().repeat(32))
+    }
+
+    #[test]
+    fn native_artifact_cas_exports_cited_evidence_after_legacy_vault_loss() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("native-project");
+        let vault = base.path().join("native-vault");
+        let private = base.path().join("native-private");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::create_dir(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        initialize_project(
+            &project,
+            Some("Native portable continuity"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let readme = b"# Native portable evidence\nCAS survives vault removal\n";
+        fs::write(project.join("README.md"), readme).unwrap();
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        let started = start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            StartSessionInput {
+                request_id: request_id('a'),
+                name: "Native portable export".to_owned(),
+                goal: "Keep cited evidence portable without the legacy vault".to_owned(),
+                source: SessionSource {
+                    kind: SessionSourceKind::HostHook,
+                    host: Some("codex".to_owned()),
+                    agent: Some("gpt-6-luna".to_owned()),
+                    source_reference: None,
+                },
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: request_id('b'),
+                summary: "Verified native portable evidence".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["README.md".to_owned()],
+                commands: Vec::new(),
+                verification: vec![VerificationInput {
+                    kind: "command".to_owned(),
+                    status: VerificationStatus::Passed,
+                    summary: "README evidence retained natively".to_owned(),
+                    command: Some("cat README.md".to_owned()),
+                    evidence_artifact_paths: vec!["README.md".to_owned()],
+                }],
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let citation =
+            checkpoint.session.checkpoints[0].verification[0].evidence_artifacts[0].clone();
+        let project_id = checkpoint.session.project_id.clone();
+
+        fs::remove_dir_all(&vault).unwrap();
+        let bundle = base.path().join("native-portable-bundle");
+        let manifest = export_portable_continuity(&store, &vault, &project_id, &bundle).unwrap();
+        assert_eq!(manifest.artifact_snapshots.len(), 1);
+        assert_eq!(manifest.evidence_blobs.len(), 1);
+        assert_eq!(
+            read_portable_cited_evidence(
+                &bundle,
+                &project_id,
+                &citation.artifact_snapshot_id,
+                &citation.artifact_path,
+                &citation.content_hash,
+            )
+            .unwrap(),
+            readme
+        );
+        let restored = base.path().join("native-restored");
+        let imported = import_portable_continuity(&bundle, &restored).unwrap();
+        assert_eq!(
+            read_continuity_evidence(
+                &imported.evidence_root,
+                &project_id,
+                &citation.artifact_snapshot_id,
+                &citation.artifact_path,
+                &citation.content_hash,
+            )
+            .unwrap(),
+            readme
+        );
     }
 
     #[test]
@@ -1260,6 +1312,43 @@ mod tests {
 
         let store = ContinuityStore::at(private.join("continuity.sqlite3"));
         let imported = import_legacy_continuity(&project, &vault, &store).unwrap();
+        store
+            .set_project_egress_policy(&imported.project_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        let snapshot_bytes =
+            b"# Portable approved intent\nlegacy snapshot survives backup\n".to_vec();
+        let snapshot_hash = format!("sha256:{:x}", Sha256::digest(&snapshot_bytes));
+        store
+            .import_legacy_approved_source_authority(
+                &imported.project_id,
+                &[ContinuityApprovedSourceSnapshotInput {
+                    source_id: "spec_88888888888888888888888888888888".to_owned(),
+                    display_name: "Legacy/PortableIntent.md".to_owned(),
+                    content_hash: snapshot_hash.clone(),
+                    approved_at_unix_ms: 124,
+                    content_bytes: snapshot_bytes.clone(),
+                }],
+                &[],
+            )
+            .unwrap();
+        store
+            .approve_project_file_source(
+                &imported.project_id,
+                "spec_99999999999999999999999999999999",
+                "AGENTS.md",
+                "AGENTS.md",
+                &format!("sha256:{:x}", Sha256::digest(b"# portable project file\n")),
+                125,
+            )
+            .unwrap();
+        store
+            .sync_legacy_project_observations(&[ContinuityProjectObservation {
+                project_id: imported.project_id.clone(),
+                root_path: project.canonicalize().unwrap(),
+                last_opened_at_unix_ms: 123,
+                continuity_origin: crate::continuity_store::ContinuityProjectOrigin::LegacyUnknown,
+            }])
+            .unwrap();
         let other = ProjectIdentity {
             schema_version: PROJECT_SCHEMA_VERSION,
             project_id: format!("prj_{}", "9".repeat(32)),
@@ -1267,6 +1356,9 @@ mod tests {
             created_at_unix_ms: 1,
         };
         store.register_project(&other).unwrap();
+        store
+            .set_project_egress_policy(&other.project_id, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
         store
             .append_event(&ContinuityEventInput {
                 event_id: format!("evt_{}", "9".repeat(64)),
@@ -1338,6 +1430,50 @@ mod tests {
         assert!(!restored.join(BUNDLE_MANIFEST_FILE).exists());
         fs::remove_dir_all(&vault).unwrap();
         let restored_store = ContinuityStore::at(&result.database_path);
+        assert!(restored_store.project_observations().unwrap().is_empty());
+        assert_eq!(
+            restored_store
+                .project_egress_policy(&result.project_id)
+                .unwrap(),
+            AgentEgressPolicy::NeverSend
+        );
+        assert!(!restored_store
+            .import_legacy_project_egress_policy(&result.project_id, AgentEgressPolicy::NeverSend)
+            .unwrap());
+        assert!(!restored_store
+            .import_legacy_approved_source_authority(&result.project_id, &[], &[])
+            .unwrap());
+        let restored_snapshot = restored_store
+            .approved_source(&result.project_id, "spec_88888888888888888888888888888888")
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored_snapshot.content_hash, snapshot_hash);
+        assert_eq!(
+            restored_store
+                .approved_snapshot_bytes(
+                    &result.project_id,
+                    "spec_88888888888888888888888888888888",
+                )
+                .unwrap()
+                .unwrap(),
+            snapshot_bytes
+        );
+        let restored_project_file = restored_store
+            .approved_source(&result.project_id, "spec_99999999999999999999999999999999")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            restored_project_file.source_kind,
+            crate::continuity_store::ContinuityApprovedSourceKind::ProjectFile
+        );
+        assert_eq!(
+            restored_project_file.project_relative_path.as_deref(),
+            Some("AGENTS.md")
+        );
+        assert!(restored_store
+            .approved_snapshot_bytes(&result.project_id, "spec_99999999999999999999999999999999",)
+            .unwrap()
+            .is_none());
         assert_eq!(
             restored_store
                 .events_for_session(&result.project_id, &started.session.session_id)
@@ -1400,6 +1536,52 @@ mod tests {
             .unwrap(),
             readme
         );
+
+        let bundle_database = bundle.join(BUNDLE_DATABASE_FILE);
+        let connection = Connection::open(&bundle_database).unwrap();
+        connection
+            .execute_batch(
+                "DROP TABLE artifact_write_authority;
+                 DROP TABLE project_artifact_state;
+                 DROP TABLE artifact_files;
+                 DROP TABLE artifact_snapshots;
+                 DROP TABLE local_migration_state;
+                 DROP TABLE approved_sources;
+                 DROP TABLE legacy_approved_source_issues;
+                 DROP TABLE approved_source_blobs;
+                 ALTER TABLE projects DROP COLUMN approved_source_authority_migrated;
+                 DROP TABLE project_observations;
+                 ALTER TABLE projects DROP COLUMN agent_egress_policy_migrated;
+                 ALTER TABLE projects DROP COLUMN agent_egress_policy;
+                 PRAGMA user_version = 2;",
+            )
+            .unwrap();
+        drop(connection);
+        let mut v2_manifest = manifest.clone();
+        let (database_sha256, database_bytes) = hash_file(&bundle_database).unwrap();
+        v2_manifest.database_sha256 = database_sha256;
+        v2_manifest.database_bytes = database_bytes;
+        fs::write(
+            bundle.join(BUNDLE_MANIFEST_FILE),
+            serialize_bundle_manifest(&v2_manifest).unwrap(),
+        )
+        .unwrap();
+        let v2_restored = base.path().join("v2-restored");
+        let v2_result = import_portable_continuity(&bundle, &v2_restored).unwrap();
+        let v2_store = ContinuityStore::at(&v2_result.database_path);
+        assert_eq!(
+            v2_store.schema_version().unwrap(),
+            CONTINUITY_SCHEMA_VERSION
+        );
+        assert_eq!(
+            v2_store
+                .project_egress_policy(&v2_result.project_id)
+                .unwrap(),
+            AgentEgressPolicy::AgentOk
+        );
+        assert!(v2_store
+            .import_legacy_project_egress_policy(&v2_result.project_id, AgentEgressPolicy::AgentOk)
+            .unwrap());
 
         let blob = &manifest.evidence_blobs[0];
         fs::write(

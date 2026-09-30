@@ -1,5 +1,7 @@
 # ADR 0070: Acceptance-criterion Verification review
 
+> Current migration note: this review surface is retired. Production Ley no longer derives `acr_` criterion objects, and the MCP review tool has been removed. Historical Verification records remain evidence; approved requirement prose remains exact Markdown; Ley does not persist or infer a relationship between them.
+
 ## Context
 
 ADR 0068 derives stable, revision-bound acceptance-criterion IDs from exact current approved

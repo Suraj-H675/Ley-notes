@@ -2,6 +2,8 @@
 
 Status: Accepted
 
+> Current migration note: creation and attachment of new Policy Bundles are retired. Existing bundles/attachments remain readable and detachable only as compatibility state while Ley removes the persistent scope/bundle hierarchy in favor of direct approved-source authority and explicit task/session source selection. This ADR remains the historical record of the original design.
+
 ## Context
 
 ADR 0052 introduced explicit reusable team/organization Knowledge Scopes for lower-precedence read-only project reference context. That solves repeated cross-project evidence reuse, but it deliberately does **not** make retrieved shared project text into policy.

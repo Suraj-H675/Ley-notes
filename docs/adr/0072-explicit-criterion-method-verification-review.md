@@ -1,5 +1,7 @@
 # ADR 0072: Explicit criterion-method-Verification review
 
+> Current migration note: this review surface is retired together with the derived `acr_`/`vmd_` objects. Production Ley exposes neither the tuple-review API nor automatic criterion/method/result bindings. This ADR remains only the historical record of the former conservative design.
+
 ## Context
 
 LEY.md's verifiability chain is:

@@ -6,6 +6,8 @@ Later extension: ADR 0075 applies ADR 0074's narrow reviewed-current active-stat
 lower-precedence shared Knowledge Scope Decision/Learning guidance. Shared direct evidence remains
 visible and shared scope authority remains read-only.
 
+> Current migration note: creation and attachment of new Knowledge Scopes are retired. Existing scopes/attachments remain readable and detachable only as compatibility state while Ley moves to explicit per-task/session source selection. This ADR records the historical design and its safety invariants, not the target product architecture.
+
 ## Context
 
 Ley's P0 Context Mounts deliberately authorize one active project to reuse one other captured project as lower-precedence read-only reference context. That is the right primitive for an isolated reference, but it becomes repetitive when the same bounded set of project knowledge should be reused across several active projects for a team or organization.

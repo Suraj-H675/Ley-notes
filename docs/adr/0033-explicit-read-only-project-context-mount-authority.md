@@ -4,6 +4,8 @@
 - Date: 2026-09-16
 - Extended by: ADR 0034 (task-conditioned mounted project reference admission)
 
+> Current migration note: standing Context Mount creation is retired. Existing mounts remain readable/removable only as compatibility state while Ley moves to explicit per-task source selection. This ADR records the historical design and safety properties that compatibility must preserve; it is no longer the target product model.
+
 ## Context
 
 Ley's fixed-project MCP process is an important isolation boundary. P0 Context Mounts must allow deliberate cross-project reference reuse without turning the observed-project catalog into ambient agent search or granting writes to another project.

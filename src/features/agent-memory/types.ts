@@ -1,51 +1,71 @@
 export type CaptureMode = "minimal" | "structured" | "full-evidence";
 export type LearningAction = "confirm" | "contest" | "reject" | "mark-stale";
 
-export type SpecificationApprovalState = "current" | "changed" | "missing";
+export type ApprovedSourceState = "current" | "changed" | "missing";
+export type ApprovedSourceKind = "project-file" | "imported-snapshot";
+export type ApprovedSourceLegacyIssueReason = "changed" | "missing" | "invalid";
 
-export interface SpecificationApproval {
+export interface ApprovedSourceApproval {
   projectId: string;
-  specificationId: string;
-  relativePath: string;
+  sourceId: string;
+  sourceKind: ApprovedSourceKind;
+  displayName: string;
+  projectRelativePath?: string;
   contentHash: string;
   approvedAtUnixMs: number;
 }
 
-export interface SpecificationAuthority {
-  approval: SpecificationApproval;
-  state: SpecificationApprovalState;
+export interface ApprovedSourceAuthority {
+  approval: ApprovedSourceApproval;
+  state: ApprovedSourceState;
   currentContentHash?: string;
 }
 
-export interface SpecificationAuthorityList {
+export interface ApprovedSourceLegacyIssue {
   projectId: string;
-  specifications: SpecificationAuthority[];
+  sourceId: string;
+  displayName: string;
+  approvedContentHash: string;
+  approvedAtUnixMs: number;
+  reason: ApprovedSourceLegacyIssueReason;
+}
+
+export interface ApprovedSourceAuthorityList {
+  projectId: string;
+  sources: ApprovedSourceAuthority[];
   current: number;
   changed: number;
   missing: number;
+  legacyIssues: ApprovedSourceLegacyIssue[];
   privacyNotice: string;
 }
 
-export interface AgentMemoryBinding {
-  projectId: string;
-  vaultName: string;
-  source: "persisted" | "override";
-}
+export type AgentMemoryStorage =
+  | {
+      kind: "native";
+      projectId: string;
+    }
+  | {
+      kind: "legacy-vault";
+      projectId: string;
+      vaultName: string;
+      source: "persisted" | "override";
+    };
 
 export interface MemoryOverview {
   projectId: string;
   projectName: string;
   captureMode: CaptureMode;
   artifactSnapshotId: string;
-  graphSnapshotId: string;
+  graphSnapshotId?: string;
   artifactGeneratedAtUnixMs: number;
-  graphGeneratedAtUnixMs: number;
+  graphGeneratedAtUnixMs?: number;
   files: number;
   retainedSourceFiles: number;
   skippedFiles: number;
-  graphNodes: number;
-  graphEdges: number;
-  graphDiagnostics: number;
+  graphNodes?: number;
+  graphEdges?: number;
+  graphDiagnostics?: number;
   freshness: string;
   liveSourceChecked: boolean;
   privacyNotice: string;
@@ -406,7 +426,7 @@ export interface LearningList {
 }
 
 export interface AgentMemoryDashboard {
-  binding: AgentMemoryBinding;
+  storage: AgentMemoryStorage;
   overview: MemoryOverview;
   resume: ProjectResume;
   sessions: SessionSummary[];
@@ -702,27 +722,6 @@ export interface ProjectArtifactInventory {
   instructionWarning: string;
 }
 
-export type ProjectGraphNodeKind =
-  | "project"
-  | "file"
-  | "symbol"
-  | "dependency"
-  | "external-symbol"
-  | "external-module";
-
-export type ProjectGraphEdgeKind =
-  | "contains"
-  | "defines"
-  | "imports"
-  | "calls"
-  | "inherits"
-  | "implements"
-  | "references"
-  | "depends-on";
-
-export type ProjectGraphProvenance =
-  "deterministic" | "user-authored" | "agent-authored" | "inferred";
-
 export interface GraphCitation {
   artifactPath: string;
   startLine: number;
@@ -734,97 +733,7 @@ export interface GraphCitation {
   mediaType?: ArtifactMediaType;
 }
 
-export interface ProjectGraphViewNode {
-  id: string;
-  kind: ProjectGraphNodeKind;
-  name: string;
-  path?: string;
-  language?: string;
-  symbolKind?: string;
-  packageManager?: string;
-  citation?: GraphCitation;
-  provenance: ProjectGraphProvenance;
-  confidence: number;
-  degree: number;
-}
-
-export interface ProjectGraphViewEdge {
-  id: string;
-  kind: ProjectGraphEdgeKind;
-  source: string;
-  target: string;
-  label?: string;
-  citation?: GraphCitation;
-  provenance: ProjectGraphProvenance;
-  confidence: number;
-}
-
-export interface ProjectGraphFilters {
-  nodeKinds: ProjectGraphNodeKind[];
-  edgeKinds: ProjectGraphEdgeKind[];
-  provenances: ProjectGraphProvenance[];
-}
-
-export interface ProjectGraphView {
-  projectId: string;
-  projectName: string;
-  artifactSnapshotId: string;
-  graphSnapshotId: string;
-  generatedAtUnixMs: number;
-  query: string;
-  selection: string;
-  nodes: ProjectGraphViewNode[];
-  edges: ProjectGraphViewEdge[];
-  totalNodes: number;
-  totalEdges: number;
-  filteredNodes: number;
-  filteredEdges: number;
-  matchingNodes: number;
-  omittedNodes: number;
-  omittedEdges: number;
-  diagnostics: Array<{
-    artifactPath: string;
-    kind: string;
-    message: string;
-  }>;
-  omittedDiagnostics: number;
-  git?: {
-    head?: string;
-    branch?: string;
-    upstream?: string;
-    ahead: number;
-    behind: number;
-    changes: Array<{
-      status: string;
-      path: string;
-      originalPath?: string;
-    }>;
-  };
-  liveSourceChecked: boolean;
-  instructionWarning: string;
-}
-
-export interface ProjectGraphHistory {
-  projectId: string;
-  projectName: string;
-  currentGraphSnapshotId: string;
-  entries: Array<{
-    graphSnapshotId: string;
-    artifactSnapshotId: string;
-    generatedAtUnixMs: number;
-    nodes: number;
-    edges: number;
-    branch?: string;
-    head?: string;
-    current: boolean;
-  }>;
-  totalEntries: number;
-  omittedEntries: number;
-  liveSourceChecked: boolean;
-  instructionWarning: string;
-}
-
-export interface ProjectGraphEvidenceExcerpt {
+export interface ProjectEvidenceExcerpt {
   projectId: string;
   artifactSnapshotId: string;
   artifactPath: string;
@@ -961,7 +870,7 @@ export type AgentProjectInspection =
       projectId: string;
       projectName: string;
       captureMode: CaptureMode;
-      binding: AgentMemoryBinding;
+      storage: AgentMemoryStorage;
     }
   | { status: "ready"; dashboard: AgentMemoryDashboard };
 

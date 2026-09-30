@@ -46,9 +46,6 @@ vi.mock("./api", () => ({
   readAgentCaptureSettings: api.readAgentCaptureSettings,
   readAgentLearning: api.readAgentLearning,
   readSemanticModelSetup: api.readSemanticModelSetup,
-  readAgentProjectGraphEvidence: vi.fn(),
-  readAgentProjectGraphHistory: vi.fn(),
-  readAgentProjectGraphView: vi.fn(),
   readAgentSession: api.readAgentSession,
   renameAgentSession: api.renameAgentSession,
   searchAgentProjects: api.searchAgentProjects,
@@ -60,7 +57,8 @@ vi.mock("./api", () => ({
 }));
 
 const dashboard: AgentMemoryDashboard = {
-  binding: {
+  storage: {
+    kind: "legacy-vault",
     projectId: "prj_test",
     vaultName: "Private vault",
     source: "persisted",
@@ -201,7 +199,7 @@ describe("Agent Memory workspace boundaries", () => {
       omittedSkippedPaths: 0,
       exclusionNotice: "Default exclusions apply.",
       privacyNotice:
-        "This preview creates no .ley metadata, vault binding, or Agent Memory until approval.",
+        "This preview creates no .ley metadata or Agent Memory until approval.",
     };
     const refreshedPreview = {
       ...initialPreview,
@@ -259,7 +257,6 @@ describe("Agent Memory workspace boundaries", () => {
     await waitFor(() =>
       expect(api.initializeAgentProject).toHaveBeenCalledWith(
         "/projects/new-app",
-        "/vault",
         "sha256:approval-before",
       ),
     );
@@ -972,11 +969,12 @@ describe("Agent Memory workspace boundaries", () => {
     expect(
       screen.getByText("Git metadata only. Live file contents were not checked."),
     ).toBeVisible();
+    expect(screen.getByText("Captured Project Revision")).toBeVisible();
     expect(
-      screen.getByTitle(
+      screen.queryByTitle(
         "Open the exact Project Graph capture used by this checkpoint",
       ),
-    ).toBeVisible();
+    ).not.toBeInTheDocument();
     expect(api.inspectAgentProject).toHaveBeenCalledWith("/projects/ley");
     fireEvent.click(
       screen.getByRole("button", { name: "Close session inspector" }),

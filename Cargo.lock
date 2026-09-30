@@ -2165,7 +2165,6 @@ name = "ley-cli"
 version = "0.1.0"
 dependencies = [
  "ley-core",
- "ley-github-connector",
  "ley-mcp",
  "ley-semantic-installer",
  "serde_json",

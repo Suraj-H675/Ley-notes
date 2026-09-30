@@ -1,3 +1,4 @@
+use ley_core::{diagnose_project, APP_IDENTIFIER, CONTEXT_MOUNT_REGISTRY_FILE};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -49,8 +50,37 @@ fn init_and_bind(config: &Path, project: &Path, vault: &Path, name: &str) {
     );
 }
 
+fn seed_legacy_mount(config: &Path, active: &Path, reference: &Path, mount_id: &str) {
+    let active_id = diagnose_project(active).unwrap().identity.project_id;
+    let reference_id = diagnose_project(reference).unwrap().identity.project_id;
+    let path = config
+        .join(APP_IDENTIFIER)
+        .join(CONTEXT_MOUNT_REGISTRY_FILE);
+    let document = serde_json::json!({
+        "schemaVersion": 3,
+        "mounts": {
+            active_id.clone(): {
+                mount_id: {
+                    "sourceProjectId": reference_id.clone(),
+                    "createdAtUnixMs": 1_700_000_000_000_u64,
+                    "agentContextEnabled": true,
+                }
+            }
+        },
+        "agentMountHistory": {
+            active_id: { mount_id: reference_id }
+        }
+    });
+    fs::write(&path, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
 #[test]
-fn cli_mounts_and_unmounts_one_explicit_reference_without_path_leakage() {
+fn cli_retires_mount_creation_but_lists_and_removes_legacy_mount_without_path_leakage() {
     let base = tempdir().unwrap();
     let config = base.path().join("config");
     let active = base.path().join("active");
@@ -63,7 +93,7 @@ fn cli_mounts_and_unmounts_one_explicit_reference_without_path_leakage() {
     init_and_bind(&config, &reference, &reference_vault, "Reference project");
     init_and_bind(&config, &unrelated, &unrelated_vault, "Unrelated project");
 
-    let created = json_stdout(ley(
+    let rejected = run_ley(
         &config,
         &[
             "mount",
@@ -72,26 +102,21 @@ fn cli_mounts_and_unmounts_one_explicit_reference_without_path_leakage() {
             active.to_str().unwrap(),
             "--json",
         ],
-    ));
-    assert_eq!(created["created"], true);
-    assert_eq!(created["mount"]["permission"], "read-only");
-    assert_eq!(created["mount"]["agentContextEnabled"], true);
-    assert_eq!(created["mount"]["status"], "ready");
-    assert_eq!(created["mount"]["sourceProjectName"], "Reference project");
-    let mount_id = created["mount"]["mountId"].as_str().unwrap().to_owned();
+    );
+    assert!(!rejected.status.success());
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("standing Context Mount creation is retired"));
+    assert!(stderr.contains("per-task source selection"));
 
-    let duplicate = json_stdout(ley(
+    let empty_before = json_stdout(ley(
         &config,
-        &[
-            "mount",
-            "add",
-            reference.to_str().unwrap(),
-            active.to_str().unwrap(),
-            "--json",
-        ],
+        &["mount", "list", active.to_str().unwrap(), "--json"],
     ));
-    assert_eq!(duplicate["created"], false);
-    assert_eq!(duplicate["mount"]["mountId"], mount_id);
+    assert!(empty_before["mounts"].as_array().unwrap().is_empty());
+
+    let mount_id = "mnt_11111111111111111111111111111111";
+    seed_legacy_mount(&config, &active, &reference, mount_id);
+
     let listed = json_stdout(ley(
         &config,
         &["mount", "list", active.to_str().unwrap(), "--json"],

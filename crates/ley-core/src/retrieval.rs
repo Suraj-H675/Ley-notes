@@ -1,6 +1,4 @@
-use crate::graph::{
-    FactProvenance, GitState, GraphCitation, GraphEdge, GraphEdgeKind, GraphNode, GraphNodeKind,
-};
+use crate::graph::{FactProvenance, GitState, GraphCitation};
 use crate::ingestion::{
     load_project_graph_history, load_project_memory, load_project_memory_at_graph_snapshot,
     ArtifactKind, ArtifactMediaType, ArtifactRecord, LoadedProjectMemory,
@@ -10,9 +8,8 @@ use crate::semantic_retrieval::{
     reciprocal_rank_fusion, semantic_ranked_project_context, SemanticIndexState,
     SemanticSearchOutcome,
 };
-use crate::{CaptureMode, LeyCoreError, ProjectRevisionFreshness};
+use crate::{CaptureMode, ContinuityStore, LeyCoreError, ProjectRevisionFreshness};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Component, Path};
 
 pub const DEFAULT_CONTEXT_RESULTS: usize = 8;
@@ -68,15 +65,20 @@ pub struct MemoryOverview {
     pub project_name: String,
     pub capture_mode: CaptureMode,
     pub artifact_snapshot_id: String,
-    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
     pub artifact_generated_at_unix_ms: u64,
-    pub graph_generated_at_unix_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_generated_at_unix_ms: Option<u64>,
     pub files: usize,
     pub retained_source_files: usize,
     pub skipped_files: usize,
-    pub graph_nodes: usize,
-    pub graph_edges: usize,
-    pub graph_diagnostics: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_nodes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_edges: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_diagnostics: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<GitState>,
     pub revision_freshness: ProjectRevisionFreshness,
@@ -181,52 +183,6 @@ pub struct EvidenceExcerpt {
     pub warning: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum GraphDirection {
-    Incoming,
-    Outgoing,
-    Both,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GraphTraversal {
-    pub project_id: String,
-    pub graph_snapshot_id: String,
-    pub captured_at_unix_ms: u64,
-    pub query: String,
-    pub ambiguous: bool,
-    pub candidates: Vec<GraphNode>,
-    pub nodes: Vec<GraphNode>,
-    pub edges: Vec<GraphEdge>,
-    pub depth: u32,
-    pub truncated: bool,
-    pub freshness: &'static str,
-    pub live_source_checked: bool,
-    pub source_boundary: &'static str,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GraphPath {
-    pub project_id: String,
-    pub graph_snapshot_id: String,
-    pub captured_at_unix_ms: u64,
-    pub from_query: String,
-    pub to_query: String,
-    pub ambiguous: bool,
-    pub from_candidates: Vec<GraphNode>,
-    pub to_candidates: Vec<GraphNode>,
-    pub found: bool,
-    pub nodes: Vec<GraphNode>,
-    pub edges: Vec<GraphEdge>,
-    pub truncated: bool,
-    pub freshness: &'static str,
-    pub live_source_checked: bool,
-    pub source_boundary: &'static str,
-}
-
 pub fn project_memory_overview(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -237,11 +193,53 @@ pub fn project_memory_overview(
     Ok(overview(&memory, resolver.freshness().clone()))
 }
 
+pub fn project_memory_overview_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<MemoryOverview, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let diagnostic = crate::diagnose_project(project_start)?;
+    if let Some(snapshot) = store.current_artifact_snapshot(&diagnostic.identity.project_id)? {
+        let resolver = RevisionResolver::new(project_start, snapshot.captured_git.as_ref())?;
+        return Ok(native_overview(&snapshot, resolver.freshness().clone()));
+    }
+    project_memory_overview(project_start, legacy_vault)
+}
+
 pub(crate) fn project_captured_git_state(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<Option<GitState>, LeyCoreError> {
     Ok(load_project_memory(project_start, vault)?.graph.git)
+}
+
+pub(crate) fn project_captured_git_state_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<Option<GitState>, LeyCoreError> {
+    let diagnostic = crate::diagnose_project(project_start.as_ref())?;
+    if let Some(snapshot) = store.current_artifact_snapshot(&diagnostic.identity.project_id)? {
+        return Ok(snapshot.captured_git);
+    }
+    project_captured_git_state(project_start, legacy_vault)
+}
+
+pub fn native_canonical_read_authority_available(
+    project_start: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<bool, LeyCoreError> {
+    let diagnostic = crate::diagnose_project(project_start.as_ref())?;
+    let project_id = &diagnostic.identity.project_id;
+    if !crate::session::session_authority_cutover_is_complete(store, project_id)?
+        || !crate::learning::learning_authority_cutover_is_complete(store, project_id)?
+        || !store.approved_source_authority_ready(project_id)?
+        || !store.artifact_read_authority_ready(project_id)?
+    {
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 /// Validate the bound captured manifest/graph store and immutable snapshot bindings without
@@ -324,6 +322,48 @@ pub fn find_project_hybrid_context(
     }
 }
 
+pub fn find_project_hybrid_context_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    query: &str,
+    limits: RetrievalLimits,
+) -> Result<HybridContextPack, LeyCoreError> {
+    validate_query(query)?;
+    validate_limits(limits)?;
+    let diagnostic = crate::diagnose_project(project_start.as_ref())?;
+    let Some(snapshot) = store.current_artifact_snapshot(&diagnostic.identity.project_id)? else {
+        return find_project_hybrid_context(project_start, legacy_vault, query, limits);
+    };
+    let graph_snapshot_id = snapshot.legacy_graph_snapshot_id.clone().ok_or_else(|| {
+        LeyCoreError::InvalidContinuityStore(
+            "native artifact snapshot is missing its captured graph provenance; recapture the project before using canonical search"
+                .to_owned(),
+        )
+    })?;
+    let candidates = collect_native_lexical_candidates(&snapshot, query)?;
+    Ok(HybridContextPack {
+        context: context_pack_from_native_snapshot(
+            &snapshot,
+            &graph_snapshot_id,
+            query,
+            limits,
+            candidates,
+        ),
+        retrieval: HybridRetrievalMetadata {
+            mode: RetrievalMode::Lexical,
+            semantic_index: SemanticIndexState::Unavailable,
+            fallback_reason: Some(
+                "native artifact continuity intentionally does not depend on the legacy semantic index"
+                    .to_owned(),
+            ),
+            conflict_projection: HybridConflictProjection::NotParticipating,
+            conflict_projection_note:
+                "No structured conflict projection participated in artifact retrieval.",
+        },
+    })
+}
+
 pub fn read_project_evidence(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -357,84 +397,6 @@ pub fn read_project_evidence(
         end_line,
         max_characters,
     )
-}
-
-pub fn read_project_graph_evidence(
-    project_start: impl AsRef<Path>,
-    vault: impl AsRef<Path>,
-    graph_snapshot_id: &str,
-    citation: &GraphCitation,
-    context_lines: u64,
-    max_characters: usize,
-) -> Result<EvidenceExcerpt, LeyCoreError> {
-    if context_lines > 20 {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "contextLines must be between 0 and 20".to_owned(),
-        ));
-    }
-    let memory =
-        load_project_memory_at_graph_snapshot(project_start, vault, Some(graph_snapshot_id))?;
-    let belongs_to_graph = memory
-        .graph
-        .nodes
-        .iter()
-        .filter_map(|node| node.citation.as_ref())
-        .chain(
-            memory
-                .graph
-                .edges
-                .iter()
-                .filter_map(|edge| edge.citation.as_ref()),
-        )
-        .any(|stored| stored == citation);
-    if !belongs_to_graph {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "citation does not belong to the selected graph snapshot".to_owned(),
-        ));
-    }
-    let artifact = memory
-        .manifest
-        .files
-        .iter()
-        .find(|artifact| artifact.path == citation.artifact_path)
-        .ok_or_else(|| {
-            LeyCoreError::InvalidArtifactStore(
-                "graph citation refers to an artifact outside its snapshot".to_owned(),
-            )
-        })?;
-    if artifact.content_hash != citation.content_hash
-        || citation.artifact_snapshot_id != memory.manifest.snapshot_id
-    {
-        return Err(LeyCoreError::InvalidArtifactStore(
-            "graph citation does not match its captured artifact".to_owned(),
-        ));
-    }
-    let start_line = citation.start_line.saturating_sub(context_lines).max(1);
-    let expanded_end = citation.end_line.saturating_add(context_lines);
-    let maximum_end = start_line.saturating_add(MAX_EVIDENCE_LINES - 1);
-    let end_line = expanded_end.min(maximum_end);
-    validate_evidence_request(
-        &citation.artifact_path,
-        start_line,
-        end_line,
-        max_characters,
-    )?;
-    let text = memory.read_artifact_text(artifact)?.ok_or_else(|| {
-        LeyCoreError::ProjectMemoryUnavailable(format!(
-            "source text is not retained for {} in Minimal capture mode",
-            citation.artifact_path
-        ))
-    })?;
-    let mut excerpt = excerpt_from_text(
-        &memory,
-        artifact,
-        &text,
-        start_line,
-        end_line,
-        max_characters,
-    )?;
-    excerpt.truncated |= expanded_end > maximum_end;
-    Ok(excerpt)
 }
 
 pub fn read_project_cited_evidence(
@@ -513,6 +475,76 @@ pub fn read_project_cited_evidence(
     Ok(excerpt)
 }
 
+pub fn read_project_cited_evidence_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    citation: &GraphCitation,
+    context_lines: u64,
+    max_characters: usize,
+) -> Result<EvidenceExcerpt, LeyCoreError> {
+    if citation.media_type.is_some() {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "media citations must be read with the media evidence reader".to_owned(),
+        ));
+    }
+    if context_lines > 20 {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "contextLines must be between 0 and 20".to_owned(),
+        ));
+    }
+    let project_start = project_start.as_ref();
+    let project_id = crate::diagnose_project(project_start)?.identity.project_id;
+    if let Some(content) = store.read_native_artifact_content(
+        &project_id,
+        &citation.artifact_snapshot_id,
+        &citation.artifact_path,
+        &citation.content_hash,
+        None,
+    )? {
+        if content.media_type.is_some() {
+            return Err(LeyCoreError::InvalidRetrievalRequest(
+                "media citations must be read with the media evidence reader".to_owned(),
+            ));
+        }
+        let text = String::from_utf8(content.bytes).map_err(|_| {
+            LeyCoreError::InvalidContinuityStore(format!(
+                "native artifact text is not UTF-8: {}",
+                citation.artifact_path
+            ))
+        })?;
+        let start_line = citation.start_line.saturating_sub(context_lines).max(1);
+        let expanded_end = citation.end_line.saturating_add(context_lines);
+        let maximum_end = start_line.saturating_add(MAX_EVIDENCE_LINES - 1);
+        let end_line = expanded_end.min(maximum_end);
+        validate_evidence_request(
+            &citation.artifact_path,
+            start_line,
+            end_line,
+            max_characters,
+        )?;
+        let mut excerpt = evidence_excerpt_from_text(
+            &project_id,
+            &citation.artifact_snapshot_id,
+            &content.artifact_path,
+            &content.content_hash,
+            &text,
+            start_line,
+            end_line,
+            max_characters,
+        )?;
+        excerpt.truncated |= expanded_end > maximum_end;
+        return Ok(excerpt);
+    }
+    read_project_cited_evidence(
+        project_start,
+        legacy_vault,
+        citation,
+        context_lines,
+        max_characters,
+    )
+}
+
 pub fn read_project_cited_media(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -521,45 +553,7 @@ pub fn read_project_cited_media(
     content_hash: &str,
     max_bytes: usize,
 ) -> Result<MediaEvidence, LeyCoreError> {
-    let path = Path::new(artifact_path);
-    if artifact_path.is_empty()
-        || path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-    {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "artifactPath must be a safe project-relative path".to_owned(),
-        ));
-    }
-    if artifact_snapshot_id.len() != 68
-        || !artifact_snapshot_id.starts_with("snp_")
-        || !artifact_snapshot_id[4..]
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "artifactSnapshotId must be a valid snp_ identifier".to_owned(),
-        ));
-    }
-    if content_hash.len() != 71
-        || !content_hash.starts_with("sha256:")
-        || !content_hash[7..]
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "contentHash must be a sha256: digest".to_owned(),
-        ));
-    }
-    if !(1..=MAX_MEDIA_EVIDENCE_BYTES).contains(&max_bytes) {
-        return Err(LeyCoreError::InvalidRetrievalRequest(format!(
-            "maxBytes must be between 1 and {MAX_MEDIA_EVIDENCE_BYTES}"
-        )));
-    }
+    validate_media_evidence_request(artifact_path, artifact_snapshot_id, content_hash, max_bytes)?;
 
     let project_start = project_start.as_ref();
     let vault = vault.as_ref();
@@ -625,6 +619,102 @@ pub fn read_project_cited_media(
     })
 }
 
+pub fn read_project_cited_media_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    artifact_path: &str,
+    artifact_snapshot_id: &str,
+    content_hash: &str,
+    max_bytes: usize,
+) -> Result<MediaEvidence, LeyCoreError> {
+    validate_media_evidence_request(artifact_path, artifact_snapshot_id, content_hash, max_bytes)?;
+    let project_start = project_start.as_ref();
+    let project_id = crate::diagnose_project(project_start)?.identity.project_id;
+    if let Some(content) = store.read_native_artifact_content(
+        &project_id,
+        artifact_snapshot_id,
+        artifact_path,
+        content_hash,
+        Some(max_bytes),
+    )? {
+        let media_type =
+            parse_native_media_type(content.media_type.as_deref())?.ok_or_else(|| {
+                LeyCoreError::InvalidRetrievalRequest(
+                    "cited artifact is not captured image evidence".to_owned(),
+                )
+            })?;
+        return Ok(MediaEvidence {
+            artifact_path: content.artifact_path,
+            artifact_snapshot_id: artifact_snapshot_id.to_owned(),
+            content_hash: content.content_hash,
+            media_type,
+            source_bytes: content.source_bytes,
+            data: content.bytes,
+            evidence_role: "original-media",
+            source_boundary: SOURCE_BOUNDARY,
+            live_source_checked: false,
+            derived_description_included: false,
+        });
+    }
+    read_project_cited_media(
+        project_start,
+        legacy_vault,
+        artifact_path,
+        artifact_snapshot_id,
+        content_hash,
+        max_bytes,
+    )
+}
+
+fn validate_media_evidence_request(
+    artifact_path: &str,
+    artifact_snapshot_id: &str,
+    content_hash: &str,
+    max_bytes: usize,
+) -> Result<(), LeyCoreError> {
+    let path = Path::new(artifact_path);
+    if artifact_path.is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "artifactPath must be a safe project-relative path".to_owned(),
+        ));
+    }
+    if artifact_snapshot_id.len() != 68
+        || !artifact_snapshot_id.starts_with("snp_")
+        || !artifact_snapshot_id[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "artifactSnapshotId must be a valid snp_ identifier".to_owned(),
+        ));
+    }
+    if content_hash.len() != 71
+        || !content_hash.starts_with("sha256:")
+        || !content_hash[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "contentHash must be a sha256: digest".to_owned(),
+        ));
+    }
+    if !(1..=MAX_MEDIA_EVIDENCE_BYTES).contains(&max_bytes) {
+        return Err(LeyCoreError::InvalidRetrievalRequest(format!(
+            "maxBytes must be between 1 and {MAX_MEDIA_EVIDENCE_BYTES}"
+        )));
+    }
+    Ok(())
+}
+
 pub fn read_verification_media_evidence(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -665,58 +755,6 @@ pub fn read_verification_media_evidence(
     )
 }
 
-pub fn traverse_project_graph(
-    project_start: impl AsRef<Path>,
-    vault: impl AsRef<Path>,
-    node_query: &str,
-    depth: u32,
-    max_nodes: usize,
-    direction: GraphDirection,
-    edge_kinds: Option<&[GraphEdgeKind]>,
-) -> Result<GraphTraversal, LeyCoreError> {
-    validate_graph_limits(depth, max_nodes)?;
-    validate_node_query(node_query)?;
-    let memory = load_project_memory(project_start, vault)?;
-    Ok(traverse_loaded_graph(
-        &memory, node_query, depth, max_nodes, direction, edge_kinds,
-    ))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn find_project_graph_path(
-    project_start: impl AsRef<Path>,
-    vault: impl AsRef<Path>,
-    from_query: &str,
-    to_query: &str,
-    max_depth: u32,
-    max_visited_nodes: usize,
-    direction: GraphDirection,
-    edge_kinds: Option<&[GraphEdgeKind]>,
-) -> Result<GraphPath, LeyCoreError> {
-    if !(1..=8).contains(&max_depth) {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "maxDepth must be between 1 and 8".to_owned(),
-        ));
-    }
-    if !(2..=500).contains(&max_visited_nodes) {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "maxVisitedNodes must be between 2 and 500".to_owned(),
-        ));
-    }
-    validate_node_query(from_query)?;
-    validate_node_query(to_query)?;
-    let memory = load_project_memory(project_start, vault)?;
-    Ok(path_in_loaded_graph(
-        &memory,
-        from_query,
-        to_query,
-        max_depth,
-        max_visited_nodes,
-        direction,
-        edge_kinds,
-    ))
-}
-
 fn overview(
     memory: &LoadedProjectMemory,
     revision_freshness: ProjectRevisionFreshness,
@@ -726,9 +764,9 @@ fn overview(
         project_name: memory.manifest.project_name.clone(),
         capture_mode: memory.manifest.capture_mode,
         artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
-        graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
+        graph_snapshot_id: Some(memory.graph.graph_snapshot_id.clone()),
         artifact_generated_at_unix_ms: memory.manifest.generated_at_unix_ms,
-        graph_generated_at_unix_ms: memory.graph.generated_at_unix_ms,
+        graph_generated_at_unix_ms: Some(memory.graph.generated_at_unix_ms),
         files: memory.manifest.files.len(),
         retained_source_files: memory
             .manifest
@@ -737,9 +775,9 @@ fn overview(
             .filter(|artifact| artifact.content_blob.is_some())
             .count(),
         skipped_files: memory.manifest.skipped.len(),
-        graph_nodes: memory.graph.nodes.len(),
-        graph_edges: memory.graph.edges.len(),
-        graph_diagnostics: memory.graph.diagnostics.len(),
+        graph_nodes: Some(memory.graph.nodes.len()),
+        graph_edges: Some(memory.graph.edges.len()),
+        graph_diagnostics: Some(memory.graph.diagnostics.len()),
         git: memory.graph.git.clone(),
         revision_freshness,
         source_boundary: SOURCE_BOUNDARY,
@@ -747,6 +785,38 @@ fn overview(
         live_source_checked: false,
         privacy_notice:
             "Ley reads only this explicitly bound project snapshot. Retrieved context may be sent to the connected agent provider.",
+    }
+}
+
+fn native_overview(
+    snapshot: &crate::continuity_store::ContinuityCurrentArtifactSnapshot,
+    revision_freshness: ProjectRevisionFreshness,
+) -> MemoryOverview {
+    MemoryOverview {
+        project_id: snapshot.project_id.clone(),
+        project_name: snapshot.project_name.clone(),
+        capture_mode: snapshot.capture_mode,
+        artifact_snapshot_id: snapshot.snapshot_id.clone(),
+        graph_snapshot_id: None,
+        artifact_generated_at_unix_ms: snapshot.generated_at_unix_ms,
+        graph_generated_at_unix_ms: None,
+        files: snapshot.files.len(),
+        retained_source_files: snapshot
+            .files
+            .iter()
+            .filter(|artifact| artifact.content_captured)
+            .count(),
+        skipped_files: snapshot.skipped_files,
+        graph_nodes: None,
+        graph_edges: None,
+        graph_diagnostics: None,
+        git: snapshot.captured_git.clone(),
+        revision_freshness,
+        source_boundary: SOURCE_BOUNDARY,
+        freshness: SNAPSHOT_FRESHNESS,
+        live_source_checked: false,
+        privacy_notice:
+            "Ley reads only this explicitly captured local project snapshot. Retrieved context may be sent to the connected agent provider.",
     }
 }
 
@@ -818,37 +888,6 @@ fn collect_lexical_candidates(
         });
     }
 
-    for node in &memory.graph.nodes {
-        let kind = match node.kind {
-            GraphNodeKind::Symbol => ContextItemKind::Symbol,
-            GraphNodeKind::Dependency => ContextItemKind::Dependency,
-            _ => continue,
-        };
-        let mut searchable = node.name.to_lowercase();
-        if let Some(path) = &node.path {
-            searchable.push(' ');
-            searchable.push_str(&path.to_lowercase());
-        }
-        let score = text_score(&searchable, &normalized_query, &terms).saturating_mul(4);
-        let Some(citation) = node.citation.clone().filter(|_| score > 0) else {
-            continue;
-        };
-        candidates.push(ContextItem {
-            id: node.id.clone(),
-            kind,
-            title: node.name.clone(),
-            path: node.path.clone(),
-            language: node.language.clone(),
-            snippet: None,
-            citation,
-            score,
-            provenance: node.provenance,
-            confidence: node.confidence,
-            trust_state: DIRECT_EVIDENCE_TRUST,
-            source_boundary: SOURCE_BOUNDARY,
-        });
-    }
-
     candidates.sort_by(|left, right| {
         right
             .score
@@ -859,6 +898,149 @@ fn collect_lexical_candidates(
     });
     candidates.dedup_by(|left, right| left.id == right.id);
     Ok(candidates)
+}
+
+fn collect_native_lexical_candidates(
+    snapshot: &crate::continuity_store::ContinuityCurrentArtifactSnapshot,
+    query: &str,
+) -> Result<Vec<ContextItem>, LeyCoreError> {
+    let normalized_query = query.trim().to_lowercase();
+    let terms = query_terms(&normalized_query);
+    let mut candidates = Vec::new();
+    for artifact in &snapshot.files {
+        let media_type = parse_native_media_type(artifact.media_type.as_deref())?;
+        let path_score = text_score(
+            &artifact.artifact_path.to_lowercase(),
+            &normalized_query,
+            &terms,
+        );
+        let best = artifact
+            .text
+            .as_deref()
+            .and_then(|text| best_text_window(text, &normalized_query, &terms));
+        let score = path_score.saturating_mul(3) + best.as_ref().map_or(0, |window| window.score);
+        if score == 0 {
+            continue;
+        }
+        let (snippet, start_line, start_column, end_line, end_column) = if media_type.is_some() {
+            (None, 0, 0, 0, 0)
+        } else if let Some(window) = best {
+            (
+                Some(window.snippet),
+                window.start_line,
+                1,
+                window.end_line,
+                window.end_column,
+            )
+        } else {
+            (None, 1, 1, artifact.line_count.max(1), 1)
+        };
+        candidates.push(ContextItem {
+            id: format!("artifact:{}", artifact.artifact_path),
+            kind: ContextItemKind::Artifact,
+            title: artifact.artifact_path.clone(),
+            path: Some(artifact.artifact_path.clone()),
+            language: artifact.language.clone(),
+            snippet,
+            citation: GraphCitation {
+                artifact_path: artifact.artifact_path.clone(),
+                start_line,
+                start_column,
+                end_line,
+                end_column,
+                content_hash: artifact.content_hash.clone(),
+                artifact_snapshot_id: snapshot.snapshot_id.clone(),
+                media_type,
+            },
+            score,
+            provenance: FactProvenance::Deterministic,
+            confidence: 1.0,
+            trust_state: DIRECT_EVIDENCE_TRUST,
+            source_boundary: SOURCE_BOUNDARY,
+        });
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .score
+            .cmp(&left.score)
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.title.cmp(&right.title))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    candidates.dedup_by(|left, right| left.id == right.id);
+    Ok(candidates)
+}
+
+fn context_pack_from_native_snapshot(
+    snapshot: &crate::continuity_store::ContinuityCurrentArtifactSnapshot,
+    graph_snapshot_id: &str,
+    query: &str,
+    limits: RetrievalLimits,
+    candidates: Vec<ContextItem>,
+) -> ContextPack {
+    let mut items = Vec::new();
+    let mut estimated_tokens = 80usize;
+    let mut truncated = candidates.len() > limits.max_results;
+    for mut item in candidates {
+        if items.len() >= limits.max_results {
+            truncated = true;
+            break;
+        }
+        let remaining_tokens = limits.max_tokens.saturating_sub(estimated_tokens);
+        if remaining_tokens < 24 {
+            truncated = true;
+            break;
+        }
+        let mut item_tokens = estimate_item_tokens(&item);
+        if item_tokens > remaining_tokens {
+            let available_characters = remaining_tokens.saturating_sub(20).saturating_mul(4);
+            let Some(snippet) = &item.snippet else {
+                truncated = true;
+                continue;
+            };
+            if available_characters < 64 {
+                truncated = true;
+                break;
+            }
+            item.snippet = Some(truncate_characters(snippet, available_characters));
+            item_tokens = estimate_item_tokens(&item);
+            truncated = true;
+            if item_tokens > remaining_tokens {
+                continue;
+            }
+        }
+        estimated_tokens = estimated_tokens.saturating_add(item_tokens);
+        items.push(item);
+    }
+    ContextPack {
+        project_id: snapshot.project_id.clone(),
+        project_name: snapshot.project_name.clone(),
+        artifact_snapshot_id: snapshot.snapshot_id.clone(),
+        graph_snapshot_id: graph_snapshot_id.to_owned(),
+        captured_at_unix_ms: snapshot.generated_at_unix_ms,
+        query: query.trim().to_owned(),
+        max_tokens: limits.max_tokens,
+        estimated_tokens: estimated_tokens.min(limits.max_tokens),
+        truncated,
+        items,
+        conflicts: Vec::new(),
+        freshness: SNAPSHOT_FRESHNESS,
+        live_source_checked: false,
+        source_boundary: SOURCE_BOUNDARY,
+        warning: EVIDENCE_WARNING,
+    }
+}
+
+fn parse_native_media_type(value: Option<&str>) -> Result<Option<ArtifactMediaType>, LeyCoreError> {
+    match value {
+        None => Ok(None),
+        Some("png") => Ok(Some(ArtifactMediaType::Png)),
+        Some("jpeg") => Ok(Some(ArtifactMediaType::Jpeg)),
+        Some("webp") => Ok(Some(ArtifactMediaType::Webp)),
+        Some(other) => Err(LeyCoreError::InvalidContinuityStore(format!(
+            "native artifact has unsupported media type {other:?}"
+        ))),
+    }
 }
 
 fn context_pack_from_candidates(
@@ -971,6 +1153,28 @@ fn excerpt_from_text(
     requested_end_line: u64,
     max_characters: usize,
 ) -> Result<EvidenceExcerpt, LeyCoreError> {
+    evidence_excerpt_from_text(
+        &memory.manifest.project_id,
+        &memory.manifest.snapshot_id,
+        &artifact.path,
+        &artifact.content_hash,
+        text,
+        start_line,
+        requested_end_line,
+        max_characters,
+    )
+}
+
+fn evidence_excerpt_from_text(
+    project_id: &str,
+    artifact_snapshot_id: &str,
+    artifact_path: &str,
+    content_hash: &str,
+    text: &str,
+    start_line: u64,
+    requested_end_line: u64,
+    max_characters: usize,
+) -> Result<EvidenceExcerpt, LeyCoreError> {
     let lines = text.lines().collect::<Vec<_>>();
     if start_line as usize > lines.len().max(1) {
         return Err(LeyCoreError::InvalidRetrievalRequest(format!(
@@ -994,18 +1198,18 @@ fn excerpt_from_text(
     };
     let end_column = text.rsplit('\n').next().unwrap_or_default().len() as u64 + 1;
     Ok(EvidenceExcerpt {
-        project_id: memory.manifest.project_id.clone(),
-        artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
-        artifact_path: artifact.path.clone(),
+        project_id: project_id.to_owned(),
+        artifact_snapshot_id: artifact_snapshot_id.to_owned(),
+        artifact_path: artifact_path.to_owned(),
         text,
         citation: GraphCitation {
-            artifact_path: artifact.path.clone(),
+            artifact_path: artifact_path.to_owned(),
             start_line,
             start_column: 1,
             end_line: returned_end_line,
             end_column,
-            content_hash: artifact.content_hash.clone(),
-            artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
+            content_hash: content_hash.to_owned(),
+            artifact_snapshot_id: artifact_snapshot_id.to_owned(),
             media_type: None,
         },
         truncated,
@@ -1014,286 +1218,6 @@ fn excerpt_from_text(
         source_boundary: SOURCE_BOUNDARY,
         warning: EVIDENCE_WARNING,
     })
-}
-
-fn traverse_loaded_graph(
-    memory: &LoadedProjectMemory,
-    node_query: &str,
-    depth: u32,
-    max_nodes: usize,
-    direction: GraphDirection,
-    edge_kinds: Option<&[GraphEdgeKind]>,
-) -> GraphTraversal {
-    let candidates = resolve_nodes(&memory.graph.nodes, node_query);
-    if candidates.len() != 1 {
-        return GraphTraversal {
-            project_id: memory.manifest.project_id.clone(),
-            graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
-            captured_at_unix_ms: memory.graph.generated_at_unix_ms,
-            query: node_query.to_owned(),
-            ambiguous: candidates.len() > 1,
-            candidates,
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            depth,
-            truncated: false,
-            freshness: SNAPSHOT_FRESHNESS,
-            live_source_checked: false,
-            source_boundary: SOURCE_BOUNDARY,
-        };
-    }
-    let start = candidates[0].id.clone();
-    let node_by_id = memory
-        .graph
-        .nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node))
-        .collect::<BTreeMap<_, _>>();
-    let adjacency = graph_adjacency(&memory.graph.edges, direction, edge_kinds);
-    let mut queue = VecDeque::from([(start.clone(), 0_u32)]);
-    let mut visited = BTreeSet::from([start]);
-    let mut edge_ids = BTreeSet::new();
-    let mut truncated = false;
-    while let Some((current, current_depth)) = queue.pop_front() {
-        if current_depth >= depth {
-            continue;
-        }
-        for (neighbor, edge_id) in adjacency.get(current.as_str()).into_iter().flatten() {
-            if visited.contains(neighbor) {
-                edge_ids.insert(edge_id.clone());
-                continue;
-            }
-            if visited.len() >= max_nodes {
-                truncated = true;
-                continue;
-            }
-            visited.insert(neighbor.clone());
-            edge_ids.insert(edge_id.clone());
-            queue.push_back((neighbor.clone(), current_depth + 1));
-        }
-    }
-    let nodes = visited
-        .iter()
-        .filter_map(|id| node_by_id.get(id.as_str()).copied().cloned())
-        .collect::<Vec<_>>();
-    let edges = memory
-        .graph
-        .edges
-        .iter()
-        .filter(|edge| edge_ids.contains(&edge.id))
-        .cloned()
-        .collect();
-    GraphTraversal {
-        project_id: memory.manifest.project_id.clone(),
-        graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
-        captured_at_unix_ms: memory.graph.generated_at_unix_ms,
-        query: node_query.to_owned(),
-        ambiguous: false,
-        candidates,
-        nodes,
-        edges,
-        depth,
-        truncated,
-        freshness: SNAPSHOT_FRESHNESS,
-        live_source_checked: false,
-        source_boundary: SOURCE_BOUNDARY,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn path_in_loaded_graph(
-    memory: &LoadedProjectMemory,
-    from_query: &str,
-    to_query: &str,
-    max_depth: u32,
-    max_visited_nodes: usize,
-    direction: GraphDirection,
-    edge_kinds: Option<&[GraphEdgeKind]>,
-) -> GraphPath {
-    let from_candidates = resolve_nodes(&memory.graph.nodes, from_query);
-    let to_candidates = resolve_nodes(&memory.graph.nodes, to_query);
-    if from_candidates.len() != 1 || to_candidates.len() != 1 {
-        return GraphPath {
-            project_id: memory.manifest.project_id.clone(),
-            graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
-            captured_at_unix_ms: memory.graph.generated_at_unix_ms,
-            from_query: from_query.to_owned(),
-            to_query: to_query.to_owned(),
-            ambiguous: from_candidates.len() > 1 || to_candidates.len() > 1,
-            from_candidates,
-            to_candidates,
-            found: false,
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            truncated: false,
-            freshness: SNAPSHOT_FRESHNESS,
-            live_source_checked: false,
-            source_boundary: SOURCE_BOUNDARY,
-        };
-    }
-    let start = from_candidates[0].id.clone();
-    let target = to_candidates[0].id.clone();
-    let adjacency = graph_adjacency(&memory.graph.edges, direction, edge_kinds);
-    let mut queue = VecDeque::from([(start.clone(), 0_u32)]);
-    let mut visited = BTreeSet::from([start.clone()]);
-    let mut parents = BTreeMap::<String, (String, String)>::new();
-    let mut found = start == target;
-    let mut truncated = false;
-    while let Some((current, depth)) = queue.pop_front() {
-        if found || depth >= max_depth {
-            continue;
-        }
-        for (neighbor, edge_id) in adjacency.get(current.as_str()).into_iter().flatten() {
-            if visited.contains(neighbor) {
-                continue;
-            }
-            if visited.len() >= max_visited_nodes {
-                truncated = true;
-                continue;
-            }
-            visited.insert(neighbor.clone());
-            parents.insert(neighbor.clone(), (current.clone(), edge_id.clone()));
-            if neighbor == &target {
-                found = true;
-                break;
-            }
-            queue.push_back((neighbor.clone(), depth + 1));
-        }
-    }
-
-    let node_by_id = memory
-        .graph
-        .nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node))
-        .collect::<BTreeMap<_, _>>();
-    let edge_by_id = memory
-        .graph
-        .edges
-        .iter()
-        .map(|edge| (edge.id.as_str(), edge))
-        .collect::<BTreeMap<_, _>>();
-    let mut node_ids = Vec::new();
-    let mut edge_ids = Vec::new();
-    if found {
-        let mut current = target.clone();
-        node_ids.push(current.clone());
-        while current != start {
-            let Some((parent, edge)) = parents.get(&current) else {
-                break;
-            };
-            edge_ids.push(edge.clone());
-            current = parent.clone();
-            node_ids.push(current.clone());
-        }
-        node_ids.reverse();
-        edge_ids.reverse();
-    }
-    GraphPath {
-        project_id: memory.manifest.project_id.clone(),
-        graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
-        captured_at_unix_ms: memory.graph.generated_at_unix_ms,
-        from_query: from_query.to_owned(),
-        to_query: to_query.to_owned(),
-        ambiguous: false,
-        from_candidates,
-        to_candidates,
-        found,
-        nodes: node_ids
-            .iter()
-            .filter_map(|id| node_by_id.get(id.as_str()).copied().cloned())
-            .collect(),
-        edges: edge_ids
-            .iter()
-            .filter_map(|id| edge_by_id.get(id.as_str()).copied().cloned())
-            .collect(),
-        truncated,
-        freshness: SNAPSHOT_FRESHNESS,
-        live_source_checked: false,
-        source_boundary: SOURCE_BOUNDARY,
-    }
-}
-
-fn resolve_nodes(nodes: &[GraphNode], query: &str) -> Vec<GraphNode> {
-    if let Some(node) = nodes.iter().find(|node| node.id == query) {
-        return vec![node.clone()];
-    }
-    let exact_path = nodes
-        .iter()
-        .filter(|node| {
-            node.kind == GraphNodeKind::File && node.path.as_ref().is_some_and(|path| path == query)
-        })
-        .take(21)
-        .cloned()
-        .collect::<Vec<_>>();
-    if !exact_path.is_empty() {
-        return exact_path;
-    }
-    let exact_name = nodes
-        .iter()
-        .filter(|node| node.name == query)
-        .take(21)
-        .cloned()
-        .collect::<Vec<_>>();
-    if !exact_name.is_empty() {
-        return exact_name;
-    }
-    let query = query.to_lowercase();
-    let exact = nodes
-        .iter()
-        .filter(|node| node.name.to_lowercase() == query)
-        .take(21)
-        .cloned()
-        .collect::<Vec<_>>();
-    if !exact.is_empty() {
-        return exact;
-    }
-    nodes
-        .iter()
-        .filter(|node| {
-            node.name.to_lowercase().contains(&query)
-                || node
-                    .path
-                    .as_ref()
-                    .is_some_and(|path| path.to_lowercase().contains(&query))
-        })
-        .take(21)
-        .cloned()
-        .collect()
-}
-
-fn graph_adjacency(
-    edges: &[GraphEdge],
-    direction: GraphDirection,
-    edge_kinds: Option<&[GraphEdgeKind]>,
-) -> BTreeMap<String, Vec<(String, String)>> {
-    let allowed = edge_kinds.map(|kinds| kinds.iter().copied().collect::<BTreeSet<_>>());
-    let mut adjacency = BTreeMap::<String, Vec<(String, String)>>::new();
-    for edge in edges {
-        if allowed
-            .as_ref()
-            .is_some_and(|kinds| !kinds.contains(&edge.kind))
-        {
-            continue;
-        }
-        if matches!(direction, GraphDirection::Outgoing | GraphDirection::Both) {
-            adjacency
-                .entry(edge.source.clone())
-                .or_default()
-                .push((edge.target.clone(), edge.id.clone()));
-        }
-        if matches!(direction, GraphDirection::Incoming | GraphDirection::Both) {
-            adjacency
-                .entry(edge.target.clone())
-                .or_default()
-                .push((edge.source.clone(), edge.id.clone()));
-        }
-    }
-    for neighbors in adjacency.values_mut() {
-        neighbors.sort();
-        neighbors.dedup();
-    }
-    adjacency
 }
 
 fn text_score(text: &str, query: &str, terms: &[String]) -> u32 {
@@ -1404,34 +1328,13 @@ fn validate_limits(limits: RetrievalLimits) -> Result<(), LeyCoreError> {
     Ok(())
 }
 
-fn validate_graph_limits(depth: u32, max_nodes: usize) -> Result<(), LeyCoreError> {
-    if !(1..=3).contains(&depth) {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "depth must be between 1 and 3".to_owned(),
-        ));
-    }
-    if !(2..=100).contains(&max_nodes) {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "maxNodes must be between 2 and 100".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_node_query(query: &str) -> Result<(), LeyCoreError> {
-    let query = query.trim();
-    if query.is_empty() || query.chars().count() > 512 || query.chars().any(char::is_control) {
-        return Err(LeyCoreError::InvalidRetrievalRequest(
-            "graph node query must contain 1 to 512 visible characters".to_owned(),
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ingest_project, initialize_project, read_project_graph, CaptureMode};
+    use crate::{
+        ingest_project, ingest_project_with_continuity_transition, initialize_project, CaptureMode,
+        ContinuityStore,
+    };
     use tempfile::tempdir;
 
     fn setup_memory(
@@ -1484,13 +1387,88 @@ mod tests {
     }
 
     #[test]
+    fn native_artifact_context_survives_legacy_vault_loss() {
+        let (base, project, vault) = setup_memory(CaptureMode::Structured);
+        let private = base.path().join("private");
+        std::fs::create_dir(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        let legacy_overview = project_memory_overview(&project, &vault).unwrap();
+        let legacy = find_project_context(
+            &project,
+            &vault,
+            "durable checkpoint",
+            RetrievalLimits::default(),
+        )
+        .unwrap();
+        let legacy_memory = legacy
+            .items
+            .iter()
+            .find(|item| item.path.as_deref() == Some("memory.py"))
+            .unwrap()
+            .clone();
+
+        std::fs::remove_dir_all(&vault).unwrap();
+        let native_overview =
+            project_memory_overview_with_continuity_transition(&project, &vault, &store).unwrap();
+        assert_eq!(native_overview.project_id, legacy_overview.project_id);
+        assert_eq!(native_overview.project_name, legacy_overview.project_name);
+        assert_eq!(native_overview.capture_mode, legacy_overview.capture_mode);
+        assert_eq!(
+            native_overview.artifact_snapshot_id,
+            legacy_overview.artifact_snapshot_id
+        );
+        assert_eq!(native_overview.files, legacy_overview.files);
+        assert_eq!(
+            native_overview.retained_source_files,
+            legacy_overview.retained_source_files
+        );
+        assert_eq!(native_overview.skipped_files, legacy_overview.skipped_files);
+        assert!(native_overview.graph_snapshot_id.is_none());
+        assert!(native_overview.graph_generated_at_unix_ms.is_none());
+        assert!(native_overview.graph_nodes.is_none());
+        assert!(native_overview.graph_edges.is_none());
+        assert!(native_overview.graph_diagnostics.is_none());
+        let native = find_project_hybrid_context_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            "durable checkpoint",
+            RetrievalLimits::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            native.context.artifact_snapshot_id,
+            legacy.artifact_snapshot_id
+        );
+        assert_eq!(native.context.graph_snapshot_id, legacy.graph_snapshot_id);
+        assert_eq!(native.context.project_id, legacy.project_id);
+        assert_eq!(native.retrieval.mode, RetrievalMode::Lexical);
+        let native_memory = native
+            .context
+            .items
+            .iter()
+            .find(|item| item.path.as_deref() == Some("memory.py"))
+            .unwrap();
+        assert_eq!(native_memory.citation, legacy_memory.citation);
+        assert_eq!(native_memory.snippet, legacy_memory.snippet);
+    }
+
+    #[test]
     fn cited_evidence_reads_the_immutable_snapshot_after_live_source_changes() {
         let (_base, project, vault) = setup_memory(CaptureMode::Structured);
-        let first_graph = read_project_graph(&project, &vault).unwrap();
-        let citation = first_graph
-            .nodes
+        let first_context =
+            find_project_context(&project, &vault, "README.md", RetrievalLimits::default())
+                .unwrap();
+        let citation = first_context
+            .items
             .iter()
-            .filter_map(|node| node.citation.as_ref())
+            .map(|item| &item.citation)
             .find(|citation| citation.artifact_path == "README.md")
             .unwrap()
             .clone();
@@ -1514,6 +1492,40 @@ mod tests {
         assert!(error
             .to_string()
             .contains("content hash does not match its captured artifact"));
+    }
+
+    #[test]
+    fn transition_cited_evidence_reads_native_cas_after_legacy_vault_loss() {
+        let (base, project, vault) = setup_memory(CaptureMode::Structured);
+        let private = base.path().join("private");
+        std::fs::create_dir(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        let context =
+            find_project_context(&project, &vault, "README.md", RetrievalLimits::default())
+                .unwrap();
+        let citation = context
+            .items
+            .iter()
+            .map(|item| &item.citation)
+            .find(|citation| citation.artifact_path == "README.md")
+            .unwrap()
+            .clone();
+
+        std::fs::remove_dir_all(&vault).unwrap();
+        let excerpt = read_project_cited_evidence_with_continuity_transition(
+            &project, &vault, &store, &citation, 0, 8_000,
+        )
+        .unwrap();
+        assert!(excerpt.text.contains("Memory project"));
+        assert_eq!(excerpt.artifact_snapshot_id, citation.artifact_snapshot_id);
+        assert_eq!(excerpt.citation.content_hash, citation.content_hash);
+        assert!(!excerpt.live_source_checked);
     }
 
     #[test]
@@ -1577,6 +1589,66 @@ mod tests {
         assert!(forged
             .to_string()
             .contains("content hash does not match its captured artifact"));
+    }
+
+    #[test]
+    fn transition_cited_media_reads_native_cas_after_legacy_vault_loss() {
+        let (base, project, vault) = setup_memory(CaptureMode::FullEvidence);
+        let original = png_fixture(7);
+        std::fs::write(project.join("native-screenshot.png"), &original).unwrap();
+        let private = base.path().join("private-media");
+        std::fs::create_dir(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        let snapshot = store
+            .current_artifact_snapshot(
+                &crate::diagnose_project(&project)
+                    .unwrap()
+                    .identity
+                    .project_id,
+            )
+            .unwrap()
+            .unwrap();
+        let artifact = snapshot
+            .files
+            .iter()
+            .find(|artifact| artifact.artifact_path == "native-screenshot.png")
+            .unwrap()
+            .clone();
+
+        std::fs::remove_dir_all(&vault).unwrap();
+        let media = read_project_cited_media_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &artifact.artifact_path,
+            &snapshot.snapshot_id,
+            &artifact.content_hash,
+            original.len(),
+        )
+        .unwrap();
+        assert_eq!(media.data, original);
+        assert_eq!(media.media_type, ArtifactMediaType::Png);
+        assert_eq!(media.source_bytes, original.len() as u64);
+        assert_eq!(media.artifact_snapshot_id, snapshot.snapshot_id);
+        assert!(!media.live_source_checked);
+
+        let bounded = read_project_cited_media_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &artifact.artifact_path,
+            &media.artifact_snapshot_id,
+            &media.content_hash,
+            original.len() - 1,
+        )
+        .unwrap_err();
+        assert!(bounded.to_string().contains("exceeds the"));
     }
 
     #[test]
@@ -1657,56 +1729,6 @@ mod tests {
     }
 
     #[test]
-    fn graph_source_inspector_reads_the_selected_captured_snapshot() {
-        let (_base, project, vault) = setup_memory(CaptureMode::Structured);
-        let first_graph = read_project_graph(&project, &vault).unwrap();
-        let citation = first_graph
-            .nodes
-            .iter()
-            .find(|node| node.name == "recall")
-            .and_then(|node| node.citation.clone())
-            .unwrap();
-        std::fs::write(
-            project.join("memory.py"),
-            "def replacement():\n    return \"new source\"\n",
-        )
-        .unwrap();
-        ingest_project(&project, &vault).unwrap();
-
-        let excerpt = read_project_graph_evidence(
-            &project,
-            &vault,
-            &first_graph.graph_snapshot_id,
-            &citation,
-            2,
-            4_000,
-        )
-        .unwrap();
-        assert!(excerpt.text.contains("def recall"));
-        assert!(excerpt.text.contains("checkpoint()"));
-        assert!(!excerpt.text.contains("new source"));
-        assert_eq!(
-            excerpt.artifact_snapshot_id,
-            first_graph.artifact_snapshot_id
-        );
-        assert!(!excerpt.live_source_checked);
-
-        let mut forged = citation;
-        forged.start_line += 1;
-        assert!(matches!(
-            read_project_graph_evidence(
-                &project,
-                &vault,
-                &first_graph.graph_snapshot_id,
-                &forged,
-                2,
-                4_000,
-            ),
-            Err(LeyCoreError::InvalidRetrievalRequest(_))
-        ));
-    }
-
-    #[test]
     fn evidence_read_is_line_and_character_bounded() {
         let (_base, project, vault) = setup_memory(CaptureMode::Structured);
         let excerpt = read_project_evidence(&project, &vault, "memory.py", 3, 8, 256).unwrap();
@@ -1718,145 +1740,18 @@ mod tests {
     }
 
     #[test]
-    fn minimal_capture_searches_structure_but_refuses_source_reads() {
+    fn minimal_capture_searches_artifact_paths_without_graph_candidates_or_source_reads() {
         let (_base, project, vault) = setup_memory(CaptureMode::Minimal);
         let pack =
             find_project_context(&project, &vault, "Memory", RetrievalLimits::default()).unwrap();
         assert!(pack
             .items
             .iter()
-            .any(|item| item.kind == ContextItemKind::Symbol && item.title == "Memory"));
+            .any(|item| item.kind == ContextItemKind::Artifact && item.title == "memory.py"));
+        assert!(pack
+            .items
+            .iter()
+            .all(|item| item.kind == ContextItemKind::Artifact));
         assert!(read_project_evidence(&project, &vault, "memory.py", 1, 2, 256).is_err());
-    }
-
-    #[test]
-    fn traversal_handles_ambiguity_neighbors_and_shortest_paths() {
-        let (_base, project, vault) = setup_memory(CaptureMode::Structured);
-        let ambiguous = traverse_project_graph(
-            &project,
-            &vault,
-            "checkpoint",
-            2,
-            50,
-            GraphDirection::Both,
-            None,
-        )
-        .unwrap();
-        assert!(ambiguous.ambiguous);
-        assert!(ambiguous.candidates.len() >= 2);
-
-        let memory = load_project_memory(&project, &vault).unwrap();
-        let memory_node = memory
-            .graph
-            .nodes
-            .iter()
-            .find(|node| node.kind == GraphNodeKind::Symbol && node.name == "Memory")
-            .unwrap();
-        let neighbors = traverse_project_graph(
-            &project,
-            &vault,
-            &memory_node.id,
-            2,
-            50,
-            GraphDirection::Both,
-            None,
-        )
-        .unwrap();
-        assert!(!neighbors.nodes.is_empty());
-        let project_node = memory
-            .graph
-            .nodes
-            .iter()
-            .find(|node| node.kind == GraphNodeKind::Project)
-            .unwrap();
-        let path = find_project_graph_path(
-            &project,
-            &vault,
-            &project_node.id,
-            &memory_node.id,
-            4,
-            100,
-            GraphDirection::Both,
-            None,
-        )
-        .unwrap();
-        assert!(path.found);
-        assert_eq!(path.nodes.first().unwrap().id, project_node.id);
-        assert_eq!(path.nodes.last().unwrap().id, memory_node.id);
-        assert_eq!(path.edges.len() + 1, path.nodes.len());
-    }
-
-    #[test]
-    fn graph_node_resolution_prefers_exact_captured_path_before_suffix_matches() {
-        let (_base, project, vault) = setup_memory(CaptureMode::Structured);
-        let memory = load_project_memory(&project, &vault).unwrap();
-        let exact = memory
-            .graph
-            .nodes
-            .iter()
-            .find(|node| node.path.as_deref() == Some("memory.py"))
-            .unwrap()
-            .clone();
-        let mut suffix_match = exact.clone();
-        suffix_match.id = "fil_suffix_match".to_owned();
-        suffix_match.path = Some("legacy/memory.py".to_owned());
-        let mut same_path_symbol = exact.clone();
-        same_path_symbol.id = "sym_same_path".to_owned();
-        same_path_symbol.kind = GraphNodeKind::Symbol;
-        same_path_symbol.name = "Memory".to_owned();
-        let resolved = resolve_nodes(
-            &[exact.clone(), suffix_match, same_path_symbol],
-            "memory.py",
-        );
-        assert_eq!(resolved, vec![exact]);
-    }
-
-    #[test]
-    fn graph_node_resolution_prefers_exact_spelling_before_case_insensitive_matches() {
-        let file_upper = GraphNode {
-            id: "fil_upper".to_owned(),
-            kind: GraphNodeKind::File,
-            name: "Renderer.ts".to_owned(),
-            path: Some("src/Renderer.ts".to_owned()),
-            language: Some("typescript".to_owned()),
-            symbol_kind: None,
-            package_manager: None,
-            citation: None,
-            provenance: FactProvenance::Deterministic,
-            confidence: 1.0,
-        };
-        let file_lower = GraphNode {
-            id: "fil_lower".to_owned(),
-            name: "renderer.ts".to_owned(),
-            path: Some("src/renderer.ts".to_owned()),
-            ..file_upper.clone()
-        };
-        let symbol_upper = GraphNode {
-            id: "sym_upper".to_owned(),
-            kind: GraphNodeKind::Symbol,
-            name: "Render".to_owned(),
-            path: Some("src/Renderer.ts".to_owned()),
-            language: Some("typescript".to_owned()),
-            symbol_kind: Some("function".to_owned()),
-            package_manager: None,
-            citation: None,
-            provenance: FactProvenance::Deterministic,
-            confidence: 1.0,
-        };
-        let symbol_lower = GraphNode {
-            id: "sym_lower".to_owned(),
-            name: "render".to_owned(),
-            path: Some("src/renderer.ts".to_owned()),
-            ..symbol_upper.clone()
-        };
-
-        assert_eq!(
-            resolve_nodes(&[file_upper.clone(), file_lower.clone()], "src/Renderer.ts",),
-            vec![file_upper]
-        );
-        assert_eq!(
-            resolve_nodes(&[symbol_upper.clone(), symbol_lower], "Render"),
-            vec![symbol_upper]
-        );
     }
 }

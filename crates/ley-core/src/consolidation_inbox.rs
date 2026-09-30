@@ -1,7 +1,8 @@
 use crate::{
-    compile_session_memory, diagnose_project, list_sessions, LeyCoreError, MemoryCompilationState,
-    SessionSourceKind, SessionStatus, TurnEvidenceRetention, MAX_MEMORY_COMPILE_RESULTS,
-    MIN_MEMORY_COMPILE_CHARACTERS,
+    compile_session_memory, compile_session_memory_with_continuity_transition, diagnose_project,
+    list_sessions, list_sessions_with_continuity_transition, ContinuityStore, LeyCoreError,
+    MemoryCompilationState, SessionSourceKind, SessionStatus, TurnEvidenceRetention,
+    MAX_MEMORY_COMPILE_RESULTS, MIN_MEMORY_COMPILE_CHARACTERS,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -116,11 +117,35 @@ pub fn consolidation_inbox(
     vault: impl AsRef<Path>,
     limits: ConsolidationInboxLimits,
 ) -> Result<ConsolidationInbox, LeyCoreError> {
+    consolidation_inbox_with_authority(project_start.as_ref(), vault.as_ref(), None, limits)
+}
+
+pub fn consolidation_inbox_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    limits: ConsolidationInboxLimits,
+) -> Result<ConsolidationInbox, LeyCoreError> {
+    consolidation_inbox_with_authority(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        Some(store),
+        limits,
+    )
+}
+
+fn consolidation_inbox_with_authority(
+    project_start: &Path,
+    vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+    limits: ConsolidationInboxLimits,
+) -> Result<ConsolidationInbox, LeyCoreError> {
     validate_limits(limits)?;
-    let project_start = project_start.as_ref();
-    let vault = vault.as_ref();
     let diagnostic = diagnose_project(project_start)?;
-    let mut sessions = list_sessions(project_start, vault)?;
+    let mut sessions = match transition_store {
+        Some(store) => list_sessions_with_continuity_transition(project_start, vault, store),
+        None => list_sessions(project_start, vault),
+    }?;
     let total_sessions = sessions.len();
     let excluded_active_sessions = sessions
         .iter()
@@ -151,13 +176,23 @@ pub fn consolidation_inbox(
     let sessions_inspected = selected.len();
     let mut candidates = Vec::new();
     for summary in selected {
-        let compilation = compile_session_memory(
-            project_start,
-            vault,
-            &summary.session_id,
-            MAX_MEMORY_COMPILE_RESULTS,
-            MIN_MEMORY_COMPILE_CHARACTERS,
-        )?;
+        let compilation = match transition_store {
+            Some(store) => compile_session_memory_with_continuity_transition(
+                project_start,
+                vault,
+                store,
+                &summary.session_id,
+                MAX_MEMORY_COMPILE_RESULTS,
+                MIN_MEMORY_COMPILE_CHARACTERS,
+            ),
+            None => compile_session_memory(
+                project_start,
+                vault,
+                &summary.session_id,
+                MAX_MEMORY_COMPILE_RESULTS,
+                MIN_MEMORY_COMPILE_CHARACTERS,
+            ),
+        }?;
         if compilation.total_unconsolidated_evidence == 0 {
             continue;
         }

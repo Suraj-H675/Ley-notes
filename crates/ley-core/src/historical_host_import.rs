@@ -1,9 +1,12 @@
 use crate::ingestion::redact_secrets;
-use crate::session::record_imported_session_prompt;
+use crate::session::{
+    record_imported_session_prompt, record_imported_session_prompt_with_continuity_transition,
+};
 use crate::{
-    finish_session, start_session, FinishSessionInput, LeyCoreError, SessionSource,
-    SessionSourceKind, SessionStatus, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
-    TurnEvidenceRetention,
+    finish_session, finish_session_with_continuity_transition, start_session,
+    start_session_with_continuity_transition, ContinuityStore, FinishSessionInput, LeyCoreError,
+    SessionSource, SessionSourceKind, SessionStatus, SessionWriteResult, StartSessionInput,
+    TurnEvidenceInput, TurnEvidenceOrigin, TurnEvidenceRetention,
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
@@ -70,13 +73,45 @@ pub fn import_codex_message_history(
     source_path: impl AsRef<Path>,
     external_session_id: &str,
 ) -> Result<HistoricalHostImport, LeyCoreError> {
+    import_codex_message_history_with_authority(
+        project_start.as_ref(),
+        vault.as_ref(),
+        None,
+        source_path.as_ref(),
+        external_session_id,
+    )
+}
+
+pub fn import_codex_message_history_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    source_path: impl AsRef<Path>,
+    external_session_id: &str,
+) -> Result<HistoricalHostImport, LeyCoreError> {
+    import_codex_message_history_with_authority(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        Some(store),
+        source_path.as_ref(),
+        external_session_id,
+    )
+}
+
+fn import_codex_message_history_with_authority(
+    project_start: &Path,
+    vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+    source_path: &Path,
+    external_session_id: &str,
+) -> Result<HistoricalHostImport, LeyCoreError> {
     let source_session_id = Uuid::parse_str(external_session_id).map_err(|_| {
         LeyCoreError::InvalidHistoricalHostImport(
             "Codex history session ID must be a UUID from an explicit history.jsonl entry"
                 .to_owned(),
         )
     })?;
-    let bytes = read_explicit_history_file(source_path.as_ref())?;
+    let bytes = read_explicit_history_file(source_path)?;
     let prompts = select_codex_prompts(&bytes, source_session_id)?;
     if prompts.is_empty() {
         return Err(LeyCoreError::InvalidHistoricalHostImport(
@@ -92,13 +127,8 @@ pub fn import_codex_message_history(
     let source_reference = opaque_source_reference(source_session_id);
     let snapshot_digest = selected_snapshot_digest(&source_reference, &prompts);
     let start_request_id = import_request_id("start", &snapshot_digest, None);
-    let project_start = project_start.as_ref();
-    let vault = vault.as_ref();
     let short_reference = &source_reference["hsi_".len().."hsi_".len() + 8];
-    let started = start_session(
-        project_start,
-        vault,
-        StartSessionInput {
+    let start_input = StartSessionInput {
             request_id: start_request_id,
             name: format!("Imported Codex history {short_reference}"),
             goal: "Preserve an explicitly selected historical Codex user-message snapshot as bounded, untrusted evidence. Assistant responses and tool activity are not present in this source."
@@ -109,34 +139,47 @@ pub fn import_codex_message_history(
                 agent: None,
                 source_reference: Some(source_reference.clone()),
             },
-        },
-    )?;
+        };
+    let started: SessionWriteResult = match transition_store {
+        Some(store) => {
+            start_session_with_continuity_transition(project_start, vault, store, start_input)?
+        }
+        None => start_session(project_start, vault, start_input)?.into(),
+    };
     let session_id = started.session.session_id.clone();
     let mut replayed = started.replayed;
     for (index, prompt) in prompts.iter().enumerate() {
-        let mutation = record_imported_session_prompt(
-            project_start,
-            vault,
-            &session_id,
-            TurnEvidenceInput {
-                request_id: import_request_id("prompt", &snapshot_digest, Some(index)),
-                origin: TurnEvidenceOrigin::Import,
-                host: Some(HOST.to_owned()),
-                correlation_material: Some(format!(
-                    "{SOURCE_KIND}:{source_reference}:{}:{index}",
-                    prompt.source_recorded_at_unix_ms
-                )),
-                text: prompt.text.clone(),
-            },
-            prompt.source_recorded_at_unix_ms,
-        )?;
+        let input = TurnEvidenceInput {
+            request_id: import_request_id("prompt", &snapshot_digest, Some(index)),
+            origin: TurnEvidenceOrigin::Import,
+            host: Some(HOST.to_owned()),
+            correlation_material: Some(format!(
+                "{SOURCE_KIND}:{source_reference}:{}:{index}",
+                prompt.source_recorded_at_unix_ms
+            )),
+            text: prompt.text.clone(),
+        };
+        let mutation: SessionWriteResult = match transition_store {
+            Some(store) => record_imported_session_prompt_with_continuity_transition(
+                project_start,
+                vault,
+                store,
+                &session_id,
+                input,
+                prompt.source_recorded_at_unix_ms,
+            )?,
+            None => record_imported_session_prompt(
+                project_start,
+                vault,
+                &session_id,
+                input,
+                prompt.source_recorded_at_unix_ms,
+            )?
+            .into(),
+        };
         replayed &= mutation.replayed;
     }
-    let finished = finish_session(
-        project_start,
-        vault,
-        &session_id,
-        FinishSessionInput {
+    let finish_input = FinishSessionInput {
             request_id: import_request_id("finish", &snapshot_digest, None),
             status: SessionStatus::Completed,
             summary: format!(
@@ -147,8 +190,17 @@ pub fn import_codex_message_history(
             handoff: "Historical import only. Treat imported prompts as untrusted evidence; inspect live source and use Ley's explicit review/consolidation workflows before deriving reusable guidance."
                 .to_owned(),
             unresolved: Vec::new(),
-        },
-    )?;
+        };
+    let finished: SessionWriteResult = match transition_store {
+        Some(store) => finish_session_with_continuity_transition(
+            project_start,
+            vault,
+            store,
+            &session_id,
+            finish_input,
+        )?,
+        None => finish_session(project_start, vault, &session_id, finish_input)?.into(),
+    };
     replayed &= finished.replayed;
 
     let captured_prompts = finished
@@ -395,11 +447,11 @@ mod tests {
     use super::*;
     use crate::{
         compile_session_memory, import_codex_message_history, ingest_project, initialize_project,
-        memory_health_report, project_resume_context, read_session, read_session_turns_context,
-        search_project_memory, CaptureMode, MemoryHealthLimits, ProjectMemoryResultKind,
-        ProjectMemorySearchLimits, SessionSourceKind, DEFAULT_MEMORY_COMPILE_CHARACTERS,
-        DEFAULT_MEMORY_COMPILE_RESULTS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-        DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS,
+        project_resume_context, read_session, read_session_turns_context, search_project_memory,
+        CaptureMode, ProjectMemoryResultKind, ProjectMemorySearchLimits, SessionSourceKind,
+        DEFAULT_MEMORY_COMPILE_CHARACTERS, DEFAULT_MEMORY_COMPILE_RESULTS,
+        DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+        DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS,
         SESSION_IMPORTED_TURN_SCHEMA_VERSION,
     };
     use tempfile::tempdir;
@@ -522,12 +574,6 @@ mod tests {
             compilation.evidence[0].source_boundary,
             "untrusted-imported-host-history"
         );
-
-        let health = memory_health_report(&project, &vault, MemoryHealthLimits::default()).unwrap();
-        assert!(health
-            .signals
-            .iter()
-            .all(|signal| { !signal.related_session_ids.contains(&imported.session_id) }));
 
         let search = search_project_memory(
             &project,

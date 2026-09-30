@@ -1999,7 +1999,7 @@ mod tests {
             ),
             Err(LeyCoreError::ExternalConnectorNotFound(_))
         ));
-        assert!(crate::read_project_graph(&project, &vault).is_ok());
+        assert!(crate::ingestion::read_project_graph(&project, &vault).is_ok());
     }
 
     #[test]

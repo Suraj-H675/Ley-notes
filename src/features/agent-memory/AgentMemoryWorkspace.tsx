@@ -22,7 +22,6 @@ import {
   LayoutDashboard,
   LockKeyhole,
   MessageSquareWarning,
-  Network,
   PencilLine,
   RefreshCw,
   RotateCcw,
@@ -55,6 +54,7 @@ import { ProjectsHub } from "./ProjectsHub";
 import type {
   AgentInitialCapturePreview,
   AgentMemoryDashboard,
+  AgentMemoryStorage,
   AgentProjectCatalog,
   AgentProjectInspection,
   AgentProjectSearchResult,
@@ -85,18 +85,12 @@ type Section =
   | "lessons"
   | "specifications"
   | "artifacts"
-  | "graph"
   | "review"
   | "privacy";
 
 type ArtifactFocus = {
   path: string;
   evidence?: ArtifactEvidenceReference;
-  requestId: number;
-};
-type GraphFocus = {
-  evidence?: ArtifactEvidenceReference;
-  graphSnapshotId?: string;
   requestId: number;
 };
 
@@ -108,11 +102,6 @@ const ArtifactExplorer = lazy(() =>
 const MemorySearch = lazy(() =>
   import("./MemorySearch").then((module) => ({
     default: module.MemorySearch,
-  })),
-);
-const ProjectKnowledgeGraph = lazy(() =>
-  import("./ProjectKnowledgeGraph").then((module) => ({
-    default: module.ProjectKnowledgeGraph,
   })),
 );
 const ProjectActivityExplorer = lazy(() =>
@@ -196,7 +185,6 @@ export function AgentMemoryWorkspace({
   const [artifactFocus, setArtifactFocus] = useState<ArtifactFocus | null>(
     null,
   );
-  const [graphFocus, setGraphFocus] = useState<GraphFocus | null>(null);
 
   useEffect(() => {
     if (!open || projectPath || catalog) return;
@@ -271,7 +259,6 @@ export function AgentMemoryWorkspace({
     setInspectedPath(null);
     setProjectPath(nextProjectPath);
     setArtifactFocus(null);
-    setGraphFocus(null);
     if (!destination) {
       setSection("overview");
       return;
@@ -295,29 +282,24 @@ export function AgentMemoryWorkspace({
       setLearningId(destination.learningId ?? null);
     } else {
       if (destination.kind === "artifact") {
-        if (destination.citation?.mediaType) {
+        if (destination.citation) {
           setArtifactFocus({
             path: destination.citation.artifactPath,
             evidence: destination.citation,
             requestId: Date.now(),
           });
           setSection("artifacts");
-        } else if (destination.citation) {
-          setGraphFocus({
-            evidence: destination.citation,
-            requestId: Date.now(),
-          });
-          setSection("graph");
         } else {
           setArtifactFocus({ path: destination.title, requestId: Date.now() });
           setSection("artifacts");
         }
       } else if (destination.citation) {
-        setGraphFocus({
+        setArtifactFocus({
+          path: destination.citation.artifactPath,
           evidence: destination.citation,
           requestId: Date.now(),
         });
-        setSection("graph");
+        setSection("artifacts");
       }
     }
   }
@@ -332,24 +314,12 @@ export function AgentMemoryWorkspace({
   function openEvidence(evidence: ArtifactEvidenceReference) {
     setSessionId(null);
     setLearningId(null);
-    if (evidence.mediaType) {
-      setArtifactFocus({
-        path: evidence.artifactPath,
-        evidence,
-        requestId: Date.now(),
-      });
-      setSection("artifacts");
-    } else {
-      setGraphFocus({ evidence, requestId: Date.now() });
-      setSection("graph");
-    }
-  }
-
-  function openProjectRevision(graphSnapshotId: string) {
-    setSessionId(null);
-    setLearningId(null);
-    setGraphFocus({ graphSnapshotId, requestId: Date.now() });
-    setSection("graph");
+    setArtifactFocus({
+      path: evidence.artifactPath,
+      evidence,
+      requestId: Date.now(),
+    });
+    setSection("artifacts");
   }
 
   function openMemoryResult(result: ProjectMemorySearchResult) {
@@ -383,7 +353,6 @@ export function AgentMemoryWorkspace({
         }
         dashboard = await initializeAgentProject(
           projectPath,
-          vaultPath,
           inspection.preview.approvalFingerprint,
         );
       } else if (kind === "connect") {
@@ -471,7 +440,6 @@ export function AgentMemoryWorkspace({
 
   function changeSection(nextSection: Section) {
     if (nextSection === "artifacts") setArtifactFocus(null);
-    if (nextSection === "graph") setGraphFocus(null);
     setSection(nextSection);
   }
 
@@ -515,7 +483,6 @@ export function AgentMemoryWorkspace({
       learningId={learningId}
       section={section}
       artifactFocus={artifactFocus}
-      graphFocus={graphFocus}
       onChooseProject={chooseProject}
       onOpenProject={openProject}
       onForgetProject={removeProject}
@@ -530,9 +497,7 @@ export function AgentMemoryWorkspace({
       onRefresh={refresh}
       onSection={changeSection}
       onMemoryResult={openMemoryResult}
-      onArtifact={openArtifact}
       onEvidence={openEvidence}
-      onProjectRevision={openProjectRevision}
       onLearning={setLearningId}
       onSession={setSessionId}
       onSessionClose={() => setSessionId(null)}
@@ -571,7 +536,6 @@ interface AgentMemoryWorkspaceViewProps {
   learningId: string | null;
   section: Section;
   artifactFocus: ArtifactFocus | null;
-  graphFocus: GraphFocus | null;
   onChooseProject: () => Promise<void>;
   onOpenProject: (
     projectPath: string,
@@ -584,9 +548,7 @@ interface AgentMemoryWorkspaceViewProps {
   onRefresh: () => Promise<void>;
   onSection: (section: Section) => void;
   onMemoryResult: (result: ProjectMemorySearchResult) => void;
-  onArtifact: (path: string) => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
-  onProjectRevision: (graphSnapshotId: string) => void;
   onLearning: (id: string) => void;
   onSession: (id: string) => void;
   onSessionClose: () => void;
@@ -605,8 +567,6 @@ interface AgentMemoryWorkspaceViewProps {
 function AgentMemoryWorkspaceView({
   open,
   vaultName,
-  vaultPath,
-  activeNote,
   onClose,
   projectPath,
   projectLabel,
@@ -620,7 +580,6 @@ function AgentMemoryWorkspaceView({
   learningId,
   section,
   artifactFocus,
-  graphFocus,
   onChooseProject,
   onOpenProject,
   onForgetProject,
@@ -630,9 +589,7 @@ function AgentMemoryWorkspaceView({
   onRefresh,
   onSection,
   onMemoryResult,
-  onArtifact,
   onEvidence,
-  onProjectRevision,
   onLearning,
   onSession,
   onSessionClose,
@@ -673,8 +630,6 @@ function AgentMemoryWorkspaceView({
           />
           <AgentMemoryBody
             vaultName={vaultName}
-            vaultPath={vaultPath}
-            activeNote={activeNote}
             projectPath={projectPath}
             catalog={catalog}
             catalogBusy={catalogBusy}
@@ -683,7 +638,6 @@ function AgentMemoryWorkspaceView({
             inspection={inspection}
             section={section}
             artifactFocus={artifactFocus}
-            graphFocus={graphFocus}
             onChooseProject={onChooseProject}
             onOpenProject={onOpenProject}
             onForgetProject={onForgetProject}
@@ -692,7 +646,6 @@ function AgentMemoryWorkspaceView({
             onMakeReady={onMakeReady}
             onSection={onSection}
             onMemoryResult={onMemoryResult}
-            onArtifact={onArtifact}
             onEvidence={onEvidence}
             onLearning={onLearning}
             onSession={onSession}
@@ -707,7 +660,6 @@ function AgentMemoryWorkspaceView({
               projectName={dashboard.overview.projectName}
               onClose={onSessionClose}
               onEvidence={onEvidence}
-              onProjectRevision={onProjectRevision}
               onPromote={onPromoteSession}
               onLinkCanvas={onLinkSessionCanvas}
               onRenamed={onSessionRenamed}
@@ -816,8 +768,6 @@ function AgentMemoryHeader({
 
 function AgentMemoryBody({
   vaultName,
-  vaultPath,
-  activeNote,
   projectPath,
   catalog,
   catalogBusy,
@@ -826,7 +776,6 @@ function AgentMemoryBody({
   inspection,
   section,
   artifactFocus,
-  graphFocus,
   onChooseProject,
   onOpenProject,
   onForgetProject,
@@ -835,7 +784,6 @@ function AgentMemoryBody({
   onMakeReady,
   onSection,
   onMemoryResult,
-  onArtifact,
   onEvidence,
   onLearning,
   onSession,
@@ -844,8 +792,6 @@ function AgentMemoryBody({
 }: Pick<
   AgentMemoryWorkspaceViewProps,
   | "vaultName"
-  | "vaultPath"
-  | "activeNote"
   | "projectPath"
   | "catalog"
   | "catalogBusy"
@@ -854,7 +800,6 @@ function AgentMemoryBody({
   | "inspection"
   | "section"
   | "artifactFocus"
-  | "graphFocus"
   | "onChooseProject"
   | "onOpenProject"
   | "onForgetProject"
@@ -863,7 +808,6 @@ function AgentMemoryBody({
   | "onMakeReady"
   | "onSection"
   | "onMemoryResult"
-  | "onArtifact"
   | "onEvidence"
   | "onLearning"
   | "onSession"
@@ -904,16 +848,12 @@ function AgentMemoryBody({
       dashboard={inspection.dashboard}
       section={section}
       projectPath={projectPath}
-      vaultPath={vaultPath}
-      activeNote={activeNote}
       error={error}
       busy={busy}
       artifactFocus={artifactFocus}
-      graphFocus={graphFocus}
       onSection={onSection}
       onChangeProject={onReturnToProjects}
       onMemoryResult={onMemoryResult}
-      onArtifact={onArtifact}
       onEvidence={onEvidence}
       onLearning={onLearning}
       onSession={onSession}
@@ -927,16 +867,12 @@ function AgentMemoryReadyContent({
   dashboard,
   section,
   projectPath,
-  vaultPath,
-  activeNote,
   error,
   busy,
   artifactFocus,
-  graphFocus,
   onSection,
   onChangeProject,
   onMemoryResult,
-  onArtifact,
   onEvidence,
   onLearning,
   onSession,
@@ -946,16 +882,12 @@ function AgentMemoryReadyContent({
   dashboard: AgentMemoryDashboard;
   section: Section;
   projectPath: string;
-  vaultPath: string;
-  activeNote?: Page;
   error: string | null;
   busy: boolean;
   artifactFocus: ArtifactFocus | null;
-  graphFocus: GraphFocus | null;
   onSection: (section: Section) => void;
   onChangeProject: () => void;
   onMemoryResult: (result: ProjectMemorySearchResult) => void;
-  onArtifact: (path: string) => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
   onLearning: (id: string) => void;
   onSession: (id: string) => void;
@@ -976,15 +908,11 @@ function AgentMemoryReadyContent({
           <AgentMemorySectionContent
             section={section}
             projectPath={projectPath}
-            vaultPath={vaultPath}
-            activeNote={activeNote}
             dashboard={dashboard}
             error={error}
             artifactFocus={artifactFocus}
-            graphFocus={graphFocus}
             onSection={onSection}
             onMemoryResult={onMemoryResult}
-            onArtifact={onArtifact}
             onEvidence={onEvidence}
             onLearning={onLearning}
             onSession={onSession}
@@ -1000,15 +928,11 @@ function AgentMemoryReadyContent({
 function AgentMemorySectionContent({
   section,
   projectPath,
-  vaultPath,
-  activeNote,
   dashboard,
   error,
   artifactFocus,
-  graphFocus,
   onSection,
   onMemoryResult,
-  onArtifact,
   onEvidence,
   onLearning,
   onSession,
@@ -1017,15 +941,11 @@ function AgentMemorySectionContent({
 }: {
   section: Section;
   projectPath: string;
-  vaultPath: string;
-  activeNote?: Page;
   dashboard: AgentMemoryDashboard;
   error: string | null;
   artifactFocus: ArtifactFocus | null;
-  graphFocus: GraphFocus | null;
   onSection: (section: Section) => void;
   onMemoryResult: (result: ProjectMemorySearchResult) => void;
-  onArtifact: (path: string) => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
   onLearning: (id: string) => void;
   onSession: (id: string) => void;
@@ -1071,11 +991,7 @@ function AgentMemorySectionContent({
       )}
       {section === "specifications" && (
         <Suspense fallback={<KnowledgeSurfaceFallback />}>
-          <SpecificationsPanel
-            projectPath={projectPath}
-            vaultPath={vaultPath}
-            activeNote={activeNote}
-          />
+          <SpecificationsPanel projectPath={projectPath} />
         </Suspense>
       )}
       {section === "artifacts" && (
@@ -1084,16 +1000,6 @@ function AgentMemorySectionContent({
             key={`artifacts-${artifactFocus?.requestId ?? "browse"}`}
             projectPath={projectPath}
             focus={artifactFocus}
-          />
-        </Suspense>
-      )}
-      {section === "graph" && (
-        <Suspense fallback={<KnowledgeSurfaceFallback />}>
-          <ProjectKnowledgeGraph
-            key={`graph-${graphFocus?.requestId ?? "browse"}`}
-            projectPath={projectPath}
-            focus={graphFocus}
-            onOpenArtifact={onArtifact}
           />
         </Suspense>
       )}
@@ -1170,12 +1076,6 @@ function AgentMemoryNav({
       count: dashboard.overview.files,
     },
     {
-      id: "graph",
-      label: "Project graph",
-      icon: Network,
-      count: dashboard.overview.graphNodes,
-    },
-    {
       id: "review",
       label: "Review",
       icon: Inbox,
@@ -1234,7 +1134,7 @@ function AgentMemoryNav({
           {dashboard.overview.projectName}
         </p>
         <p className="mt-0.5 truncate text-micro text-muted-foreground">
-          {dashboard.binding.vaultName}
+          {agentMemoryStorageLabel(dashboard.storage)}
         </p>
         <button
           type="button"
@@ -1348,10 +1248,10 @@ function Overview({
             detail={`${overview.retainedSourceFiles} with retained text`}
           />
           <MetricCard
-            icon={GitBranch}
-            label="Project graph"
-            value={overview.graphNodes}
-            detail={`${overview.graphEdges} deterministic links`}
+            icon={Inbox}
+            label="Review items"
+            value={reviewInbox.totalMatching}
+            detail="Needs human attention"
           />
         </div>
       </section>
@@ -1578,7 +1478,6 @@ function SessionInspector({
   projectName,
   onClose,
   onEvidence,
-  onProjectRevision,
   onPromote,
   onLinkCanvas,
   onRenamed,
@@ -1589,7 +1488,6 @@ function SessionInspector({
   projectName: string;
   onClose: () => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
-  onProjectRevision: (graphSnapshotId: string) => void;
   onPromote: (draft: PromotedSessionNoteDraft) => Promise<void>;
   onLinkCanvas: (request: SessionCanvasLinkRequest) => Promise<void>;
   onRenamed: (dashboard: AgentMemoryDashboard) => void;
@@ -1764,7 +1662,6 @@ function SessionInspector({
             erasing={erasing}
             onToggleErasing={toggleErasing}
             onEvidence={onEvidence}
-            onProjectRevision={onProjectRevision}
           />
           {renaming && session && (
             <div className="shrink-0 border-t border-border bg-surface-1">
@@ -1890,7 +1787,6 @@ function SessionInspectorBody({
   erasing,
   onToggleErasing,
   onEvidence,
-  onProjectRevision,
 }: {
   session: SessionContext | null;
   busy: boolean;
@@ -1902,7 +1798,6 @@ function SessionInspectorBody({
   erasing: boolean;
   onToggleErasing: () => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
-  onProjectRevision: (graphSnapshotId: string) => void;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
@@ -1936,7 +1831,6 @@ function SessionInspectorBody({
           <SessionCheckpointTimeline
             session={session}
             onEvidence={onEvidence}
-            onProjectRevision={onProjectRevision}
           />
           {session.omittedCheckpoints > 0 && (
             <p className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-micro text-warning">
@@ -2313,11 +2207,9 @@ function SessionLocalData({
 function SessionCheckpointTimeline({
   session,
   onEvidence,
-  onProjectRevision,
 }: {
   session: SessionContext;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
-  onProjectRevision: (graphSnapshotId: string) => void;
 }) {
   return (
     <section aria-labelledby="checkpoint-timeline-title">
@@ -2341,7 +2233,6 @@ function SessionCheckpointTimeline({
               index={index}
               revisionFreshness={session.revisionFreshness}
               onEvidence={onEvidence}
-              onProjectRevision={onProjectRevision}
             />
           ))
         )}
@@ -2355,13 +2246,11 @@ function SessionCheckpointCard({
   index,
   revisionFreshness,
   onEvidence,
-  onProjectRevision,
 }: {
   checkpoint: SessionContext["checkpoints"][number];
   index: number;
   revisionFreshness: ProjectRevisionFreshness;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
-  onProjectRevision: (graphSnapshotId: string) => void;
 }) {
   return (
     <article className="relative rounded-md border border-border bg-surface-1 p-4 shadow-panel sm:p-5">
@@ -2441,7 +2330,6 @@ function SessionCheckpointCard({
           revision={checkpoint.projectRevision}
           applicability={checkpoint.revisionApplicability}
           freshness={revisionFreshness}
-          onOpen={onProjectRevision}
         />
       )}
 
@@ -2595,14 +2483,12 @@ function ProjectRevisionButton({
   revision,
   applicability,
   freshness,
-  onOpen,
 }: {
   revision: NonNullable<
     SessionContext["checkpoints"][number]["projectRevision"]
   >;
   applicability?: RevisionApplicability;
   freshness: ProjectRevisionFreshness;
-  onOpen: (graphSnapshotId: string) => void;
 }) {
   const shortHead = revision.head?.slice(0, 10);
   const currentHead = freshness.currentHead?.slice(0, 10);
@@ -2622,13 +2508,7 @@ function ProjectRevisionButton({
       <p className="text-micro font-medium text-muted-foreground">
         Captured Project Revision
       </p>
-      <button
-        type="button"
-        onClick={() => onOpen(revision.graphSnapshotId)}
-        className="mt-2 flex w-full touch-manipulation items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5 text-left outline-none transition-[transform,border-color,background-color] hover:border-primary/35 hover:bg-primary/7 active:scale-[0.99] motion-reduce:transform-none focus-visible:ring-2 focus-visible:ring-primary"
-        title="Open the exact Project Graph capture used by this checkpoint"
-        aria-label={`Open captured project revision ${shortHead ?? revision.graphSnapshotId}`}
-      >
+      <div className="mt-2 flex w-full items-center gap-3 rounded-md border border-border bg-surface-2 px-3 py-2.5 text-left">
         <span className="grid size-8 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
           <GitBranch size={16} aria-hidden="true" />
         </span>
@@ -2644,12 +2524,7 @@ function ProjectRevisionButton({
             Captured {absoluteTime(revision.capturedAtUnixMs)} · {changeLabel}
           </span>
         </span>
-        <ChevronRight
-          size={16}
-          className="shrink-0 text-muted-foreground"
-          aria-hidden="true"
-        />
-      </button>
+      </div>
       <div className="mt-2 rounded-md border border-border bg-background/45 px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-micro font-medium text-muted-foreground">
@@ -3523,7 +3398,7 @@ function onboardingCopy(
     return projectPath
       ? {
           title: "Opening local project",
-          body: "Ley is validating this project’s local identity, private vault binding, and captured memory.",
+          body: "Ley is validating this project’s local identity, continuity authority, and captured memory.",
         }
       : {
           title: "Choose a project",
@@ -3534,7 +3409,7 @@ function onboardingCopy(
     case "uninitialized":
       return {
         title: "Review capture before enabling Agent Memory",
-        body: `Nothing has been initialized or written yet. Review what Ley would capture from “${inspection.suggestedName}” and where durable memory would live before approving setup.`,
+        body: `Nothing has been initialized or written yet. Review what Ley would capture from “${inspection.suggestedName}”. Durable continuity will stay in Ley’s private local app storage.`,
       };
     case "unbound":
       return {
@@ -3549,7 +3424,10 @@ function onboardingCopy(
     case "needs-capture":
       return {
         title: "Create the first snapshot",
-        body: `“${inspection.projectName}” is connected to “${inspection.binding.vaultName}” but has not been captured yet.`,
+        body:
+          inspection.storage.kind === "legacy-vault"
+            ? `“${inspection.projectName}” is connected to “${inspection.storage.vaultName}” but has not been captured yet.`
+            : `“${inspection.projectName}” has native local continuity authority but has not been captured yet.`,
       };
     case "ready":
       return { title: "Project ready", body: "This project is ready." };
@@ -3558,10 +3436,10 @@ function onboardingCopy(
 
 function InitialCapturePreviewCard({
   preview,
-  vaultName,
+  storageLabel,
 }: {
   preview: AgentInitialCapturePreview;
-  vaultName: string;
+  storageLabel: string;
 }) {
   const hasHardBoundSkips =
     preview.skippedOversized > 0 ||
@@ -3576,8 +3454,7 @@ function InitialCapturePreviewCard({
           <p className="mt-1 text-micro leading-5 text-muted-foreground">
             Structured capture · {preview.eligibleFiles.toLocaleString()}{" "}
             eligible {preview.eligibleFiles === 1 ? "file" : "files"} ·{" "}
-            {formatOnboardingBytes(preview.eligibleBytes)} · durable memory in “
-            {vaultName}”
+            {formatOnboardingBytes(preview.eligibleBytes)} · durable memory in {storageLabel}
           </p>
         </div>
       </div>
@@ -3665,6 +3542,9 @@ function ProjectOnboarding({
   onCapture: () => void;
 }) {
   const copy = onboardingCopy(inspection, projectPath, vaultName);
+  const primaryAction = inspection
+    ? onboardingPrimaryAction(inspection, onInitialize, onConnect, onCapture)
+    : null;
   return (
     <main className="min-h-0 flex-1 overflow-y-auto px-4 py-10 sm:px-6">
       <div className="mx-auto flex min-h-full max-w-xl items-center justify-center">
@@ -3690,7 +3570,11 @@ function ProjectOnboarding({
             inspection?.status === "unbound") && (
             <InitialCapturePreviewCard
               preview={inspection.preview}
-              vaultName={vaultName}
+              storageLabel={
+                inspection.status === "uninitialized"
+                  ? "Ley’s private local app storage"
+                  : `“${vaultName}” during legacy migration`
+              }
             />
           )}
           {error && (
@@ -3723,14 +3607,7 @@ function ProjectOnboarding({
                 <Button
                   variant="primary"
                   disabled={busy}
-                  onClick={
-                    inspection.status === "uninitialized"
-                      ? onInitialize
-                      : inspection.status === "unbound" ||
-                          inspection.status === "vault-unavailable"
-                        ? onConnect
-                        : onCapture
-                  }
+                  onClick={primaryAction?.onClick}
                 >
                   {busy ? (
                     <RefreshCw
@@ -3740,15 +3617,7 @@ function ProjectOnboarding({
                   ) : (
                     <ArrowRight size={14} />
                   )}
-                  {busy
-                    ? "Preparing memory…"
-                    : inspection.status === "uninitialized"
-                      ? "Approve, initialize & capture"
-                      : inspection.status === "unbound"
-                        ? "Approve, connect & capture"
-                        : inspection.status === "vault-unavailable"
-                          ? "Reconnect & capture"
-                          : "Capture project"}
+                  {busy ? "Preparing memory…" : primaryAction?.label}
                 </Button>
                 <Button variant="outline" disabled={busy} onClick={onChoose}>
                   Choose another
@@ -3770,6 +3639,24 @@ function ProjectOnboarding({
       </div>
     </main>
   );
+}
+
+function onboardingPrimaryAction(
+  inspection: AgentProjectInspection,
+  onInitialize: () => void,
+  onConnect: () => void,
+  onCapture: () => void,
+) {
+  switch (inspection.status) {
+    case "uninitialized":
+      return { onClick: onInitialize, label: "Approve, initialize & capture" };
+    case "unbound":
+      return { onClick: onConnect, label: "Approve, connect & capture" };
+    case "vault-unavailable":
+      return { onClick: onConnect, label: "Reconnect & capture" };
+    default:
+      return { onClick: onCapture, label: "Capture project" };
+  }
 }
 
 function SessionSummaryCard({
@@ -4332,6 +4219,12 @@ function formatOnboardingBytes(bytes: number): string {
     unit = units[index];
   }
   return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`;
+}
+
+function agentMemoryStorageLabel(storage: AgentMemoryStorage): string {
+  return storage.kind === "native"
+    ? "Ley private local storage"
+    : storage.vaultName;
 }
 
 function relativeTime(unixMs: number): string {

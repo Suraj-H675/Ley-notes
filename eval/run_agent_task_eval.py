@@ -29,10 +29,14 @@ from pathlib import Path
 from run_eval import (
     EVAL_ENV,
     WRITE_FLAGS,
+    automatic_hook_context,
     cli_json,
     create_structured_session,
     git_commit_all,
     git_run,
+    hook_additional_context,
+    hook_call,
+    hook_ley_session_id,
     init_project,
     mcp_call,
     request_id,
@@ -49,8 +53,16 @@ MAX_REPETITIONS = 10
 MAX_SANDBOX_OUTPUT_BYTES = 1_048_576
 MAX_ORACLE_SCRIPT_BYTES = 65_536
 ORACLE_REFERENCE_TIMEOUT_SECONDS = 30
-COMPARISON_VARIANTS = ("baseline", "handoff", "minimal", "ley")
+COMPARISON_VARIANTS = (
+    "baseline",
+    "handoff",
+    "minimal",
+    "ley",
+    "ley-brief",
+    "ley-auto",
+)
 SIMPLER_VARIANTS = ("baseline", "handoff", "minimal")
+BRIEFING_VARIANTS = ("ley-brief", "ley-auto")
 DEFAULT_RUNNER_ENV = (
     "LANG",
     "LC_ALL",
@@ -1055,13 +1067,17 @@ def snapshot_directory(root: Path) -> bytes:
 
 
 def restore_directory(root: Path, archive_bytes: bytes) -> None:
-    root.mkdir(parents=True, exist_ok=True)
+    root.mkdir(parents=True, mode=0o700, exist_ok=True)
+    root.chmod(0o700)
     with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
             if path.is_absolute() or ".." in path.parts:
                 raise RuntimeError("internal Ley-state archive contains an unsafe path")
         archive.extractall(root, filter="data")
+    private_config = root / "config" / "app.leynotes.desktop"
+    if private_config.is_dir():
+        private_config.chmod(0o700)
 
 
 def snapshot_project_tree(project: Path) -> dict[str, tuple[str, int, bytes]]:
@@ -1852,23 +1868,58 @@ def prepare_ley_reference_projects(
         init_project(reference, str(definition["name"]), vault)
         if definition.get("selected") is True:
             selected_count += 1
-            receipt = cli_json(["mount", "add", str(reference), str(project), "--json"])
-            if not isinstance(receipt, dict) or not isinstance(receipt.get("mount"), dict):
-                raise RuntimeError("explicit reference mount returned no mount receipt")
-            mount = receipt["mount"]
-            mount_id = str(mount.get("mountId", ""))
-            if (
-                not mount_id.startswith("mnt_")
-                or mount.get("agentContextEnabled") is not True
-                or mount.get("status") != "ready"
-            ):
-                raise RuntimeError("explicit reference mount was not ready for agent context")
+            seed_legacy_context_mount(project, reference)
     if selected_count != 1:
         raise RuntimeError("agent task reference setup requires exactly one selected project")
     return {
         "referenceProjectCount": len(definitions),
         "selectedReferenceCount": selected_count,
     }
+
+
+def project_id(project: Path) -> str:
+    diagnostic = cli_json(["doctor", str(project), "--json"])
+    identity = diagnostic.get("identity") if isinstance(diagnostic, dict) else None
+    value = identity.get("projectId") if isinstance(identity, dict) else None
+    if not isinstance(value, str) or not value.startswith("prj_"):
+        raise RuntimeError(f"doctor returned no stable project ID for {project.name}")
+    return value
+
+
+def seed_legacy_context_mount(active: Path, reference: Path) -> str:
+    """Seed retained mount compatibility state without reopening retired mount creation."""
+
+    active_id = project_id(active)
+    reference_id = project_id(reference)
+    mount_id = "mnt_" + hashlib.sha256(
+        f"agent-eval:{active_id}:{reference_id}".encode("utf-8")
+    ).hexdigest()[:32]
+    registry_path = (
+        Path(EVAL_ENV["XDG_CONFIG_HOME"])
+        / "app.leynotes.desktop"
+        / "context-mounts-v1.json"
+    )
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    if registry_path.exists():
+        document = json.loads(registry_path.read_text(encoding="utf-8"))
+    else:
+        document = {"schemaVersion": 3, "mounts": {}, "agentMountHistory": {}}
+    if document.get("schemaVersion") != 3:
+        raise RuntimeError("agent-task eval found unsupported retained mount registry schema")
+    mounts = document.setdefault("mounts", {}).setdefault(active_id, {})
+    history = document.setdefault("agentMountHistory", {}).setdefault(active_id, {})
+    mounts[mount_id] = {
+        "sourceProjectId": reference_id,
+        "createdAtUnixMs": int(time.time() * 1000),
+        "agentContextEnabled": True,
+    }
+    history[mount_id] = reference_id
+    registry_path.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    registry_path.chmod(0o600)
+    return mount_id
 
 
 def prepare_ley_context(
@@ -1999,6 +2050,234 @@ def prepare_ley_context(
             else "compiled-context"
         ),
         "recoveryState": recovery_pack.get("state") if recovery_pack is not None else None,
+        **reference_setup,
+    }
+
+
+def automatic_context_pack_id(context: str) -> str:
+    for line in context.splitlines():
+        if not line.startswith("Pack "):
+            continue
+        candidate = line.split(" ", 2)[1].strip()
+        if candidate.startswith("cpk_"):
+            return candidate
+    return ""
+
+
+def prepare_ley_host_session(
+    project: Path,
+    fixture: dict[str, object],
+    mode: str,
+) -> tuple[str, str, dict[str, object]]:
+    reference_setup = prepare_ley_reference_projects(project, fixture)
+    external_id = f"ley-agent-eval-{mode}-" + hashlib.sha256(
+        str(fixture["id"]).encode("utf-8")
+    ).hexdigest()[:16]
+    startup = hook_call(
+        project,
+        "codex",
+        {"hook_event_name": "SessionStart", "session_id": external_id},
+    )
+    session_id = hook_ley_session_id(startup)
+    if not session_id.startswith("ses_"):
+        raise RuntimeError(
+            f"{mode} Ley evaluation startup returned no stable session ID"
+        )
+    return hook_additional_context(startup).strip(), session_id, reference_setup
+
+
+def canonical_briefing_marker_metrics(
+    fixture: dict[str, object],
+    rendered: str,
+) -> dict[str, object]:
+    required_markers = [
+        str(value)
+        for value in [
+            *fixture.get("context_markers", []),
+            *fixture.get("ley_context_markers", []),
+        ]
+    ]
+    present_markers = sum(
+        marker.lower() in rendered.lower() for marker in required_markers
+    )
+    forbidden_markers = [
+        str(value)
+        for value in [
+            *fixture.get("forbidden_context_markers", []),
+            *fixture.get("ley_forbidden_context_markers", []),
+        ]
+    ]
+    leaked = [
+        marker for marker in forbidden_markers if marker.lower() in rendered.lower()
+    ]
+    if leaked:
+        raise RuntimeError(
+            f"canonical Ley briefing exposed {len(leaked)} forbidden benchmark marker(s)"
+        )
+    return {
+        "requiredMarkerCount": len(required_markers),
+        "presentRequiredMarkerCount": present_markers,
+        "requiredMarkerCoverage": (
+            present_markers / len(required_markers) if required_markers else 1.0
+        ),
+        "forbiddenMarkerCount": len(forbidden_markers),
+        "forbiddenMarkerLeakCount": 0,
+    }
+
+
+def prepare_ley_brief_context(
+    project: Path,
+    fixture: dict[str, object],
+) -> tuple[str, dict[str, object]]:
+    """Exercise canonical ley_brief without compatibility recovery tools."""
+
+    task = str(fixture["task"])
+    startup_context, session_id, reference_setup = prepare_ley_host_session(
+        project,
+        fixture,
+        "brief",
+    )
+    explicit = mcp_call(
+        project,
+        "ley_brief",
+        {"task": task, "maxResults": 8, "maxTokens": 1_500},
+    )
+    context_pack_id = str(explicit.get("contextPackId", ""))
+    if not context_pack_id.startswith("cpk_"):
+        raise RuntimeError("canonical Ley brief returned no stable contextPackId")
+    full_brief = render_context(explicit)
+    rendered = (
+        f"{startup_context}\n\n{full_brief.strip()}\n"
+        if startup_context
+        else full_brief
+    )
+    session = mcp_call(
+        project,
+        "ley_session_get",
+        {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
+    )
+    event_count = session.get("eventCount")
+    if not isinstance(event_count, int) or event_count < 1:
+        raise RuntimeError("explicit Ley brief evaluation returned an invalid session")
+    return rendered, {
+        "sessionId": session_id,
+        "bindingId": None,
+        "contextPackId": context_pack_id,
+        "contextSha256": sha256_text(rendered),
+        "contextCharacters": len(rendered),
+        "estimatedTokens": approximate_text_tokens(rendered),
+        "evidenceState": explicit.get("evidenceState"),
+        "requestedMaxTokens": 1_500,
+        "contextTokenBudget": 1_500,
+        "preOutcomeEventCount": event_count,
+        "contextComposition": "session-start+explicit-ley-brief",
+        "fullBriefCharacters": len(full_brief),
+        **canonical_briefing_marker_metrics(fixture, rendered),
+        **reference_setup,
+    }
+
+
+def prepare_ley_automatic_context(
+    project: Path,
+    fixture: dict[str, object],
+) -> tuple[str, dict[str, object]]:
+    """Exercise the shipped automatic-first workflow, including explicit fallback."""
+
+    task = str(fixture["task"])
+    startup_context, session_id, reference_setup = prepare_ley_host_session(
+        project,
+        fixture,
+        "auto",
+    )
+    external_id = "ley-agent-eval-auto-" + hashlib.sha256(
+        str(fixture["id"]).encode("utf-8")
+    ).hexdigest()[:16]
+    prompt = hook_call(
+        project,
+        "codex",
+        {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": external_id,
+            "turn_id": "ley-agent-eval-auto-turn",
+            "prompt": task,
+        },
+    )
+    automatic = automatic_hook_context(prompt)
+    if not automatic.startswith("# Ley task context (automatic)"):
+        raise RuntimeError("automatic Ley evaluation returned no task-context block")
+    automatic_rendered = (
+        f"{startup_context}\n\n{automatic.strip()}\n"
+        if startup_context
+        else automatic.strip() + "\n"
+    )
+
+    explicit = mcp_call(
+        project,
+        "ley_brief",
+        {"task": task, "maxResults": 8, "maxTokens": 1_500},
+    )
+    explicit_pack_id = str(explicit.get("contextPackId", ""))
+    automatic_pack_id = automatic_context_pack_id(automatic)
+    if not explicit_pack_id.startswith("cpk_"):
+        raise RuntimeError("canonical Ley brief returned no stable contextPackId")
+    if automatic_pack_id and automatic_pack_id != explicit_pack_id:
+        raise RuntimeError("automatic hook context and ley_brief resolved different logical packs")
+    full_brief = render_context(explicit)
+    automatic_marker_metrics = canonical_briefing_marker_metrics(
+        fixture,
+        automatic_rendered,
+    )
+    brief_fallback_used = not automatic_pack_id
+    rendered = (
+        automatic_rendered.rstrip() + "\n\n" + full_brief
+        if brief_fallback_used
+        else automatic_rendered
+    )
+    marker_metrics = canonical_briefing_marker_metrics(fixture, rendered)
+
+    session = mcp_call(
+        project,
+        "ley_session_get",
+        {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
+    )
+    event_count = session.get("eventCount")
+    if not isinstance(event_count, int) or event_count < 2:
+        raise RuntimeError("automatic Ley evaluation did not retain the submitted task turn")
+
+    return rendered, {
+        "sessionId": session_id,
+        "bindingId": None,
+        "contextPackId": automatic_pack_id or explicit_pack_id,
+        "contextSha256": sha256_text(rendered),
+        "contextCharacters": len(rendered),
+        "estimatedTokens": approximate_text_tokens(rendered),
+        "evidenceState": explicit.get("evidenceState"),
+        "requestedMaxTokens": None,
+        "contextTokenBudget": 1_500,
+        "preOutcomeEventCount": event_count,
+        "contextComposition": (
+            "session-start+automatic-hook-projection+explicit-brief-fallback"
+            if brief_fallback_used
+            else "session-start+automatic-hook-projection"
+        ),
+        "explicitBriefPackId": explicit_pack_id,
+        "automaticPackId": automatic_pack_id or None,
+        "logicalPackMatched": (
+            automatic_pack_id == explicit_pack_id if automatic_pack_id else None
+        ),
+        "briefFallbackUsed": brief_fallback_used,
+        "fullBriefCharacters": len(full_brief),
+        "automaticProjectionCharacters": len(automatic),
+        "projectionCharacterRatio": (
+            len(automatic) / len(full_brief) if full_brief else None
+        ),
+        "automaticRequiredMarkerCoverage": automatic_marker_metrics[
+            "requiredMarkerCoverage"
+        ],
+        "automaticForbiddenMarkerLeakCount": automatic_marker_metrics[
+            "forbiddenMarkerLeakCount"
+        ],
+        **marker_metrics,
         **reference_setup,
     }
 
@@ -2174,8 +2453,19 @@ def variants_for_repetition(
     first_variant: str,
     repetition: int,
 ) -> tuple[str, ...]:
-    if selected_variant not in {"all", "both"}:
+    if selected_variant not in {"all", "both", "briefing"}:
         return (selected_variant,)
+    if selected_variant == "briefing":
+        if first_variant not in BRIEFING_VARIANTS:
+            raise RuntimeError(
+                "--variant briefing requires ley-brief or ley-auto as --first-variant"
+            )
+        first = (
+            first_variant
+            if repetition % 2 == 1
+            else ("ley-auto" if first_variant == "ley-brief" else "ley-brief")
+        )
+        return (first, "ley-auto" if first == "ley-brief" else "ley-brief")
     if selected_variant == "both":
         if first_variant not in {"baseline", "ley"}:
             raise RuntimeError("--variant both requires baseline or ley as --first-variant")
@@ -2413,7 +2703,7 @@ def execute_variant(
     memory_snapshot: bytes | None = None
     previous_config = EVAL_ENV.get("XDG_CONFIG_HOME")
     try:
-        if variant == "ley":
+        if variant in {"ley", "ley-brief", "ley-auto"}:
             memory_root = Path(tempfile.mkdtemp(prefix="ley-real-agent-memory-"))
             memory_project = memory_root / "project"
             shutil.copytree(project, memory_project)
@@ -2426,16 +2716,31 @@ def execute_variant(
                 if fixture.get("ley_seed_prior_memory", True)
                 else None
             )
-            context_text, utility = prepare_ley_context(
-                memory_project,
-                fixture,
-                prior_session_id,
-                max_results=max_results,
-                max_tokens=max_tokens,
-            )
+            if variant == "ley":
+                context_text, utility = prepare_ley_context(
+                    memory_project,
+                    fixture,
+                    prior_session_id,
+                    max_results=max_results,
+                    max_tokens=max_tokens,
+                )
+            elif variant == "ley-brief":
+                context_text, utility = prepare_ley_brief_context(
+                    memory_project,
+                    fixture,
+                )
+            else:
+                context_text, utility = prepare_ley_automatic_context(
+                    memory_project,
+                    fixture,
+                )
             prompt_context = context_text
             context_metadata = {
-                "kind": "current-full-ley-compiled-context",
+                "kind": {
+                    "ley": "current-full-ley-compiled-context",
+                    "ley-brief": "canonical-explicit-ley-brief",
+                    "ley-auto": "current-ley-automatic-hook-context",
+                }[variant],
                 **{
                     key: value
                     for key, value in utility.items()
@@ -2722,10 +3027,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--variant",
-        choices=("all", "both", *COMPARISON_VARIANTS),
+        choices=("all", "both", "briefing", *COMPARISON_VARIANTS),
         default="all",
         help=(
-            "Run all four comparison arms, legacy baseline+Ley, or one arm. "
+            "Run all six comparison arms, legacy baseline+Ley, canonical explicit-vs-automatic "
+            "briefing, or one arm. "
             "The minimal arm is a fixture-derived benchmark baseline, not the redesigned Ley implementation."
         ),
     )
@@ -2850,6 +3156,10 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"invalid --runner-env name: {name!r}")
     if args.variant == "both" and args.first_variant not in {"baseline", "ley"}:
         raise SystemExit("--variant both requires --first-variant baseline or ley")
+    if args.variant == "briefing" and args.first_variant not in BRIEFING_VARIANTS:
+        raise SystemExit(
+            "--variant briefing requires --first-variant ley-brief or ley-auto"
+        )
     if args.require_ley_advantage and args.variant not in {"all", "both"}:
         raise SystemExit("--require-ley-advantage requires --variant all or both")
     command = shlex.split(args.runner_command)
@@ -2945,6 +3255,8 @@ def main(argv: list[str] | None = None) -> int:
     handoff_task_rate = summaries["handoff"]["taskPassRate"]
     minimal_task_rate = summaries["minimal"]["taskPassRate"]
     ley_task_rate = summaries["ley"]["taskPassRate"]
+    ley_brief_task_rate = summaries["ley-brief"]["taskPassRate"]
+    ley_auto_task_rate = summaries["ley-auto"]["taskPassRate"]
     task_advantage = ley_advantage_observed(summaries)
     regressed_task_ids = regressed_groups(per_task)
     regressed_families = regressed_groups(per_family)
@@ -2983,7 +3295,7 @@ def main(argv: list[str] | None = None) -> int:
         },
         "repetitions": args.repetitions,
         "firstVariant": (
-            args.first_variant if args.variant in {"all", "both"} else None
+            args.first_variant if args.variant in {"all", "both", "briefing"} else None
         ),
         "results": results,
         "comparison": {
@@ -2994,6 +3306,19 @@ def main(argv: list[str] | None = None) -> int:
             "handoffTaskPassRate": handoff_task_rate,
             "minimalTaskPassRate": minimal_task_rate,
             "leyTaskPassRate": ley_task_rate,
+            "leyBriefTaskPassRate": ley_brief_task_rate,
+            "leyAutomaticTaskPassRate": ley_auto_task_rate,
+            "automaticMinusExplicitBriefTaskPassRate": (
+                float(ley_auto_task_rate) - float(ley_brief_task_rate)
+                if ley_auto_task_rate is not None and ley_brief_task_rate is not None
+                else None
+            ),
+            "leyBriefMeanContextCharacters": summaries["ley-brief"][
+                "meanContextCharacters"
+            ],
+            "leyAutomaticMeanContextCharacters": summaries["ley-auto"][
+                "meanContextCharacters"
+            ],
             "leyTaskAdvantageObserved": task_advantage,
             "leyAdvantageAssertionPassed": advantage_assertion,
             "leyRegressedTaskIds": regressed_task_ids,
@@ -3002,13 +3327,17 @@ def main(argv: list[str] | None = None) -> int:
             "handoffHiddenOracle": summaries["handoff"]["hiddenOracle"],
             "minimalHiddenOracle": summaries["minimal"]["hiddenOracle"],
             "leyHiddenOracle": summaries["ley"]["hiddenOracle"],
+            "leyBriefHiddenOracle": summaries["ley-brief"]["hiddenOracle"],
+            "leyAutomaticHiddenOracle": summaries["ley-auto"]["hiddenOracle"],
             "contextUsageProven": False,
             "causalUtilityProven": False,
             "interpretation": (
                 "This is an opt-in external-agent observation. The handoff and minimal arms are simpler "
                 "comparison baselines; the minimal arm is fixture-derived and is not a claim that redesigned "
-                "Ley already exists. Results are not a deterministic CI gate, do not prove causation, and "
-                "must be reproduced before product claims."
+                "Ley already exists. The canonical ley-brief and ley-auto arms isolate explicit full briefing "
+                "from the compact automatic host projection while preserving the historical full-Ley arm. "
+                "Results are not a deterministic CI gate, do not prove causation, and must be reproduced "
+                "before product claims."
             ),
         },
     }

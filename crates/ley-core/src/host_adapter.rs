@@ -1,19 +1,26 @@
 use crate::{
     compile_bootstrap_specifications_with_registries,
-    compile_project_context_for_agent_with_registries, compile_session_memory, diagnose_project,
-    evaluate_agent_egress, project_resume_context, read_session, record_session_prompt,
-    record_session_response, record_session_tool_observation, start_session,
-    AgentContextAuthorities, AgentEgressTarget, AgentSession, BootstrapSpecificationContext,
+    compile_bootstrap_specifications_with_transition_registries,
+    compile_project_context_for_agent_with_registries,
+    compile_project_context_for_agent_with_transition_registries, compile_session_memory,
+    compile_session_memory_with_continuity_transition, diagnose_project, evaluate_agent_egress,
+    project_resume_context, project_resume_context_with_continuity_transition, read_session,
+    read_session_with_continuity_transition, record_session_prompt,
+    record_session_prompt_with_continuity_transition, record_session_response,
+    record_session_response_with_continuity_transition, record_session_tool_observation,
+    record_session_tool_observation_with_continuity_transition, start_session,
+    start_session_with_continuity_transition, AgentContextAuthorities, AgentEgressTarget,
+    AgentSession, ApprovedSourceRegistry, BootstrapSpecificationContext,
     BootstrapSpecificationRegistry, CompiledContextPack, ContextCompileCoverage,
-    ContextCompileLimits, ContextMountRegistry, EgressPolicyRegistry, KnowledgeScopeRegistry,
-    LeyCoreError, MemoryCompilationState, MountedReferenceCoverage, PolicyBundleCompileCoverage,
-    PolicyBundleRegistry, ProjectResumePack, SessionSource, SessionSourceKind, SessionStatus,
-    SharedKnowledgeCoverage, SpecificationCompileCoverage, SpecificationRegistry,
-    StartSessionInput, ToolObservationInput, ToolObservationKind, TurnEvidenceInput,
-    TurnEvidenceOrigin, DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS,
-    DEFAULT_MEMORY_COMPILE_RESULTS, MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS,
-    MIN_MEMORY_COMPILE_CHARACTERS, SESSION_TOOL_COMMAND_LIMIT_CHARACTERS,
-    SESSION_TOOL_RESULT_LIMIT_CHARACTERS,
+    ContextCompileLimits, ContextMountRegistry, ContinuityStore, EgressPolicyRegistry,
+    EgressPolicySnapshot, KnowledgeScopeRegistry, LeyCoreError, MemoryCompilationState,
+    MountedReferenceCoverage, PolicyBundleCompileCoverage, PolicyBundleRegistry, ProjectResumePack,
+    SessionSource, SessionSourceKind, SessionStatus, SharedKnowledgeCoverage,
+    SpecificationCompileCoverage, SpecificationRegistry, StartSessionInput, ToolObservationInput,
+    ToolObservationKind, TurnEvidenceInput, TurnEvidenceOrigin, DEFAULT_CONTEXT_COMPILE_RESULTS,
+    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_MEMORY_COMPILE_RESULTS,
+    MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS, MIN_MEMORY_COMPILE_CHARACTERS,
+    SESSION_TOOL_COMMAND_LIMIT_CHARACTERS, SESSION_TOOL_RESULT_LIMIT_CHARACTERS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -122,6 +129,46 @@ pub fn process_bootstrap_host_hook_for_agent_with_registries(
     egress_registry: &EgressPolicyRegistry,
     target: AgentEgressTarget,
 ) -> Result<HostHookResult, LeyCoreError> {
+    process_bootstrap_host_hook_for_agent_with_authority(
+        workspace.as_ref(),
+        host,
+        payload,
+        bootstrap_registry,
+        egress_registry,
+        None,
+        target,
+    )
+}
+
+pub fn process_bootstrap_host_hook_for_agent_with_transition_registries(
+    workspace: impl AsRef<Path>,
+    host: AgentHost,
+    payload: Value,
+    bootstrap_registry: &BootstrapSpecificationRegistry,
+    egress_registry: &EgressPolicyRegistry,
+    continuity_store: &ContinuityStore,
+    target: AgentEgressTarget,
+) -> Result<HostHookResult, LeyCoreError> {
+    process_bootstrap_host_hook_for_agent_with_authority(
+        workspace.as_ref(),
+        host,
+        payload,
+        bootstrap_registry,
+        egress_registry,
+        Some(continuity_store),
+        target,
+    )
+}
+
+fn process_bootstrap_host_hook_for_agent_with_authority(
+    workspace: &Path,
+    host: AgentHost,
+    payload: Value,
+    bootstrap_registry: &BootstrapSpecificationRegistry,
+    egress_registry: &EgressPolicyRegistry,
+    transition_store: Option<&ContinuityStore>,
+    target: AgentEgressTarget,
+) -> Result<HostHookResult, LeyCoreError> {
     let object = payload.as_object().ok_or_else(|| {
         LeyCoreError::InvalidSessionRequest("host hook payload must be a JSON object".to_owned())
     })?;
@@ -134,17 +181,31 @@ pub fn process_bootstrap_host_hook_for_agent_with_registries(
 
     let prompt = required_text(object.get("prompt"), "prompt")?;
     let context = match normalize_host_task_query(&prompt) {
-        Some(task) => match compile_bootstrap_specifications_with_registries(
-            workspace.as_ref(),
-            &task,
-            ContextCompileLimits {
-                max_results: DEFAULT_CONTEXT_COMPILE_RESULTS,
-                max_tokens: DEFAULT_CONTEXT_COMPILE_TOKENS,
-            },
-            target,
-            bootstrap_registry,
-            egress_registry,
-        ) {
+        Some(task) => match match transition_store {
+            Some(store) => compile_bootstrap_specifications_with_transition_registries(
+                workspace,
+                &task,
+                ContextCompileLimits {
+                    max_results: DEFAULT_CONTEXT_COMPILE_RESULTS,
+                    max_tokens: DEFAULT_CONTEXT_COMPILE_TOKENS,
+                },
+                target,
+                bootstrap_registry,
+                egress_registry,
+                store,
+            ),
+            None => compile_bootstrap_specifications_with_registries(
+                workspace,
+                &task,
+                ContextCompileLimits {
+                    max_results: DEFAULT_CONTEXT_COMPILE_RESULTS,
+                    max_tokens: DEFAULT_CONTEXT_COMPILE_TOKENS,
+                },
+                target,
+                bootstrap_registry,
+                egress_registry,
+            ),
+        } {
             Ok(pack) => format_automatic_bootstrap_context(&pack),
             Err(_) => automatic_bootstrap_context_unavailable(),
         },
@@ -169,6 +230,46 @@ pub fn process_host_hook_for_agent_with_registries(
     registries: HostAgentContextRegistries<'_>,
     target: AgentEgressTarget,
 ) -> Result<HostHookResult, LeyCoreError> {
+    process_host_hook_for_agent_with_authority(
+        project_start.as_ref(),
+        vault.as_ref(),
+        host,
+        payload,
+        registries,
+        None,
+        target,
+    )
+}
+
+pub fn process_host_hook_for_agent_with_transition_registries(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    host: AgentHost,
+    payload: Value,
+    registries: HostAgentContextRegistries<'_>,
+    continuity_store: &ContinuityStore,
+    target: AgentEgressTarget,
+) -> Result<HostHookResult, LeyCoreError> {
+    process_host_hook_for_agent_with_authority(
+        project_start.as_ref(),
+        vault.as_ref(),
+        host,
+        payload,
+        registries,
+        Some(continuity_store),
+        target,
+    )
+}
+
+fn process_host_hook_for_agent_with_authority(
+    project_start: &Path,
+    vault: &Path,
+    host: AgentHost,
+    payload: Value,
+    registries: HostAgentContextRegistries<'_>,
+    transition_store: Option<&ContinuityStore>,
+    target: AgentEgressTarget,
+) -> Result<HostHookResult, LeyCoreError> {
     let HostAgentContextRegistries {
         specifications: specification_registry,
         egress: egress_registry,
@@ -176,8 +277,6 @@ pub fn process_host_hook_for_agent_with_registries(
         knowledge_scopes: knowledge_scope_registry,
         policy_bundles: policy_bundle_registry,
     } = registries;
-    let project_start = project_start.as_ref();
-    let vault = vault.as_ref();
     let object = payload.as_object().ok_or_else(|| {
         LeyCoreError::InvalidSessionRequest("host hook input must be a JSON object".to_owned())
     })?;
@@ -190,8 +289,12 @@ pub fn process_host_hook_for_agent_with_registries(
         None
     };
     let project_id = diagnose_project(project_start)?.identity.project_id;
+    let approved_source_registry = match transition_store {
+        Some(store) => ApprovedSourceRegistry::at(store.clone()),
+        None => ApprovedSourceRegistry::system_default()?,
+    };
 
-    let mut result = egress_registry.with_snapshot_locked(|policies| {
+    let process = |policies: &EgressPolicySnapshot| {
         let project_decision = evaluate_agent_egress(policies.project_policy(&project_id), target);
         if !project_decision.allowed {
             return Ok(noop(host, event.clone()));
@@ -249,8 +352,13 @@ pub fn process_host_hook_for_agent_with_registries(
                 || blocked_scope_source
                 || blocked_policy_bundle_source
             {
-                let session =
-                    ensure_host_session(project_start, vault, host, &external_session_id)?;
+                let session = ensure_host_session(
+                    project_start,
+                    vault,
+                    transition_store,
+                    host,
+                    &external_session_id,
+                )?;
                 return Ok(HostHookResult {
                     schema_version: HOST_ADAPTER_SCHEMA_VERSION,
                     host,
@@ -262,31 +370,63 @@ pub fn process_host_hook_for_agent_with_registries(
             }
         }
 
-        process_host_hook(project_start, vault, host, payload)
-    })?;
+        process_host_hook_with_session_transition(
+            project_start,
+            vault,
+            host,
+            payload,
+            transition_store,
+        )
+    };
+    let mut result = match transition_store {
+        Some(store) => egress_registry.with_transition_snapshot_locked(store, process)?,
+        None => egress_registry.with_snapshot_locked(process)?,
+    };
 
     if event == "UserPromptSubmit" && result.disposition == HostHookDisposition::TurnPrepared {
         let context = match automatic_task
             .as_deref()
             .and_then(normalize_host_task_query)
         {
-            Some(task) => match compile_project_context_for_agent_with_registries(
-                project_start,
-                vault,
-                &task,
-                ContextCompileLimits {
-                    max_results: DEFAULT_CONTEXT_COMPILE_RESULTS,
-                    max_tokens: DEFAULT_CONTEXT_COMPILE_TOKENS,
-                },
-                AgentContextAuthorities {
-                    specifications: specification_registry,
-                    mounts: mount_registry,
-                    knowledge_scopes: knowledge_scope_registry,
-                    policy_bundles: policy_bundle_registry,
-                    egress: egress_registry,
-                },
-                target,
-            ) {
+            Some(task) => match match transition_store {
+                Some(store) => compile_project_context_for_agent_with_transition_registries(
+                    project_start,
+                    vault,
+                    &task,
+                    ContextCompileLimits {
+                        max_results: DEFAULT_CONTEXT_COMPILE_RESULTS,
+                        max_tokens: DEFAULT_CONTEXT_COMPILE_TOKENS,
+                    },
+                    AgentContextAuthorities {
+                        specifications: specification_registry,
+                        approved_sources: &approved_source_registry,
+                        mounts: mount_registry,
+                        knowledge_scopes: knowledge_scope_registry,
+                        policy_bundles: policy_bundle_registry,
+                        egress: egress_registry,
+                    },
+                    store,
+                    target,
+                ),
+                None => compile_project_context_for_agent_with_registries(
+                    project_start,
+                    vault,
+                    &task,
+                    ContextCompileLimits {
+                        max_results: DEFAULT_CONTEXT_COMPILE_RESULTS,
+                        max_tokens: DEFAULT_CONTEXT_COMPILE_TOKENS,
+                    },
+                    AgentContextAuthorities {
+                        specifications: specification_registry,
+                        approved_sources: &approved_source_registry,
+                        mounts: mount_registry,
+                        knowledge_scopes: knowledge_scope_registry,
+                        policy_bundles: policy_bundle_registry,
+                        egress: egress_registry,
+                    },
+                    target,
+                ),
+            } {
                 Ok(pack) => format_automatic_task_context(&pack),
                 Err(LeyCoreError::AgentEgressDenied { .. }) => {
                     automatic_task_context_egress_denied(target)
@@ -307,6 +447,22 @@ pub fn process_host_hook(
     host: AgentHost,
     payload: Value,
 ) -> Result<HostHookResult, LeyCoreError> {
+    process_host_hook_with_session_transition(
+        project_start.as_ref(),
+        vault.as_ref(),
+        host,
+        payload,
+        None,
+    )
+}
+
+fn process_host_hook_with_session_transition(
+    project_start: &Path,
+    vault: &Path,
+    host: AgentHost,
+    payload: Value,
+    transition_store: Option<&ContinuityStore>,
+) -> Result<HostHookResult, LeyCoreError> {
     let object = payload.as_object().ok_or_else(|| {
         LeyCoreError::InvalidSessionRequest("host hook input must be a JSON object".to_owned())
     })?;
@@ -317,25 +473,46 @@ pub fn process_host_hook(
     match (host, event.as_str()) {
         (_, "SessionStart") => {
             let session = ensure_host_session(
-                project_start.as_ref(),
-                vault.as_ref(),
+                project_start,
+                vault,
+                transition_store,
                 host,
                 &external_session_id,
             )?;
-            let resume = project_resume_context(
-                project_start.as_ref(),
-                vault.as_ref(),
-                HOST_RESUME_SESSIONS,
-                HOST_RESUME_LEARNINGS,
-                HOST_RESUME_CHARACTERS,
-            )?;
-            let recovery = compile_session_memory(
-                project_start.as_ref(),
-                vault.as_ref(),
-                &session,
-                DEFAULT_MEMORY_COMPILE_RESULTS,
-                MIN_MEMORY_COMPILE_CHARACTERS,
-            )?;
+            let resume = match transition_store {
+                Some(store) => project_resume_context_with_continuity_transition(
+                    project_start,
+                    vault,
+                    store,
+                    HOST_RESUME_SESSIONS,
+                    HOST_RESUME_LEARNINGS,
+                    HOST_RESUME_CHARACTERS,
+                )?,
+                None => project_resume_context(
+                    project_start,
+                    vault,
+                    HOST_RESUME_SESSIONS,
+                    HOST_RESUME_LEARNINGS,
+                    HOST_RESUME_CHARACTERS,
+                )?,
+            };
+            let recovery = match transition_store {
+                Some(store) => compile_session_memory_with_continuity_transition(
+                    project_start,
+                    vault,
+                    store,
+                    &session,
+                    DEFAULT_MEMORY_COMPILE_RESULTS,
+                    MIN_MEMORY_COMPILE_CHARACTERS,
+                )?,
+                None => compile_session_memory(
+                    project_start,
+                    vault,
+                    &session,
+                    DEFAULT_MEMORY_COMPILE_RESULTS,
+                    MIN_MEMORY_COMPILE_CHARACTERS,
+                )?,
+            };
             let output = session_start_output(
                 host,
                 &format_resume_context(
@@ -358,12 +535,13 @@ pub fn process_host_hook(
         (AgentHost::Codex | AgentHost::ClaudeCode, "UserPromptSubmit") => {
             let prompt = required_text(object.get("prompt"), "prompt")?;
             let session_id = ensure_host_session(
-                project_start.as_ref(),
-                vault.as_ref(),
+                project_start,
+                vault,
+                transition_store,
                 host,
                 &external_session_id,
             )?;
-            let session = read_session(project_start.as_ref(), vault.as_ref(), &session_id)?;
+            let session = read_host_session(project_start, vault, transition_store, &session_id)?;
             if session.status != SessionStatus::Active {
                 return Ok(noop_for_session(host, event, session_id));
             }
@@ -374,18 +552,25 @@ pub fn process_host_hook(
                 &session,
                 TurnSide::Prompt,
             )?;
-            let mutation = record_session_prompt(
-                project_start,
-                vault,
-                &session_id,
-                TurnEvidenceInput {
-                    request_id: stable_request_id(&["prompt", &correlation]),
-                    origin: TurnEvidenceOrigin::HostHook,
-                    host: Some(host.source_name().to_owned()),
-                    correlation_material: Some(correlation),
-                    text: prompt,
-                },
-            )?;
+            let turn_input = TurnEvidenceInput {
+                request_id: stable_request_id(&["prompt", &correlation]),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some(host.source_name().to_owned()),
+                correlation_material: Some(correlation),
+                text: prompt,
+            };
+            let mutation = match transition_store {
+                Some(store) => record_session_prompt_with_continuity_transition(
+                    project_start,
+                    vault,
+                    store,
+                    &session_id,
+                    turn_input,
+                )?,
+                None => {
+                    record_session_prompt(project_start, vault, &session_id, turn_input)?.into()
+                }
+            };
             Ok(HostHookResult {
                 schema_version: HOST_ADAPTER_SCHEMA_VERSION,
                 host,
@@ -405,12 +590,13 @@ pub fn process_host_hook(
                 return Ok(noop(host, event));
             }
             let session_id = ensure_host_session(
-                project_start.as_ref(),
-                vault.as_ref(),
+                project_start,
+                vault,
+                transition_store,
                 host,
                 &external_session_id,
             )?;
-            let session = read_session(project_start.as_ref(), vault.as_ref(), &session_id)?;
+            let session = read_host_session(project_start, vault, transition_store, &session_id)?;
             if session.status != SessionStatus::Active {
                 return Ok(noop_for_session(host, event, session_id));
             }
@@ -421,18 +607,25 @@ pub fn process_host_hook(
                 &session,
                 TurnSide::Response,
             )?;
-            let mutation = record_session_response(
-                project_start,
-                vault,
-                &session_id,
-                TurnEvidenceInput {
-                    request_id: stable_request_id(&["response", &correlation]),
-                    origin: TurnEvidenceOrigin::HostHook,
-                    host: Some(host.source_name().to_owned()),
-                    correlation_material: Some(correlation),
-                    text: response.to_owned(),
-                },
-            )?;
+            let turn_input = TurnEvidenceInput {
+                request_id: stable_request_id(&["response", &correlation]),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some(host.source_name().to_owned()),
+                correlation_material: Some(correlation),
+                text: response.to_owned(),
+            };
+            let mutation = match transition_store {
+                Some(store) => record_session_response_with_continuity_transition(
+                    project_start,
+                    vault,
+                    store,
+                    &session_id,
+                    turn_input,
+                )?,
+                None => {
+                    record_session_response(project_start, vault, &session_id, turn_input)?.into()
+                }
+            };
             Ok(HostHookResult {
                 schema_version: HOST_ADAPTER_SCHEMA_VERSION,
                 host,
@@ -464,12 +657,13 @@ pub fn process_host_hook(
                 HOST_TOOL_COMMAND_INPUT_LIMIT_CHARACTERS,
             )?;
             let session_id = ensure_host_session(
-                project_start.as_ref(),
-                vault.as_ref(),
+                project_start,
+                vault,
+                transition_store,
                 host,
                 &external_session_id,
             )?;
-            let session = read_session(project_start.as_ref(), vault.as_ref(), &session_id)?;
+            let session = read_host_session(project_start, vault, transition_store, &session_id)?;
             if session.status != SessionStatus::Active {
                 return Ok(noop_for_session(host, event, session_id));
             }
@@ -502,26 +696,34 @@ pub fn process_host_hook(
                 &tool_use_id,
                 &event,
             ]);
-            let mutation = record_session_tool_observation(
-                project_start,
-                vault,
-                &session_id,
-                ToolObservationInput {
-                    request_id,
-                    host: host.source_name().to_owned(),
-                    turn_correlation_material: Some(turn_correlation),
-                    tool_call_correlation_material: format!(
-                        "host={}\nsession={}\ntool-use={}",
-                        host.source_name(),
-                        external_session_id,
-                        tool_use_id
-                    ),
-                    tool_name,
-                    observation_kind,
-                    command,
-                    result,
-                },
-            )?;
+            let tool_input = ToolObservationInput {
+                request_id,
+                host: host.source_name().to_owned(),
+                turn_correlation_material: Some(turn_correlation),
+                tool_call_correlation_material: format!(
+                    "host={}\nsession={}\ntool-use={}",
+                    host.source_name(),
+                    external_session_id,
+                    tool_use_id
+                ),
+                tool_name,
+                observation_kind,
+                command,
+                result,
+            };
+            let mutation = match transition_store {
+                Some(store) => record_session_tool_observation_with_continuity_transition(
+                    project_start,
+                    vault,
+                    store,
+                    &session_id,
+                    tool_input,
+                )?,
+                None => {
+                    record_session_tool_observation(project_start, vault, &session_id, tool_input)?
+                        .into()
+                }
+            };
             Ok(HostHookResult {
                 schema_version: HOST_ADAPTER_SCHEMA_VERSION,
                 host,
@@ -550,6 +752,20 @@ fn serialize_tool_response(value: Option<&Value>) -> Result<String, LeyCoreError
     let mut budget = ToolResponseFlattenBudget::default();
     flatten_tool_response(value, "", &mut output, &mut budget, 0)?;
     Ok(output)
+}
+
+fn read_host_session(
+    project_start: &Path,
+    vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+    session_id: &str,
+) -> Result<AgentSession, LeyCoreError> {
+    match transition_store {
+        Some(store) => {
+            read_session_with_continuity_transition(project_start, vault, store, session_id)
+        }
+        None => read_session(project_start, vault, session_id),
+    }
 }
 
 #[derive(Debug, Default)]
@@ -699,32 +915,33 @@ fn ensure_tool_response_input_bound(characters: usize) -> Result<(), LeyCoreErro
 fn ensure_host_session(
     project: &Path,
     vault: &Path,
+    transition_store: Option<&ContinuityStore>,
     host: AgentHost,
     external_session_id: &str,
 ) -> Result<String, LeyCoreError> {
     let request_id = stable_request_id(&["start", host.source_name(), external_session_id]);
     let short_id = request_id["req_".len()..("req_".len() + 8)].to_owned();
-    let mutation = start_session(
-        project,
-        vault,
-        StartSessionInput {
-            request_id,
-            name: format!("{} session {short_id}", host.label()),
-            goal: format!(
-                "Preserve durable, local continuity for this {} project session.",
-                host.label()
-            ),
-            source: SessionSource {
-                kind: SessionSourceKind::HostHook,
-                host: Some(host.source_name().to_owned()),
-                // Model fields are not present on every event and can change
-                // during one host thread. Keeping the start payload stable is
-                // required for crash-safe replay.
-                agent: None,
-                source_reference: None,
-            },
+    let input = StartSessionInput {
+        request_id,
+        name: format!("{} session {short_id}", host.label()),
+        goal: format!(
+            "Preserve durable, local continuity for this {} project session.",
+            host.label()
+        ),
+        source: SessionSource {
+            kind: SessionSourceKind::HostHook,
+            host: Some(host.source_name().to_owned()),
+            // Model fields are not present on every event and can change
+            // during one host thread. Keeping the start payload stable is
+            // required for crash-safe replay.
+            agent: None,
+            source_reference: None,
         },
-    )?;
+    };
+    let mutation = match transition_store {
+        Some(store) => start_session_with_continuity_transition(project, vault, store, input)?,
+        None => start_session(project, vault, input)?.into(),
+    };
     Ok(mutation.session.session_id)
 }
 
@@ -755,13 +972,13 @@ fn format_resume_context(
         if can_checkpoint {
             let _ = writeln!(
                 context,
-                "\nRecovery signal: this same Ley session has {unconsolidated_evidence} prompt/response record(s) after its latest structured checkpoint ({state}). Their bodies were not injected here. Inspect `ley_session_memory_compile` before reconstructing a recovery checkpoint, and use its `sessionEventCount` as `expectedEventCount` so newer evidence cannot be overwritten.",
+                "\nRecovery signal: this same Ley session has {unconsolidated_evidence} prompt/response record(s) after its latest structured checkpoint ({state}). Their bodies were not injected here. Treat the interrupted window as incomplete historical evidence: verify relevant repository/runtime state with normal host tools before claiming an outcome, and use `ley_checkpoint` only for current state you can now support. Keep anything uncertain or unfinished explicit.",
                 state = memory_compilation_state_label(recovery_state),
             );
         } else {
             let _ = writeln!(
                 context,
-                "\nHistorical recovery notice: this Ley session is no longer active but still has {unconsolidated_evidence} prompt/response record(s) after its latest structured checkpoint ({state}). Their bodies were not injected here. You may inspect `ley_session_memory_compile` as historical evidence, but do not reconstruct or write a recovery checkpoint for this session (`canCheckpoint: false`).",
+                "\nHistorical recovery notice: this Ley session is no longer active but still has {unconsolidated_evidence} prompt/response record(s) after its latest structured checkpoint ({state}). Their bodies were not injected here. Treat the interrupted window as incomplete historical evidence and do not reconstruct or write a checkpoint for this closed session (`canCheckpoint: false`). Verify any current claim from live repository/runtime state instead.",
                 state = memory_compilation_state_label(recovery_state),
             );
         }
@@ -850,7 +1067,7 @@ fn session_start_egress_withheld_output(
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": format!(
-                "# Ley project memory\n\nCurrent Ley session: {session_id}.\nHistorical Ley startup context is withheld by OS-private egress policy for the '{target}' agent target. Do not reconstruct withheld session, learning, Specification, or mounted-reference content from nearby memory. Use ley_compile_context for task-specific context that is allowed for this target; direct captured project evidence may still be available under the active-project policy."
+                "# Ley project memory\n\nCurrent Ley session: {session_id}.\nHistorical Ley startup context is withheld by OS-private egress policy for the '{target}' agent target. Do not reconstruct withheld session, learning, Specification, or mounted-reference content from nearby memory. Use ley_brief for task-specific context that is allowed for this target; direct captured project evidence may still be available under the active-project policy."
             )
         },
         "systemMessage": format!(
@@ -880,7 +1097,7 @@ fn turn_start_output(_host: AgentHost, session_id: &str, session: &AgentSession)
         "hookSpecificOutput": {
             "hookEventName": event,
             "additionalContext": format!(
-                "Ley is active for this project. Continue the existing local Ley session {session_id}; do not start a parallel session. {capture} Ley never reads the complete host transcript automatically. If this turn produces a meaningful decision, implementation, diagnosis, failed attempt, solution, verification result, or handoff, use ley_session_checkpoint for {session_id} before the final response. Store concise structure and project-relative evidence, never secrets, hidden reasoning, environment dumps, or complete tool output."
+                "Ley is active for this project. Continue the existing local Ley session {session_id}; do not start a parallel session. {capture} Ley never reads the complete host transcript automatically. If this turn produces a meaningful decision, implementation, diagnosis, failed attempt, solution, verification result, or handoff, use ley_checkpoint for {session_id} before the final response. Store concise structure and project-relative evidence, never secrets, hidden reasoning, environment dumps, or complete tool output."
             )
         }
     })
@@ -1165,7 +1382,7 @@ fn format_automatic_task_context(pack: &CompiledContextPack) -> String {
     }
 
     let omissions = format!(
-        "Host rendering omitted: premiseWarnings={}, specifications={}, policyBundlePolicies={}, activeItems={}, mountedReferences={}, sharedReferences={}, conflicts={}, gaps={}, followUps={}; unrendered compiler exclusions active={}, specs={}, policies={}, mounts={}, shared={}. Compiler coverage: searchTruncated={}, sourceTruncated={}, omittedActiveItems={}, omittedSpecs={}, omittedPolicyBundles={}, omittedPolicyItems={}, omittedPolicyExclusions={}, omittedMountScopes={}, omittedMountItems={}, omittedMountExclusions={}, omittedSharedScopes={}, omittedSharedItems={}, omittedSharedExclusions={}. Use pack ID with `ley_context_pack_inspect` for attribution; call `ley_compile_context` again only for a materially changed/refined task or when this compact pack is insufficient. No compiled pack or utility binding was persisted by automatic injection.",
+        "Host rendering omitted: premiseWarnings={}, specifications={}, policyBundlePolicies={}, activeItems={}, mountedReferences={}, sharedReferences={}, conflicts={}, gaps={}, followUps={}; unrendered compiler exclusions active={}, specs={}, policies={}, mounts={}, shared={}. Compiler coverage: searchTruncated={}, sourceTruncated={}, omittedActiveItems={}, omittedSpecs={}, omittedPolicyBundles={}, omittedPolicyItems={}, omittedPolicyExclusions={}, omittedMountScopes={}, omittedMountItems={}, omittedMountExclusions={}, omittedSharedScopes={}, omittedSharedItems={}, omittedSharedExclusions={}. Use pack ID with `ley_context_pack_inspect` for attribution; call `ley_brief` only for a materially changed/refined task or when this compact pack is insufficient. No compiled pack or utility binding was persisted by automatic injection.",
         pack.premise_adjudication
             .warnings
             .len()
@@ -1244,18 +1461,18 @@ fn host_compiler_omissions_from_coverage(
 
 fn automatic_task_context_rendering_overflow() -> String {
     format!(
-        "# Ley task context (automatic)\n\nLey compiled the current task, but the compact host projection exceeded Ley's {HOST_TASK_CONTEXT_MAX_BYTES}-byte injection bound after truthful omission accounting, so no partial context pack was injected. The user prompt was not repeated or truncated. If task-specific memory is useful, call `ley_compile_context` once with the current task or a concise refinement."
+        "# Ley task context (automatic)\n\nLey compiled the current task, but the compact host projection exceeded Ley's {HOST_TASK_CONTEXT_MAX_BYTES}-byte injection bound after truthful omission accounting, so no partial context pack was injected. The user prompt was not repeated or truncated. If task-specific memory is useful, call `ley_brief` once with the current task or a concise refinement."
     )
 }
 
 fn automatic_task_context_query_out_of_bounds() -> String {
     format!(
-        "# Ley task context (automatic)\n\nLey captured this turn, but it did not auto-compile task context because the exact prompt cannot be represented within Ley's bounded {MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS}-character project-memory query after whitespace normalization. Ley did not truncate or reinterpret the task. If task-specific memory is useful, call `ley_compile_context` once with a concise formulation of the current task."
+        "# Ley task context (automatic)\n\nLey captured this turn, but it did not auto-compile task context because the exact prompt cannot be represented within Ley's bounded {MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS}-character project-memory query after whitespace normalization. Ley did not truncate or reinterpret the task. If task-specific memory is useful, call `ley_brief` once with a concise formulation of the current task."
     )
 }
 
 fn automatic_task_context_unavailable() -> String {
-    "# Ley task context (automatic)\n\nLey captured this turn, but automatic task-context compilation was unavailable. No raw local error or path is exposed here, and missing context must not be inferred. If task-specific memory is useful, call `ley_compile_context` once with a concise current-task query."
+    "# Ley task context (automatic)\n\nLey captured this turn, but automatic task-context compilation was unavailable. No raw local error or path is exposed here, and missing context must not be inferred. If task-specific memory is useful, call `ley_brief` once with a concise current-task query."
         .to_owned()
 }
 
@@ -1572,6 +1789,50 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn transition_bootstrap_host_honors_migrated_native_source_denial() {
+        let (_temporary, target, source, _specification_id, bootstrap, egress) =
+            bootstrap_host_fixture(
+                "# Product\n\nbootstrap_transition_host_marker is private approved intent.\n",
+            );
+        let store = ContinuityStore::at(
+            egress
+                .path()
+                .with_file_name("transition-continuity.sqlite3"),
+        );
+        let source_identity = diagnose_project(&source).unwrap().identity;
+        store.register_project(&source_identity).unwrap();
+        store
+            .set_project_egress_policy(&source_identity.project_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+
+        let initial_entries = fs::read_dir(&target).unwrap().count();
+        let loaded = process_bootstrap_host_hook_for_agent_with_transition_registries(
+            &target,
+            AgentHost::Codex,
+            json!({
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "bootstrap-transition-host-thread",
+                "prompt": "implement bootstrap_transition_host_marker",
+            }),
+            &bootstrap,
+            &egress,
+            &store,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(loaded.disposition, HostHookDisposition::ContextLoaded);
+        assert!(loaded.session_id.is_none());
+        let context = loaded.output["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(context.starts_with("# Ley bootstrap task context (automatic)"));
+        assert!(!context.contains("bootstrap_transition_host_marker is private approved intent"));
+        assert_eq!(fs::read_dir(&target).unwrap().count(), initial_entries);
+        assert!(!target.join(".ley").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn bootstrap_host_omits_a_large_specification_whole_instead_of_clipping_human_intent() {
         let body = format!(
             "# Large product\n\nbootstrap_large_marker LARGE_BOOTSTRAP_BODY_START {} LARGE_BOOTSTRAP_BODY_END\n",
@@ -1742,7 +2003,6 @@ mod tests {
         assert_eq!(prepared.disposition, HostHookDisposition::TurnPrepared);
         assert_eq!(prepared.session_id, started.session_id);
         let prepared_output = prepared.output.to_string();
-        assert!(prepared_output.contains("ley_session_checkpoint"));
         assert!(!prepared_output.contains("turn-1"));
         assert!(!prepared_output.contains("secret-value"));
 
@@ -1791,8 +2051,10 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(resumed_context.contains("Recovery signal"));
-        assert!(resumed_context.contains("ley_session_memory_compile"));
-        assert!(resumed_context.contains("expectedEventCount"));
+        assert!(resumed_context.contains("ley_checkpoint"));
+        assert!(resumed_context.contains("incomplete historical evidence"));
+        assert!(resumed_context.contains("repository/runtime state"));
+        assert!(!resumed_context.contains("ley_session_memory_"));
         assert!(!resumed_context.contains("fix the watcher"));
         assert!(!resumed_context.contains("Implemented the vault watcher"));
 
@@ -1829,7 +2091,9 @@ mod tests {
         assert!(!terminal_context.contains("Recovery signal"));
         assert!(terminal_context.contains("Historical recovery notice"));
         assert!(terminal_context.contains("canCheckpoint: false"));
-        assert!(terminal_context.contains("ley_session_memory_compile"));
+        assert!(terminal_context.contains("incomplete historical evidence"));
+        assert!(terminal_context.contains("closed session"));
+        assert!(!terminal_context.contains("ley_session_memory_"));
         assert!(!terminal_context.contains("fix the watcher"));
         assert!(!terminal_context.contains("Implemented the vault watcher"));
     }
@@ -2282,6 +2546,74 @@ mod tests {
     }
 
     #[test]
+    fn transition_host_hook_applies_migrated_native_project_denial() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("project");
+        let vault = base.path().join("vault");
+        let config = base.path().join("config");
+        let private = base.path().join("private");
+        for path in [&project, &vault, &config, &private] {
+            fs::create_dir(path).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(project.join("README.md"), "# Transition hook\n").unwrap();
+        let initialized =
+            initialize_project(&project, Some("Transition hook"), CaptureMode::Structured).unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let specifications =
+            SpecificationRegistry::at(config.join(crate::SPECIFICATION_REGISTRY_FILE));
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
+        let scopes = KnowledgeScopeRegistry::at(config.join("knowledge-scopes-v1.json"));
+        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        store.register_project(&initialized.identity).unwrap();
+        store
+            .set_project_egress_policy(
+                &initialized.identity.project_id,
+                AgentEgressPolicy::NeverSend,
+            )
+            .unwrap();
+        assert_eq!(
+            egress.list(&project).unwrap().project_policy,
+            AgentEgressPolicy::AgentOk
+        );
+
+        let before = list_sessions(&project, &vault).unwrap().len();
+        let blocked = process_host_hook_for_agent_with_transition_registries(
+            &project,
+            &vault,
+            AgentHost::Codex,
+            json!({
+                "session_id": "codex-native-project-denied-prompt",
+                "cwd": project,
+                "hook_event_name": "UserPromptSubmit",
+                "turn_id": "turn-native-egress-denied",
+                "prompt": "This prompt must not create Ley state"
+            }),
+            HostAgentContextRegistries {
+                specifications: &specifications,
+                egress: &egress,
+                mounts: &mounts,
+                knowledge_scopes: &scopes,
+                policy_bundles: &policy_bundles,
+            },
+            &store,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert_eq!(blocked.disposition, HostHookDisposition::Noop);
+        assert_eq!(blocked.output, json!({}));
+        assert!(blocked.session_id.is_none());
+        assert_eq!(list_sessions(&project, &vault).unwrap().len(), before);
+    }
+
+    #[test]
     fn agent_hook_egress_withholds_startup_history_and_project_denial_is_noop() {
         let base = tempdir().unwrap();
         let project = base.path().join("project");
@@ -2348,6 +2680,8 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(cloud_context.contains("Historical Ley startup context is withheld"));
+        assert!(cloud_context.contains("ley_brief"));
+        assert!(!cloud_context.contains("ley_compile_context"));
         assert!(cloud_context.contains(cloud.session_id.as_deref().unwrap()));
         assert!(!cloud_context.contains(prior_marker));
 
@@ -2513,6 +2847,11 @@ mod tests {
         let config = base.path().join("config");
         for path in [&project, &vault, &source, &source_vault, &config] {
             fs::create_dir(path).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
         }
         fs::write(project.join("README.md"), "# Active\n").unwrap();
         fs::write(source.join("README.md"), "# Policy source\n").unwrap();
@@ -2826,7 +3165,7 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(context.contains(prepared.session_id.as_deref().unwrap()));
-        assert!(context.contains("ley_session_checkpoint"));
+        assert!(context.contains("ley_checkpoint"));
         assert!(context.contains("# Ley task context (automatic)"));
         assert!(!context.contains("NEVER_STORE_THIS_PROMPT"));
 

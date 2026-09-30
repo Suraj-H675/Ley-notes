@@ -709,6 +709,23 @@ were discarded only after path hashes proved one of the two evaluator artifacts 
 under the corrected harness. The study is evidence for the capabilities exercised by those fixtures, not
 a general claim that the current full Ley architecture should survive the reset.
 
+The historical `ley` arm is intentionally preserved unchanged so those Phase-0 results remain
+reproducible. The current harness adds two separate canonical briefing arms instead of silently redefining
+that control:
+
+- `ley-brief` starts a real host session and supplies the full canonical `ley_brief` result;
+- `ley-auto` exercises the real host `SessionStart` + `UserPromptSubmit` path first. If the automatic
+  projection contains a stable pack ID, that bounded projection is the only task brief. If the host
+  truthfully returns its explicit compact-projection fallback instead, the evaluator follows the shipped
+  Skill contract and supplies one `ley_brief` fallback. It never uses fixture ground truth to decide
+  whether to fall back.
+
+Both canonical arms keep Ley/private state outside the downstream runner. Reports record whether the
+automatic path used the explicit brief fallback, automatic-only marker coverage, final marker coverage,
+automatic/full-brief character counts, the projection ratio, and logical pack identity when the compact
+projection exposed one. Forbidden-marker leakage remains a hard evaluator error. These fields describe
+delivery behavior; they do not prove that a model read or causally used any supplied context.
+
 Runner stdout/stderr are captured through anonymous temporary file descriptors and discarded after
 their byte counts/hashes are computed. Normal reports retain no raw model output, no full context body,
 no raw runner command, and no runtime-secret value. They record the executable name, optional
@@ -740,8 +757,10 @@ IDs, revalidation state, and utility projection. That observation must continue 
 
 The evaluator never turns a model-dependent success into memory authority or ranking changes.
 
-Repeated four-arm runs rotate arm order across **task × repetition** so a particular task family is not
-systematically coupled to the same first arm. A suite report aggregates the same attempts overall,
+Repeated all-arm runs rotate the six current arms across **task × repetition** so a particular task family
+is not systematically coupled to the same first arm. The dedicated `briefing` mode alternates only
+`ley-brief` and `ley-auto` across repetitions, preserving the same fixture/oracle while isolating the
+brief-delivery question. A suite report aggregates the same attempts overall,
 per-task, and per-family; it also records any task IDs/families where Ley's pass rate is below at least
 one simpler arm. Aggregate improvement must therefore never be used to hide stale-memory harm in a
 specific family. A result is not a product claim merely because `leyTaskAdvantageObserved` is true.
@@ -778,6 +797,21 @@ python eval/run_agent_task_eval.py \
   --runner-command '<runner command>'
 ```
 
+Compare only the canonical explicit and automatic-first briefing workflows:
+
+```text
+python eval/run_agent_task_eval.py \
+  --task divergent-feature-flag-contract \
+  --task verified-timeout-contract \
+  --task crash-slug-normalization-contract \
+  --task explicit-reference-cache-contract \
+  --variant briefing \
+  --first-variant ley-brief \
+  --repetitions 3 \
+  --runner-label pinned-runner-model \
+  --runner-command '<runner command>'
+```
+
 The full checked-in corpus is intentionally **not** the implicit real-agent default. Use
 `--all-tasks` explicitly when you actually intend to pay for every selected arm/repetition. By contrast,
 `--validate` with no task selector still validates the full corpus because it makes no model calls.
@@ -790,12 +824,14 @@ Other runners should use the same minimum-exposure pattern for authentication an
 executables.
 
 `--require-ley-advantage` is a local experiment assertion on the **overall task pass rate**, not the
-hidden-oracle pass rate. In a four-arm run Ley must be strictly above every simpler included arm **and**
+hidden-oracle pass rate. In an all-arm run the preserved historical Ley arm must be strictly above every
+simpler included arm **and**
 must not regress on any reported task or task family; in legacy `both` mode it compares baseline and Ley
 under the same no-regression rule. Normal schema-v3 reports expose overall/per-task/per-family variant
 summaries, hidden-oracle attempted/passed/failed/skipped counts, mean runner time, mean supplied context
-characters, regression lists, selected task IDs/families, and planned attempt count while retaining the
-older baseline/Ley summary fields and single-task `taskId`/`taskFamily` fields for compatibility. A hidden
+characters, canonical explicit/automatic briefing pass rates and context-size summaries, regression
+lists, selected task IDs/families, and planned attempt count while retaining the older baseline/Ley
+summary fields and single-task `taskId`/`taskFamily` fields for compatibility. A hidden
 oracle that was not run because an earlier gate failed is recorded as `skipped`, never as `failed`.
 Do not add this assertion to deterministic CI or reinterpret one failed simpler arm / passed Ley arm as
 causal proof.

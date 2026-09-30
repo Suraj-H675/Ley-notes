@@ -1,20 +1,22 @@
+use crate::approved_source::ApprovedSourceAuthoritySnapshot;
 use crate::knowledge_scope::validate_knowledge_scope_id;
 use crate::project_memory_search::lexical_score;
+use crate::specification::specification_task_terms;
 use crate::specification::validate_specification_id;
-use crate::specification::{specification_task_terms, SpecificationAuthoritySnapshot};
 use crate::{
     default_binding_registry_path, diagnose_project, evaluate_agent_egress, validate_project_id,
     AgentEgressBlockReason, AgentEgressPolicy, AgentEgressScopeKind, AgentEgressTarget,
-    ApprovedSpecificationSource, BindingRegistry, EgressPolicySnapshot, KnowledgeScopeKind,
-    KnowledgeScopeRegistry, LeyCoreError, ProjectCatalog, SpecificationRegistry,
-    BINDING_REGISTRY_FILE, METADATA_FILE_LIMIT_BYTES, PROJECT_CATALOG_FILE,
-    SPECIFICATION_REGISTRY_FILE,
+    ApprovedSourceRegistry, ApprovedSpecificationSource, BindingRegistry, ContinuityStore,
+    EgressPolicySnapshot, KnowledgeScopeKind, KnowledgeScopeRegistry, LeyCoreError, ProjectCatalog,
+    SpecificationRegistry, BINDING_REGISTRY_FILE, CONTINUITY_DATABASE_FILE,
+    METADATA_FILE_LIMIT_BYTES, PROJECT_CATALOG_FILE, SPECIFICATION_REGISTRY_FILE,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -26,8 +28,9 @@ pub const MAX_POLICY_BUNDLE_SOURCES: usize = 16;
 pub const MAX_ATTACHED_POLICY_BUNDLES_PER_PROJECT: usize = 8;
 pub const MAX_POLICY_BUNDLE_HISTORY_PER_PROJECT: usize = 256;
 
-const PRIVACY_NOTICE: &str = "Policy Bundle authority is OS-private. It stores stable bundle/scope/project/Specification identities, exact approved content hashes, explicit project attachments, and bounded attachment history only. Policy Markdown remains in the user's ordinary vault; project and vault paths remain owned by Ley's private project catalog and binding registry.";
+const PRIVACY_NOTICE: &str = "Policy Bundle compatibility state is OS-private. It stores stable bundle/scope/project/approved-source identities, exact approved content hashes, explicit project attachments, and bounded attachment history only. Source content is resolved through native approved-source authority; the legacy vault/binding is consulted only once if that source project has not completed approved-source migration.";
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyBundleSourceInput {
     pub source_project: PathBuf,
@@ -77,6 +80,7 @@ pub struct PolicyBundle {
     pub created_at_unix_ms: u64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PolicyBundleMutation {
@@ -110,6 +114,7 @@ pub struct PolicyBundleAttachment {
     pub state: PolicyBundleAttachmentState,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PolicyBundleAttachmentMutation {
@@ -197,7 +202,7 @@ pub(crate) struct PolicyBundleTaskScan {
 pub(crate) struct PolicyBundleTaskScanRequest<'a> {
     pub active_scope_ids: &'a BTreeSet<String>,
     pub task: &'a str,
-    pub specification_authority: &'a SpecificationAuthoritySnapshot<'a>,
+    pub specification_authority: &'a ApprovedSourceAuthoritySnapshot<'a>,
     pub policies: &'a EgressPolicySnapshot,
     pub target: AgentEgressTarget,
 }
@@ -221,13 +226,12 @@ pub(crate) struct PolicyBundleAgentEgressExclusion {
 }
 
 #[derive(Debug, Clone)]
-struct ResolvedPolicySourceLocation {
+struct ResolvedNativePolicySourceLocation {
     source_project_id: String,
     source_project_name: String,
     specification_id: String,
     expected_content_hash: String,
     project_root: PathBuf,
-    vault_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -360,13 +364,19 @@ pub struct PolicyBundleRegistry {
     project_catalog: ProjectCatalog,
     binding_registry: BindingRegistry,
     specification_registry: SpecificationRegistry,
+    approved_source_registry: ApprovedSourceRegistry,
 }
 
 impl PolicyBundleRegistry {
     pub fn system_default() -> Result<Self, LeyCoreError> {
-        Ok(Self::at(
-            default_binding_registry_path()?.with_file_name(POLICY_BUNDLE_REGISTRY_FILE),
-        ))
+        let path = default_binding_registry_path()?.with_file_name(POLICY_BUNDLE_REGISTRY_FILE);
+        Ok(Self {
+            project_catalog: ProjectCatalog::system_default()?,
+            binding_registry: BindingRegistry::system_default()?,
+            specification_registry: SpecificationRegistry::system_default()?,
+            approved_source_registry: ApprovedSourceRegistry::system_default()?,
+            path,
+        })
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {
@@ -377,6 +387,9 @@ impl PolicyBundleRegistry {
             specification_registry: SpecificationRegistry::at(
                 path.with_file_name(SPECIFICATION_REGISTRY_FILE),
             ),
+            approved_source_registry: ApprovedSourceRegistry::at(ContinuityStore::at(
+                path.with_file_name(CONTINUITY_DATABASE_FILE),
+            )),
             path,
         }
     }
@@ -385,6 +398,7 @@ impl PolicyBundleRegistry {
         &self.path
     }
 
+    #[cfg(test)]
     pub fn create(
         &self,
         scope_id: &str,
@@ -509,6 +523,7 @@ impl PolicyBundleRegistry {
         })
     }
 
+    #[cfg(test)]
     pub fn attach(
         &self,
         active_project: impl AsRef<Path>,
@@ -849,9 +864,11 @@ impl PolicyBundleRegistry {
                         continue;
                     }
 
-                    let location = match self.resolve_source_for_agent(source)? {
-                        ResolvedBundleSource::Ready(location) => location,
-                        ResolvedBundleSource::Unavailable(unavailable) => {
+                    let location = match self
+                        .resolve_source_for_native_agent(source, specification_authority.store())?
+                    {
+                        Ok(location) => location,
+                        Err(unavailable) => {
                             unavailable_sources = unavailable_sources.saturating_add(1);
                             exclusions.push(PolicyBundleTaskExclusion {
                                 bundle_id: bundle_id.clone(),
@@ -868,12 +885,12 @@ impl PolicyBundleRegistry {
                     };
 
                     let approved = match specification_authority.read_approved_source(
+                        &location.project_root,
                         &location.source_project_id,
-                        &location.vault_path,
                         &location.specification_id,
                     ) {
                         Ok(approved) => approved,
-                        Err(LeyCoreError::SpecificationNotApproved(_)) => {
+                        Err(LeyCoreError::ApprovedSourceNotFound(_)) => {
                             unavailable_sources = unavailable_sources.saturating_add(1);
                             exclusions.push(PolicyBundleTaskExclusion {
                                 bundle_id: bundle_id.clone(),
@@ -885,7 +902,7 @@ impl PolicyBundleRegistry {
                             });
                             continue;
                         }
-                        Err(LeyCoreError::SpecificationApprovalStale { .. }) => {
+                        Err(LeyCoreError::ApprovedSourceStale { .. }) => {
                             unavailable_sources = unavailable_sources.saturating_add(1);
                             exclusions.push(PolicyBundleTaskExclusion {
                                 bundle_id: bundle_id.clone(),
@@ -1091,62 +1108,110 @@ impl PolicyBundleRegistry {
         &self,
         source: &PolicyBundleSourceRef,
     ) -> Result<PolicyBundleSource, LeyCoreError> {
-        match self.resolve_source_for_agent(source)? {
-            ResolvedBundleSource::Ready(ready) => {
-                let approved = match self.specification_registry.read_approved_source(
-                    &ready.project_root,
-                    &ready.vault_path,
-                    &ready.specification_id,
-                ) {
-                    Ok(approved) => approved,
-                    Err(LeyCoreError::SpecificationNotApproved(_)) => {
-                        return Ok(unavailable_source(
-                            source,
-                            Some(ready.source_project_name),
-                            PolicyBundleSourceStatus::SpecificationNotApproved,
-                        ))
-                    }
-                    Err(LeyCoreError::SpecificationApprovalStale { .. }) => {
-                        return Ok(unavailable_source(
-                            source,
-                            Some(ready.source_project_name),
-                            PolicyBundleSourceStatus::SpecificationRevisionChanged,
-                        ))
-                    }
-                    Err(LeyCoreError::Io { source: error, .. })
-                        if error.kind() == std::io::ErrorKind::NotFound =>
-                    {
-                        return Ok(unavailable_source(
-                            source,
-                            Some(ready.source_project_name),
-                            PolicyBundleSourceStatus::SpecificationSourceUnavailable,
-                        ))
-                    }
-                    Err(error) => return Err(error),
-                };
-                let status = if approved.content_hash == ready.expected_content_hash {
-                    PolicyBundleSourceStatus::Ready
-                } else {
-                    PolicyBundleSourceStatus::SpecificationRevisionChanged
-                };
-                Ok(PolicyBundleSource {
-                    source_project_id: ready.source_project_id,
-                    source_project_name: Some(ready.source_project_name),
-                    specification_id: ready.specification_id,
-                    content_hash: ready.expected_content_hash,
-                    status,
-                })
+        let Some(observed) = self.project_catalog.get(&source.source_project_id)? else {
+            return Ok(unavailable_source(
+                source,
+                None,
+                PolicyBundleSourceStatus::SourceProjectUnavailable,
+            ));
+        };
+        let diagnostic = match diagnose_project(&observed.root_path) {
+            Ok(diagnostic) if diagnostic.identity.project_id == source.source_project_id => {
+                diagnostic
             }
-            ResolvedBundleSource::Unavailable(unavailable) => Ok(unavailable),
+            Ok(diagnostic) => {
+                return Ok(unavailable_source(
+                    source,
+                    Some(diagnostic.identity.name),
+                    PolicyBundleSourceStatus::SourceIdentityChanged,
+                ))
+            }
+            Err(_) => {
+                return Ok(unavailable_source(
+                    source,
+                    None,
+                    PolicyBundleSourceStatus::SourceProjectUnavailable,
+                ))
+            }
+        };
+
+        if !self
+            .approved_source_registry
+            .authority_ready_for_expected_project(&diagnostic.root, &source.source_project_id)?
+        {
+            let binding = match self.binding_registry.resolve_observed(&diagnostic) {
+                Ok(binding) => binding,
+                Err(_) => {
+                    return Ok(unavailable_source(
+                        source,
+                        Some(diagnostic.identity.name),
+                        PolicyBundleSourceStatus::SourceVaultUnavailable,
+                    ))
+                }
+            };
+            self.approved_source_registry
+                .migrate_legacy_specifications_for_expected_project(
+                    &diagnostic.root,
+                    &binding.vault_path,
+                    &self.specification_registry,
+                    &source.source_project_id,
+                )?;
         }
+
+        let approved = match self
+            .approved_source_registry
+            .read_specification_compat_for_expected_project(
+                &diagnostic.root,
+                &source.source_project_id,
+                &source.specification_id,
+            ) {
+            Ok(approved) => approved,
+            Err(LeyCoreError::ApprovedSourceNotFound(_)) => {
+                return Ok(unavailable_source(
+                    source,
+                    Some(diagnostic.identity.name),
+                    PolicyBundleSourceStatus::SpecificationNotApproved,
+                ))
+            }
+            Err(LeyCoreError::ApprovedSourceStale { .. }) => {
+                return Ok(unavailable_source(
+                    source,
+                    Some(diagnostic.identity.name),
+                    PolicyBundleSourceStatus::SpecificationRevisionChanged,
+                ))
+            }
+            Err(LeyCoreError::Io { source: error, .. })
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                return Ok(unavailable_source(
+                    source,
+                    Some(diagnostic.identity.name),
+                    PolicyBundleSourceStatus::SpecificationSourceUnavailable,
+                ))
+            }
+            Err(error) => return Err(error),
+        };
+        let status = if approved.content_hash == source.content_hash {
+            PolicyBundleSourceStatus::Ready
+        } else {
+            PolicyBundleSourceStatus::SpecificationRevisionChanged
+        };
+        Ok(PolicyBundleSource {
+            source_project_id: source.source_project_id.clone(),
+            source_project_name: Some(diagnostic.identity.name),
+            specification_id: source.specification_id.clone(),
+            content_hash: source.content_hash.clone(),
+            status,
+        })
     }
 
-    fn resolve_source_for_agent(
+    fn resolve_source_for_native_agent(
         &self,
         source: &PolicyBundleSourceRef,
-    ) -> Result<ResolvedBundleSource, LeyCoreError> {
+        continuity_store: &crate::ContinuityStore,
+    ) -> Result<Result<ResolvedNativePolicySourceLocation, PolicyBundleSource>, LeyCoreError> {
         let Some(observed) = self.project_catalog.get(&source.source_project_id)? else {
-            return Ok(ResolvedBundleSource::Unavailable(unavailable_source(
+            return Ok(Err(unavailable_source(
                 source,
                 None,
                 PolicyBundleSourceStatus::SourceProjectUnavailable,
@@ -1157,37 +1222,46 @@ impl PolicyBundleRegistry {
                 diagnostic
             }
             Ok(diagnostic) => {
-                return Ok(ResolvedBundleSource::Unavailable(unavailable_source(
+                return Ok(Err(unavailable_source(
                     source,
                     Some(diagnostic.identity.name),
                     PolicyBundleSourceStatus::SourceIdentityChanged,
                 )))
             }
             Err(_) => {
-                return Ok(ResolvedBundleSource::Unavailable(unavailable_source(
+                return Ok(Err(unavailable_source(
                     source,
                     None,
                     PolicyBundleSourceStatus::SourceProjectUnavailable,
                 )))
             }
         };
-        let binding = match self.binding_registry.resolve_observed(&diagnostic) {
-            Ok(binding) => binding,
-            Err(_) => {
-                return Ok(ResolvedBundleSource::Unavailable(unavailable_source(
-                    source,
-                    Some(diagnostic.identity.name),
-                    PolicyBundleSourceStatus::SourceVaultUnavailable,
-                )))
-            }
-        };
-        Ok(ResolvedBundleSource::Ready(ResolvedPolicySourceLocation {
+        continuity_store.register_project(&diagnostic.identity)?;
+        if !continuity_store.approved_source_authority_ready(&source.source_project_id)? {
+            let binding = match self.binding_registry.resolve_observed(&diagnostic) {
+                Ok(binding) => binding,
+                Err(_) => {
+                    return Ok(Err(unavailable_source(
+                        source,
+                        Some(diagnostic.identity.name),
+                        PolicyBundleSourceStatus::SourceVaultUnavailable,
+                    )))
+                }
+            };
+            crate::continuity_import::import_legacy_approved_sources_with_native_authority_held(
+                &diagnostic.root,
+                &binding.vault_path,
+                &self.specification_registry,
+                continuity_store,
+                Some(&source.source_project_id),
+            )?;
+        }
+        Ok(Ok(ResolvedNativePolicySourceLocation {
             source_project_id: source.source_project_id.clone(),
             source_project_name: diagnostic.identity.name,
             specification_id: source.specification_id.clone(),
             expected_content_hash: source.content_hash.clone(),
             project_root: diagnostic.root,
-            vault_path: binding.vault_path,
         }))
     }
 
@@ -1363,11 +1437,6 @@ impl PolicyBundleRegistry {
     }
 }
 
-enum ResolvedBundleSource {
-    Ready(ResolvedPolicySourceLocation),
-    Unavailable(PolicyBundleSource),
-}
-
 fn task_exclusion_reason_from_source_status(
     status: PolicyBundleSourceStatus,
 ) -> PolicyBundleTaskExclusionReason {
@@ -1489,10 +1558,12 @@ fn validate_bundle_name(value: &str) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
+#[cfg(test)]
 fn generate_bundle_id() -> String {
     format!("pbd_{}", Uuid::new_v4().simple())
 }
 
+#[cfg(test)]
 fn sort_source_refs(values: &mut [PolicyBundleSourceRef]) {
     values.sort_by(|left, right| {
         left.source_project_id
@@ -1511,6 +1582,7 @@ fn sort_egress_sources(values: &mut [PolicyBundleEgressSource]) {
     });
 }
 
+#[cfg(test)]
 fn unix_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1688,7 +1760,7 @@ mod tests {
     }
 
     #[test]
-    fn bundle_authority_is_exact_revision_idempotent_and_path_body_safe() {
+    fn bundle_compatibility_is_snapshot_stable_project_file_aware_and_path_body_safe() {
         let fixture = setup();
         let scope = team_scope(&fixture, true);
         let sources = policy_sources(&fixture, true);
@@ -1760,18 +1832,18 @@ mod tests {
             "# Team policy\n\nUse signed commits and two reviewers for releases.\n",
         )
         .unwrap();
-        let changed = fixture
+        let migrated_snapshot = fixture
             .bundle_registry
             .list(&fixture.scope_registry)
             .unwrap();
         assert_eq!(
-            changed.bundles[0]
+            migrated_snapshot.bundles[0]
                 .sources
                 .iter()
                 .find(|source| source.specification_id == fixture.source_specification_id)
                 .unwrap()
                 .status,
-            PolicyBundleSourceStatus::SpecificationRevisionChanged
+            PolicyBundleSourceStatus::Ready
         );
 
         fixture
@@ -1783,31 +1855,88 @@ mod tests {
                 "TeamPolicy.md",
             )
             .unwrap();
-        let still_old_revision = fixture
+        let still_snapshot_pinned = fixture
             .bundle_registry
             .list(&fixture.scope_registry)
             .unwrap();
         assert_eq!(
-            still_old_revision.bundles[0]
+            still_snapshot_pinned.bundles[0]
                 .sources
                 .iter()
                 .find(|source| source.specification_id == fixture.source_specification_id)
                 .unwrap()
                 .status,
+            PolicyBundleSourceStatus::Ready
+        );
+
+        fs::create_dir_all(fixture.source.join("docs")).unwrap();
+        fs::write(
+            fixture.source.join("docs/NativePolicy.md"),
+            "# Native policy\n\nUse deterministic release manifests.\n",
+        )
+        .unwrap();
+        let native = fixture
+            .bundle_registry
+            .approved_source_registry
+            .approve_project_file(&fixture.source, "docs/NativePolicy.md")
+            .unwrap();
+        let native_bundle_id = generate_bundle_id();
+        let native_source_project_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        fixture
+            .bundle_registry
+            .mutate(|document| {
+                document.bundles.insert(
+                    native_bundle_id.clone(),
+                    PolicyBundleEntry {
+                        scope_id: scope.scope.scope_id.clone(),
+                        name: "Native project policy".to_owned(),
+                        sources: vec![PolicyBundleSourceRef {
+                            source_project_id: native_source_project_id,
+                            specification_id: native.source_id.clone(),
+                            content_hash: native.content_hash.clone(),
+                        }],
+                        created_at_unix_ms: unix_time_ms(),
+                    },
+                );
+                Ok(())
+            })
+            .unwrap();
+        let native_ready = fixture
+            .bundle_registry
+            .list(&fixture.scope_registry)
+            .unwrap();
+        assert_eq!(
+            native_ready
+                .bundles
+                .iter()
+                .find(|bundle| bundle.bundle_id == native_bundle_id)
+                .unwrap()
+                .sources[0]
+                .status,
+            PolicyBundleSourceStatus::Ready
+        );
+        fs::write(
+            fixture.source.join("docs/NativePolicy.md"),
+            "# Native policy\n\nChanged without approval.\n",
+        )
+        .unwrap();
+        let native_changed = fixture
+            .bundle_registry
+            .list(&fixture.scope_registry)
+            .unwrap();
+        assert_eq!(
+            native_changed
+                .bundles
+                .iter()
+                .find(|bundle| bundle.bundle_id == native_bundle_id)
+                .unwrap()
+                .sources[0]
+                .status,
             PolicyBundleSourceStatus::SpecificationRevisionChanged
         );
-        let replacement = fixture
-            .bundle_registry
-            .create(
-                &scope.scope.scope_id,
-                "Engineering policy",
-                &sources,
-                &fixture.scope_registry,
-                &fixture.specification_registry,
-            )
-            .unwrap();
-        assert!(replacement.created);
-        assert_ne!(replacement.bundle.bundle_id, created.bundle.bundle_id);
 
         let single_source_scope = team_scope(&fixture, false);
         assert!(matches!(

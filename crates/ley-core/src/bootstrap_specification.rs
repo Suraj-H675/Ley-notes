@@ -3,23 +3,18 @@ use crate::context_compiler::{
 };
 use crate::project_memory_search::{lexical_score, search_project_memory_for_expected_project};
 use crate::revision::estimate_revision_freshness_tokens;
-use crate::specification::{
-    acceptance_criteria_projection_tokens, derive_specification_acceptance_criteria,
-    derive_specification_verification_methods, omit_acceptance_criteria_for_budget,
-    omit_verification_methods_for_budget, specification_task_terms, validate_specification_id,
-    verification_methods_projection_tokens, SpecificationAcceptanceCriteria,
-    SpecificationVerificationMethods,
-};
+use crate::specification::{specification_task_terms, validate_specification_id};
 use crate::{
     canonical_directory, default_binding_registry_path, diagnose_project, evaluate_agent_egress,
     initialize_project_uncoordinated, validate_project_id, AgentEgressBlockReason,
-    AgentEgressPolicy, AgentEgressTarget, BindingRegistry, CaptureMode, ContextAdmissionBasis,
-    ContextAuthority, ContextCompileLimits, ContextExclusion, ContextExclusionReason,
-    ContextExclusionStage, EgressPolicyRegistry, EgressPolicySnapshot, GraphCitation,
-    LearningFreshness, LearningOriginSummary, LearningState, LearningTrustState, LeyCoreError,
-    ProjectCatalog, ProjectInitialization, ProjectMemoryConflictKind, ProjectMemoryRankingSignals,
-    ProjectMemoryResultKind, ProjectMemorySearchLimits, ProjectMemoryTrustSignal,
-    ProjectRevisionFreshness, RevisionApplicability, SpecificationRegistry, BINDING_REGISTRY_FILE,
+    AgentEgressPolicy, AgentEgressTarget, ApprovedSourceRegistry, BindingRegistry, CaptureMode,
+    ContextAdmissionBasis, ContextAuthority, ContextCompileLimits, ContextExclusion,
+    ContextExclusionReason, ContextExclusionStage, ContinuityStore, EgressPolicyRegistry,
+    EgressPolicySnapshot, GraphCitation, LearningFreshness, LearningOriginSummary, LearningState,
+    LearningTrustState, LeyCoreError, ProjectCatalog, ProjectInitialization,
+    ProjectMemoryConflictKind, ProjectMemoryRankingSignals, ProjectMemoryResultKind,
+    ProjectMemorySearchLimits, ProjectMemoryTrustSignal, ProjectRevisionFreshness,
+    RevisionApplicability, SpecificationRegistry, BINDING_REGISTRY_FILE, CONTINUITY_DATABASE_FILE,
     MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
     MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS, METADATA_FILE_LIMIT_BYTES,
     MIN_CONTEXT_COMPILE_TOKENS, PROJECT_CATALOG_FILE, SPECIFICATION_REGISTRY_FILE,
@@ -235,6 +230,7 @@ pub struct BootstrapReferenceGrant {
     pub attached_at_unix_ms: u64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapReferenceMutation {
@@ -294,10 +290,6 @@ pub struct BootstrapCompiledSpecification {
     pub content_hash: String,
     pub approved_at_unix_ms: u64,
     pub source: String,
-    pub acceptance_criteria_tokens: usize,
-    pub acceptance_criteria: SpecificationAcceptanceCriteria,
-    pub verification_methods_tokens: usize,
-    pub verification_methods: SpecificationVerificationMethods,
     pub relevance_score: u32,
     pub exact_match: bool,
     pub authority: &'static str,
@@ -482,13 +474,20 @@ pub struct BootstrapSpecificationRegistry {
     project_catalog: ProjectCatalog,
     binding_registry: BindingRegistry,
     specification_registry: SpecificationRegistry,
+    approved_source_registry: ApprovedSourceRegistry,
 }
 
 impl BootstrapSpecificationRegistry {
     pub fn system_default() -> Result<Self, LeyCoreError> {
-        Ok(Self::at(
-            default_binding_registry_path()?.with_file_name(BOOTSTRAP_SPECIFICATION_REGISTRY_FILE),
-        ))
+        let path =
+            default_binding_registry_path()?.with_file_name(BOOTSTRAP_SPECIFICATION_REGISTRY_FILE);
+        Ok(Self {
+            project_catalog: ProjectCatalog::system_default()?,
+            binding_registry: BindingRegistry::system_default()?,
+            specification_registry: SpecificationRegistry::system_default()?,
+            approved_source_registry: ApprovedSourceRegistry::system_default()?,
+            path,
+        })
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {
@@ -499,6 +498,9 @@ impl BootstrapSpecificationRegistry {
             specification_registry: SpecificationRegistry::at(
                 path.with_file_name(SPECIFICATION_REGISTRY_FILE),
             ),
+            approved_source_registry: ApprovedSourceRegistry::at(ContinuityStore::at(
+                path.with_file_name(CONTINUITY_DATABASE_FILE),
+            )),
             path,
         }
     }
@@ -516,6 +518,44 @@ impl BootstrapSpecificationRegistry {
                 source,
             }),
         }
+    }
+
+    fn ensure_native_source_authority(
+        &self,
+        source_diagnostic: &crate::ProjectDiagnostic,
+    ) -> Result<(), LeyCoreError> {
+        if self
+            .approved_source_registry
+            .authority_ready_for_expected_project(
+                &source_diagnostic.root,
+                &source_diagnostic.identity.project_id,
+            )?
+        {
+            return Ok(());
+        }
+        let binding = self.binding_registry.resolve_observed(source_diagnostic)?;
+        self.approved_source_registry
+            .migrate_legacy_specifications_for_expected_project(
+                &source_diagnostic.root,
+                &binding.vault_path,
+                &self.specification_registry,
+                &source_diagnostic.identity.project_id,
+            )?;
+        Ok(())
+    }
+
+    fn read_native_approved_source(
+        &self,
+        source_diagnostic: &crate::ProjectDiagnostic,
+        source_id: &str,
+    ) -> Result<crate::ApprovedSpecificationSource, LeyCoreError> {
+        self.ensure_native_source_authority(source_diagnostic)?;
+        self.approved_source_registry
+            .read_specification_compat_for_expected_project(
+                &source_diagnostic.root,
+                &source_diagnostic.identity.project_id,
+                source_id,
+            )
     }
 
     pub fn attach(
@@ -542,15 +582,9 @@ impl BootstrapSpecificationRegistry {
                 let workspace = bootstrap_workspace_identity(locked_root)?;
                 ensure_target_uninitialized(&workspace.root)?;
                 let source_diagnostic = diagnose_project(&source_project)?;
-                let source = self.binding_registry.with_resolved_observed_locked(
+                let source = self.read_native_approved_source(
                     &source_diagnostic,
-                    |binding| {
-                        self.specification_registry.read_approved_source(
-                            &source_diagnostic.root,
-                            &binding.vault_path,
-                            &requested_specification_id,
-                        )
-                    },
+                    &requested_specification_id,
                 )?;
                 let grant_id = grant_id(
                     &workspace.workspace_id,
@@ -728,6 +762,7 @@ impl BootstrapSpecificationRegistry {
         )
     }
 
+    #[cfg(test)]
     pub fn attach_reference(
         &self,
         workspace: impl AsRef<Path>,
@@ -1290,13 +1325,15 @@ pub fn compile_bootstrap_specifications(
 ) -> Result<BootstrapSpecificationContext, LeyCoreError> {
     let registry = BootstrapSpecificationRegistry::system_default()?;
     let egress = EgressPolicyRegistry::system_default()?;
-    compile_bootstrap_specifications_with_registries(
+    let continuity_store = ContinuityStore::system_default()?;
+    compile_bootstrap_specifications_with_transition_registries(
         workspace.as_ref(),
         task,
         limits,
         target,
         &registry,
         &egress,
+        &continuity_store,
     )
 }
 
@@ -1308,14 +1345,52 @@ pub fn compile_bootstrap_specifications_with_registries(
     registry: &BootstrapSpecificationRegistry,
     egress: &EgressPolicyRegistry,
 ) -> Result<BootstrapSpecificationContext, LeyCoreError> {
+    compile_bootstrap_specifications_with_authority(
+        workspace, task, limits, target, registry, egress, None,
+    )
+}
+
+pub fn compile_bootstrap_specifications_with_transition_registries(
+    workspace: &Path,
+    task: &str,
+    limits: ContextCompileLimits,
+    target: AgentEgressTarget,
+    registry: &BootstrapSpecificationRegistry,
+    egress: &EgressPolicyRegistry,
+    continuity_store: &ContinuityStore,
+) -> Result<BootstrapSpecificationContext, LeyCoreError> {
+    compile_bootstrap_specifications_with_authority(
+        workspace,
+        task,
+        limits,
+        target,
+        registry,
+        egress,
+        Some(continuity_store),
+    )
+}
+
+fn compile_bootstrap_specifications_with_authority(
+    workspace: &Path,
+    task: &str,
+    limits: ContextCompileLimits,
+    target: AgentEgressTarget,
+    registry: &BootstrapSpecificationRegistry,
+    egress: &EgressPolicyRegistry,
+    transition_store: Option<&ContinuityStore>,
+) -> Result<BootstrapSpecificationContext, LeyCoreError> {
     validate_compile_limits(task, limits)?;
     registry.with_current_workspace_locked(workspace, |workspace, entry| {
-        egress.with_snapshot_locked(|policies| {
+        let compile = |policies: &EgressPolicySnapshot| {
             compile_bootstrap_specifications_locked(
                 workspace, entry, task, limits, target, registry, policies,
             )
             .map(finalize_bootstrap_specification_projections)
-        })
+        };
+        match transition_store {
+            Some(store) => egress.with_transition_snapshot_locked(store, compile),
+            None => egress.with_snapshot_locked(compile),
+        }
     })
 }
 
@@ -1347,83 +1422,48 @@ fn compile_bootstrap_specifications_locked(
                 }
             };
         coverage.resolved_sources += 1;
-        let approved = registry.binding_registry.with_resolved_observed_locked(
-            &source_diagnostic,
-            |binding| {
-                let project_decision = evaluate_agent_egress(
-                    policies.project_policy(&grant.source_project_id),
-                    target,
-                );
-                if !project_decision.allowed {
-                    return Ok(Err((
-                        project_decision.policy,
-                        project_decision
-                            .block_reason
-                            .expect("blocked project egress has a reason"),
-                    )));
-                }
-                let specification_decision = evaluate_agent_egress(
-                    policies
-                        .specification_policy(&grant.source_project_id, &grant.specification_id),
-                    target,
-                );
-                if !specification_decision.allowed {
-                    return Ok(Err((
-                        specification_decision.policy,
-                        specification_decision
-                            .block_reason
-                            .expect("blocked Specification egress has a reason"),
-                    )));
-                }
-                Ok(Ok(registry
-                    .specification_registry
-                    .read_approved_source_for_expected_project(
-                        &source_diagnostic.root,
-                        &binding.vault_path,
-                        &grant.source_project_id,
-                        &grant.specification_id,
-                    )))
-            },
+        let project_decision =
+            evaluate_agent_egress(policies.project_policy(&grant.source_project_id), target);
+        if !project_decision.allowed {
+            coverage.egress_blocked += 1;
+            exclusions.push(exclusion(
+                grant_id,
+                grant,
+                BootstrapCompileExclusionReason::EgressBlocked,
+                Some((
+                    project_decision.policy,
+                    project_decision
+                        .block_reason
+                        .expect("blocked project egress has a reason"),
+                )),
+            ));
+            continue;
+        }
+        let specification_decision = evaluate_agent_egress(
+            policies.specification_policy(&grant.source_project_id, &grant.specification_id),
+            target,
         );
-        let approved = match approved {
+        if !specification_decision.allowed {
+            coverage.egress_blocked += 1;
+            exclusions.push(exclusion(
+                grant_id,
+                grant,
+                BootstrapCompileExclusionReason::EgressBlocked,
+                Some((
+                    specification_decision.policy,
+                    specification_decision
+                        .block_reason
+                        .expect("blocked Specification egress has a reason"),
+                )),
+            ));
+            continue;
+        }
+
+        let approved = match registry
+            .read_native_approved_source(&source_diagnostic, &grant.specification_id)
+        {
             Ok(approved) => approved,
-            Err(LeyCoreError::VaultNotBound(_))
-            | Err(LeyCoreError::BoundVaultUnavailable { .. }) => {
-                coverage.unavailable_sources += 1;
-                exclusions.push(exclusion(
-                    grant_id,
-                    grant,
-                    BootstrapCompileExclusionReason::SourceVaultUnavailable,
-                    None,
-                ));
-                continue;
-            }
-            Err(LeyCoreError::ProjectNotFound(_))
-            | Err(LeyCoreError::InvalidProjectIdentity(_)) => {
-                coverage.unavailable_sources += 1;
-                exclusions.push(exclusion(
-                    grant_id,
-                    grant,
-                    BootstrapCompileExclusionReason::SourceIdentityChanged,
-                    None,
-                ));
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
-        let approved = match approved {
-            Err((policy, block_reason)) => {
-                coverage.egress_blocked += 1;
-                exclusions.push(exclusion(
-                    grant_id,
-                    grant,
-                    BootstrapCompileExclusionReason::EgressBlocked,
-                    Some((policy, block_reason)),
-                ));
-                continue;
-            }
-            Ok(Ok(approved)) => approved,
-            Ok(Err(LeyCoreError::SpecificationNotApproved(_))) => {
+            Err(LeyCoreError::ApprovedSourceNotFound(_)) => {
                 coverage.stale_specifications += 1;
                 exclusions.push(exclusion(
                     grant_id,
@@ -1433,7 +1473,7 @@ fn compile_bootstrap_specifications_locked(
                 ));
                 continue;
             }
-            Ok(Err(LeyCoreError::Io { source, .. }))
+            Err(LeyCoreError::Io { source, .. })
                 if source.kind() == std::io::ErrorKind::NotFound =>
             {
                 coverage.stale_specifications += 1;
@@ -1445,7 +1485,7 @@ fn compile_bootstrap_specifications_locked(
                 ));
                 continue;
             }
-            Ok(Err(LeyCoreError::SpecificationApprovalStale { .. })) => {
+            Err(LeyCoreError::ApprovedSourceStale { .. }) => {
                 coverage.stale_specifications += 1;
                 exclusions.push(exclusion(
                     grant_id,
@@ -1455,8 +1495,19 @@ fn compile_bootstrap_specifications_locked(
                 ));
                 continue;
             }
-            Ok(Err(LeyCoreError::InvalidProjectIdentity(_)))
-            | Ok(Err(LeyCoreError::ProjectNotFound(_))) => {
+            Err(LeyCoreError::VaultNotBound(_))
+            | Err(LeyCoreError::BoundVaultUnavailable { .. }) => {
+                coverage.unavailable_sources += 1;
+                exclusions.push(exclusion(
+                    grant_id,
+                    grant,
+                    BootstrapCompileExclusionReason::SourceVaultUnavailable,
+                    None,
+                ));
+                continue;
+            }
+            Err(LeyCoreError::InvalidProjectIdentity(_))
+            | Err(LeyCoreError::ProjectNotFound(_)) => {
                 coverage.unavailable_sources += 1;
                 exclusions.push(exclusion(
                     grant_id,
@@ -1466,7 +1517,7 @@ fn compile_bootstrap_specifications_locked(
                 ));
                 continue;
             }
-            Ok(Err(error)) => return Err(error),
+            Err(error) => return Err(error),
         };
         if approved.content_hash != grant.content_hash {
             coverage.stale_specifications += 1;
@@ -1534,16 +1585,6 @@ fn compile_bootstrap_specifications_locked(
             ));
             continue;
         }
-        let acceptance_criteria = derive_specification_acceptance_criteria(
-            &candidate.specification_id,
-            &candidate.content_hash,
-            &candidate.source,
-        );
-        let verification_methods = derive_specification_verification_methods(
-            &candidate.specification_id,
-            &candidate.content_hash,
-            &candidate.source,
-        );
         estimated_tokens += candidate.estimated_tokens;
         specifications.push(BootstrapCompiledSpecification {
             grant_id: candidate.grant_id,
@@ -1554,10 +1595,6 @@ fn compile_bootstrap_specifications_locked(
             content_hash: candidate.content_hash,
             approved_at_unix_ms: candidate.approved_at_unix_ms,
             source: candidate.source,
-            acceptance_criteria_tokens: 0,
-            acceptance_criteria,
-            verification_methods_tokens: 0,
-            verification_methods,
             relevance_score: candidate.relevance_score,
             exact_match: candidate.exact_match,
             authority: "human-intent",
@@ -1589,24 +1626,8 @@ fn compile_bootstrap_specifications_locked(
 }
 
 fn finalize_bootstrap_specification_projections(
-    mut context: BootstrapSpecificationContext,
+    context: BootstrapSpecificationContext,
 ) -> BootstrapSpecificationContext {
-    let acceptance_criteria_tokens = fit_bootstrap_acceptance_criteria_tokens(
-        &mut context.specifications,
-        context.max_tokens.saturating_sub(context.estimated_tokens),
-    );
-    context.estimated_tokens = context
-        .estimated_tokens
-        .saturating_add(acceptance_criteria_tokens)
-        .min(context.max_tokens);
-    let verification_methods_tokens = fit_bootstrap_verification_methods_tokens(
-        &mut context.specifications,
-        context.max_tokens.saturating_sub(context.estimated_tokens),
-    );
-    context.estimated_tokens = context
-        .estimated_tokens
-        .saturating_add(verification_methods_tokens)
-        .min(context.max_tokens);
     context
 }
 
@@ -1618,13 +1639,15 @@ pub fn compile_bootstrap_context(
 ) -> Result<BootstrapContext, LeyCoreError> {
     let registry = BootstrapSpecificationRegistry::system_default()?;
     let egress = EgressPolicyRegistry::system_default()?;
-    compile_bootstrap_context_with_registries(
+    let continuity_store = ContinuityStore::system_default()?;
+    compile_bootstrap_context_with_transition_registries(
         workspace.as_ref(),
         task,
         limits,
         target,
         &registry,
         &egress,
+        &continuity_store,
     )
 }
 
@@ -1636,10 +1659,44 @@ pub fn compile_bootstrap_context_with_registries(
     registry: &BootstrapSpecificationRegistry,
     egress: &EgressPolicyRegistry,
 ) -> Result<BootstrapContext, LeyCoreError> {
+    compile_bootstrap_context_with_authority(
+        workspace, task, limits, target, registry, egress, None,
+    )
+}
+
+pub fn compile_bootstrap_context_with_transition_registries(
+    workspace: &Path,
+    task: &str,
+    limits: ContextCompileLimits,
+    target: AgentEgressTarget,
+    registry: &BootstrapSpecificationRegistry,
+    egress: &EgressPolicyRegistry,
+    continuity_store: &ContinuityStore,
+) -> Result<BootstrapContext, LeyCoreError> {
+    compile_bootstrap_context_with_authority(
+        workspace,
+        task,
+        limits,
+        target,
+        registry,
+        egress,
+        Some(continuity_store),
+    )
+}
+
+fn compile_bootstrap_context_with_authority(
+    workspace: &Path,
+    task: &str,
+    limits: ContextCompileLimits,
+    target: AgentEgressTarget,
+    registry: &BootstrapSpecificationRegistry,
+    egress: &EgressPolicyRegistry,
+    transition_store: Option<&ContinuityStore>,
+) -> Result<BootstrapContext, LeyCoreError> {
     validate_compile_limits(task, limits)?;
     registry.with_current_workspace_locked(workspace, |workspace, entry| {
-        egress.with_snapshot_locked(|policies| {
-            let mut specifications = compile_bootstrap_specifications_locked(
+        let compile = |policies: &EgressPolicySnapshot| {
+            let specifications = compile_bootstrap_specifications_locked(
                 workspace, entry, task, limits, target, registry, policies,
             )?;
             let (
@@ -1647,7 +1704,7 @@ pub fn compile_bootstrap_context_with_registries(
                 references,
                 reference_exclusions,
                 reference_coverage,
-                mut estimated_tokens,
+                estimated_tokens,
             ) = compile_bootstrap_references_locked(
                 entry,
                 task,
@@ -1659,20 +1716,6 @@ pub fn compile_bootstrap_context_with_registries(
                 specifications.estimated_tokens,
                 specifications.specifications.len(),
             )?;
-            let acceptance_criteria_tokens = fit_bootstrap_acceptance_criteria_tokens(
-                &mut specifications.specifications,
-                limits.max_tokens.saturating_sub(estimated_tokens),
-            );
-            estimated_tokens = estimated_tokens
-                .saturating_add(acceptance_criteria_tokens)
-                .min(limits.max_tokens);
-            let verification_methods_tokens = fit_bootstrap_verification_methods_tokens(
-                &mut specifications.specifications,
-                limits.max_tokens.saturating_sub(estimated_tokens),
-            );
-            estimated_tokens = estimated_tokens
-                .saturating_add(verification_methods_tokens)
-                .min(limits.max_tokens);
             Ok(BootstrapContext {
                 schema_version: BOOTSTRAP_CONTEXT_SCHEMA_VERSION,
                 workspace_id: workspace.workspace_id.clone(),
@@ -1698,7 +1741,11 @@ pub fn compile_bootstrap_context_with_registries(
                 instruction_warning: BOOTSTRAP_CONTEXT_INSTRUCTION_WARNING,
                 privacy_notice: BOOTSTRAP_CONTEXT_PRIVACY_NOTICE,
             })
-        })
+        };
+        match transition_store {
+            Some(store) => egress.with_transition_snapshot_locked(store, compile),
+            None => egress.with_snapshot_locked(compile),
+        }
     })
 }
 
@@ -2079,6 +2126,7 @@ fn grant_id(workspace_id: &str, source_project_id: &str, specification_id: &str)
     format!("bsg_{:x}", digest.finalize())
 }
 
+#[cfg(test)]
 fn reference_grant_id(workspace_id: &str, source_project_id: &str) -> String {
     let mut digest = Sha256::new();
     for value in [workspace_id, source_project_id] {
@@ -2262,56 +2310,6 @@ fn estimate_specification_tokens(relative_path: &str, source: &str) -> usize {
     )
 }
 
-fn fit_bootstrap_acceptance_criteria_tokens(
-    specifications: &mut [BootstrapCompiledSpecification],
-    mut remaining_tokens: usize,
-) -> usize {
-    let mut used = 0usize;
-    for specification in specifications {
-        let required = acceptance_criteria_projection_tokens(&specification.acceptance_criteria);
-        if required == 0 {
-            specification.acceptance_criteria_tokens = 0;
-            continue;
-        }
-        if required <= remaining_tokens {
-            specification.acceptance_criteria_tokens = required;
-            specification.estimated_tokens =
-                specification.estimated_tokens.saturating_add(required);
-            remaining_tokens -= required;
-            used = used.saturating_add(required);
-        } else {
-            omit_acceptance_criteria_for_budget(&mut specification.acceptance_criteria);
-            specification.acceptance_criteria_tokens = 0;
-        }
-    }
-    used
-}
-
-fn fit_bootstrap_verification_methods_tokens(
-    specifications: &mut [BootstrapCompiledSpecification],
-    mut remaining_tokens: usize,
-) -> usize {
-    let mut used = 0usize;
-    for specification in specifications {
-        let required = verification_methods_projection_tokens(&specification.verification_methods);
-        if required == 0 {
-            specification.verification_methods_tokens = 0;
-            continue;
-        }
-        if required <= remaining_tokens {
-            specification.verification_methods_tokens = required;
-            specification.estimated_tokens =
-                specification.estimated_tokens.saturating_add(required);
-            remaining_tokens -= required;
-            used = used.saturating_add(required);
-        } else {
-            omit_verification_methods_for_budget(&mut specification.verification_methods);
-            specification.verification_methods_tokens = 0;
-        }
-    }
-    used
-}
-
 fn validate_compile_limits(task: &str, limits: ContextCompileLimits) -> Result<(), LeyCoreError> {
     if task.trim().is_empty() {
         return Err(LeyCoreError::InvalidBootstrapSpecificationRequest(
@@ -2475,7 +2473,6 @@ mod tests {
         source: PathBuf,
         vault: PathBuf,
         bootstrap: BootstrapSpecificationRegistry,
-        specifications: SpecificationRegistry,
         egress: EgressPolicyRegistry,
         specification_id: String,
     }
@@ -2515,10 +2512,28 @@ mod tests {
             source,
             vault,
             bootstrap,
-            specifications,
             egress,
             specification_id,
         }
+    }
+
+    fn approve_native_project_file(fixture: &Fixture, relative_path: &str, body: &str) -> String {
+        let diagnostic = diagnose_project(&fixture.source).unwrap();
+        fixture
+            .bootstrap
+            .ensure_native_source_authority(&diagnostic)
+            .unwrap();
+        let path = fixture.source.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&path, body).unwrap();
+        fixture
+            .bootstrap
+            .approved_source_registry
+            .approve_project_file(&fixture.source, relative_path)
+            .unwrap()
+            .source_id
     }
 
     fn compile(fixture: &Fixture, task: &str, max_tokens: usize) -> BootstrapSpecificationContext {
@@ -2556,40 +2571,19 @@ mod tests {
         assert!(context.specifications[0]
             .source
             .contains("The bootstrap_offline_marker app must work fully offline."));
-        assert_eq!(
-            context.specifications[0].acceptance_criteria.state,
-            crate::SpecificationAcceptanceCriteriaState::Available
-        );
-        assert_eq!(
-            context.specifications[0].acceptance_criteria.criteria.len(),
-            1
-        );
-        assert!(context.specifications[0].acceptance_criteria.criteria[0]
-            .text
+        assert!(context.specifications[0]
+            .source
             .contains("bootstrap_acceptance_marker"));
-        assert!(context.specifications[0].acceptance_criteria_tokens > 0);
-        assert_eq!(
-            context.specifications[0].verification_methods.state,
-            crate::SpecificationVerificationMethodsState::Available
-        );
-        assert_eq!(
-            context.specifications[0].verification_methods.methods.len(),
-            1
-        );
-        assert!(context.specifications[0].verification_methods.methods[0]
-            .text
+        assert!(context.specifications[0]
+            .source
             .contains("bootstrap_verification_method_marker"));
-        assert!(
-            !context.specifications[0]
-                .verification_methods
-                .criterion_binding_proven
-        );
-        assert!(
-            !context.specifications[0]
-                .verification_methods
-                .observed_result_binding_proven
-        );
-        assert!(context.specifications[0].verification_methods_tokens > 0);
+        let serialized = serde_json::to_value(&context).unwrap();
+        assert!(serialized["specifications"][0]
+            .get("acceptanceCriteria")
+            .is_none());
+        assert!(serialized["specifications"][0]
+            .get("verificationMethods")
+            .is_none());
         assert_eq!(context.specifications[0].authority, "human-intent");
         assert_eq!(
             context.specifications[0].source_boundary,
@@ -2771,6 +2765,80 @@ mod tests {
     }
 
     #[test]
+    fn transition_bootstrap_context_applies_migrated_native_source_policy() {
+        let fixture =
+            fixture("# Product\n\ntransition_bootstrap_spec_marker approved private intent\n");
+        fs::write(
+            fixture.source.join("REFERENCE.md"),
+            "transition_bootstrap_reference_marker private captured evidence\n",
+        )
+        .unwrap();
+        ingest_project(&fixture.source, &fixture.vault).unwrap();
+        fixture
+            .bootstrap
+            .attach(&fixture.target, &fixture.source, &fixture.specification_id)
+            .unwrap();
+        fixture
+            .bootstrap
+            .attach_reference(&fixture.target, &fixture.source)
+            .unwrap();
+
+        let legacy = compile_bootstrap_context_with_registries(
+            &fixture.target,
+            "transition_bootstrap",
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 2_000,
+            },
+            AgentEgressTarget::Cloud,
+            &fixture.bootstrap,
+            &fixture.egress,
+        )
+        .unwrap();
+        assert_eq!(legacy.specifications.len(), 1);
+        assert!(legacy.specifications[0]
+            .source
+            .contains("transition_bootstrap_spec_marker"));
+        assert!(legacy.references.iter().any(|reference| reference
+            .excerpt
+            .contains("transition_bootstrap_reference_marker")));
+
+        let store = ContinuityStore::at(
+            fixture
+                .egress
+                .path()
+                .with_file_name("transition-continuity.sqlite3"),
+        );
+        let source_identity = diagnose_project(&fixture.source).unwrap().identity;
+        store.register_project(&source_identity).unwrap();
+        store
+            .set_project_egress_policy(&source_identity.project_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+
+        let transitioned = compile_bootstrap_context_with_transition_registries(
+            &fixture.target,
+            "transition_bootstrap",
+            ContextCompileLimits {
+                max_results: 8,
+                max_tokens: 2_000,
+            },
+            AgentEgressTarget::Cloud,
+            &fixture.bootstrap,
+            &fixture.egress,
+            &store,
+        )
+        .unwrap();
+        assert!(transitioned.specifications.is_empty());
+        assert!(transitioned.references.is_empty());
+        assert_eq!(transitioned.coverage.egress_blocked, 1);
+        assert_eq!(transitioned.reference_coverage.egress_blocked, 1);
+        let serialized = serde_json::to_string(&transitioned).unwrap();
+        assert!(!serialized.contains("transition_bootstrap_spec_marker"));
+        assert!(!serialized.contains("transition_bootstrap_reference_marker"));
+        assert!(!fixture.target.join(".ley").exists());
+    }
+
+    #[test]
     fn bootstrap_specification_outranks_conflicting_reference_guidance() {
         let fixture =
             fixture("# Product\n\nThe reference_conflict_marker cache must not use Redis.\n");
@@ -2896,7 +2964,7 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_reference_keeps_budget_precedence_over_acceptance_projection() {
+    fn bootstrap_reference_and_whole_approved_source_share_budget_without_projection_layer() {
         let criterion = format!(
             "- bootstrap_criteria_budget_marker {}\n",
             "must remain exact ".repeat(40)
@@ -2937,16 +3005,14 @@ mod tests {
             .references
             .iter()
             .any(|item| item.excerpt.contains("bootstrap_criteria_budget_marker")));
-        assert_eq!(
-            context.specifications[0].acceptance_criteria.state,
-            crate::SpecificationAcceptanceCriteriaState::OmittedBudget
-        );
-        assert_eq!(context.specifications[0].acceptance_criteria_tokens, 0);
+        assert!(context.specifications[0]
+            .source
+            .contains("bootstrap_criteria_budget_marker"));
         assert!(context.estimated_tokens <= context.max_tokens);
     }
 
     #[test]
-    fn bootstrap_acceptance_criteria_keep_budget_precedence_over_verification_methods() {
+    fn bootstrap_whole_approved_source_has_no_derived_projection_budget() {
         let method = format!("- bootstrap_method_budget_marker {}\n", "m".repeat(1_000));
         let fixture = fixture(&format!(
             "# Product\n\nbootstrap_method_budget_marker is required.\n\n## Acceptance criteria\n\n- Existing bootstrap criterion stays available.\n\n## Verification method\n\n{method}"
@@ -2959,25 +3025,20 @@ mod tests {
         let context = compile(&fixture, "bootstrap_method_budget_marker", 600);
 
         assert_eq!(context.specifications.len(), 1);
-        assert_eq!(
-            context.specifications[0].acceptance_criteria.state,
-            crate::SpecificationAcceptanceCriteriaState::Available
-        );
-        assert!(context.specifications[0].acceptance_criteria_tokens > 0);
-        assert_eq!(
-            context.specifications[0].verification_methods.state,
-            crate::SpecificationVerificationMethodsState::OmittedBudget
-        );
-        assert_eq!(
-            context.specifications[0].verification_methods.total_methods,
-            1
-        );
-        assert!(context.specifications[0]
-            .verification_methods
-            .methods
-            .is_empty());
-        assert_eq!(context.specifications[0].verification_methods_tokens, 0);
         assert!(context.specifications[0].source.contains(&method));
+        assert!(context.specifications[0]
+            .source
+            .contains("## Acceptance criteria"));
+        assert!(context.specifications[0]
+            .source
+            .contains("## Verification method"));
+        let serialized = serde_json::to_value(&context).unwrap();
+        assert!(serialized["specifications"][0]
+            .get("acceptanceCriteria")
+            .is_none());
+        assert!(serialized["specifications"][0]
+            .get("verificationMethods")
+            .is_none());
         assert!(context.estimated_tokens <= context.max_tokens);
     }
 
@@ -3227,7 +3288,7 @@ mod tests {
     }
 
     #[test]
-    fn source_revision_and_egress_changes_fail_closed_before_returning_text() {
+    fn source_egress_blocks_before_read_and_project_file_revision_changes_fail_closed() {
         let fixture = fixture("# Product\n\nsecret_bootstrap_marker original requirement\n");
         fixture
             .bootstrap
@@ -3266,48 +3327,68 @@ mod tests {
             "# Product\n\nsecret_bootstrap_marker changed requirement\n",
         )
         .unwrap();
-        let stale = compile(&fixture, "secret_bootstrap_marker", 1_500);
+        let snapshot = compile(&fixture, "secret_bootstrap_marker", 1_500);
+        assert_eq!(snapshot.specifications.len(), 1);
+        assert!(snapshot.specifications[0]
+            .source
+            .contains("original requirement"));
+        assert!(!serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains("changed requirement"));
+
+        let project_file_id = approve_native_project_file(
+            &fixture,
+            "docs/BootstrapIntent.md",
+            "# Native bootstrap intent\n\nnative_revision_marker original project-file requirement\n",
+        );
+        fixture
+            .bootstrap
+            .attach(&fixture.target, &fixture.source, &project_file_id)
+            .unwrap();
+        let current = compile(&fixture, "native_revision_marker", 1_500);
+        assert_eq!(current.specifications.len(), 1);
+        assert_eq!(current.specifications[0].specification_id, project_file_id);
+
+        fs::write(
+            fixture.source.join("docs/BootstrapIntent.md"),
+            "# Native bootstrap intent\n\nnative_revision_marker changed without approval\n",
+        )
+        .unwrap();
+        let stale = compile(&fixture, "native_revision_marker", 1_500);
         assert!(stale.specifications.is_empty());
         assert_eq!(stale.coverage.stale_specifications, 1);
         assert!(stale.exclusions.iter().any(|item| {
-            item.reason == BootstrapCompileExclusionReason::SpecificationRevisionChanged
+            item.specification_id == project_file_id
+                && item.reason == BootstrapCompileExclusionReason::SpecificationRevisionChanged
         }));
-        let serialized = serde_json::to_string(&stale).unwrap();
-        assert!(!serialized.contains("changed requirement"));
-        assert!(!serialized.contains(fixture.vault.to_str().unwrap()));
+        assert!(!serde_json::to_string(&stale)
+            .unwrap()
+            .contains("changed without approval"));
     }
 
     #[test]
     fn missing_approved_specification_is_excluded_without_aborting_other_grants() {
-        let fixture = fixture(
+        let fixture = fixture("# Legacy\n\nlegacy fixture source\n");
+        let missing_id = approve_native_project_file(
+            &fixture,
+            "docs/Missing.md",
             "# Missing requirement\n\nshared_missing_marker vanished requirement must not leak.\n",
+        );
+        let surviving_id = approve_native_project_file(
+            &fixture,
+            "docs/Surviving.md",
+            "# Surviving requirement\n\nshared_missing_marker surviving requirement stays available.\n",
         );
         fixture
             .bootstrap
-            .attach(&fixture.target, &fixture.source, &fixture.specification_id)
-            .unwrap();
-
-        let surviving_id = generate_specification_id();
-        fs::write(
-            fixture.vault.join("Specs/Surviving.md"),
-            "# Surviving requirement\n\nshared_missing_marker surviving requirement stays available.\n",
-        )
-        .unwrap();
-        fixture
-            .specifications
-            .approve(
-                &fixture.source,
-                &fixture.vault,
-                &surviving_id,
-                "Specs/Surviving.md",
-            )
+            .attach(&fixture.target, &fixture.source, &missing_id)
             .unwrap();
         fixture
             .bootstrap
             .attach(&fixture.target, &fixture.source, &surviving_id)
             .unwrap();
 
-        fs::remove_file(fixture.vault.join("Specs/Product.md")).unwrap();
+        fs::remove_file(fixture.source.join("docs/Missing.md")).unwrap();
         let context = compile(&fixture, "shared_missing_marker", 1_500);
         assert_eq!(context.specifications.len(), 1);
         assert_eq!(context.specifications[0].specification_id, surviving_id);
@@ -3316,7 +3397,7 @@ mod tests {
             .contains("surviving requirement stays available"));
         assert_eq!(context.coverage.stale_specifications, 1);
         assert!(context.exclusions.iter().any(|item| {
-            item.specification_id == fixture.specification_id
+            item.specification_id == missing_id
                 && item.reason == BootstrapCompileExclusionReason::SpecificationUnavailable
         }));
         assert!(!serde_json::to_string(&context)
@@ -3325,7 +3406,7 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_source_identity_or_vault_is_disclosed_without_path_leakage() {
+    fn source_identity_unavailability_is_disclosed_but_migrated_snapshot_ignores_vault_loss() {
         let fixture = fixture("# Product\n\nsource_availability_marker requirement\n");
         fixture
             .bootstrap
@@ -3347,18 +3428,18 @@ mod tests {
         fs::rename(&moved_source, &fixture.source).unwrap();
         let moved_vault = fixture.vault.with_extension("moved");
         fs::rename(&fixture.vault, &moved_vault).unwrap();
-        let missing_vault = compile(&fixture, "source_availability_marker", 1_500);
-        assert!(missing_vault.specifications.is_empty());
-        assert_eq!(missing_vault.coverage.unavailable_sources, 1);
-        assert!(missing_vault.exclusions.iter().any(|item| {
-            item.reason == BootstrapCompileExclusionReason::SourceVaultUnavailable
-        }));
-        let serialized = serde_json::to_string(&missing_vault).unwrap();
+        let no_vault = compile(&fixture, "source_availability_marker", 1_500);
+        assert_eq!(no_vault.specifications.len(), 1);
+        assert_eq!(no_vault.coverage.unavailable_sources, 0);
+        assert!(no_vault.specifications[0]
+            .source
+            .contains("source_availability_marker requirement"));
+        let serialized = serde_json::to_string(&no_vault).unwrap();
         assert!(!serialized.contains(moved_vault.to_str().unwrap()));
     }
 
     #[test]
-    fn compilation_uses_the_current_locked_source_binding_not_a_cached_vault() {
+    fn migrated_snapshot_is_independent_of_later_source_binding_changes() {
         let fixture = fixture("# Product\n\ncurrent_binding_marker original requirement\n");
         fixture
             .bootstrap
@@ -3379,10 +3460,12 @@ mod tests {
             .unwrap();
 
         let rebound = compile(&fixture, "current_binding_marker", 1_500);
-        assert!(rebound.specifications.is_empty());
-        assert_eq!(rebound.coverage.stale_specifications, 1);
-        assert!(!serde_json::to_string(&rebound)
-            .unwrap()
+        assert_eq!(rebound.specifications.len(), 1);
+        assert!(rebound.specifications[0]
+            .source
+            .contains("original requirement"));
+        assert!(!rebound.specifications[0]
+            .source
             .contains("replacement vault requirement"));
 
         fixture
@@ -3408,20 +3491,21 @@ mod tests {
             .attach(&fixture.target, &fixture.source, &fixture.specification_id)
             .unwrap();
 
-        let binding_lock_path = fixture
+        let approved_source_lock_path = fixture
             .bootstrap
-            .binding_registry
+            .approved_source_registry
+            .store()
             .path()
-            .with_file_name("bindings-v1.lock");
-        let binding_lock = OpenOptions::new()
+            .with_file_name("continuity-approved-source.lock");
+        let approved_source_lock = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
             .mode(0o600)
-            .open(&binding_lock_path)
+            .open(&approved_source_lock_path)
             .unwrap();
-        binding_lock.lock().unwrap();
+        approved_source_lock.lock().unwrap();
 
         let bootstrap = fixture.bootstrap.clone();
         let egress = fixture.egress.clone();
@@ -3462,7 +3546,7 @@ mod tests {
         }
         assert!(
             observed_egress_lock,
-            "compile never acquired egress lock while waiting for the source binding"
+            "compile never acquired egress lock while waiting for approved-source authority"
         );
 
         let old_source = fixture.source.with_extension("old-generation");
@@ -3480,7 +3564,7 @@ mod tests {
         )
         .unwrap();
 
-        File::unlock(&binding_lock).unwrap();
+        File::unlock(&approved_source_lock).unwrap();
         let context = worker.join().unwrap().unwrap();
         assert!(context.specifications.is_empty());
         assert_eq!(context.coverage.unavailable_sources, 1);
@@ -3589,25 +3673,26 @@ mod tests {
     }
 
     #[test]
-    fn reapproval_of_changed_source_does_not_update_an_existing_bootstrap_pin() {
-        let fixture = fixture("# Product\n\npinned_revision_marker original requirement\n");
+    fn reapproval_of_project_file_source_does_not_update_an_existing_bootstrap_pin() {
+        let fixture = fixture("# Legacy\n\nlegacy fixture source\n");
+        let specification_id = approve_native_project_file(
+            &fixture,
+            "docs/Pinned.md",
+            "# Product\n\npinned_revision_marker original requirement\n",
+        );
         fixture
             .bootstrap
-            .attach(&fixture.target, &fixture.source, &fixture.specification_id)
+            .attach(&fixture.target, &fixture.source, &specification_id)
             .unwrap();
         fs::write(
-            fixture.vault.join("Specs/Product.md"),
+            fixture.source.join("docs/Pinned.md"),
             "# Product\n\npinned_revision_marker replacement requirement\n",
         )
         .unwrap();
         fixture
-            .specifications
-            .approve(
-                &fixture.source,
-                &fixture.vault,
-                &fixture.specification_id,
-                "Specs/Product.md",
-            )
+            .bootstrap
+            .approved_source_registry
+            .reapprove_project_file(&fixture.source, &specification_id)
             .unwrap();
 
         let context = compile(&fixture, "pinned_revision_marker", 1_500);
@@ -3616,7 +3701,7 @@ mod tests {
 
         let refreshed = fixture
             .bootstrap
-            .attach(&fixture.target, &fixture.source, &fixture.specification_id)
+            .attach(&fixture.target, &fixture.source, &specification_id)
             .unwrap();
         assert!(refreshed.created);
         let context = compile(&fixture, "pinned_revision_marker", 1_500);

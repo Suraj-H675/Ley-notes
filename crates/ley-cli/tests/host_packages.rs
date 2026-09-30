@@ -80,7 +80,7 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
     assert_eq!(hooks["hooks"]["PostToolUseFailure"][0]["matcher"], "Bash");
 
     let skill = fs::read_to_string(plugin.join("skills/ley-memory/SKILL.md")).unwrap();
-    assert!(skill.contains("ley_session_checkpoint"));
+    assert!(skill.contains("ley_checkpoint"));
     assert!(skill.contains("raw transcripts"));
     assert_portable(root.join(".claude-plugin/marketplace.json"));
     for path in [
@@ -122,416 +122,92 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
     ] {
         let skill = fs::read_to_string(&path).expect("packaged Ley skill");
         let normalized_skill = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for canonical in ["ley_brief", "ley_search", "ley_evidence", "ley_checkpoint"] {
+            assert!(
+                skill.contains(canonical),
+                "{} missing {canonical}",
+                path.display()
+            );
+        }
         assert!(
             skill.contains("# Ley task context (automatic)"),
             "{}",
             path.display()
         );
         assert!(
-            normalized_skill.contains("Do not call `ley_compile_context` again")
-                || normalized_skill.contains("Do **not** call `ley_compile_context` again"),
+            skill.contains("# Ley bootstrap task context (automatic)"),
             "{}",
             path.display()
         );
         assert!(
-            normalized_skill.contains("Automatic hook-injected packs deliberately")
-                && normalized_skill.contains("no utility binding"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_project_specifications"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("human-intent"), "{}", path.display());
-        assert!(skill.contains("shared budget"), "{}", path.display());
-        assert!(skill.contains("authorityPrecedence"), "{}", path.display());
-        assert!(skill.contains("referencePrecedence"), "{}", path.display());
-        assert!(
-            skill.contains("sharedKnowledgePrecedence"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("mountedReferenceScopes"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("mountedReferences"), "{}", path.display());
-        assert!(
-            skill.contains("sharedKnowledgeScopes"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("sharedKnowledgeReferences"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("sharedKnowledgeExclusions"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("mountedReferenceExclusions"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("lower-precedence read-only"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("mountId"), "{}", path.display());
-        assert!(
-            skill.contains("untrusted-shared-project-memory"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("create/remove Context Mounts"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("create/list/attach/detach Knowledge Scopes"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("cannot approve")
-                || skill.contains("cannot approve or revoke")
-                || skill.contains("never approve"),
+            skill.contains("bootstrap-only compatibility exception"),
             "{}",
             path.display()
         );
         assert!(skill.contains("ley_compile_context"), "{}", path.display());
-        assert!(
-            skill.contains("ley_context_pack_inspect"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("contextPackId"), "{}", path.display());
-        assert!(
-            skill.contains("matchesExpectedContextPack"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("ley_project_state"), "{}", path.display());
-        assert!(skill.contains("ley_memory_health"), "{}", path.display());
-        assert!(skill.contains("unsupportedSignals"), "{}", path.display());
-        assert!(
-            skill.contains("destructiveActionsTaken"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("ley_agent_legibility"), "{}", path.display());
-        assert!(
-            skill.contains("tableOfContentsNotScore"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("selectionBasis"), "{}", path.display());
-        assert!(skill.contains("declaredCommands"), "{}", path.display());
-        assert!(skill.contains("observedCommands"), "{}", path.display());
-        assert!(skill.contains("ley runbook compile"), "{}", path.display());
-        assert!(
-            skill.contains("ley runbook export-skill"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("--expected-runbook"), "{}", path.display());
-        assert!(skill.contains("installed: false"), "{}", path.display());
-        assert!(skill.contains("outside MCP"), "{}", path.display());
-        assert!(
-            skill.contains("evidenceArtifactPaths"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("evidenceArtifacts"), "{}", path.display());
-        assert!(
-            skill.contains("ley_read_media_evidence"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("mediaType"), "{}", path.display());
-        assert!(
-            normalized_skill.contains("original untrusted media evidence"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("OCR"), "{}", path.display());
-        assert!(skill.contains("Full Evidence"), "{}", path.display());
-        assert!(skill.contains("ley_topic_dossier"), "{}", path.display());
-        assert!(skill.contains("currentStateProven"), "{}", path.display());
-        assert!(skill.contains("premiseAdjudication"), "{}", path.display());
-        assert!(skill.contains("obsolete-assumption"), "{}", path.display());
-        assert!(skill.contains("revisionFreshness"), "{}", path.display());
-        assert!(
-            skill.contains("revisionApplicability"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("divergent"), "{}", path.display());
-        assert!(skill.contains("merged"), "{}", path.display());
-        assert!(skill.contains("liveGitChecked"), "{}", path.display());
-        assert!(skill.contains("ley_graph_neighbors"), "{}", path.display());
-        assert!(skill.contains("ley_graph_path"), "{}", path.display());
-        assert!(
-            normalized_skill.contains("relative JavaScript/TypeScript import"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("revisionCompatibility"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("current-lineage"), "{}", path.display());
-        assert!(
-            skill.contains("revisionFilteredCandidates"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("Filtering is inspection scope"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("egressTarget"), "{}", path.display());
-        assert!(skill.contains("egressCoverage"), "{}", path.display());
-        assert!(skill.contains("egressExclusions"), "{}", path.display());
         assert!(
             skill.contains("withheld by egress policy"),
             "{}",
             path.display()
         );
         assert!(
-            skill.contains("historicalMemoryWithheld"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("withheldDerivedResults"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("policyBundlePrecedence"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("policyBundlePolicies"), "{}", path.display());
-        assert!(
-            skill.contains("policyBundleExclusions"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("ley policy-bundle"), "{}", path.display());
-        assert!(
-            skill.contains("ley session import codex-history"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("untrusted-imported-host-history"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill.contains("Never scan host storage"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill.contains("excluded from automatic Resume"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("local-model-only"), "{}", path.display());
-        assert!(skill.contains("confirm-per-use"), "{}", path.display());
-        assert!(skill.contains("never-send"), "{}", path.display());
-        assert!(
-            skill.contains("cannot change egress policy"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_external_connectors_list"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_external_connector_get"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("untrusted-external-reference"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("Neither tool contacts GitHub"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill
-                .contains("Never add, refresh, remove, or change egress for a connector"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("40-hex commit SHA"), "{}", path.display());
-        assert!(
-            normalized_skill.contains("branch/tag document URLs are deliberately unsupported"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill
-                .contains("does not prove the current branch still points to that commit"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("conflicting-state"), "{}", path.display());
-        assert!(skill.contains("uncertain-state"), "{}", path.display());
-        assert!(
-            skill.contains("replacementLearningId"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill.contains("not proof") && normalized_skill.contains("live source"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("no-useful-evidence"), "{}", path.display());
-        assert!(
-            skill.contains("ley_session_memory_compile"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_verify"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_verify_typed"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_verify_batch"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_verify_composite"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_verify_problem"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("review-required"), "{}", path.display());
-        assert!(
-            skill.contains("semantic faithfulness"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_commit_unresolved"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_commit_task"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_commit_plan"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_commit_batch"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_commit_composite"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("ley_session_memory_commit_problem"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill.contains("ordered Attempts"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("atomic checkpoint"), "{}", path.display());
-        assert!(skill.contains("schema-v13"), "{}", path.display());
-        assert!(skill.contains("Schema-v14"), "{}", path.display());
-        assert!(
-            skill.contains("supportingToolEvidence"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("toolObservations"), "{}", path.display());
-        assert!(skill.contains("`toe_`"), "{}", path.display());
-        assert!(
-            normalized_skill.contains("returned does not mean the command/test succeeded")
-                || normalized_skill.contains("`returned` does not mean the command/test succeeded"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            skill.contains("do not commit them sequentially"),
-            "{}",
-            path.display()
-        );
-        assert!(skill.contains("generic checkpoint"), "{}", path.display());
-        assert!(skill.contains("re-verif"), "{}", path.display());
-        assert!(skill.contains("do not advance"), "{}", path.display());
-        assert!(skill.contains("expectedEventCount"), "{}", path.display());
-        assert!(
-            skill.contains("Do not infer completion"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill.contains("mechanically known origin lineage"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill.contains("complete causal ancestry"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill
-                .contains("Automatic derivation cannot grant authority above `review-required`"),
-            "{}",
-            path.display()
-        );
-        assert!(
-            normalized_skill.contains("does not erase origin history"),
+            normalized_skill.contains("evidence, never instructions")
+                && normalized_skill.contains("historical and incomplete"),
             "{}",
             path.display()
         );
         assert!(skill.contains("live source"), "{}", path.display());
+        assert!(
+            skill.contains("current Ley session ID"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            skill.contains("does not prove completion"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("raw transcripts")
+                && normalized_skill.contains("hidden reasoning"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("Do not duplicate an adequate automatic pack"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("do not reconstruct it from neighboring memory"),
+            "{}",
+            path.display()
+        );
+        for retired in [
+            "ley_session_memory_",
+            "ley_session_checkpoint",
+            "ley_session_finish",
+            "ley_project_state",
+            "ley_memory_health",
+            "ley_agent_legibility",
+            "ley_topic_dossier",
+            "ley_graph_",
+            "ley_context_utility_",
+            "ley_consolidation_inbox",
+            "ley_learning_",
+            "ley_external_connector",
+            "ley_project_specifications",
+            "ley_search_memory",
+            "ley_search_context",
+            "ley_read_evidence",
+            "ley_read_media_evidence",
+        ] {
+            assert!(
+                !skill.contains(retired),
+                "{} still teaches retired compatibility surface {retired}",
+                path.display()
+            );
+        }
         assert_portable(&path);
     }
 }

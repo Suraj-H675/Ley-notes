@@ -1,4 +1,7 @@
-use crate::retrieval::project_captured_git_state;
+use crate::retrieval::{
+    find_project_hybrid_context_with_continuity_transition, project_captured_git_state,
+    project_captured_git_state_with_continuity_transition,
+};
 use crate::revision::{
     estimate_revision_applicability_tokens, estimate_revision_freshness_tokens, RevisionResolver,
 };
@@ -6,9 +9,10 @@ use crate::semantic_retrieval::{
     rank_bounded_local_texts, SemanticTextCandidate, SemanticTextRankOutcome,
     MAX_SEMANTIC_RANK_TEXTS,
 };
-use crate::session::visit_session_records;
+use crate::session::{visit_session_records, visit_session_records_with_continuity_transition};
 use crate::{
-    diagnose_project, find_project_hybrid_context, list_learnings, ContextItemKind, GraphCitation,
+    diagnose_project, find_project_hybrid_context, list_learnings,
+    list_learnings_with_continuity_transition, ContextItemKind, ContinuityStore, GraphCitation,
     LearningFreshness, LearningKind, LearningOriginSummary, LearningState, LearningSummary,
     LearningTrustState, LeyCoreError, ProjectRevisionFreshness, RetrievalLimits, RetrievalMode,
     RevisionApplicability, RevisionCompatibility, SessionArtifactCitation, SessionSourceKind,
@@ -336,30 +340,72 @@ pub fn search_project_memory(
     limits: ProjectMemorySearchLimits,
     revision_filter: Option<RevisionCompatibility>,
 ) -> Result<ProjectMemorySearch, LeyCoreError> {
+    search_project_memory_with_session_transition(
+        project_start.as_ref(),
+        vault.as_ref(),
+        None,
+        query,
+        limits,
+        revision_filter,
+    )
+}
+
+pub fn search_project_memory_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    query: &str,
+    limits: ProjectMemorySearchLimits,
+    revision_filter: Option<RevisionCompatibility>,
+) -> Result<ProjectMemorySearch, LeyCoreError> {
+    search_project_memory_with_session_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        Some(store),
+        query,
+        limits,
+        revision_filter,
+    )
+}
+
+fn search_project_memory_with_session_transition(
+    project_start: &Path,
+    vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+    query: &str,
+    limits: ProjectMemorySearchLimits,
+    revision_filter: Option<RevisionCompatibility>,
+) -> Result<ProjectMemorySearch, LeyCoreError> {
     validate_request(query, limits)?;
-    let project_start = project_start.as_ref();
-    let vault = vault.as_ref();
     let query = query.trim();
     let normalized_query = normalize_for_match(query);
     let query_terms = query_terms(&normalized_query);
 
-    let captured_git =
-        project_captured_git_state(project_start, vault).map_err(sanitize_memory_error)?;
+    let captured_git = match transition_store {
+        Some(store) => {
+            project_captured_git_state_with_continuity_transition(project_start, vault, store)
+        }
+        None => project_captured_git_state(project_start, vault),
+    }
+    .map_err(sanitize_memory_error)?;
     let mut revision_resolver = RevisionResolver::new(project_start, captured_git.as_ref())
         .map_err(sanitize_memory_error)?;
     let capture_applicability = revision_resolver.capture_applicability();
 
-    // `find_project_hybrid_context` remains the single artifact/graph retrieval authority and
-    // reuses its disposable snapshot-bound local index when available.
-    let hybrid = find_project_hybrid_context(
-        project_start,
-        vault,
-        query,
-        RetrievalLimits {
-            max_results: limits.max_results,
-            max_tokens: limits.max_tokens,
-        },
-    )
+    let retrieval_limits = RetrievalLimits {
+        max_results: limits.max_results,
+        max_tokens: limits.max_tokens,
+    };
+    let hybrid = match transition_store {
+        Some(store) => find_project_hybrid_context_with_continuity_transition(
+            project_start,
+            vault,
+            store,
+            query,
+            retrieval_limits,
+        ),
+        None => find_project_hybrid_context(project_start, vault, query, retrieval_limits),
+    }
     .map_err(sanitize_memory_error)?;
 
     let mut collector = CandidateCollector::with_revision_filter(
@@ -371,18 +417,35 @@ pub fn search_project_memory(
         conflicts: Vec::new(),
     };
 
-    visit_session_records(project_start, vault, |session| {
+    let collect_session = |session: crate::AgentSession,
+                           collector: &mut CandidateCollector,
+                           revision_resolver: &mut RevisionResolver| {
         collect_session_candidates(
             &session,
             &normalized_query,
             &query_terms,
-            &mut collector,
-            &mut revision_resolver,
+            collector,
+            revision_resolver,
         );
-    })
+    };
+    match transition_store {
+        Some(store) => visit_session_records_with_continuity_transition(
+            project_start,
+            vault,
+            store,
+            |session| collect_session(session, &mut collector, &mut revision_resolver),
+        ),
+        None => visit_session_records(project_start, vault, |session| {
+            collect_session(session, &mut collector, &mut revision_resolver)
+        }),
+    }
     .map_err(sanitize_memory_error)?;
 
-    let learnings = list_learnings(project_start, vault).map_err(sanitize_memory_error)?;
+    let learnings = match transition_store {
+        Some(store) => list_learnings_with_continuity_transition(project_start, vault, store),
+        None => list_learnings(project_start, vault),
+    }
+    .map_err(sanitize_memory_error)?;
     for learning in &learnings {
         let candidate = learning_candidate(
             learning,
@@ -1485,9 +1548,13 @@ fn sanitize_memory_error(_error: LeyCoreError) -> LeyCoreError {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, ingest_project, initialize_project, start_session, ArtifactMediaType,
-        CaptureMode, CheckpointInput, DecisionInput, SessionSource, StartSessionInput,
-        VerificationInput, VerificationStatus,
+        checkpoint_session, checkpoint_session_with_continuity_transition, ingest_project,
+        ingest_project_with_continuity_transition, initialize_project,
+        propose_learning_with_continuity_transition, start_session,
+        start_session_with_continuity_transition, ArtifactMediaType, CaptureMode, CheckpointInput,
+        DecisionInput, LearningActor, LearningEvidenceInput, LearningKind, LearningProvenance,
+        ProposeLearningInput, SessionSource, StartSessionInput, VerificationInput,
+        VerificationStatus,
     };
     use std::fs;
     use std::process::Command;
@@ -1941,6 +2008,123 @@ mod tests {
             .unwrap()
             .contains(project.to_string_lossy().as_ref()));
         assert!(!result.live_source_checked);
+    }
+
+    #[test]
+    fn canonical_transition_search_survives_vault_loss_after_native_authorities_cut_over() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("native-search-project");
+        let vault = root.path().join("native-search-vault");
+        let private = root.path().join("native-search-private");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::create_dir_all(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        initialize_project(
+            &project,
+            Some("Native canonical search"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        fs::write(
+            project.join("README.md"),
+            "The captured retrieval marker remains available through native continuity.\n",
+        )
+        .unwrap();
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        let ingested = ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        let started = start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            StartSessionInput {
+                request_id: request_id('a'),
+                name: "Native authority prerequisite".to_owned(),
+                goal: "Prove canonical search no longer requires the legacy vault.".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let checkpoint = checkpoint_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: request_id('b'),
+                summary: "Captured one native search checkpoint.".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: vec!["README.md".to_owned()],
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let record_id = checkpoint.session.checkpoints.last().unwrap().id.clone();
+        propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            ProposeLearningInput {
+                request_id: request_id('c'),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Use native search authority".to_owned(),
+                guidance: "Read canonical artifact context from native continuity.".to_owned(),
+                confidence_percent: 80,
+                provenance: LearningProvenance::Inferred,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: started.session.session_id,
+                    record_id,
+                    note: "Authority cutover fixture.".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+
+        fs::remove_dir_all(&vault).unwrap();
+        let result = search_project_memory_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            "captured retrieval marker",
+            ProjectMemorySearchLimits {
+                max_results: 6,
+                max_tokens: 1_500,
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.artifact_snapshot_id, ingested.snapshot_id);
+        assert!(result.graph_snapshot_id.starts_with("grf_"));
+        assert_eq!(
+            result.retrieval.artifact_context_mode,
+            RetrievalMode::Lexical
+        );
+        let artifact = result
+            .results
+            .iter()
+            .find(|item| {
+                item.kind == ProjectMemoryResultKind::Artifact
+                    && item
+                        .citation
+                        .as_ref()
+                        .is_some_and(|citation| citation.artifact_path == "README.md")
+            })
+            .unwrap();
+        let citation = artifact.citation.as_ref().unwrap();
+        assert_eq!(citation.artifact_snapshot_id, ingested.snapshot_id);
+        assert!(!serde_json::to_string(&result)
+            .unwrap()
+            .contains(project.to_string_lossy().as_ref()));
     }
 
     #[test]

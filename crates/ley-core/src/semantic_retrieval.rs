@@ -1,4 +1,4 @@
-use crate::graph::{FactProvenance, GraphCitation, GraphNodeKind};
+use crate::graph::{FactProvenance, GraphCitation};
 use crate::ingestion::LoadedProjectMemory;
 use crate::retrieval::{ContextItem, ContextItemKind};
 use crate::{LeyCoreError, AGENT_MEMORY_DIRECTORY};
@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-pub const SEMANTIC_INDEX_SCHEMA_VERSION: u32 = 1;
+pub const SEMANTIC_INDEX_SCHEMA_VERSION: u32 = 2;
 pub const SEMANTIC_MODEL_ID: &str = "minishlab/potion-retrieval-32M";
 pub const SEMANTIC_MODEL_REVISION: &str = "6fc8051fab2a1e0ee76689cf08c853792ac285e7";
 pub const SEMANTIC_MODEL_DIMENSION: usize = 512;
@@ -25,7 +25,7 @@ const SEMANTIC_CACHE_APPLICATION_DIRECTORY: &str = "ley";
 const SEMANTIC_CACHE_MODELS_DIRECTORY: &str = "models";
 const SEMANTIC_CACHE_MODEL_DIRECTORY: &str = "minishlab--potion-retrieval-32m";
 const SEMANTIC_INDEX_DIRECTORY: &str = "semantic-index";
-const SEMANTIC_INDEX_FILE_PREFIX: &str = "semantic-index-v1-";
+const SEMANTIC_INDEX_FILE_PREFIX: &str = "semantic-index-v2-";
 const SEMANTIC_INDEX_LIMIT_BYTES: u64 = 33_554_432;
 const SEMANTIC_RRF_K: u32 = 60;
 const MODEL_COPY_BUFFER_BYTES: usize = 64 * 1024;
@@ -88,7 +88,6 @@ pub struct SemanticIndexBinding {
     pub schema_version: u32,
     pub project_id: String,
     pub artifact_snapshot_id: String,
-    pub graph_snapshot_id: String,
     pub model_id: String,
     pub model_revision: String,
     pub embedding_dimension: usize,
@@ -531,7 +530,6 @@ fn semantic_index_binding(memory: &LoadedProjectMemory) -> SemanticIndexBinding 
         schema_version: SEMANTIC_INDEX_SCHEMA_VERSION,
         project_id: memory.manifest.project_id.clone(),
         artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
-        graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
         model_id: SEMANTIC_MODEL_ID.to_owned(),
         model_revision: SEMANTIC_MODEL_REVISION.to_owned(),
         embedding_dimension: SEMANTIC_MODEL_DIMENSION,
@@ -654,49 +652,6 @@ fn semantic_index_candidates(
                 source_boundary: "untrusted-project-evidence",
             },
             text: document,
-        });
-    }
-    for node in &memory.graph.nodes {
-        if candidates.len() >= MAX_SEMANTIC_INDEX_ENTRIES {
-            break;
-        }
-        let kind = match node.kind {
-            GraphNodeKind::Symbol => ContextItemKind::Symbol,
-            GraphNodeKind::Dependency => ContextItemKind::Dependency,
-            _ => continue,
-        };
-        let Some(citation) = node.citation.clone() else {
-            continue;
-        };
-        let mut document = node.name.clone();
-        if let Some(path) = &node.path {
-            document.push(' ');
-            document.push_str(path);
-        }
-        if let Some(symbol_kind) = &node.symbol_kind {
-            document.push(' ');
-            document.push_str(symbol_kind);
-        }
-        if let Some(package_manager) = &node.package_manager {
-            document.push(' ');
-            document.push_str(package_manager);
-        }
-        candidates.push(SemanticIndexCandidate {
-            item: ContextItem {
-                id: node.id.clone(),
-                kind,
-                title: node.name.clone(),
-                path: node.path.clone(),
-                language: node.language.clone(),
-                snippet: None,
-                citation,
-                score: 0,
-                provenance: node.provenance,
-                confidence: node.confidence,
-                trust_state: "direct-evidence",
-                source_boundary: "untrusted-project-evidence",
-            },
-            text: bounded_document(&document),
         });
     }
     candidates.sort_by(|left, right| left.item.id.cmp(&right.item.id));
@@ -1373,12 +1328,44 @@ mod tests {
     }
 
     #[test]
+    fn semantic_index_candidates_exclude_unearned_graph_nodes() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(
+            project.join("lib.rs"),
+            "pub fn artifact_only_semantic_candidate() -> bool { true }\n",
+        )
+        .unwrap();
+        crate::initialize_project(
+            &project,
+            Some("Semantic artifact-only"),
+            crate::CaptureMode::Structured,
+        )
+        .unwrap();
+        crate::ingest_project(&project, &vault).unwrap();
+        let memory = crate::ingestion::load_project_memory(&project, &vault).unwrap();
+        assert!(memory.graph.nodes.iter().any(|node| {
+            matches!(
+                node.kind,
+                crate::GraphNodeKind::Symbol | crate::GraphNodeKind::Dependency
+            )
+        }));
+        let candidates = semantic_index_candidates(&memory).unwrap();
+        assert!(!candidates.is_empty());
+        assert!(candidates
+            .iter()
+            .all(|candidate| candidate.item.kind == ContextItemKind::Artifact));
+    }
+
+    #[test]
     fn semantic_index_validation_rejects_binding_and_embedding_mismatches() {
         let binding = SemanticIndexBinding {
             schema_version: SEMANTIC_INDEX_SCHEMA_VERSION,
             project_id: "prj_00000000000000000000000000000000".to_owned(),
             artifact_snapshot_id: format!("snp_{}", "0".repeat(64)),
-            graph_snapshot_id: format!("grf_{}", "1".repeat(64)),
             model_id: SEMANTIC_MODEL_ID.to_owned(),
             model_revision: SEMANTIC_MODEL_REVISION.to_owned(),
             embedding_dimension: SEMANTIC_MODEL_DIMENSION,
@@ -1409,12 +1396,12 @@ mod tests {
         assert!(validate_semantic_index(&index, &binding).is_ok());
         let current_filename = semantic_index_filename(&binding).unwrap();
         let mut mismatched = binding.clone();
-        mismatched.graph_snapshot_id = format!("grf_{}", "2".repeat(64));
+        mismatched.artifact_snapshot_id = format!("snp_{}", "2".repeat(64));
         assert!(validate_semantic_index(&index, &mismatched).is_err());
         assert_ne!(
             current_filename,
             semantic_index_filename(&mismatched).unwrap(),
-            "a new snapshot/graph binding must use a different derived-index namespace"
+            "a new artifact snapshot binding must use a different derived-index namespace"
         );
         let mut invalid = index;
         invalid.entries[0].embedding.pop();

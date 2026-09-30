@@ -1,71 +1,50 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Page } from "@/infrastructure/database/schema";
 import { SpecificationsPanel } from "./SpecificationsPanel";
-import type { SpecificationAuthorityList } from "./types";
+import type { ApprovedSourceAuthorityList } from "./types";
 
 const api = vi.hoisted(() => ({
   approve: vi.fn(),
   read: vi.fn(),
+  reapprove: vi.fn(),
   revoke: vi.fn(),
-  verifyVault: vi.fn(),
-  updateFrontmatter: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
-  approveAgentProjectSpecification: api.approve,
-  readAgentProjectSpecifications: api.read,
-  revokeAgentProjectSpecification: api.revoke,
-  verifyAgentProjectNoteVault: api.verifyVault,
+  approveAgentProjectFileSource: api.approve,
+  readAgentProjectApprovedSources: api.read,
+  reapproveAgentProjectFileSource: api.reapprove,
+  revokeAgentProjectApprovedSource: api.revoke,
 }));
 
-vi.mock("@/core/vault/pages", () => ({
-  updatePageFrontmatter: api.updateFrontmatter,
-}));
-
-const emptyAuthority: SpecificationAuthorityList = {
+const emptyAuthority: ApprovedSourceAuthorityList = {
   projectId: "prj_test",
-  specifications: [],
+  sources: [],
   current: 0,
   changed: 0,
   missing: 0,
-  privacyNotice: "Only approval metadata is stored privately.",
-};
-
-const activeNote: Page = {
-  id: "page_spec",
-  title: "Offline product",
-  lcTitle: "offline product",
-  path: "Specs/Offline product.md",
-  content: "# Offline product\n\n## Acceptance criteria\n\n- Works offline.\n",
-  frontmatter: { owner: "Suraj" },
-  aliases: [],
-  createdAt: 1,
-  updatedAt: 2,
-  deletedAt: null,
+  legacyIssues: [],
+  privacyNotice: "Only explicit approved-source authority is stored privately.",
 };
 
 describe("SpecificationsPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.read.mockResolvedValue(emptyAuthority);
-    api.verifyVault.mockResolvedValue(undefined);
-    api.updateFrontmatter.mockResolvedValue(undefined);
-    vi.stubGlobal("crypto", {
-      randomUUID: () => "12345678-1234-4123-8123-123456789abc",
-    });
   });
 
-  it("verifies the bound vault before designating and approving the exact visible note", async () => {
-    const approved: SpecificationAuthorityList = {
+  it("approves an exact project-relative source without a vault or caller-generated id", async () => {
+    const approved: ApprovedSourceAuthorityList = {
       ...emptyAuthority,
       current: 1,
-      specifications: [
+      sources: [
         {
           approval: {
             projectId: "prj_test",
-            specificationId: "spec_12345678123441238123123456789abc",
-            relativePath: activeNote.path,
+            sourceId: "spec_12345678123441238123123456789abc",
+            sourceKind: "project-file",
+            displayName: "AGENTS.md",
+            projectRelativePath: "AGENTS.md",
             contentHash: `sha256:${"a".repeat(64)}`,
             approvedAtUnixMs: 1_700_000_000_000,
           },
@@ -76,79 +55,37 @@ describe("SpecificationsPanel", () => {
     };
     api.approve.mockResolvedValue(approved);
 
-    render(
-      <SpecificationsPanel
-        projectPath="/projects/ley"
-        vaultPath="/vaults/private"
-        activeNote={activeNote}
-      />,
-    );
+    render(<SpecificationsPanel projectPath="/projects/ley" />);
 
+    const input = await screen.findByRole("textbox", {
+      name: "Project-relative source path",
+    });
+    expect(input).toHaveValue("AGENTS.md");
     fireEvent.click(
-      await screen.findByRole("button", { name: "Approve current note" }),
+      screen.getByRole("button", { name: "Approve exact revision" }),
     );
 
     await waitFor(() => {
-      expect(api.verifyVault).toHaveBeenCalledWith(
-        "/projects/ley",
-        "/vaults/private",
-      );
-      expect(api.updateFrontmatter).toHaveBeenCalledWith("page_spec", {
-        owner: "Suraj",
-        "ley-type": "specification",
-        "ley-spec-id": "spec_12345678123441238123123456789abc",
-      });
-      expect(api.approve).toHaveBeenCalledWith(
-        "/projects/ley",
-        "/vaults/private",
-        "spec_12345678123441238123123456789abc",
-        "Specs/Offline product.md",
-      );
+      expect(api.approve).toHaveBeenCalledWith("/projects/ley", "AGENTS.md");
     });
-    expect(api.verifyVault.mock.invocationCallOrder[0]).toBeLessThan(
-      api.updateFrontmatter.mock.invocationCallOrder[0],
+    expect((await screen.findAllByText("current")).length).toBeGreaterThanOrEqual(
+      1,
     );
-    expect(api.updateFrontmatter.mock.invocationCallOrder[0]).toBeLessThan(
-      api.approve.mock.invocationCallOrder[0],
-    );
-    expect(
-      (await screen.findAllByText("current")).length,
-    ).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("project file")).toBeVisible();
   });
 
-  it("does not mutate Markdown when the open vault is not the project binding", async () => {
-    api.verifyVault.mockRejectedValue(
-      new Error("Open the bound vault before approving a Specification."),
-    );
-
-    render(
-      <SpecificationsPanel
-        projectPath="/projects/ley"
-        vaultPath="/vaults/wrong"
-        activeNote={activeNote}
-      />,
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Approve current note" }),
-    );
-
-    expect(
-      await screen.findByText(/Open the bound vault before approving/),
-    ).toBeVisible();
-    expect(api.updateFrontmatter).not.toHaveBeenCalled();
-    expect(api.approve).not.toHaveBeenCalled();
-  });
-
-  it("shows a changed approval and revokes authority without editing the note", async () => {
-    const changed: SpecificationAuthorityList = {
+  it("reapproves and revokes a changed project-file authority", async () => {
+    const changed: ApprovedSourceAuthorityList = {
       ...emptyAuthority,
       changed: 1,
-      specifications: [
+      sources: [
         {
           approval: {
             projectId: "prj_test",
-            specificationId: "spec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            relativePath: activeNote.path,
+            sourceId: "spec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            sourceKind: "project-file",
+            displayName: "docs/requirements.md",
+            projectRelativePath: "docs/requirements.md",
             contentHash: `sha256:${"a".repeat(64)}`,
             approvedAtUnixMs: 1_700_000_000_000,
           },
@@ -157,31 +94,81 @@ describe("SpecificationsPanel", () => {
         },
       ],
     };
+    const refreshed: ApprovedSourceAuthorityList = {
+      ...changed,
+      current: 1,
+      changed: 0,
+      sources: changed.sources.map((source) => ({
+        ...source,
+        state: "current",
+        approval: {
+          ...source.approval,
+          contentHash: `sha256:${"b".repeat(64)}`,
+        },
+      })),
+    };
     api.read.mockResolvedValue(changed);
+    api.reapprove.mockResolvedValue(refreshed);
     api.revoke.mockResolvedValue(emptyAuthority);
 
-    render(
-      <SpecificationsPanel
-        projectPath="/projects/ley"
-        vaultPath="/vaults/private"
-        activeNote={activeNote}
-      />,
-    );
+    render(<SpecificationsPanel projectPath="/projects/ley" />);
 
-    expect(
-      (await screen.findAllByText("changed")).length,
-    ).toBeGreaterThanOrEqual(1);
-    fireEvent.click(screen.getByRole("button", { name: "Revoke authority" }));
+    expect((await screen.findAllByText("changed")).length).toBeGreaterThanOrEqual(
+      1,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reapprove revision" }));
     await waitFor(() => {
-      expect(api.revoke).toHaveBeenCalledWith(
+      expect(api.reapprove).toHaveBeenCalledWith(
         "/projects/ley",
-        "/vaults/private",
         "spec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       );
     });
-    expect(api.updateFrontmatter).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Revoke authority" }),
+    );
+    await waitFor(() => {
+      expect(api.revoke).toHaveBeenCalledWith(
+        "/projects/ley",
+        "spec_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      );
+    });
     expect(
-      await screen.findByText(/No Specification revisions are approved/),
+      await screen.findByText(/No active approved sources/),
     ).toBeVisible();
+  });
+
+  it("keeps unresolved legacy approvals separate from active authority", async () => {
+    const authority: ApprovedSourceAuthorityList = {
+      ...emptyAuthority,
+      legacyIssues: [
+        {
+          projectId: "prj_test",
+          sourceId: "spec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          displayName: "Specs/Old.md",
+          approvedContentHash: `sha256:${"c".repeat(64)}`,
+          approvedAtUnixMs: 1_700_000_000_000,
+          reason: "changed",
+        },
+      ],
+    };
+    api.read.mockResolvedValue(authority);
+    api.revoke.mockResolvedValue(emptyAuthority);
+
+    render(<SpecificationsPanel projectPath="/projects/ley" />);
+
+    expect(
+      await screen.findByText("Legacy approvals needing review"),
+    ).toBeVisible();
+    expect(screen.getByText("Specs/Old.md")).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dismiss legacy approval" }),
+    );
+    await waitFor(() => {
+      expect(api.revoke).toHaveBeenCalledWith(
+        "/projects/ley",
+        "spec_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      );
+    });
   });
 });

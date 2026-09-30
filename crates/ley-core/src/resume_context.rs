@@ -1,7 +1,10 @@
 use crate::{
-    list_learning_contexts, list_sessions, project_memory_overview, read_session, CaptureMode,
+    list_learning_contexts, list_learning_contexts_with_continuity_transition, list_sessions,
+    list_sessions_with_continuity_transition, project_memory_overview,
+    project_memory_overview_with_continuity_transition, read_session,
+    read_session_with_continuity_transition, AgentSession, CaptureMode, ContinuityStore,
     LearningFreshness, LearningKind, LearningListScope, LearningProvenance, LearningState,
-    LearningTrustState, LeyCoreError, SessionSourceKind, SessionStatus, TaskStatus,
+    LearningTrustState, LeyCoreError, SessionSourceKind, SessionStatus, SessionSummary, TaskStatus,
 };
 use serde::Serialize;
 use std::path::Path;
@@ -28,7 +31,8 @@ pub struct ProjectResumePack {
     pub project_name: String,
     pub capture_mode: CaptureMode,
     pub artifact_snapshot_id: String,
-    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
     pub captured_at_unix_ms: u64,
     pub freshness: &'static str,
     pub live_source_checked: bool,
@@ -136,10 +140,65 @@ pub fn project_resume_context(
     max_text_characters: usize,
 ) -> Result<ProjectResumePack, LeyCoreError> {
     validate_limits(max_sessions, max_learnings, max_text_characters)?;
-    let overview = project_memory_overview(&project_start, &vault)?;
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let summaries = list_sessions(project_start, vault)?;
+    project_resume_context_from_sessions(
+        project_start,
+        vault,
+        summaries,
+        max_sessions,
+        max_learnings,
+        max_text_characters,
+        None,
+        |session_id| read_session(project_start, vault, session_id),
+    )
+}
+
+pub fn project_resume_context_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    max_sessions: usize,
+    max_learnings: usize,
+    max_text_characters: usize,
+) -> Result<ProjectResumePack, LeyCoreError> {
+    validate_limits(max_sessions, max_learnings, max_text_characters)?;
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let summaries = list_sessions_with_continuity_transition(project_start, legacy_vault, store)?;
+    project_resume_context_from_sessions(
+        project_start,
+        legacy_vault,
+        summaries,
+        max_sessions,
+        max_learnings,
+        max_text_characters,
+        Some(store),
+        |session_id| {
+            read_session_with_continuity_transition(project_start, legacy_vault, store, session_id)
+        },
+    )
+}
+
+fn project_resume_context_from_sessions(
+    project_start: &Path,
+    vault: &Path,
+    mut summaries: Vec<SessionSummary>,
+    max_sessions: usize,
+    max_learnings: usize,
+    max_text_characters: usize,
+    transition_store: Option<&ContinuityStore>,
+    mut session_reader: impl FnMut(&str) -> Result<AgentSession, LeyCoreError>,
+) -> Result<ProjectResumePack, LeyCoreError> {
+    let overview = match transition_store {
+        Some(store) => {
+            project_memory_overview_with_continuity_transition(project_start, vault, store)
+        }
+        None => project_memory_overview(project_start, vault),
+    }?;
     let mut budget = TextBudget::new(max_text_characters);
 
-    let mut summaries = list_sessions(&project_start, &vault)?;
     let total_sessions = summaries.len();
     let excluded_imported_sessions = summaries
         .iter()
@@ -158,7 +217,7 @@ pub fn project_resume_context(
             budget.truncated = true;
             break;
         }
-        let session = read_session(&project_start, &vault, &summary.session_id)?;
+        let session = session_reader(&summary.session_id)?;
         let latest_checkpoint = session
             .checkpoints
             .last()
@@ -238,12 +297,21 @@ pub fn project_resume_context(
     }
     let omitted_sessions = total_sessions.saturating_sub(sessions.len());
 
-    let learning_list = list_learning_contexts(
-        &project_start,
-        &vault,
-        LearningListScope::CurrentTrusted,
-        max_learnings,
-    )?;
+    let learning_list = match transition_store {
+        Some(store) => list_learning_contexts_with_continuity_transition(
+            project_start,
+            vault,
+            store,
+            LearningListScope::CurrentTrusted,
+            max_learnings,
+        ),
+        None => list_learning_contexts(
+            project_start,
+            vault,
+            LearningListScope::CurrentTrusted,
+            max_learnings,
+        ),
+    }?;
     let total_current_trusted_learnings = learning_list.total_matching;
     let mut learnings = Vec::new();
     for learning in learning_list.learnings {

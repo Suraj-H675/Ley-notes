@@ -72,8 +72,8 @@ export function SessionErasureEditor({
           </p>
           <ul className="mt-2 grid gap-1.5 text-micro leading-5 text-muted-foreground sm:grid-cols-2">
             <li>Unrelated sessions and lessons</li>
-            <li>Project captures and graph history</li>
-            <li>Project files, policy, and vault binding</li>
+            <li>Captured project evidence</li>
+            <li>Project files and capture policy</li>
             <li>Ordinary Markdown and Canvas copies</li>
           </ul>
           <p className="mt-3 border-t border-border pt-3 text-micro leading-5 text-muted-foreground">

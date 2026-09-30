@@ -1,5 +1,6 @@
 use ley_core::{
-    generate_specification_id, SpecificationRegistry, APP_IDENTIFIER, SPECIFICATION_REGISTRY_FILE,
+    diagnose_project, generate_specification_id, SpecificationRegistry, APP_IDENTIFIER,
+    KNOWLEDGE_SCOPE_REGISTRY_FILE, POLICY_BUNDLE_REGISTRY_FILE, SPECIFICATION_REGISTRY_FILE,
 };
 use serde_json::Value;
 use std::fs;
@@ -53,8 +54,43 @@ fn init_and_bind(config: &Path, project: &Path, vault: &Path, name: &str) {
     );
 }
 
+fn seed_legacy_scope(config: &Path, active: &Path, source: &Path, scope_id: &str) {
+    let active_id = diagnose_project(active).unwrap().identity.project_id;
+    let source_id = diagnose_project(source).unwrap().identity.project_id;
+    let path = config
+        .join(APP_IDENTIFIER)
+        .join(KNOWLEDGE_SCOPE_REGISTRY_FILE);
+    let document = serde_json::json!({
+        "schemaVersion": 1,
+        "scopes": {
+            scope_id: {
+                "kind": "team",
+                "name": "Platform team",
+                "sourceProjectIds": [source_id.clone()],
+                "createdAtUnixMs": 1_700_000_000_000_u64,
+            }
+        },
+        "attachments": {
+            active_id.clone(): {
+                scope_id: 1_700_000_000_100_u64,
+            }
+        },
+        "attachmentHistory": {
+            active_id: {
+                scope_id: [source_id],
+            }
+        }
+    });
+    fs::write(&path, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
 #[test]
-fn cli_policy_bundle_lifecycle_is_explicit_exact_revision_and_path_safe() {
+fn cli_retires_policy_bundle_growth_but_preserves_legacy_inspection_and_detach() {
     let base = tempdir().unwrap();
     let config = base.path().join("config");
     let active = base.path().join("active");
@@ -79,11 +115,11 @@ fn cli_policy_bundle_lifecycle_is_explicit_exact_revision_and_path_safe() {
             .join(APP_IDENTIFIER)
             .join(SPECIFICATION_REGISTRY_FILE),
     );
-    specification_registry
+    let approved = specification_registry
         .approve(&source, &source_vault, &specification_id, "TeamPolicy.md")
         .unwrap();
 
-    let created_scope = json_stdout(ley(
+    let create_scope_rejected = run_ley(
         &config,
         &[
             "scope",
@@ -93,38 +129,15 @@ fn cli_policy_bundle_lifecycle_is_explicit_exact_revision_and_path_safe() {
             source.to_str().unwrap(),
             "--json",
         ],
-    ));
-    let scope_id = created_scope["scope"]["scopeId"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-
-    let created = json_stdout(ley(
-        &config,
-        &[
-            "policy-bundle",
-            "create",
-            &scope_id,
-            "Platform policy",
-            "--source",
-            source.to_str().unwrap(),
-            &specification_id,
-            "--json",
-        ],
-    ));
-    assert_eq!(created["created"], true);
-    assert_eq!(created["bundle"]["scopeId"], scope_id);
-    assert_eq!(created["bundle"]["scopeKind"], "team");
-    assert_eq!(created["bundle"]["name"], "Platform policy");
-    assert_eq!(
-        created["bundle"]["sources"][0]["specificationId"],
-        specification_id
     );
-    assert_eq!(created["bundle"]["sources"][0]["status"], "ready");
-    let bundle_id = created["bundle"]["bundleId"].as_str().unwrap().to_owned();
-    assert!(bundle_id.starts_with("pbd_"));
+    assert!(!create_scope_rejected.status.success());
+    assert!(String::from_utf8_lossy(&create_scope_rejected.stderr)
+        .contains("Knowledge Scope creation is retired"));
 
-    let duplicate = json_stdout(ley(
+    let scope_id = "ksc_22222222222222222222222222222222";
+    seed_legacy_scope(&config, &active, &source, scope_id);
+
+    let create_bundle_rejected = run_ley(
         &config,
         &[
             "policy-bundle",
@@ -136,13 +149,61 @@ fn cli_policy_bundle_lifecycle_is_explicit_exact_revision_and_path_safe() {
             &specification_id,
             "--json",
         ],
-    ));
-    assert_eq!(duplicate["created"], false);
-    assert_eq!(duplicate["bundle"]["bundleId"], bundle_id);
+    );
+    assert!(!create_bundle_rejected.status.success());
+    assert!(String::from_utf8_lossy(&create_bundle_rejected.stderr)
+        .contains("Policy Bundle creation is retired"));
+
+    let bundle_id = "pbd_11111111111111111111111111111111";
+    let source_project_id = diagnose_project(&source).unwrap().identity.project_id;
+    let active_project_id = diagnose_project(&active).unwrap().identity.project_id;
+    let bundle_path = config
+        .join(APP_IDENTIFIER)
+        .join(POLICY_BUNDLE_REGISTRY_FILE);
+    let bundle_document = serde_json::json!({
+        "schemaVersion": 1,
+        "bundles": {
+            bundle_id: {
+                "scopeId": scope_id,
+                "name": "Platform policy",
+                "sources": [{
+                    "sourceProjectId": source_project_id,
+                    "specificationId": specification_id,
+                    "contentHash": approved.content_hash,
+                }],
+                "createdAtUnixMs": 1_700_000_000_000_u64,
+            }
+        },
+        "attachments": {
+            active_project_id.clone(): {
+                bundle_id: { "attachedAtUnixMs": 1_700_000_000_100_u64 }
+            }
+        },
+        "attachmentHistory": {
+            active_project_id: {
+                bundle_id: [{
+                    "sourceProjectId": source_project_id.clone(),
+                    "specificationId": specification_id.clone(),
+                    "contentHash": approved.content_hash.clone(),
+                }]
+            }
+        }
+    });
+    fs::write(
+        &bundle_path,
+        serde_json::to_vec_pretty(&bundle_document).unwrap(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&bundle_path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
 
     let listed = json_stdout(ley(&config, &["policy-bundle", "list", "--json"]));
     assert_eq!(listed["bundles"].as_array().unwrap().len(), 1);
     assert_eq!(listed["bundles"][0]["bundleId"], bundle_id);
+    assert_eq!(listed["bundles"][0]["sources"][0]["status"], "ready");
     let listed_json = serde_json::to_string(&listed).unwrap();
     for private in [
         active.to_str().unwrap(),
@@ -156,7 +217,7 @@ fn cli_policy_bundle_lifecycle_is_explicit_exact_revision_and_path_safe() {
         assert!(!listed_json.contains(private));
     }
 
-    let premature_attach = run_ley(
+    let attach_rejected = run_ley(
         &config,
         &[
             "policy-bundle",
@@ -166,46 +227,9 @@ fn cli_policy_bundle_lifecycle_is_explicit_exact_revision_and_path_safe() {
             "--json",
         ],
     );
-    assert!(!premature_attach.status.success());
-    assert!(String::from_utf8_lossy(&premature_attach.stderr)
-        .contains("must be attached before policy bundle"));
-
-    ley(
-        &config,
-        &[
-            "scope",
-            "attach",
-            &scope_id,
-            active.to_str().unwrap(),
-            "--json",
-        ],
-    );
-    let attached = json_stdout(ley(
-        &config,
-        &[
-            "policy-bundle",
-            "attach",
-            &bundle_id,
-            active.to_str().unwrap(),
-            "--json",
-        ],
-    ));
-    assert_eq!(attached["created"], true);
-    assert_eq!(attached["attachment"]["bundleId"], bundle_id);
-    assert_eq!(attached["attachment"]["scopeId"], scope_id);
-    assert_eq!(attached["attachment"]["state"], "active");
-
-    let duplicate_attach = json_stdout(ley(
-        &config,
-        &[
-            "policy-bundle",
-            "attach",
-            &bundle_id,
-            active.to_str().unwrap(),
-            "--json",
-        ],
-    ));
-    assert_eq!(duplicate_attach["created"], false);
+    assert!(!attach_rejected.status.success());
+    assert!(String::from_utf8_lossy(&attach_rejected.stderr)
+        .contains("Policy Bundle attachment is retired"));
 
     let attached_list = json_stdout(ley(
         &config,
@@ -230,6 +254,14 @@ fn cli_policy_bundle_lifecycle_is_explicit_exact_revision_and_path_safe() {
         ],
     ));
     assert_eq!(status, attached_list);
+
+    fs::remove_file(specification_registry.path()).unwrap();
+    fs::remove_dir_all(&source_vault).unwrap();
+    let migrated_list = json_stdout(ley(&config, &["policy-bundle", "list", "--json"]));
+    assert_eq!(migrated_list["bundles"][0]["sources"][0]["status"], "ready");
+    let migrated_json = serde_json::to_string(&migrated_list).unwrap();
+    assert!(!migrated_json.contains(source_vault.to_str().unwrap()));
+    assert!(!migrated_json.contains(private_policy_marker));
 
     let unrelated_status = json_stdout(ley(
         &config,

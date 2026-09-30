@@ -452,10 +452,11 @@ mod tests {
     use crate::{
         compile_project_context_for_agent_with_registries, compile_project_context_with_registries,
         ingest_project, initialize_project, AgentContextAuthorities, AgentEgressTarget,
-        BindingRegistry, CaptureMode, ContextCompileLimits, ContextMountRegistry,
-        EgressPolicyRegistry, KnowledgeScopeKind, KnowledgeScopeRegistry, PolicyBundleRegistry,
-        PolicyBundleSourceInput, SpecificationRegistry, BINDING_REGISTRY_FILE,
-        CONTEXT_MOUNT_REGISTRY_FILE, KNOWLEDGE_SCOPE_REGISTRY_FILE,
+        ApprovedSourceRegistry, BindingRegistry, CaptureMode, ContextCompileLimits,
+        ContextMountRegistry, ContinuityStore, EgressPolicyRegistry, KnowledgeScopeKind,
+        KnowledgeScopeRegistry, PolicyBundleRegistry, PolicyBundleSourceInput,
+        SpecificationRegistry, BINDING_REGISTRY_FILE, CONTEXT_MOUNT_REGISTRY_FILE,
+        KNOWLEDGE_SCOPE_REGISTRY_FILE,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -555,6 +556,11 @@ mod tests {
         for path in [&config, &active, &active_vault, &source, &source_vault] {
             fs::create_dir_all(path).unwrap();
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
         initialize_project(&source, Some("Policy source"), CaptureMode::Structured).unwrap();
         fs::write(active.join("README.md"), "inspector policy baseline\n").unwrap();
@@ -571,6 +577,9 @@ mod tests {
         .unwrap();
 
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let source_specification_id = crate::generate_specification_id();
         specifications
             .approve(
@@ -618,6 +627,7 @@ mod tests {
             },
             AgentContextAuthorities {
                 specifications: &specifications,
+                approved_sources: &approved_sources,
                 mounts: &mounts,
                 knowledge_scopes: &scopes,
                 policy_bundles: &policy_bundles,

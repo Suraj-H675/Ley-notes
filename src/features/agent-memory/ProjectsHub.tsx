@@ -157,7 +157,7 @@ function ProjectsHubContent({
               <p className="mt-3 text-body leading-6 text-muted-foreground-strong">
                 Ley remembers only projects you explicitly open. Each project
                 keeps its own cited sessions, decisions, problems, lessons, and
-                deterministic graph inside its bound filesystem vault.
+                captured evidence in Ley’s private local continuity store.
               </p>
             </div>
             <Button variant="primary" onClick={onAdd}>
@@ -707,10 +707,6 @@ function ProjectCard({
             <span className="inline-flex items-center gap-1.5">
               <CircleDot size={11} aria-hidden="true" />
               {project.activeSessions ?? 0} active
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <Network size={11} aria-hidden="true" />
-              {(project.graphNodes ?? 0).toLocaleString()} graph nodes
             </span>
             <span>{humanize(project.freshness ?? "stored")}</span>
           </div>

@@ -8,8 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use uuid::Uuid;
 
-mod acceptance_verification;
-mod agent_legibility;
+mod approved_source;
 mod binding;
 mod bootstrap_specification;
 mod consolidation_inbox;
@@ -20,7 +19,6 @@ mod continuity_import;
 mod continuity_portable;
 mod continuity_store;
 mod cross_project_search;
-mod current_project_state;
 mod egress_policy;
 mod external_connector;
 mod graph;
@@ -32,7 +30,6 @@ mod knowledge_view;
 mod learning;
 mod learning_context;
 mod memory_compiler;
-mod memory_health;
 mod memory_transition;
 mod policy_bundle;
 mod private_state;
@@ -47,57 +44,54 @@ mod semantic_retrieval;
 mod session;
 mod session_context;
 mod specification;
-mod topic_dossier;
 
-pub use acceptance_verification::{
-    review_acceptance_criterion_verification, review_acceptance_criterion_verification_with_method,
-    AcceptanceCriterionVerificationReview, AcceptanceCriterionVerificationReviewInput,
-};
-pub use agent_legibility::{
-    compile_agent_legibility_map, AgentLegibilityCoverage, AgentLegibilityLimits,
-    AgentLegibilityMap, LegibilityApiCandidate, LegibilityArtifactRef, LegibilityCommand,
-    LegibilityCommandCategory, LegibilityCommandSource, LegibilityDirectory, LegibilityGap,
-    LegibilityPlanItem, LegibilitySpecification, AGENT_LEGIBILITY_SCHEMA_VERSION,
-    DEFAULT_AGENT_LEGIBILITY_CHARACTERS, DEFAULT_AGENT_LEGIBILITY_ENTRIES_PER_SECTION,
-    DEFAULT_AGENT_LEGIBILITY_SESSIONS, MAX_AGENT_LEGIBILITY_CHARACTERS,
-    MAX_AGENT_LEGIBILITY_ENTRIES_PER_SECTION, MAX_AGENT_LEGIBILITY_SESSIONS,
-    MIN_AGENT_LEGIBILITY_CHARACTERS,
+pub use approved_source::{
+    approve_project_file_source, approved_source_authority, list_approved_sources,
+    read_approved_source, reapprove_project_file_source, revoke_approved_source,
+    ApprovedSourceApproval, ApprovedSourceAuthority, ApprovedSourceAuthorityList,
+    ApprovedSourceContent, ApprovedSourceKind, ApprovedSourceLegacyIssue,
+    ApprovedSourceLegacyIssueReason, ApprovedSourceRegistry, ApprovedSourceState,
+    MAX_APPROVED_SOURCE_BYTES, MAX_APPROVED_SOURCE_PATH_CHARACTERS,
 };
 pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
 };
+#[cfg(test)]
+pub use bootstrap_specification::BootstrapReferenceMutation;
 pub use bootstrap_specification::{
     compile_bootstrap_context, compile_bootstrap_context_with_registries,
-    compile_bootstrap_specifications, compile_bootstrap_specifications_with_registries,
+    compile_bootstrap_context_with_transition_registries, compile_bootstrap_specifications,
+    compile_bootstrap_specifications_with_registries,
+    compile_bootstrap_specifications_with_transition_registries,
     initialize_project_retiring_bootstrap, BootstrapCompileCoverage, BootstrapCompileExclusion,
     BootstrapCompileExclusionReason, BootstrapCompiledReference, BootstrapCompiledSpecification,
     BootstrapContext, BootstrapReferenceCoverage, BootstrapReferenceExclusion,
-    BootstrapReferenceGrant, BootstrapReferenceList, BootstrapReferenceMutation,
-    BootstrapReferenceScope, BootstrapReferenceScopeState, BootstrapReferenceStatus,
-    BootstrapSpecificationContext, BootstrapSpecificationGrant, BootstrapSpecificationList,
-    BootstrapSpecificationMutation, BootstrapSpecificationRegistry,
-    BOOTSTRAP_CONTEXT_SCHEMA_VERSION, BOOTSTRAP_SPECIFICATION_REGISTRY_FILE,
-    BOOTSTRAP_SPECIFICATION_REGISTRY_SCHEMA_VERSION, BOOTSTRAP_SPECIFICATION_SCHEMA_VERSION,
-    MAX_BOOTSTRAP_REFERENCES_PER_WORKSPACE, MAX_BOOTSTRAP_SPECIFICATIONS_PER_WORKSPACE,
-    MAX_BOOTSTRAP_WORKSPACES,
+    BootstrapReferenceGrant, BootstrapReferenceList, BootstrapReferenceScope,
+    BootstrapReferenceScopeState, BootstrapReferenceStatus, BootstrapSpecificationContext,
+    BootstrapSpecificationGrant, BootstrapSpecificationList, BootstrapSpecificationMutation,
+    BootstrapSpecificationRegistry, BOOTSTRAP_CONTEXT_SCHEMA_VERSION,
+    BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, BOOTSTRAP_SPECIFICATION_REGISTRY_SCHEMA_VERSION,
+    BOOTSTRAP_SPECIFICATION_SCHEMA_VERSION, MAX_BOOTSTRAP_REFERENCES_PER_WORKSPACE,
+    MAX_BOOTSTRAP_SPECIFICATIONS_PER_WORKSPACE, MAX_BOOTSTRAP_WORKSPACES,
 };
 pub use consolidation_inbox::{
-    consolidation_inbox, ConsolidationAction, ConsolidationInbox, ConsolidationInboxCoverage,
-    ConsolidationInboxItem, ConsolidationInboxLimits, CONSOLIDATION_INBOX_SCHEMA_VERSION,
+    consolidation_inbox, consolidation_inbox_with_continuity_transition, ConsolidationAction,
+    ConsolidationInbox, ConsolidationInboxCoverage, ConsolidationInboxItem,
+    ConsolidationInboxLimits, CONSOLIDATION_INBOX_SCHEMA_VERSION,
     DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
     MAX_CONSOLIDATION_INBOX_ITEMS, MAX_CONSOLIDATION_INBOX_SESSIONS,
     MAX_CONSOLIDATION_PROPOSAL_EVIDENCE_IDS,
 };
 pub use context_compiler::{
     compile_project_context, compile_project_context_for_agent_with_registries,
-    compile_project_context_with_registries, compile_project_context_with_registry,
-    AgentContextAuthorities, CompiledContextItem, CompiledContextPack,
-    CompiledMountedReferenceItem, CompiledPolicyBundleItem, CompiledSharedKnowledgeReference,
-    CompiledSpecificationItem, ContextAdmissionBasis, ContextAuthority, ContextCompileCoverage,
-    ContextCompileLimits, ContextEgressCoverage, ContextEgressExclusion, ContextEgressPolicyOrigin,
-    ContextEvidenceState, ContextExclusion, ContextExclusionReason, ContextExclusionStage,
-    ContextFollowUp, ContextFollowUpKind, ContextGap, ContextGapKind, ContextPremiseAdjudication,
+    compile_project_context_for_agent_with_transition_registries, AgentContextAuthorities,
+    CompiledContextItem, CompiledContextPack, CompiledMountedReferenceItem,
+    CompiledPolicyBundleItem, CompiledSharedKnowledgeReference, CompiledSpecificationItem,
+    ContextAdmissionBasis, ContextAuthority, ContextCompileCoverage, ContextCompileLimits,
+    ContextEgressCoverage, ContextEgressExclusion, ContextEgressPolicyOrigin, ContextEvidenceState,
+    ContextExclusion, ContextExclusionReason, ContextExclusionStage, ContextFollowUp,
+    ContextFollowUpKind, ContextGap, ContextGapKind, ContextPremiseAdjudication,
     ContextPremiseState, ContextPremiseWarning, ContextPremiseWarningKind,
     MountedReferenceCoverage, MountedReferenceExclusion, MountedReferenceScope,
     MountedReferenceScopeState, PolicyBundleCompileCoverage, PolicyBundleCompileExclusion,
@@ -108,18 +102,26 @@ pub use context_compiler::{
     DEFAULT_CONTEXT_COMPILE_TOKENS, MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
     MIN_CONTEXT_COMPILE_TOKENS, MIN_SEMANTIC_ADMISSION_SIMILARITY,
 };
+#[cfg(test)]
+pub use context_compiler::{
+    compile_project_context_with_registries, compile_project_context_with_registry,
+};
+#[cfg(test)]
+pub use context_mount::ContextMountMutation;
 pub use context_mount::{
     ContextMount, ContextMountEgressSource, ContextMountEgressSources, ContextMountList,
-    ContextMountMutation, ContextMountPermission, ContextMountRegistry, ContextMountStatus,
-    CONTEXT_MOUNT_REGISTRY_FILE, CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
-    MAX_CONTEXT_MOUNTS_PER_PROJECT, MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT,
+    ContextMountPermission, ContextMountRegistry, ContextMountStatus, CONTEXT_MOUNT_REGISTRY_FILE,
+    CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION, MAX_CONTEXT_MOUNTS_PER_PROJECT,
+    MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT,
 };
 pub use context_pack_inspector::{
     inspect_context_pack, ContextPackBudgetBreakdown, ContextPackIncludedRecord,
     ContextPackInspection, ContextPackRecordSource, CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION,
 };
 pub use continuity_import::{
-    import_legacy_continuity, LegacyContinuityImportSummary,
+    import_legacy_approved_sources, import_legacy_continuity, import_legacy_project_catalog,
+    import_legacy_project_egress, LegacyApprovedSourceImportSummary, LegacyContinuityImportSummary,
+    LegacyProjectCatalogImportSummary, LegacyProjectEgressImportSummary,
     LEGACY_CONTINUITY_IMPORT_FORMAT_VERSION,
 };
 pub use continuity_portable::{
@@ -138,17 +140,6 @@ pub use cross_project_search::{
     search_observed_projects, CrossProjectResultKind, CrossProjectSearch, CrossProjectSearchResult,
     DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, MAX_CROSS_PROJECT_SEARCH_QUERY_CHARACTERS,
     MAX_CROSS_PROJECT_SEARCH_RESULTS,
-};
-pub use current_project_state::{
-    current_project_state, current_project_state_with_specification_authority,
-    CurrentAuthoritativeSpecification, CurrentKnowledgeAttention, CurrentKnowledgeAttentionReason,
-    CurrentOpenWork, CurrentOpenWorkKind, CurrentProjectState, CurrentProjectStateCoverage,
-    CurrentProjectStateLimits, CurrentRecentDecision, CurrentSpecificationAttention,
-    CurrentTrustedKnowledge, CurrentVerification, CurrentWorkingSession,
-    CURRENT_PROJECT_STATE_SCHEMA_VERSION, DEFAULT_CURRENT_STATE_CHARACTERS,
-    DEFAULT_CURRENT_STATE_KNOWLEDGE, DEFAULT_CURRENT_STATE_SESSIONS, MAX_CURRENT_STATE_CHARACTERS,
-    MAX_CURRENT_STATE_KNOWLEDGE, MAX_CURRENT_STATE_SESSIONS, MAX_CURRENT_STATE_SPECIFICATIONS,
-    MIN_CURRENT_STATE_CHARACTERS,
 };
 pub use egress_policy::{
     evaluate_agent_egress, AgentEgressBlockReason, AgentEgressDecision, AgentEgressPolicy,
@@ -171,92 +162,107 @@ pub use graph::{
     PROJECT_GRAPH_SCHEMA_VERSION,
 };
 pub use historical_host_import::{
-    import_codex_message_history, HistoricalHostImport, HISTORICAL_HOST_IMPORT_SCHEMA_VERSION,
-    MAX_CODEX_HISTORY_IMPORT_BYTES, MAX_CODEX_HISTORY_IMPORT_PROMPTS,
-    MAX_CODEX_HISTORY_IMPORT_RECORDS,
+    import_codex_message_history, import_codex_message_history_with_continuity_transition,
+    HistoricalHostImport, HISTORICAL_HOST_IMPORT_SCHEMA_VERSION, MAX_CODEX_HISTORY_IMPORT_BYTES,
+    MAX_CODEX_HISTORY_IMPORT_PROMPTS, MAX_CODEX_HISTORY_IMPORT_RECORDS,
 };
 pub use host_adapter::{
-    process_bootstrap_host_hook_for_agent_with_registries, process_host_hook,
-    process_host_hook_for_agent_with_registries, AgentHost, HostAgentContextRegistries,
+    process_bootstrap_host_hook_for_agent_with_registries,
+    process_bootstrap_host_hook_for_agent_with_transition_registries, process_host_hook,
+    process_host_hook_for_agent_with_registries,
+    process_host_hook_for_agent_with_transition_registries, AgentHost, HostAgentContextRegistries,
     HostHookDisposition, HostHookResult, HOST_ADAPTER_SCHEMA_VERSION,
 };
 pub use ingestion::{
-    erase_project_memory, ingest_project, ingest_project_with_expected_capture_plan,
-    read_project_graph, ArtifactKind, ArtifactMediaType, ArtifactRecord, ArtifactSkipReason,
-    IngestionResult, ProjectMemoryErasure, RedactionFinding, RenamedArtifact, SkippedArtifact,
-    AGENT_MEMORY_DIRECTORY, ARTIFACT_MANIFEST_LIMIT_BYTES, ARTIFACT_MANIFEST_SCHEMA_VERSION,
+    erase_project_memory, erase_project_memory_with_continuity_transition,
+    erase_project_memory_with_native_authority, ingest_project,
+    ingest_project_with_continuity_transition, ingest_project_with_expected_capture_plan,
+    ingest_project_with_expected_capture_plan_and_continuity_transition,
+    ingest_project_with_expected_capture_plan_and_native_authority,
+    ingest_project_with_native_authority, ArtifactKind, ArtifactMediaType, ArtifactRecord,
+    ArtifactSkipReason, IngestionResult, ProjectMemoryErasure, RedactionFinding, RenamedArtifact,
+    SkippedArtifact, AGENT_MEMORY_DIRECTORY, ARTIFACT_MANIFEST_LIMIT_BYTES,
+    ARTIFACT_MANIFEST_SCHEMA_VERSION,
 };
 pub use knowledge_scope::{
     KnowledgeScope, KnowledgeScopeAttachment, KnowledgeScopeAttachmentList,
-    KnowledgeScopeAttachmentMutation, KnowledgeScopeEgressSource, KnowledgeScopeEgressSources,
-    KnowledgeScopeKind, KnowledgeScopeList, KnowledgeScopeMutation, KnowledgeScopePermission,
-    KnowledgeScopeRegistry, KnowledgeScopeSource, KnowledgeScopeSourceStatus,
-    KNOWLEDGE_SCOPE_REGISTRY_FILE, KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION,
-    MAX_ATTACHED_KNOWLEDGE_SCOPES_PER_PROJECT, MAX_KNOWLEDGE_SCOPES,
-    MAX_KNOWLEDGE_SCOPE_HISTORY_PER_PROJECT, MAX_KNOWLEDGE_SCOPE_SOURCES,
+    KnowledgeScopeEgressSource, KnowledgeScopeEgressSources, KnowledgeScopeKind,
+    KnowledgeScopeList, KnowledgeScopePermission, KnowledgeScopeRegistry, KnowledgeScopeSource,
+    KnowledgeScopeSourceStatus, KNOWLEDGE_SCOPE_REGISTRY_FILE,
+    KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION, MAX_ATTACHED_KNOWLEDGE_SCOPES_PER_PROJECT,
+    MAX_KNOWLEDGE_SCOPES, MAX_KNOWLEDGE_SCOPE_HISTORY_PER_PROJECT, MAX_KNOWLEDGE_SCOPE_SOURCES,
 };
+#[cfg(test)]
+pub use knowledge_scope::{KnowledgeScopeAttachmentMutation, KnowledgeScopeMutation};
 pub use knowledge_view::{
-    project_artifact_inventory, project_graph_history, project_graph_view,
-    project_graph_view_filtered, ArtifactInventoryItem, ProjectArtifactInventory,
-    ProjectGraphFilters, ProjectGraphHistory, ProjectGraphHistoryEntry, ProjectGraphView,
-    ProjectGraphViewNode, SkippedArtifactInventoryItem, DEFAULT_ARTIFACT_RESULTS,
-    DEFAULT_GRAPH_HISTORY_RESULTS, DEFAULT_GRAPH_VIEW_EDGES, DEFAULT_GRAPH_VIEW_NODES,
-    MAX_ARTIFACT_RESULTS, MAX_GRAPH_HISTORY_RESULTS, MAX_GRAPH_VIEW_EDGES, MAX_GRAPH_VIEW_NODES,
-    MAX_KNOWLEDGE_QUERY_CHARACTERS,
+    project_artifact_inventory, project_artifact_inventory_with_continuity_transition,
+    ArtifactInventoryItem, ProjectArtifactInventory, SkippedArtifactInventoryItem,
+    DEFAULT_ARTIFACT_RESULTS, MAX_ARTIFACT_RESULTS, MAX_KNOWLEDGE_QUERY_CHARACTERS,
 };
 pub use learning::{
-    correct_learning, generate_learning_request_id, learning_review_inbox, list_learnings,
-    propose_learning, read_learning, review_learning, CorrectLearningInput, LearningActor,
+    correct_learning, correct_learning_with_continuity_transition, generate_learning_request_id,
+    learning_review_inbox, learning_review_inbox_with_continuity_transition, list_learnings,
+    list_learnings_with_continuity_transition, propose_learning,
+    propose_learning_with_continuity_transition, read_learning,
+    read_learning_with_continuity_transition, review_learning,
+    review_learning_with_continuity_transition, CorrectLearningInput, LearningActor,
     LearningEvidence, LearningEvidenceInput, LearningFeedbackAction, LearningFreshness,
     LearningIndex, LearningKind, LearningMutation, LearningOriginLineage, LearningOriginSource,
     LearningOriginSummary, LearningProvenance, LearningRecord, LearningRedaction,
-    LearningReviewEntry, LearningState, LearningSummary, LearningTrustState, ProposeLearningInput,
-    ReviewLearningInput, LEARNING_EVENT_LIMIT, LEARNING_EVENT_LIMIT_BYTES,
+    LearningReviewEntry, LearningState, LearningSummary, LearningTrustState, LearningWriteResult,
+    ProposeLearningInput, ReviewLearningInput, LEARNING_EVENT_LIMIT, LEARNING_EVENT_LIMIT_BYTES,
     LEARNING_INDEX_LIMIT_BYTES, LEARNING_SCHEMA_VERSION, MAX_LEARNING_ORIGIN_SOURCES,
 };
 pub use learning_context::{
-    list_learning_contexts, read_learning_context, LearningApplicationObservation,
-    LearningContextPack, LearningList, LearningListScope, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
-    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
-    LEARNING_CONTEXT_PROJECTION_SCHEMA_VERSION, MAX_LEARNING_CONTEXT_APPLICATION_OBSERVATIONS,
-    MAX_LEARNING_CONTEXT_ARTIFACTS, MAX_LEARNING_CONTEXT_CHARACTERS, MAX_LEARNING_CONTEXT_EVIDENCE,
-    MAX_LEARNING_CONTEXT_HISTORY, MAX_LEARNING_CONTEXT_ORIGIN_SOURCES, MAX_LEARNING_LIST_RESULTS,
+    list_learning_contexts, list_learning_contexts_with_continuity_transition,
+    read_learning_context, read_learning_context_with_continuity_transition,
+    LearningApplicationObservation, LearningContextPack, LearningList, LearningListScope,
+    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
+    DEFAULT_LEARNING_LIST_RESULTS, LEARNING_CONTEXT_PROJECTION_SCHEMA_VERSION,
+    MAX_LEARNING_CONTEXT_APPLICATION_OBSERVATIONS, MAX_LEARNING_CONTEXT_ARTIFACTS,
+    MAX_LEARNING_CONTEXT_CHARACTERS, MAX_LEARNING_CONTEXT_EVIDENCE, MAX_LEARNING_CONTEXT_HISTORY,
+    MAX_LEARNING_CONTEXT_ORIGIN_SOURCES, MAX_LEARNING_LIST_RESULTS,
     MIN_LEARNING_CONTEXT_CHARACTERS,
 };
 pub use memory_compiler::{
-    compile_session_memory, MemoryCompilationBoundary, MemoryCompilationCommandCandidate,
+    compile_session_memory, compile_session_memory_with_continuity_transition,
+    MemoryCompilationBoundary, MemoryCompilationCommandCandidate,
     MemoryCompilationCommandCandidateEligibility, MemoryCompilationEvidence,
     MemoryCompilationEvidenceKind, MemoryCompilationState, MemoryCompilationToolEvidence,
     SessionMemoryCompilationPack, DEFAULT_MEMORY_COMPILE_CHARACTERS,
     DEFAULT_MEMORY_COMPILE_RESULTS, MAX_MEMORY_COMPILE_CHARACTERS, MAX_MEMORY_COMPILE_RESULTS,
     MIN_MEMORY_COMPILE_CHARACTERS,
 };
-pub use memory_health::{
-    memory_health_report, MemoryHealthCoverage, MemoryHealthLimits, MemoryHealthReport,
-    MemoryHealthSeverity, MemoryHealthSeverityCounts, MemoryHealthSignal, MemoryHealthSignalKind,
-    UnsupportedMemoryHealthSignal, DEFAULT_MEMORY_HEALTH_CHARACTERS,
-    DEFAULT_MEMORY_HEALTH_SESSIONS, DEFAULT_MEMORY_HEALTH_SIGNALS, MAX_MEMORY_HEALTH_CHARACTERS,
-    MAX_MEMORY_HEALTH_SESSIONS, MAX_MEMORY_HEALTH_SIGNALS, MEMORY_HEALTH_SCHEMA_VERSION,
-    MIN_MEMORY_HEALTH_CHARACTERS,
-};
 pub use memory_transition::{
-    commit_batch_memory_transition, commit_composite_memory_transition,
-    commit_observed_command_memory_transition, commit_plan_memory_transition,
-    commit_rich_problem_memory_transition, commit_structured_memory_transition,
-    commit_task_memory_transition, commit_unresolved_memory_transition,
-    verify_batch_memory_transition, verify_composite_memory_transition, verify_memory_transition,
-    verify_observed_command_memory_transition, verify_rich_problem_memory_transition,
-    verify_typed_memory_transition, BatchMemoryCandidateClaim, BatchMemoryTransitionInput,
-    CommitBatchMemoryTransitionInput, CommitCompositeMemoryTransitionInput,
-    CommitObservedCommandMemoryTransitionInput, CommitPlanMemoryTransitionInput,
-    CommitRichProblemMemoryTransitionInput, CommitStructuredMemoryTransitionInput,
-    CommitTaskMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
-    CompositeMemoryTransitionInput, MemoryCandidateClaim, MemoryCandidateKind,
-    MemoryEvidenceAnchorQuality, MemoryTransitionClaimCheck, MemoryTransitionCoverage,
-    MemoryTransitionInput, MemoryTransitionIssue, MemoryTransitionIssueKind,
-    MemoryTransitionOverlap, MemoryTransitionOverlapKind, MemoryTransitionState,
-    MemoryTransitionVerification, ObservedCommandMemoryTransitionInput,
+    commit_batch_memory_transition, commit_batch_memory_transition_with_continuity_transition,
+    commit_composite_memory_transition,
+    commit_composite_memory_transition_with_continuity_transition,
+    commit_observed_command_memory_transition,
+    commit_observed_command_memory_transition_with_continuity_transition,
+    commit_plan_memory_transition, commit_plan_memory_transition_with_continuity_transition,
+    commit_rich_problem_memory_transition,
+    commit_rich_problem_memory_transition_with_continuity_transition,
+    commit_structured_memory_transition,
+    commit_structured_memory_transition_with_continuity_transition, commit_task_memory_transition,
+    commit_task_memory_transition_with_continuity_transition, commit_unresolved_memory_transition,
+    commit_unresolved_memory_transition_with_continuity_transition, verify_batch_memory_transition,
+    verify_batch_memory_transition_with_continuity_transition, verify_composite_memory_transition,
+    verify_composite_memory_transition_with_continuity_transition, verify_memory_transition,
+    verify_memory_transition_with_continuity_transition, verify_observed_command_memory_transition,
+    verify_observed_command_memory_transition_with_continuity_transition,
+    verify_rich_problem_memory_transition,
+    verify_rich_problem_memory_transition_with_continuity_transition,
+    verify_typed_memory_transition, verify_typed_memory_transition_with_continuity_transition,
+    BatchMemoryCandidateClaim, BatchMemoryTransitionInput, CommitBatchMemoryTransitionInput,
+    CommitCompositeMemoryTransitionInput, CommitObservedCommandMemoryTransitionInput,
+    CommitPlanMemoryTransitionInput, CommitRichProblemMemoryTransitionInput,
+    CommitStructuredMemoryTransitionInput, CommitTaskMemoryTransitionInput,
+    CommitUnresolvedMemoryTransitionInput, CompositeMemoryTransitionInput, MemoryCandidateClaim,
+    MemoryCandidateKind, MemoryEvidenceAnchorQuality, MemoryTransitionClaimCheck,
+    MemoryTransitionCoverage, MemoryTransitionInput, MemoryTransitionIssue,
+    MemoryTransitionIssueKind, MemoryTransitionOverlap, MemoryTransitionOverlapKind,
+    MemoryTransitionState, MemoryTransitionVerification, ObservedCommandMemoryTransitionInput,
     ObservedCommandTransitionIssue, ObservedCommandTransitionIssueKind,
     ObservedCommandTransitionState, ObservedCommandTransitionVerification,
     RichProblemAttemptCandidate, RichProblemMemoryCandidate, RichProblemMemoryTransitionInput,
@@ -270,17 +276,21 @@ pub use memory_transition::{
 };
 pub use policy_bundle::{
     validate_policy_bundle_id, PolicyBundle, PolicyBundleAttachment, PolicyBundleAttachmentList,
-    PolicyBundleAttachmentMutation, PolicyBundleAttachmentState, PolicyBundleEgressSource,
-    PolicyBundleEgressSources, PolicyBundleList, PolicyBundleMutation, PolicyBundleRegistry,
-    PolicyBundleSource, PolicyBundleSourceInput, PolicyBundleSourceRef, PolicyBundleSourceStatus,
-    MAX_ATTACHED_POLICY_BUNDLES_PER_PROJECT, MAX_POLICY_BUNDLES,
+    PolicyBundleAttachmentState, PolicyBundleEgressSource, PolicyBundleEgressSources,
+    PolicyBundleList, PolicyBundleRegistry, PolicyBundleSource, PolicyBundleSourceRef,
+    PolicyBundleSourceStatus, MAX_ATTACHED_POLICY_BUNDLES_PER_PROJECT, MAX_POLICY_BUNDLES,
     MAX_POLICY_BUNDLE_HISTORY_PER_PROJECT, MAX_POLICY_BUNDLE_SOURCES, POLICY_BUNDLE_REGISTRY_FILE,
     POLICY_BUNDLE_REGISTRY_SCHEMA_VERSION,
 };
+#[cfg(test)]
+pub use policy_bundle::{
+    PolicyBundleAttachmentMutation, PolicyBundleMutation, PolicyBundleSourceInput,
+};
 pub use private_state::EVAL_PRIVATE_ROOT_ENV;
 pub use project_activity::{
-    project_activity_view, ProjectActivityCitation, ProjectActivityView, ProjectDecision,
-    ProjectProblem, ProjectProblemAttempt, ProjectProblemResolution, ProjectProblemScope,
+    project_activity_view, project_activity_view_with_continuity_transition,
+    ProjectActivityCitation, ProjectActivityView, ProjectDecision, ProjectProblem,
+    ProjectProblemAttempt, ProjectProblemResolution, ProjectProblemScope,
     DEFAULT_PROJECT_ACTIVITY_RESULTS, MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS,
     MAX_PROJECT_ACTIVITY_RESULTS,
 };
@@ -289,37 +299,40 @@ pub use project_catalog::{
     MAX_PROJECT_CATALOG_RESULTS, PROJECT_CATALOG_FILE, PROJECT_CATALOG_SCHEMA_VERSION,
 };
 pub use project_memory_search::{
-    search_project_memory, ProjectMemoryConflict, ProjectMemoryConflictKind,
-    ProjectMemoryRankingSignals, ProjectMemoryResultKind, ProjectMemorySearch,
-    ProjectMemorySearchCoverage, ProjectMemorySearchLimits, ProjectMemorySearchResult,
-    ProjectMemorySearchRetrieval, ProjectMemoryTrustSignal, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, MAX_PROJECT_MEMORY_SEARCH_CANDIDATES,
-    MAX_PROJECT_MEMORY_SEARCH_CONFLICTS, MAX_PROJECT_MEMORY_SEARCH_EXCERPT_CHARACTERS,
-    MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS, MAX_PROJECT_MEMORY_SEARCH_RESULTS,
-    MAX_PROJECT_MEMORY_SEARCH_TITLE_CHARACTERS, MAX_PROJECT_MEMORY_SEARCH_TOKENS,
-    MIN_PROJECT_MEMORY_SEARCH_TOKENS,
+    search_project_memory, search_project_memory_with_continuity_transition, ProjectMemoryConflict,
+    ProjectMemoryConflictKind, ProjectMemoryRankingSignals, ProjectMemoryResultKind,
+    ProjectMemorySearch, ProjectMemorySearchCoverage, ProjectMemorySearchLimits,
+    ProjectMemorySearchResult, ProjectMemorySearchRetrieval, ProjectMemoryTrustSignal,
+    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+    MAX_PROJECT_MEMORY_SEARCH_CANDIDATES, MAX_PROJECT_MEMORY_SEARCH_CONFLICTS,
+    MAX_PROJECT_MEMORY_SEARCH_EXCERPT_CHARACTERS, MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS,
+    MAX_PROJECT_MEMORY_SEARCH_RESULTS, MAX_PROJECT_MEMORY_SEARCH_TITLE_CHARACTERS,
+    MAX_PROJECT_MEMORY_SEARCH_TOKENS, MIN_PROJECT_MEMORY_SEARCH_TOKENS,
 };
 pub use resume_context::{
-    project_resume_context, ProjectResumePack, ResumeCheckpoint, ResumeDecision, ResumeLearning,
-    ResumeProblem, ResumeResult, ResumeSession, ResumeTask, DEFAULT_RESUME_CHARACTERS,
-    DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS, MAX_RESUME_CHARACTERS, MAX_RESUME_LEARNINGS,
-    MAX_RESUME_SESSIONS, MIN_RESUME_CHARACTERS,
+    project_resume_context, project_resume_context_with_continuity_transition, ProjectResumePack,
+    ResumeCheckpoint, ResumeDecision, ResumeLearning, ResumeProblem, ResumeResult, ResumeSession,
+    ResumeTask, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    MAX_RESUME_CHARACTERS, MAX_RESUME_LEARNINGS, MAX_RESUME_SESSIONS, MIN_RESUME_CHARACTERS,
 };
 pub use retrieval::{
-    find_project_context, find_project_graph_path, find_project_hybrid_context,
-    project_memory_overview, read_project_cited_evidence, read_project_cited_media,
-    read_project_evidence, read_project_graph_evidence, read_verification_media_evidence,
-    traverse_project_graph, validate_project_memory, ContextItem, ContextItemKind, ContextPack,
-    EvidenceExcerpt, GraphDirection, GraphPath, GraphTraversal, HybridConflictProjection,
-    HybridContextPack, HybridRetrievalMetadata, MediaEvidence, MemoryOverview, RetrievalLimits,
-    RetrievalMode, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS,
-    MAX_CONTEXT_TOKENS, MAX_MEDIA_EVIDENCE_BYTES,
+    find_project_context, find_project_hybrid_context, native_canonical_read_authority_available,
+    project_memory_overview, project_memory_overview_with_continuity_transition,
+    read_project_cited_evidence, read_project_cited_evidence_with_continuity_transition,
+    read_project_cited_media, read_project_cited_media_with_continuity_transition,
+    read_project_evidence, read_verification_media_evidence, validate_project_memory, ContextItem,
+    ContextItemKind, ContextPack, EvidenceExcerpt, HybridConflictProjection, HybridContextPack,
+    HybridRetrievalMetadata, MediaEvidence, MemoryOverview, RetrievalLimits, RetrievalMode,
+    DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
+    MAX_MEDIA_EVIDENCE_BYTES,
 };
 pub use revision::{ProjectRevisionFreshness, RevisionApplicability, RevisionCompatibility};
 pub use runbook::{
-    compile_reviewed_runbook, export_reviewed_runbook_skill, ReviewedRunbook, ReviewedRunbookEntry,
-    ReviewedRunbookInput, RunbookSkillExport, RunbookSkillExportInput, RunbookSkillHost,
-    MAX_REVIEWED_RUNBOOK_CHARACTERS, MAX_REVIEWED_RUNBOOK_SOURCES, REVIEWED_RUNBOOK_SCHEMA_VERSION,
+    compile_reviewed_runbook, compile_reviewed_runbook_with_continuity_transition,
+    export_reviewed_runbook_skill, export_reviewed_runbook_skill_transition, ReviewedRunbook,
+    ReviewedRunbookEntry, ReviewedRunbookInput, RunbookSkillExport, RunbookSkillExportInput,
+    RunbookSkillHost, MAX_REVIEWED_RUNBOOK_CHARACTERS, MAX_REVIEWED_RUNBOOK_SOURCES,
+    REVIEWED_RUNBOOK_SCHEMA_VERSION,
 };
 pub use semantic_retrieval::{
     default_semantic_model_cache_path, install_semantic_model_from_staging,
@@ -330,20 +343,31 @@ pub use semantic_retrieval::{
     SEMANTIC_MODEL_DIMENSION, SEMANTIC_MODEL_ID, SEMANTIC_MODEL_REVISION,
 };
 pub use session::{
-    bind_context_utility_pack, checkpoint_session, checkpoint_session_if_current,
-    derive_turn_reference, erase_session_memory, finish_session, generate_request_id,
-    list_sessions, project_session_stats, read_session, record_context_utility_observation,
-    record_session_prompt, record_session_response, record_session_tool_observation,
-    rename_session, replay_context_utility_binding_if_present, start_session, AgentSession,
-    AttemptInput, AttemptOutcome, AttemptRecord, CheckpointInput, CommandInput, CommandRecord,
-    ContextUtilityBinding, ContextUtilityBindingInput, ContextUtilityIncludedRecord,
-    ContextUtilityObservation, ContextUtilityObservationInput, ContextUtilityOutcomeEvidence,
-    ContextUtilityOutcomeKind, ContextUtilityRecordSource, DecisionInput, DecisionRecord,
-    EraseSessionMemoryInput, FinishSessionInput, MemoryRedaction, PlanItem, PlanItemInput,
-    PlanStatus, ProblemInput, ProblemRecord, ProjectSessionStats, RenameSessionInput,
-    ResolutionInput, ResolutionRecord, SessionArtifactCitation, SessionCheckpoint, SessionFinish,
-    SessionMemoryErasure, SessionMutation, SessionProjectRevision, SessionRename, SessionSource,
-    SessionSourceKind, SessionStatus, SessionSummary, SessionToolObservation, SessionTurnEvidence,
+    bind_context_utility_pack, bind_context_utility_pack_with_continuity_transition,
+    checkpoint_session, checkpoint_session_if_current,
+    checkpoint_session_if_current_with_continuity_transition,
+    checkpoint_session_with_continuity_transition, derive_turn_reference, erase_session_memory,
+    erase_session_memory_with_continuity_transition, finish_session,
+    finish_session_with_continuity_transition, generate_request_id, list_sessions,
+    list_sessions_with_continuity_transition, native_session_authority_available,
+    project_session_stats, project_session_stats_with_continuity_transition, read_session,
+    read_session_with_continuity_transition, record_context_utility_observation,
+    record_context_utility_observation_with_continuity_transition, record_session_prompt,
+    record_session_prompt_with_continuity_transition, record_session_response,
+    record_session_response_with_continuity_transition, record_session_tool_observation,
+    record_session_tool_observation_with_continuity_transition, rename_session,
+    rename_session_with_continuity_transition, replay_context_utility_binding_if_present,
+    replay_context_utility_binding_if_present_with_continuity_transition, start_session,
+    start_session_with_continuity_transition, AgentSession, AttemptInput, AttemptOutcome,
+    AttemptRecord, CheckpointInput, CommandInput, CommandRecord, ContextUtilityBinding,
+    ContextUtilityBindingInput, ContextUtilityIncludedRecord, ContextUtilityObservation,
+    ContextUtilityObservationInput, ContextUtilityOutcomeEvidence, ContextUtilityOutcomeKind,
+    ContextUtilityRecordSource, DecisionInput, DecisionRecord, EraseSessionMemoryInput,
+    FinishSessionInput, MemoryRedaction, PlanItem, PlanItemInput, PlanStatus, ProblemInput,
+    ProblemRecord, ProjectSessionStats, RenameSessionInput, ResolutionInput, ResolutionRecord,
+    SessionArtifactCitation, SessionCheckpoint, SessionFinish, SessionMemoryErasure,
+    SessionMutation, SessionProjectRevision, SessionRename, SessionSource, SessionSourceKind,
+    SessionStatus, SessionSummary, SessionToolObservation, SessionTurnEvidence, SessionWriteResult,
     StartSessionInput, TaskInput, TaskRecord, TaskStatus, ToolObservationInput,
     ToolObservationKind, TurnEvidenceInput, TurnEvidenceOrigin, TurnEvidenceRetention,
     VerificationInput, VerificationRecord, VerificationStatus,
@@ -362,7 +386,9 @@ pub use session::{
     SESSION_VERIFICATION_EVIDENCE_SCHEMA_VERSION,
 };
 pub use session_context::{
-    list_session_contexts, read_session_context, read_session_turns_context, SessionContextAttempt,
+    list_session_contexts, list_session_contexts_with_continuity_transition, read_session_context,
+    read_session_context_with_continuity_transition, read_session_turns_context,
+    read_session_turns_context_with_continuity_transition, SessionContextAttempt,
     SessionContextCheckpoint, SessionContextCitation, SessionContextCommand,
     SessionContextDecision, SessionContextFinish, SessionContextPack, SessionContextProblem,
     SessionContextRename, SessionContextResolution, SessionContextTask,
@@ -378,29 +404,17 @@ pub use session_context::{
     SESSION_TURNS_CONTEXT_PROJECTION_SCHEMA_VERSION,
 };
 pub use specification::{
-    derive_specification_acceptance_criteria, derive_specification_verification_methods,
     generate_specification_id, project_specifications_context, specification_content_hash,
-    ApprovedSpecificationSource, ProjectSpecificationsContext, SpecificationAcceptanceCriteria,
-    SpecificationAcceptanceCriteriaState, SpecificationAcceptanceCriterion, SpecificationApproval,
+    ApprovedSpecificationSource, ProjectSpecificationsContext, SpecificationApproval,
     SpecificationApprovalState, SpecificationAuthority, SpecificationAuthorityList,
     SpecificationContextExclusion, SpecificationContextExclusionReason, SpecificationContextItem,
     SpecificationContextLimits, SpecificationEgressCoverage, SpecificationEgressExclusion,
-    SpecificationRegistry, SpecificationVerificationMethod, SpecificationVerificationMethods,
-    SpecificationVerificationMethodsState, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
-    DEFAULT_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_ACCEPTANCE_CRITERIA,
-    MAX_SPECIFICATION_APPROVALS_PER_PROJECT, MAX_SPECIFICATION_BYTES,
-    MAX_SPECIFICATION_CONTEXT_CHARACTERS, MAX_SPECIFICATION_CONTEXT_RESULTS,
-    MAX_SPECIFICATION_PATH_CHARACTERS, MAX_SPECIFICATION_VERIFICATION_METHODS,
+    SpecificationRegistry, DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS,
+    DEFAULT_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_APPROVALS_PER_PROJECT,
+    MAX_SPECIFICATION_BYTES, MAX_SPECIFICATION_CONTEXT_CHARACTERS,
+    MAX_SPECIFICATION_CONTEXT_RESULTS, MAX_SPECIFICATION_PATH_CHARACTERS,
     MIN_SPECIFICATION_CONTEXT_CHARACTERS, SPECIFICATION_REGISTRY_FILE,
     SPECIFICATION_REGISTRY_SCHEMA_VERSION,
-};
-pub use topic_dossier::{
-    compile_topic_dossier, TopicDossier, TopicDossierArtifact, TopicDossierCoverage,
-    TopicDossierLimits, TopicDossierOpenItem, TopicDossierOpenKind, TopicDossierSections,
-    TopicDossierSupportingSession, TopicDossierVerification, DEFAULT_TOPIC_DOSSIER_RESULTS,
-    DEFAULT_TOPIC_DOSSIER_SUPPORTING_SESSIONS, DEFAULT_TOPIC_DOSSIER_TOKENS,
-    MAX_TOPIC_DOSSIER_RESULTS, MAX_TOPIC_DOSSIER_SUPPORTING_SESSIONS, MAX_TOPIC_DOSSIER_TOKENS,
-    MIN_TOPIC_DOSSIER_TOKENS, TOPIC_DOSSIER_SCHEMA_VERSION,
 };
 
 pub const LEY_DIRECTORY: &str = ".ley";
@@ -604,8 +618,31 @@ pub enum LeyCoreError {
     ExternalConnectorNotFound(String),
     #[error("Ley agent egress policy '{policy}' does not allow target '{target}'")]
     AgentEgressDenied { policy: String, target: String },
+    #[error("Ley agent egress policy migration is incomplete for project {project_id}")]
+    AgentEgressPolicyMigrationPending { project_id: String },
+    #[error("Ley agent egress authority cannot be re-entered from a protected operation")]
+    AgentEgressAuthorityReentrant,
+    #[error("Ley agent egress project-policy update for {project_id} may be partially applied after {stage} while requesting '{requested}': {detail}. Retry the same command and inspect `ley egress list`.")]
+    AgentEgressPolicyTransitionIncomplete {
+        project_id: String,
+        requested: String,
+        stage: String,
+        detail: String,
+    },
     #[error("Ley cannot prove historical derived memory is independent of a source blocked for target '{target}'")]
     AgentDerivedEgressUnproven { target: String },
+    #[error("Ley approved-source authority migration is incomplete for project {project_id}")]
+    ApprovedSourceAuthorityMigrationPending { project_id: String },
+    #[error("Ley approved-source authority cannot be re-entered from a protected operation")]
+    ApprovedSourceAuthorityReentrant,
+    #[error("invalid Ley approved-source request: {0}")]
+    InvalidApprovedSourceRequest(String),
+    #[error("Ley approved source is not present: {0}")]
+    ApprovedSourceNotFound(String),
+    #[error(
+        "approved Ley source {source_id} changed at {path}; review and approve the new revision"
+    )]
+    ApprovedSourceStale { source_id: String, path: String },
     #[error("invalid Ley specification approval registry: {0}")]
     InvalidSpecificationRegistry(String),
     #[error("invalid Ley specification request: {0}")]
@@ -719,6 +756,109 @@ pub fn initialize_project(
         requested_name,
         mode,
     )
+}
+
+pub fn establish_native_born_project_authorities(
+    project_start: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<(), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start.as_ref())?;
+    let project_id = &diagnostic.identity.project_id;
+    store.register_project(&diagnostic.identity)?;
+    match store.artifact_write_authority_origin(project_id)? {
+        Some(continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn) => {}
+        Some(continuity_store::ArtifactWriteAuthorityOrigin::LegacyCutover) => {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native-born project authority cannot replace legacy-cutover artifact authority"
+                    .to_owned(),
+            ))
+        }
+        None => {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native-born project authority requires an initial native artifact capture"
+                    .to_owned(),
+            ))
+        }
+    }
+    store.establish_default_project_egress_authority(project_id)?;
+    store.establish_empty_approved_source_authority(project_id)?;
+    session::establish_native_born_session_authority(&diagnostic.root, store)?;
+    learning::establish_native_born_learning_authority(&diagnostic.root, store)?;
+    if !retrieval::native_canonical_read_authority_available(&diagnostic.root, store)? {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native-born project authority initialization did not establish canonical read authority"
+                .to_owned(),
+        ));
+    }
+    store.mark_project_native_born(&continuity_store::ContinuityProjectObservation {
+        project_id: diagnostic.identity.project_id,
+        root_path: diagnostic.root,
+        last_opened_at_unix_ms: unix_time_ms(),
+        continuity_origin: continuity_store::ContinuityProjectOrigin::NativeBorn,
+    })?;
+    Ok(())
+}
+
+pub fn register_native_born_project(
+    project_start: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<(), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    match store.artifact_write_authority_origin(&diagnostic.identity.project_id)? {
+        Some(continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn) => {
+            return store.mark_project_native_born(
+                &continuity_store::ContinuityProjectObservation {
+                    project_id: diagnostic.identity.project_id,
+                    root_path: diagnostic.root,
+                    last_opened_at_unix_ms: unix_time_ms(),
+                    continuity_origin: continuity_store::ContinuityProjectOrigin::NativeBorn,
+                },
+            )
+        }
+        Some(continuity_store::ArtifactWriteAuthorityOrigin::LegacyCutover) => {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native-born registration cannot replace established legacy artifact authority"
+                    .to_owned(),
+            ))
+        }
+        None => {}
+    }
+    match store.project_continuity_origin(&diagnostic.identity.project_id)? {
+        Some(continuity_store::ContinuityProjectOrigin::NativeBorn) => return Ok(()),
+        Some(continuity_store::ContinuityProjectOrigin::LegacyUnknown) => {}
+        None => {}
+    }
+    store.mark_project_native_born(&continuity_store::ContinuityProjectObservation {
+        project_id: diagnostic.identity.project_id,
+        root_path: diagnostic.root,
+        last_opened_at_unix_ms: unix_time_ms(),
+        continuity_origin: continuity_store::ContinuityProjectOrigin::NativeBorn,
+    })
+}
+
+pub fn prepare_legacy_project_binding(
+    project_start: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<(), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let project_id = &diagnostic.identity.project_id;
+    if store.artifact_write_authority_origin(project_id)?.is_some() {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "cannot bind a legacy vault after native artifact authority is established".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn native_born_project_registration_exists(
+    project_start: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<bool, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    Ok(matches!(
+        store.project_continuity_origin(&diagnostic.identity.project_id)?,
+        Some(continuity_store::ContinuityProjectOrigin::NativeBorn)
+    ))
 }
 
 pub(crate) fn initialize_project_uncoordinated(

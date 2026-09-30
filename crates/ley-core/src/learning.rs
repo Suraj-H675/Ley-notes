@@ -1,11 +1,14 @@
+use crate::continuity_store::ContinuityEventLinkInput;
 use crate::ingestion::{
     load_project_memory, lock_project_memory_lifecycle, redact_secrets, ProjectMemoryLifecycleLock,
 };
 use crate::retrieval::validate_project_memory;
-use crate::session::read_recovery_derivation_origin;
+use crate::session::{
+    read_recovery_derivation_origin, read_recovery_derivation_origin_with_continuity_transition,
+};
 use crate::{
-    diagnose_project, read_session, LeyCoreError, RedactionFinding, SessionArtifactCitation,
-    SessionStatus,
+    diagnose_project, read_session, read_session_with_continuity_transition, ContinuityStore,
+    LeyCoreError, RedactionFinding, SessionArtifactCitation, SessionStatus,
 };
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
@@ -34,6 +37,7 @@ const EVENTS_DIRECTORY: &str = "events";
 const LEARNING_LOCK_FILE: &str = "learnings-v1.lock";
 const LEARNING_INDEX_FILE: &str = "learnings-v1.json";
 const LEARNING_REVIEW_FILE: &str = "review.md";
+const LEARNING_AUTHORITY_CUTOVER_EVENT_KIND: &str = "learning-authority-cutover";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -334,6 +338,24 @@ pub struct LearningMutation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LearningWriteResult {
+    pub learning: LearningRecord,
+    pub event_id: String,
+    pub replayed: bool,
+}
+
+impl From<LearningMutation> for LearningWriteResult {
+    fn from(mutation: LearningMutation) -> Self {
+        Self {
+            learning: mutation.learning,
+            event_id: mutation.event_id,
+            replayed: mutation.replayed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LearningEvent {
     schema_version: u32,
     event_id: String,
@@ -395,11 +417,59 @@ pub fn propose_learning(
     vault: impl AsRef<Path>,
     input: ProposeLearningInput,
 ) -> Result<LearningMutation, LeyCoreError> {
+    propose_learning_with_session_transition(project_start.as_ref(), vault.as_ref(), None, input)
+}
+
+pub fn propose_learning_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    input: ProposeLearningInput,
+) -> Result<LearningWriteResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    crate::session::ensure_native_session_authority(project_start, legacy_vault, store)?;
+    ensure_native_learning_authority(project_start, legacy_vault, store)?;
+    let (diagnostic, learning_id, pending) =
+        prepare_learning_proposal(project_start, legacy_vault, Some(store), input)?;
+    mutate_learning_in_continuity_store(
+        &diagnostic.root,
+        legacy_vault,
+        store,
+        &diagnostic.identity,
+        &learning_id,
+        pending,
+    )
+}
+
+fn propose_learning_with_session_transition(
+    project_start: &Path,
+    vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+    input: ProposeLearningInput,
+) -> Result<LearningMutation, LeyCoreError> {
+    let (diagnostic, learning_id, pending) =
+        prepare_learning_proposal(project_start, vault, transition_store, input)?;
+    mutate_learning(
+        &diagnostic.identity.project_id,
+        &diagnostic.root,
+        &learning_id,
+        pending,
+        vault,
+    )
+}
+
+fn prepare_learning_proposal(
+    project_start: &Path,
+    vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+    input: ProposeLearningInput,
+) -> Result<(crate::ProjectDiagnostic, String, PendingLearningEvent), LeyCoreError> {
     validate_request_id(&input.request_id)?;
     validate_confidence(input.confidence_percent)?;
     validate_provenance_authority(input.actor, input.provenance)?;
-    let diagnostic = diagnose_project(&project_start)?;
-    validate_project_memory(&diagnostic.root, &vault)?;
+    let diagnostic = diagnose_project(project_start)?;
+    validate_learning_project_memory(&diagnostic.root, vault, transition_store)?;
     let learning_id = deterministic_id(
         "lrn",
         &format!("{}:{}", diagnostic.identity.project_id, input.request_id),
@@ -413,7 +483,8 @@ pub fn propose_learning(
     let mut redactions = Vec::new();
     let (evidence, origin_lineage) = resolve_evidence(
         &diagnostic.root,
-        vault.as_ref(),
+        vault,
+        transition_store,
         input.evidence,
         &mut redactions,
     )?;
@@ -427,10 +498,9 @@ pub fn propose_learning(
         evidence,
         origin_lineage: Some(origin_lineage),
     };
-    mutate_learning(
-        &diagnostic.identity.project_id,
-        &diagnostic.root,
-        &learning_id,
+    Ok((
+        diagnostic,
+        learning_id,
         PendingLearningEvent {
             event_id,
             request_id: input.request_id,
@@ -439,8 +509,7 @@ pub fn propose_learning(
             payload,
             allow_create: true,
         },
-        vault,
-    )
+    ))
 }
 
 pub fn correct_learning(
@@ -449,11 +518,68 @@ pub fn correct_learning(
     learning_id: &str,
     input: CorrectLearningInput,
 ) -> Result<LearningMutation, LeyCoreError> {
+    correct_learning_with_session_transition(
+        project_start.as_ref(),
+        vault.as_ref(),
+        None,
+        learning_id,
+        input,
+    )
+}
+
+pub fn correct_learning_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    learning_id: &str,
+    input: CorrectLearningInput,
+) -> Result<LearningWriteResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    crate::session::ensure_native_session_authority(project_start, legacy_vault, store)?;
+    ensure_native_learning_authority(project_start, legacy_vault, store)?;
+    let (diagnostic, pending) =
+        prepare_learning_correction(project_start, legacy_vault, Some(store), learning_id, input)?;
+    mutate_learning_in_continuity_store(
+        &diagnostic.root,
+        legacy_vault,
+        store,
+        &diagnostic.identity,
+        learning_id,
+        pending,
+    )
+}
+
+fn correct_learning_with_session_transition(
+    project_start: &Path,
+    vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+    learning_id: &str,
+    input: CorrectLearningInput,
+) -> Result<LearningMutation, LeyCoreError> {
+    let (diagnostic, pending) =
+        prepare_learning_correction(project_start, vault, transition_store, learning_id, input)?;
+    mutate_learning(
+        &diagnostic.identity.project_id,
+        &diagnostic.root,
+        learning_id,
+        pending,
+        vault,
+    )
+}
+
+fn prepare_learning_correction(
+    project_start: &Path,
+    vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+    learning_id: &str,
+    input: CorrectLearningInput,
+) -> Result<(crate::ProjectDiagnostic, PendingLearningEvent), LeyCoreError> {
     validate_learning_id(learning_id)?;
     validate_request_id(&input.request_id)?;
     validate_confidence(input.confidence_percent)?;
-    let diagnostic = diagnose_project(&project_start)?;
-    validate_project_memory(&diagnostic.root, &vault)?;
+    let diagnostic = diagnose_project(project_start)?;
+    validate_learning_project_memory(&diagnostic.root, vault, transition_store)?;
     let event_id = deterministic_id(
         "lev",
         &format!("{learning_id}:{}:corrected", input.request_id),
@@ -462,7 +588,8 @@ pub fn correct_learning(
     let mut redactions = Vec::new();
     let (evidence, origin_lineage) = resolve_evidence(
         &diagnostic.root,
-        vault.as_ref(),
+        vault,
+        transition_store,
         input.evidence,
         &mut redactions,
     )?;
@@ -475,10 +602,8 @@ pub fn correct_learning(
         note: sanitize_text("note", &input.note, 0, 4_000, &mut redactions)?,
         origin_lineage: Some(origin_lineage),
     };
-    mutate_learning(
-        &diagnostic.identity.project_id,
-        &diagnostic.root,
-        learning_id,
+    Ok((
+        diagnostic,
         PendingLearningEvent {
             event_id,
             request_id: input.request_id,
@@ -487,8 +612,7 @@ pub fn correct_learning(
             payload,
             allow_create: false,
         },
-        vault,
-    )
+    ))
 }
 
 pub fn review_learning(
@@ -553,6 +677,82 @@ pub fn review_learning(
             allow_create: false,
         },
         vault,
+    )
+}
+
+pub fn review_learning_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    learning_id: &str,
+    input: ReviewLearningInput,
+) -> Result<LearningWriteResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    crate::session::ensure_native_session_authority(project_start, legacy_vault, store)?;
+    ensure_native_learning_authority(project_start, legacy_vault, store)?;
+    validate_learning_id(learning_id)?;
+    validate_request_id(&input.request_id)?;
+    validate_review_authority(input.actor, input.action)?;
+    let diagnostic = diagnose_project(project_start)?;
+    validate_learning_project_memory(&diagnostic.root, legacy_vault, Some(store))?;
+    match input.action {
+        LearningFeedbackAction::Supersede => {
+            let replacement = input.replacement_learning_id.as_deref().ok_or_else(|| {
+                LeyCoreError::InvalidLearningRequest(
+                    "supersede requires replacementLearningId".to_owned(),
+                )
+            })?;
+            validate_learning_id(replacement)?;
+            if replacement == learning_id {
+                return Err(LeyCoreError::InvalidLearningRequest(
+                    "a learning cannot supersede itself".to_owned(),
+                ));
+            }
+            read_learning_from_continuity_snapshot(
+                &diagnostic.root,
+                legacy_vault,
+                store,
+                replacement,
+            )?;
+        }
+        _ if input.replacement_learning_id.is_some() => {
+            return Err(LeyCoreError::InvalidLearningRequest(
+                "replacementLearningId is only valid for supersede".to_owned(),
+            ));
+        }
+        _ => {}
+    }
+    let event_id = deterministic_id(
+        "lev",
+        &format!(
+            "{learning_id}:{}:reviewed:{}",
+            input.request_id,
+            feedback_label(input.action)
+        ),
+        64,
+    );
+    let mut redactions = Vec::new();
+    let payload = LearningEventPayload::Reviewed {
+        actor: input.actor,
+        action: input.action,
+        note: sanitize_text("note", &input.note, 0, 4_000, &mut redactions)?,
+        replacement_learning_id: input.replacement_learning_id,
+    };
+    mutate_learning_in_continuity_store(
+        &diagnostic.root,
+        legacy_vault,
+        store,
+        &diagnostic.identity,
+        learning_id,
+        PendingLearningEvent {
+            event_id,
+            request_id: input.request_id,
+            expected_event_count: input.expected_event_count,
+            redactions,
+            payload,
+            allow_create: false,
+        },
     )
 }
 
@@ -642,6 +842,467 @@ pub(crate) fn continuity_events_for_migration(
         .collect()
 }
 
+pub(crate) fn read_learning_from_continuity_snapshot(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    learning_id: &str,
+) -> Result<LearningRecord, LeyCoreError> {
+    validate_learning_id(learning_id)?;
+    let diagnostic = diagnose_project(&project_start)?;
+    let events = store
+        .events_for_subject(&diagnostic.identity.project_id, learning_id)?
+        .into_iter()
+        .map(learning_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut learning = replay_one(&events, &diagnostic.identity.project_id, learning_id)?;
+    refresh_freshness_with_continuity_transition(&mut learning, &diagnostic.root, vault, store)?;
+    Ok(learning)
+}
+
+pub fn read_learning_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    learning_id: &str,
+) -> Result<LearningRecord, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    sync_legacy_continuity_for_learning_read(project_start, legacy_vault, store)?;
+    read_learning_from_continuity_snapshot(project_start, legacy_vault, store, learning_id)
+}
+
+pub(crate) fn list_learnings_from_continuity_snapshot(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<Vec<LearningSummary>, LeyCoreError> {
+    let diagnostic = diagnose_project(&project_start)?;
+    let events = store
+        .learning_events(&diagnostic.identity.project_id)?
+        .into_iter()
+        .map(learning_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut records = replay_all(&events, &diagnostic.identity.project_id)?;
+    refresh_all_freshness_with_continuity_transition(&mut records, &diagnostic.root, vault, store)?;
+    records.sort_by(|left, right| {
+        right
+            .updated_at_unix_ms
+            .cmp(&left.updated_at_unix_ms)
+            .then_with(|| left.learning_id.cmp(&right.learning_id))
+    });
+    Ok(records.iter().map(LearningSummary::from).collect())
+}
+
+pub fn list_learnings_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<Vec<LearningSummary>, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    sync_legacy_continuity_for_learning_read(project_start, legacy_vault, store)?;
+    list_learnings_from_continuity_snapshot(project_start, legacy_vault, store)
+}
+
+fn sync_legacy_continuity_for_learning_read(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &ContinuityStore,
+) -> Result<String, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let project_id = diagnostic.identity.project_id.clone();
+    if learning_authority_cutover_is_complete(store, &project_id)? {
+        return Ok(project_id);
+    }
+    if crate::session::session_authority_cutover_is_complete(store, &project_id)? {
+        crate::continuity_import::import_legacy_learning_continuity(
+            project_start,
+            legacy_vault,
+            store,
+        )?;
+    } else {
+        crate::import_legacy_continuity(project_start, legacy_vault, store)?;
+    }
+    Ok(project_id)
+}
+
+fn learning_authority_cutover_event_id(project_id: &str) -> String {
+    deterministic_id(
+        "cut",
+        &format!("ley-native-learning-authority-v1:{project_id}"),
+        64,
+    )
+}
+
+fn fence_legacy_learning_writes(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+) -> Result<bool, LeyCoreError> {
+    let diagnostic = diagnose_project(&project_start)?;
+    validate_project_memory(&diagnostic.root, &legacy_vault)?;
+    let vault_path = legacy_vault
+        .as_ref()
+        .canonicalize()
+        .map_err(|source| LeyCoreError::Io {
+            path: legacy_vault.as_ref().to_path_buf(),
+            source,
+        })?;
+    let _lifecycle =
+        lock_project_memory_lifecycle(&vault_path, &diagnostic.identity.project_id, false, true)?;
+    let vault_dir = Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
+        LeyCoreError::Io {
+            path: vault_path.clone(),
+            source,
+        }
+    })?;
+    let ley_dir = open_existing_dir(&vault_dir, STORE_ROOT)?;
+    let memory_dir = open_existing_dir(&ley_dir, AGENT_MEMORY_DIRECTORY)?;
+    let projects_dir = open_existing_dir(&memory_dir, PROJECTS_DIRECTORY)?;
+    let project_dir = open_existing_dir(&projects_dir, &diagnostic.identity.project_id)?;
+
+    let mut read_options = OpenOptions::new();
+    read_options.read(true).follow(FollowSymlinks::No);
+    let read_lock = match project_dir.open_with(LEARNING_LOCK_FILE, &read_options) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            ensure_lock_file(&project_dir)?;
+            project_dir
+                .open_with(LEARNING_LOCK_FILE, &read_options)
+                .map_err(|source| learning_io(LEARNING_LOCK_FILE, source))?
+        }
+        Err(source) => return Err(learning_io(LEARNING_LOCK_FILE, source)),
+    };
+    ensure_private_file(&read_lock, LEARNING_LOCK_FILE)?;
+    if read_lock
+        .metadata()
+        .map_err(|source| learning_io(LEARNING_LOCK_FILE, source))?
+        .permissions()
+        .readonly()
+    {
+        return Ok(false);
+    }
+    drop(read_lock);
+
+    let mut write_options = OpenOptions::new();
+    write_options
+        .read(true)
+        .write(true)
+        .follow(FollowSymlinks::No);
+    let lock = project_dir
+        .open_with(LEARNING_LOCK_FILE, &write_options)
+        .map_err(|source| learning_io(LEARNING_LOCK_FILE, source))?;
+    ensure_private_file(&lock, LEARNING_LOCK_FILE)?;
+    let file = lock.into_std();
+    file.lock()
+        .map_err(|source| learning_io(LEARNING_LOCK_FILE, source))?;
+    let mut permissions = file
+        .metadata()
+        .map_err(|source| learning_io(LEARNING_LOCK_FILE, source))?
+        .permissions();
+    permissions.set_readonly(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o400);
+    }
+    file.set_permissions(permissions)
+        .map_err(|source| learning_io(LEARNING_LOCK_FILE, source))?;
+    file.sync_all()
+        .map_err(|source| learning_io(LEARNING_LOCK_FILE, source))?;
+    let metadata = file
+        .metadata()
+        .map_err(|source| learning_io(LEARNING_LOCK_FILE, source))?;
+    if !metadata.permissions().readonly() {
+        return Err(LeyCoreError::InvalidLearningStore(
+            "legacy learning writer fence did not become read-only".to_owned(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o222 != 0 {
+            return Err(LeyCoreError::InvalidLearningStore(
+                "legacy learning writer fence retained write permission".to_owned(),
+            ));
+        }
+    }
+    Ok(true)
+}
+
+fn learning_authority_cutover_input(
+    summary: &crate::continuity_import::LegacyLearningImportSummary,
+) -> crate::ContinuityEventInput {
+    crate::ContinuityEventInput {
+        event_id: learning_authority_cutover_event_id(&summary.project_id),
+        project_id: summary.project_id.clone(),
+        subject_id: None,
+        session_id: None,
+        session_sequence: None,
+        request_id: None,
+        request_fingerprint: None,
+        kind: LEARNING_AUTHORITY_CUTOVER_EVENT_KIND.to_owned(),
+        payload_version: 1,
+        recorded_at_unix_ms: summary.manifest_recorded_at_unix_ms.saturating_add(1),
+        revision_head: None,
+        revision_branch: None,
+        payload: serde_json::json!({
+            "source": "native-learning-authority",
+            "formatVersion": 1,
+            "legacyLearningSnapshotEventId": summary.manifest_event_id,
+            "legacyLearningEventDigest": summary.source_digest,
+            "legacyLearningEventCount": summary.learning_events
+        }),
+    }
+}
+
+fn native_born_learning_authority_input(
+    identity: &crate::ProjectIdentity,
+) -> crate::ContinuityEventInput {
+    crate::ContinuityEventInput {
+        event_id: learning_authority_cutover_event_id(&identity.project_id),
+        project_id: identity.project_id.clone(),
+        subject_id: None,
+        session_id: None,
+        session_sequence: None,
+        request_id: None,
+        request_fingerprint: None,
+        kind: LEARNING_AUTHORITY_CUTOVER_EVENT_KIND.to_owned(),
+        payload_version: 2,
+        recorded_at_unix_ms: identity.created_at_unix_ms.saturating_add(2),
+        revision_head: None,
+        revision_branch: None,
+        payload: serde_json::json!({
+            "source": "native-learning-authority",
+            "formatVersion": 2,
+            "origin": "native-born"
+        }),
+    }
+}
+
+pub(crate) fn learning_authority_cutover_is_complete(
+    store: &ContinuityStore,
+    project_id: &str,
+) -> Result<bool, LeyCoreError> {
+    let event_id = learning_authority_cutover_event_id(project_id);
+    let Some(event) = store.event(project_id, &event_id)? else {
+        return Ok(false);
+    };
+    if event.kind != LEARNING_AUTHORITY_CUTOVER_EVENT_KIND
+        || event.subject_id.is_some()
+        || event.session_id.is_some()
+        || event.session_sequence.is_some()
+        || event.request_id.is_some()
+        || event.request_fingerprint.is_some()
+        || event.revision_head.is_some()
+        || event.revision_branch.is_some()
+        || event.payload["source"] != "native-learning-authority"
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native learning-authority marker is invalid".to_owned(),
+        ));
+    }
+    match event.payload["formatVersion"].as_u64() {
+        Some(2) => {
+            if event.payload_version != 2
+                || event.payload["origin"] != "native-born"
+                || event.payload.as_object().map_or(0, |payload| payload.len()) != 3
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(
+                    "native-born learning-authority cutover marker is invalid".to_owned(),
+                ));
+            }
+            return Ok(true);
+        }
+        Some(1) => {}
+        _ => {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native learning-authority marker has an unsupported format".to_owned(),
+            ))
+        }
+    }
+    let manifest_event_id = event.payload["legacyLearningSnapshotEventId"]
+        .as_str()
+        .ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "native learning-authority cutover marker is invalid".to_owned(),
+            )
+        })?;
+    let manifest_digest = event.payload["legacyLearningEventDigest"]
+        .as_str()
+        .ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "native learning-authority cutover marker is invalid".to_owned(),
+            )
+        })?;
+    let manifest_count = event.payload["legacyLearningEventCount"]
+        .as_u64()
+        .ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "native learning-authority cutover marker is invalid".to_owned(),
+            )
+        })?;
+    let Some(manifest) = store.event(project_id, manifest_event_id)? else {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native learning-authority cutover marker references a missing learning snapshot"
+                .to_owned(),
+        ));
+    };
+    if event.payload_version != 1
+        || event.recorded_at_unix_ms != manifest.recorded_at_unix_ms.saturating_add(1)
+        || event.payload.as_object().map_or(0, |payload| payload.len()) != 5
+        || manifest.kind != "legacy-learning-snapshot-imported"
+        || manifest.subject_id.is_some()
+        || manifest.session_id.is_some()
+        || manifest.session_sequence.is_some()
+        || manifest.request_id.is_some()
+        || manifest.request_fingerprint.is_some()
+        || manifest.payload["source"] != "legacy-learning-memory"
+        || manifest.payload["formatVersion"] != 1
+        || manifest.payload["eventDigest"] != manifest_digest
+        || manifest.payload["learningEventCount"] != manifest_count
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native learning-authority cutover marker is invalid".to_owned(),
+        ));
+    }
+    Ok(true)
+}
+
+pub(crate) fn establish_native_born_learning_authority(
+    project_start: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<String, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let project_id = diagnostic.identity.project_id.clone();
+    store.register_project(&diagnostic.identity)?;
+    if learning_authority_cutover_is_complete(store, &project_id)? {
+        let marker = store
+            .event(
+                &project_id,
+                &learning_authority_cutover_event_id(&project_id),
+            )?
+            .ok_or_else(|| {
+                LeyCoreError::InvalidContinuityStore(
+                    "native learning-authority marker disappeared during initialization".to_owned(),
+                )
+            })?;
+        if marker.payload["origin"] == "native-born" {
+            return Ok(project_id);
+        }
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native-born learning authority cannot replace a legacy-cutover authority".to_owned(),
+        ));
+    }
+    if !crate::session::session_authority_cutover_is_complete(store, &project_id)? {
+        return Err(LeyCoreError::InvalidLearningStore(
+            "native-born learning authority requires native session authority first".to_owned(),
+        ));
+    }
+    let input = native_born_learning_authority_input(&diagnostic.identity);
+    match store.append_project_event_if_count(&input, 1) {
+        Ok(_) => {}
+        Err(error) => {
+            if learning_authority_cutover_is_complete(store, &project_id)? {
+                if store
+                    .event(
+                        &project_id,
+                        &learning_authority_cutover_event_id(&project_id),
+                    )?
+                    .is_some_and(|marker| marker.payload["origin"] == "native-born")
+                {
+                    return Ok(project_id);
+                }
+            }
+            return Err(error);
+        }
+    }
+    if !learning_authority_cutover_is_complete(store, &project_id)? {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native-born learning authority did not commit a valid marker".to_owned(),
+        ));
+    }
+    Ok(project_id)
+}
+
+fn ensure_native_learning_authority(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<String, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let project_id = diagnose_project(project_start)?.identity.project_id;
+    if learning_authority_cutover_is_complete(store, &project_id)? {
+        return Ok(project_id);
+    }
+    if !crate::session::session_authority_cutover_is_complete(store, &project_id)? {
+        return Err(LeyCoreError::InvalidLearningStore(
+            "native learning authority requires native session authority first".to_owned(),
+        ));
+    }
+    fence_legacy_learning_writes(project_start, legacy_vault)?;
+    let imported = crate::continuity_import::import_legacy_learning_continuity(
+        project_start,
+        legacy_vault,
+        store,
+    )?;
+    store.append_event(&learning_authority_cutover_input(&imported))?;
+    if !learning_authority_cutover_is_complete(store, &project_id)? {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native learning-authority cutover did not commit a valid marker".to_owned(),
+        ));
+    }
+    Ok(project_id)
+}
+
+fn learning_event_from_continuity(
+    event: crate::ContinuityEvent,
+) -> Result<LearningEvent, LeyCoreError> {
+    let decoded: LearningEvent =
+        serde_json::from_value(event.payload.clone()).map_err(|error| {
+            LeyCoreError::InvalidContinuityStore(format!(
+                "continuity learning event {} has invalid embedded payload: {error}",
+                event.event_id
+            ))
+        })?;
+    validate_event(&decoded, &event.project_id)?;
+    let expected_suffix = match &decoded.payload {
+        LearningEventPayload::Proposed { .. } => "learning-proposed",
+        LearningEventPayload::Corrected { .. } => "learning-corrected",
+        LearningEventPayload::Reviewed { .. } => "learning-reviewed",
+    };
+    let legacy_kind = format!("legacy-{expected_suffix}");
+    if event.event_id != decoded.event_id
+        || event.subject_id.as_deref() != Some(decoded.learning_id.as_str())
+        || event.session_id.is_some()
+        || event.session_sequence.is_some()
+        || event.payload_version != 1
+        || event.recorded_at_unix_ms != decoded.recorded_at_unix_ms
+        || event.revision_head.is_some()
+        || event.revision_branch.is_some()
+        || (event.kind != legacy_kind && event.kind != expected_suffix)
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "continuity learning event {} does not match its embedded learning event",
+            event.event_id
+        )));
+    }
+    match (&event.request_id, &event.request_fingerprint) {
+        (None, None) => {}
+        (Some(request_id), Some(request_fingerprint))
+            if request_id == &decoded.request_id
+                && request_fingerprint == &decoded.request_fingerprint => {}
+        _ => {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "continuity learning event {} has inconsistent request identity",
+                event.event_id
+            )))
+        }
+    }
+    Ok(decoded)
+}
+
 pub fn learning_review_inbox(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -650,6 +1311,19 @@ pub fn learning_review_inbox(
         .into_iter()
         .filter(summary_needs_review)
         .collect())
+}
+
+pub fn learning_review_inbox_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<Vec<LearningSummary>, LeyCoreError> {
+    Ok(
+        list_learnings_with_continuity_transition(project_start, legacy_vault, store)?
+            .into_iter()
+            .filter(summary_needs_review)
+            .collect(),
+    )
 }
 
 fn summary_needs_review(learning: &LearningSummary) -> bool {
@@ -784,6 +1458,7 @@ impl LearningOriginBuilder {
 fn resolve_evidence(
     project: &Path,
     vault: &Path,
+    transition_store: Option<&ContinuityStore>,
     inputs: Vec<LearningEvidenceInput>,
     redactions: &mut Vec<LearningRedaction>,
 ) -> Result<(Vec<LearningEvidence>, LearningOriginLineage), LeyCoreError> {
@@ -801,7 +1476,12 @@ fn resolve_evidence(
                 "learning evidence contains a duplicate session record".to_owned(),
             ));
         }
-        let session = read_session(project, vault, &input.session_id)?;
+        let session = match transition_store {
+            Some(store) => {
+                read_session_with_continuity_transition(project, vault, store, &input.session_id)?
+            }
+            None => read_session(project, vault, &input.session_id)?,
+        };
         let located = locate_session_record(&session, &input.record_id)?;
         if located.direct_turn_evidence {
             lineage.push(LearningOriginSource::TurnEvidence {
@@ -823,13 +1503,24 @@ fn resolve_evidence(
             });
         }
         if let Some(checkpoint_event_id) = located.checkpoint_event_id {
-            if let Some(recovery) = read_recovery_derivation_origin(
-                project,
-                vault,
-                &session.session_id,
-                &checkpoint_event_id,
-                &input.record_id,
-            )? {
+            let recovery = match transition_store {
+                Some(store) => read_recovery_derivation_origin_with_continuity_transition(
+                    project,
+                    vault,
+                    store,
+                    &session.session_id,
+                    &checkpoint_event_id,
+                    &input.record_id,
+                )?,
+                None => read_recovery_derivation_origin(
+                    project,
+                    vault,
+                    &session.session_id,
+                    &checkpoint_event_id,
+                    &input.record_id,
+                )?,
+            };
+            if let Some(recovery) = recovery {
                 lineage.push(LearningOriginSource::RecoveryCandidate {
                     session_id: session.session_id.clone(),
                     candidate_fingerprint: recovery.candidate_fingerprint,
@@ -875,6 +1566,20 @@ fn resolve_evidence(
             .then_with(|| left.record_id.cmp(&right.record_id))
     });
     Ok((evidence, lineage.finish(true)))
+}
+
+fn validate_learning_project_memory(
+    project: &Path,
+    legacy_vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+) -> Result<(), LeyCoreError> {
+    if let Some(store) = transition_store {
+        let project_id = diagnose_project(project)?.identity.project_id;
+        if store.current_artifact_snapshot(&project_id)?.is_some() {
+            return Ok(());
+        }
+    }
+    validate_project_memory(project, legacy_vault)
 }
 
 struct LocatedLearningEvidence {
@@ -1016,42 +1721,36 @@ struct PendingLearningEvent {
     allow_create: bool,
 }
 
-fn mutate_learning(
+enum PreparedLearningMutation {
+    Replay { event_id: String },
+    Append(LearningEvent),
+}
+
+fn prepare_learning_mutation(
     project_id: &str,
-    project_root: &Path,
     learning_id: &str,
     pending: PendingLearningEvent,
-    vault: impl AsRef<Path>,
-) -> Result<LearningMutation, LeyCoreError> {
-    let store = LearningStore::open(&vault, project_id, true)?
-        .expect("creating a learning store always returns a store");
-    let _lock = store.lock(false)?;
-    let events = store.read_events()?;
+    events: &[LearningEvent],
+) -> Result<PreparedLearningMutation, LeyCoreError> {
     let fingerprint = request_fingerprint(
         project_id,
         learning_id,
         &pending.request_id,
         &pending.payload,
     )?;
-    let event_name = format!("{}.json", pending.event_id);
-    if let Some(existing) =
-        read_private_file(&store.events_dir, &event_name, LEARNING_EVENT_LIMIT_BYTES)?
+    if let Some(event) = events
+        .iter()
+        .find(|event| event.event_id == pending.event_id)
     {
-        let event: LearningEvent = parse_json(&event_name, &existing)?;
-        validate_event(&event, project_id)?;
-        if event.request_fingerprint != fingerprint {
+        validate_event(event, project_id)?;
+        if event.learning_id != learning_id || event.request_fingerprint != fingerprint {
             return Err(LeyCoreError::LearningIdempotencyConflict(
                 pending.request_id,
             ));
         }
-        let mut records = replay_all(&events, project_id)?;
-        refresh_all_freshness(&mut records, project_root, &vault)?;
-        store.persist_index(&records)?;
-        let learning = records
-            .into_iter()
-            .find(|record| record.learning_id == learning_id)
-            .ok_or_else(|| LeyCoreError::LearningNotFound(learning_id.to_owned()))?;
-        return Ok(learning_mutation(learning, &pending.event_id, true));
+        return Ok(PreparedLearningMutation::Replay {
+            event_id: event.event_id.clone(),
+        });
     }
     if events
         .iter()
@@ -1082,9 +1781,9 @@ fn mutate_learning(
         return Err(LeyCoreError::LearningNotFound(learning_id.to_owned()));
     }
     if !learning_events.is_empty() {
-        let current = replay_one(&events, project_id, learning_id)?;
+        let current = replay_one(events, project_id, learning_id)?;
         validate_transition(&current, &pending.payload)?;
-        validate_pending_against_ledger(&events, project_id, learning_id, &pending.payload)?;
+        validate_pending_against_ledger(events, project_id, learning_id, &pending.payload)?;
     }
     if events.len() >= LEARNING_EVENT_LIMIT {
         return Err(LeyCoreError::InvalidLearningStore(format!(
@@ -1093,13 +1792,14 @@ fn mutate_learning(
     }
     let sequence = learning_events.len() as u64 + 1;
     let minimum_time = learning_events
-        .last()
+        .iter()
         .map(|event| event.recorded_at_unix_ms)
+        .max()
         .unwrap_or(1);
     let recorded_at_unix_ms = unix_time_ms().max(minimum_time);
-    let event = LearningEvent {
+    Ok(PreparedLearningMutation::Append(LearningEvent {
         schema_version: LEARNING_SCHEMA_VERSION,
-        event_id: pending.event_id.clone(),
+        event_id: pending.event_id,
         project_id: project_id.to_owned(),
         learning_id: learning_id.to_owned(),
         request_id: pending.request_id,
@@ -1108,9 +1808,31 @@ fn mutate_learning(
         recorded_at_unix_ms,
         redactions: pending.redactions,
         payload: pending.payload,
-    };
-    let body = json_body(&event, LEARNING_EVENT_LIMIT_BYTES, &event_name)?;
-    write_immutable_private(&store.events_dir, &event_name, &body)?;
+    }))
+}
+
+fn mutate_learning(
+    project_id: &str,
+    project_root: &Path,
+    learning_id: &str,
+    pending: PendingLearningEvent,
+    vault: impl AsRef<Path>,
+) -> Result<LearningMutation, LeyCoreError> {
+    let store = LearningStore::open(&vault, project_id, true)?
+        .expect("creating a learning store always returns a store");
+    let _lock = store.lock(false)?;
+    let events = store.read_events()?;
+    let (event_id, replayed) =
+        match prepare_learning_mutation(project_id, learning_id, pending, &events)? {
+            PreparedLearningMutation::Replay { event_id } => (event_id, true),
+            PreparedLearningMutation::Append(event) => {
+                let event_id = event.event_id.clone();
+                let event_name = format!("{event_id}.json");
+                let body = json_body(&event, LEARNING_EVENT_LIMIT_BYTES, &event_name)?;
+                write_immutable_private(&store.events_dir, &event_name, &body)?;
+                (event_id, false)
+            }
+        };
     let events = store.read_events()?;
     let mut records = replay_all(&events, project_id)?;
     refresh_all_freshness(&mut records, project_root, &vault)?;
@@ -1119,7 +1841,213 @@ fn mutate_learning(
         .into_iter()
         .find(|record| record.learning_id == learning_id)
         .ok_or_else(|| LeyCoreError::LearningNotFound(learning_id.to_owned()))?;
-    Ok(learning_mutation(learning, &pending.event_id, false))
+    Ok(learning_mutation(learning, &event_id, replayed))
+}
+
+fn mutate_learning_in_continuity_store(
+    project_root: &Path,
+    legacy_vault: &Path,
+    store: &ContinuityStore,
+    identity: &crate::ProjectIdentity,
+    learning_id: &str,
+    pending: PendingLearningEvent,
+) -> Result<LearningWriteResult, LeyCoreError> {
+    crate::validate_project_id(&identity.project_id)?;
+    validate_learning_id(learning_id)?;
+    validate_learning_project_memory(project_root, legacy_vault, Some(store))?;
+    store.register_project(identity)?;
+
+    let mut session_anchors = BTreeMap::new();
+    for session_id in learning_payload_session_ids(&pending.payload) {
+        let anchor = store
+            .events_for_session(&identity.project_id, &session_id)?
+            .into_iter()
+            .find(|event| {
+                matches!(
+                    event.kind.as_str(),
+                    "legacy-session-started" | "session-started"
+                )
+            })
+            .ok_or_else(|| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "native learning evidence cites missing session {session_id}"
+                ))
+            })?;
+        session_anchors.insert(session_id, anchor.event_id);
+    }
+
+    let (write, snapshot) =
+        store.append_learning_event_transactional(&identity.project_id, |existing| {
+            let decoded = existing
+                .iter()
+                .cloned()
+                .map(learning_event_from_continuity)
+                .collect::<Result<Vec<_>, _>>()?;
+            let prepared =
+                prepare_learning_mutation(&identity.project_id, learning_id, pending, &decoded)?;
+            let (input, event) = match prepared {
+                PreparedLearningMutation::Replay { event_id } => {
+                    let stored = existing
+                        .iter()
+                        .find(|event| event.event_id == event_id)
+                        .ok_or_else(|| {
+                            LeyCoreError::InvalidContinuityStore(format!(
+                                "replayed learning event {event_id} is missing from continuity storage"
+                            ))
+                        })?;
+                    let decoded = decoded
+                        .iter()
+                        .find(|event| event.event_id == event_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            LeyCoreError::InvalidContinuityStore(format!(
+                                "replayed learning event {event_id} could not be decoded"
+                            ))
+                        })?;
+                    (continuity_learning_event_input(stored), decoded)
+                }
+                PreparedLearningMutation::Append(event) => {
+                    let input = native_learning_continuity_event_input(event.clone())?;
+                    (input, event)
+                }
+            };
+            let links = native_learning_event_links(&event, &decoded, &session_anchors)?;
+            Ok((input, links))
+        })?;
+    let events = snapshot
+        .into_iter()
+        .map(learning_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut records = replay_all(&events, &identity.project_id)?;
+    refresh_all_freshness_with_continuity_transition(
+        &mut records,
+        project_root,
+        legacy_vault,
+        store,
+    )?;
+    let learning = records
+        .into_iter()
+        .find(|record| record.learning_id == learning_id)
+        .ok_or_else(|| LeyCoreError::LearningNotFound(learning_id.to_owned()))?;
+    Ok(LearningWriteResult {
+        learning,
+        event_id: write.record.event_id,
+        replayed: !write.created,
+    })
+}
+
+fn learning_payload_session_ids(payload: &LearningEventPayload) -> BTreeSet<String> {
+    match payload {
+        LearningEventPayload::Proposed { evidence, .. }
+        | LearningEventPayload::Corrected { evidence, .. } => evidence
+            .iter()
+            .map(|item| item.session_id.clone())
+            .collect(),
+        LearningEventPayload::Reviewed { .. } => BTreeSet::new(),
+    }
+}
+
+fn continuity_learning_event_input(event: &crate::ContinuityEvent) -> crate::ContinuityEventInput {
+    crate::ContinuityEventInput {
+        event_id: event.event_id.clone(),
+        project_id: event.project_id.clone(),
+        subject_id: event.subject_id.clone(),
+        session_id: event.session_id.clone(),
+        session_sequence: event.session_sequence,
+        request_id: event.request_id.clone(),
+        request_fingerprint: event.request_fingerprint.clone(),
+        kind: event.kind.clone(),
+        payload_version: event.payload_version,
+        recorded_at_unix_ms: event.recorded_at_unix_ms,
+        revision_head: event.revision_head.clone(),
+        revision_branch: event.revision_branch.clone(),
+        payload: event.payload.clone(),
+    }
+}
+
+fn native_learning_continuity_event_input(
+    event: LearningEvent,
+) -> Result<crate::ContinuityEventInput, LeyCoreError> {
+    let kind = match &event.payload {
+        LearningEventPayload::Proposed { .. } => "learning-proposed",
+        LearningEventPayload::Corrected { .. } => "learning-corrected",
+        LearningEventPayload::Reviewed { .. } => "learning-reviewed",
+    }
+    .to_owned();
+    let payload = serde_json::to_value(&event).map_err(|error| {
+        LeyCoreError::InvalidContinuityStore(format!(
+            "native learning event could not be serialized: {error}"
+        ))
+    })?;
+    Ok(crate::ContinuityEventInput {
+        event_id: event.event_id,
+        project_id: event.project_id,
+        subject_id: Some(event.learning_id),
+        session_id: None,
+        session_sequence: None,
+        request_id: None,
+        request_fingerprint: None,
+        kind,
+        payload_version: 1,
+        recorded_at_unix_ms: event.recorded_at_unix_ms,
+        revision_head: None,
+        revision_branch: None,
+        payload,
+    })
+}
+
+fn native_learning_event_links(
+    event: &LearningEvent,
+    existing: &[LearningEvent],
+    session_anchors: &BTreeMap<String, String>,
+) -> Result<Vec<ContinuityEventLinkInput>, LeyCoreError> {
+    let mut links = BTreeSet::<(String, String, String)>::new();
+    match &event.payload {
+        LearningEventPayload::Proposed { evidence, .. }
+        | LearningEventPayload::Corrected { evidence, .. } => {
+            for evidence in evidence {
+                let target = session_anchors.get(&evidence.session_id).ok_or_else(|| {
+                    LeyCoreError::InvalidContinuityStore(format!(
+                        "native learning event {} cites missing session {}",
+                        event.event_id, evidence.session_id
+                    ))
+                })?;
+                links.insert((
+                    event.event_id.clone(),
+                    target.clone(),
+                    "depends-on-session".to_owned(),
+                ));
+            }
+        }
+        LearningEventPayload::Reviewed {
+            action: LearningFeedbackAction::Supersede,
+            replacement_learning_id: Some(replacement),
+            ..
+        } => {
+            let target = existing
+                .iter()
+                .filter(|candidate| candidate.learning_id == *replacement)
+                .min_by_key(|candidate| candidate.sequence)
+                .map(|candidate| candidate.event_id.clone())
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidLearningRequest(
+                        "replacement learning does not exist in this project".to_owned(),
+                    )
+                })?;
+            links.insert((event.event_id.clone(), target, "supersedes".to_owned()));
+        }
+        LearningEventPayload::Reviewed { .. } => {}
+    }
+    Ok(links
+        .into_iter()
+        .map(
+            |(from_event_id, to_event_id, relation)| ContinuityEventLinkInput {
+                from_event_id,
+                to_event_id,
+                relation,
+            },
+        )
+        .collect())
 }
 
 fn validate_pending_against_ledger(
@@ -1486,6 +2414,55 @@ fn refresh_all_freshness(
         refresh_freshness_from_memory(learning, &memory);
     }
     Ok(())
+}
+
+fn refresh_freshness_with_continuity_transition(
+    learning: &mut LearningRecord,
+    project: &Path,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<(), LeyCoreError> {
+    let project_id = diagnose_project(project)?.identity.project_id;
+    if let Some(hashes) = store.current_artifact_hashes(&project_id)? {
+        refresh_freshness_from_hashes(learning, &hashes);
+        return Ok(());
+    }
+    refresh_freshness(learning, project, legacy_vault)
+}
+
+fn refresh_all_freshness_with_continuity_transition(
+    learnings: &mut [LearningRecord],
+    project: &Path,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<(), LeyCoreError> {
+    let project_id = diagnose_project(project)?.identity.project_id;
+    if let Some(hashes) = store.current_artifact_hashes(&project_id)? {
+        for learning in learnings {
+            refresh_freshness_from_hashes(learning, &hashes);
+        }
+        return Ok(());
+    }
+    refresh_all_freshness(learnings, project, legacy_vault)
+}
+
+fn refresh_freshness_from_hashes(learning: &mut LearningRecord, hashes: &BTreeMap<String, String>) {
+    let citations = learning
+        .evidence
+        .iter()
+        .flat_map(|evidence| &evidence.artifacts)
+        .collect::<Vec<_>>();
+    learning.freshness = if citations.is_empty() {
+        LearningFreshness::Uncited
+    } else if citations.iter().any(|citation| {
+        hashes
+            .get(&citation.artifact_path)
+            .is_none_or(|content_hash| content_hash != &citation.content_hash)
+    }) {
+        LearningFreshness::SourceChanged
+    } else {
+        LearningFreshness::Current
+    };
 }
 
 fn refresh_freshness_from_memory(
@@ -2857,6 +3834,109 @@ mod tests {
         }
     }
 
+    fn native_proposal_pending(
+        project: &Path,
+        vault: &Path,
+        store: &ContinuityStore,
+        input: ProposeLearningInput,
+    ) -> (String, PendingLearningEvent) {
+        let diagnostic = diagnose_project(project).unwrap();
+        let learning_id = deterministic_id(
+            "lrn",
+            &format!("{}:{}", diagnostic.identity.project_id, input.request_id),
+            32,
+        );
+        let event_id = deterministic_id(
+            "lev",
+            &format!("{learning_id}:{}:proposed", input.request_id),
+            64,
+        );
+        let mut redactions = Vec::new();
+        let (evidence, origin_lineage) = resolve_evidence(
+            &diagnostic.root,
+            vault,
+            Some(store),
+            input.evidence,
+            &mut redactions,
+        )
+        .unwrap();
+        (
+            learning_id,
+            PendingLearningEvent {
+                event_id,
+                request_id: input.request_id,
+                expected_event_count: None,
+                redactions,
+                payload: LearningEventPayload::Proposed {
+                    actor: input.actor,
+                    kind: input.kind,
+                    title: input.title,
+                    guidance: input.guidance,
+                    confidence_percent: input.confidence_percent,
+                    provenance: input.provenance,
+                    evidence,
+                    origin_lineage: Some(origin_lineage),
+                },
+                allow_create: true,
+            },
+        )
+    }
+
+    fn native_correction_pending(
+        project: &Path,
+        vault: &Path,
+        store: &ContinuityStore,
+        learning_id: &str,
+        request_id: String,
+        expected_event_count: Option<u64>,
+        session_id: &str,
+        record_id: &str,
+        title: &str,
+    ) -> PendingLearningEvent {
+        let mut redactions = Vec::new();
+        let (evidence, origin_lineage) = resolve_evidence(
+            project,
+            vault,
+            Some(store),
+            vec![LearningEvidenceInput {
+                session_id: session_id.to_owned(),
+                record_id: record_id.to_owned(),
+                note: "Native learning correction evidence.".to_owned(),
+            }],
+            &mut redactions,
+        )
+        .unwrap();
+        let event_id =
+            deterministic_id("lev", &format!("{learning_id}:{request_id}:corrected"), 64);
+        PendingLearningEvent {
+            event_id,
+            request_id,
+            expected_event_count,
+            redactions,
+            payload: LearningEventPayload::Corrected {
+                actor: LearningActor::User,
+                title: title.to_owned(),
+                guidance: "Keep the native learning ledger transactionally consistent.".to_owned(),
+                confidence_percent: 91,
+                evidence,
+                note: "Native correction.".to_owned(),
+                origin_lineage: Some(origin_lineage),
+            },
+            allow_create: false,
+        }
+    }
+
+    fn private_continuity_store(base: &tempfile::TempDir, name: &str) -> ContinuityStore {
+        let directory = base.path().join(name);
+        std::fs::create_dir(&directory).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        ContinuityStore::at(directory.join("continuity.sqlite3"))
+    }
+
     fn add_learning_session(
         project: &Path,
         vault: &Path,
@@ -4140,6 +5220,751 @@ mod tests {
                 .automatic_authority_ceiling,
             LearningTrustState::ReviewRequired
         );
+    }
+
+    #[test]
+    fn continuity_snapshot_replays_reviewed_learning_after_legacy_learning_store_disappears() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('7'), &session_id, &record_id),
+        )
+        .unwrap();
+        let corrected = correct_learning(
+            &project,
+            &vault,
+            &proposed.learning.learning_id,
+            CorrectLearningInput {
+                request_id: request_id('8'),
+                expected_event_count: Some(proposed.learning.event_count),
+                actor: LearningActor::User,
+                title: "Reviewed native continuity learning".to_owned(),
+                guidance: "Replay the validated learning ledger from native continuity.".to_owned(),
+                confidence_percent: 92,
+                evidence: proposed
+                    .learning
+                    .evidence
+                    .iter()
+                    .map(|item| LearningEvidenceInput {
+                        session_id: item.session_id.clone(),
+                        record_id: item.record_id.clone(),
+                        note: item.note.clone(),
+                    })
+                    .collect(),
+                note: "Corrected before review.".to_owned(),
+            },
+        )
+        .unwrap();
+        let reviewed = review_learning(
+            &project,
+            &vault,
+            &corrected.learning.learning_id,
+            ReviewLearningInput {
+                request_id: request_id('9'),
+                expected_event_count: Some(corrected.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Verified for native replay.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        let continuity_dir = base.path().join("continuity");
+        std::fs::create_dir(&continuity_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&continuity_dir, std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        let store = ContinuityStore::at(continuity_dir.join("continuity.sqlite3"));
+        crate::import_legacy_continuity(&project, &vault, &store).unwrap();
+
+        let native = read_learning_from_continuity_snapshot(
+            &project,
+            &vault,
+            &store,
+            &reviewed.learning.learning_id,
+        )
+        .unwrap();
+        assert_eq!(native, reviewed.learning);
+
+        std::fs::remove_dir_all(learning_directory(&project, &vault)).unwrap();
+        assert!(read_learning(&project, &vault, &native.learning_id).is_err());
+        assert_eq!(
+            read_learning_from_continuity_snapshot(&project, &vault, &store, &native.learning_id)
+                .unwrap(),
+            native
+        );
+        let summaries = list_learnings_from_continuity_snapshot(&project, &vault, &store).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].learning_id, reviewed.learning.learning_id);
+        assert_eq!(summaries[0].trust_state, LearningTrustState::Trusted);
+    }
+
+    #[test]
+    fn continuity_learning_replay_rejects_mismatched_envelope_kind() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('a'), &session_id, &record_id),
+        )
+        .unwrap();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let mut events = continuity_events_for_migration(&project, &vault).unwrap();
+        assert_eq!(events.len(), 1);
+        let mut event = events.remove(0);
+        event.kind = "learning-reviewed".to_owned();
+        let continuity_dir = base.path().join("malformed-continuity");
+        std::fs::create_dir(&continuity_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&continuity_dir, std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        let store = ContinuityStore::at(continuity_dir.join("continuity.sqlite3"));
+        store.register_project(&identity).unwrap();
+        store.append_event(&event).unwrap();
+
+        assert!(matches!(
+            read_learning_from_continuity_snapshot(
+                &project,
+                &vault,
+                &store,
+                &proposed.learning.learning_id,
+            ),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("does not match its embedded learning event")
+        ));
+    }
+
+    #[test]
+    fn transition_learning_reads_track_legacy_learning_ledger_after_session_cutover() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('b'), &session_id, &record_id),
+        )
+        .unwrap();
+        let continuity_dir = base.path().join("transition-continuity");
+        std::fs::create_dir(&continuity_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&continuity_dir, std::fs::Permissions::from_mode(0o700))
+                .unwrap();
+        }
+        let store = ContinuityStore::at(continuity_dir.join("continuity.sqlite3"));
+
+        let first = read_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &proposed.learning.learning_id,
+        )
+        .unwrap();
+        assert_eq!(first, proposed.learning);
+
+        crate::start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            crate::StartSessionInput {
+                request_id: request_id('c'),
+                name: "Native session authority".to_owned(),
+                goal: "Freeze session authority before the learning-only resync".to_owned(),
+                source: crate::SessionSource::default(),
+            },
+        )
+        .unwrap();
+        assert!(
+            crate::session::session_authority_cutover_is_complete(&store, &first.project_id)
+                .unwrap()
+        );
+
+        let corrected = correct_learning(
+            &project,
+            &vault,
+            &first.learning_id,
+            CorrectLearningInput {
+                request_id: request_id('d'),
+                expected_event_count: Some(first.event_count),
+                actor: LearningActor::User,
+                title: "Learning-only transition refresh".to_owned(),
+                guidance: "Reconcile only the learning ledger after session cutover.".to_owned(),
+                confidence_percent: 88,
+                evidence: first
+                    .evidence
+                    .iter()
+                    .map(|item| LearningEvidenceInput {
+                        session_id: item.session_id.clone(),
+                        record_id: item.record_id.clone(),
+                        note: item.note.clone(),
+                    })
+                    .collect(),
+                note: "Changed after session authority moved.".to_owned(),
+            },
+        )
+        .unwrap();
+        let refreshed =
+            read_learning_with_continuity_transition(&project, &vault, &store, &first.learning_id)
+                .unwrap();
+        assert_eq!(refreshed, corrected.learning);
+
+        std::fs::remove_dir_all(learning_directory(&project, &vault)).unwrap();
+        assert!(
+            list_learnings_with_continuity_transition(&project, &vault, &store)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            read_learning_from_continuity_snapshot(&project, &vault, &store, &first.learning_id),
+            Err(LeyCoreError::LearningNotFound(_))
+        ));
+        assert!(
+            crate::session::session_authority_cutover_is_complete(&store, &first.project_id)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn native_learning_cutover_requires_native_session_authority_first() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('e'), &session_id, &record_id),
+        )
+        .unwrap();
+        let store = private_continuity_store(&base, "learning-cutover-order");
+        assert!(matches!(
+            ensure_native_learning_authority(&project, &vault, &store),
+            Err(LeyCoreError::InvalidLearningStore(message))
+                if message.contains("requires native session authority first")
+        ));
+        let project_id = diagnose_project(&project).unwrap().identity.project_id;
+        assert!(!learning_authority_cutover_is_complete(&store, &project_id).unwrap());
+    }
+
+    #[test]
+    fn native_learning_cutover_recovers_after_fence_and_resists_late_legacy_sync() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        let proposed = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('e'), &session_id, &record_id),
+        )
+        .unwrap();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = private_continuity_store(&base, "learning-cutover-recovery");
+
+        crate::start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            crate::StartSessionInput {
+                request_id: request_id('f'),
+                name: "Session authority prerequisite".to_owned(),
+                goal: "Freeze session authority before learning cutover".to_owned(),
+                source: crate::SessionSource::default(),
+            },
+        )
+        .unwrap();
+        assert!(crate::session::session_authority_cutover_is_complete(
+            &store,
+            &identity.project_id
+        )
+        .unwrap());
+
+        assert!(fence_legacy_learning_writes(&project, &vault).unwrap());
+        assert!(!fence_legacy_learning_writes(&project, &vault).unwrap());
+        assert_eq!(
+            read_learning(&project, &vault, &proposed.learning.learning_id)
+                .unwrap()
+                .event_count,
+            1
+        );
+        assert!(correct_learning(
+            &project,
+            &vault,
+            &proposed.learning.learning_id,
+            CorrectLearningInput {
+                request_id: request_id('a'),
+                expected_event_count: Some(1),
+                actor: LearningActor::User,
+                title: "Legacy writer must remain fenced".to_owned(),
+                guidance: "This mutation must not reach the legacy learning ledger.".to_owned(),
+                confidence_percent: 90,
+                evidence: proposed
+                    .learning
+                    .evidence
+                    .iter()
+                    .map(|item| LearningEvidenceInput {
+                        session_id: item.session_id.clone(),
+                        record_id: item.record_id.clone(),
+                        note: item.note.clone(),
+                    })
+                    .collect(),
+                note: "Fence verification.".to_owned(),
+            },
+        )
+        .is_err());
+        assert_eq!(
+            read_learning(&project, &vault, &proposed.learning.learning_id)
+                .unwrap()
+                .event_count,
+            1
+        );
+
+        assert_eq!(
+            ensure_native_learning_authority(&project, &vault, &store).unwrap(),
+            identity.project_id
+        );
+        assert!(learning_authority_cutover_is_complete(&store, &identity.project_id).unwrap());
+        assert_eq!(
+            read_learning_with_continuity_transition(
+                &project,
+                &vault,
+                &store,
+                &proposed.learning.learning_id,
+            )
+            .unwrap(),
+            proposed.learning
+        );
+
+        // A full legacy sync already in flight when the marker commits can finish against the
+        // same fenced snapshot without invalidating the learning-authority marker.
+        crate::import_legacy_continuity(&project, &vault, &store).unwrap();
+        assert!(learning_authority_cutover_is_complete(&store, &identity.project_id).unwrap());
+
+        assert!(matches!(
+            crate::continuity_import::import_legacy_learning_continuity(
+                &project,
+                &vault,
+                &store,
+            ),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("forbidden after native learning authority cutover")
+        ));
+        assert!(learning_authority_cutover_is_complete(&store, &identity.project_id).unwrap());
+
+        let cited_session =
+            crate::read_session_with_continuity_transition(&project, &vault, &store, &session_id)
+                .unwrap();
+        let erased = crate::erase_session_memory_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            EraseSessionMemoryInput {
+                expected_event_count: cited_session.event_count,
+                expected_name: cited_session.name,
+            },
+        )
+        .unwrap();
+        assert!(erased
+            .erased_learning_ids
+            .contains(&proposed.learning.learning_id));
+        assert!(matches!(
+            read_learning_with_continuity_transition(
+                &project,
+                &vault,
+                &store,
+                &proposed.learning.learning_id,
+            ),
+            Err(LeyCoreError::LearningNotFound(_))
+        ));
+        assert!(read_learning(&project, &vault, &proposed.learning.learning_id).is_err());
+        assert!(learning_authority_cutover_is_complete(&store, &identity.project_id).unwrap());
+    }
+
+    #[test]
+    fn transition_learning_writers_cut_over_once_and_append_only_native_events() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = private_continuity_store(&base, "transition-learning-writes");
+
+        let proposed = propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('1'), &session_id, &record_id),
+        )
+        .unwrap();
+        assert!(!proposed.replayed);
+        assert_eq!(proposed.learning.event_count, 1);
+        assert!(crate::session::session_authority_cutover_is_complete(
+            &store,
+            &identity.project_id
+        )
+        .unwrap());
+        assert!(learning_authority_cutover_is_complete(&store, &identity.project_id).unwrap());
+        assert!(read_learning(&project, &vault, &proposed.learning.learning_id).is_err());
+
+        let corrected = correct_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &proposed.learning.learning_id,
+            CorrectLearningInput {
+                request_id: request_id('2'),
+                expected_event_count: Some(1),
+                actor: LearningActor::User,
+                title: "Native transition correction".to_owned(),
+                guidance: "Keep the learning authority entirely in continuity.".to_owned(),
+                confidence_percent: 93,
+                evidence: proposed
+                    .learning
+                    .evidence
+                    .iter()
+                    .map(|item| LearningEvidenceInput {
+                        session_id: item.session_id.clone(),
+                        record_id: item.record_id.clone(),
+                        note: item.note.clone(),
+                    })
+                    .collect(),
+                note: "Correction through transition authority.".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(corrected.learning.event_count, 2);
+        assert_eq!(corrected.learning.title, "Native transition correction");
+
+        let reviewed = review_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &proposed.learning.learning_id,
+            ReviewLearningInput {
+                request_id: request_id('3'),
+                expected_event_count: Some(2),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Confirm,
+                note: "Confirmed through native transition authority.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(reviewed.learning.event_count, 3);
+        assert_eq!(reviewed.learning.state, LearningState::Verified);
+        assert_eq!(reviewed.learning.trust_state, LearningTrustState::Trusted);
+
+        let events = store.learning_events(&identity.project_id).unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "learning-proposed",
+                "learning-corrected",
+                "learning-reviewed"
+            ]
+        );
+        assert!(propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('4'), &session_id, &record_id),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn transition_learning_supersession_records_native_link_and_rejects_cycle() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = private_continuity_store(&base, "transition-learning-supersession");
+        let obsolete = propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('5'), &session_id, &record_id),
+        )
+        .unwrap();
+        let replacement = propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('6'), &session_id, &record_id),
+        )
+        .unwrap();
+
+        let superseded = review_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &obsolete.learning.learning_id,
+            ReviewLearningInput {
+                request_id: request_id('7'),
+                expected_event_count: Some(1),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Supersede,
+                note: "Use the replacement learning instead.".to_owned(),
+                replacement_learning_id: Some(replacement.learning.learning_id.clone()),
+            },
+        )
+        .unwrap();
+        assert_eq!(superseded.learning.state, LearningState::Superseded);
+        assert_eq!(
+            superseded.learning.superseded_by.as_deref(),
+            Some(replacement.learning.learning_id.as_str())
+        );
+        let links = store
+            .linked_events(&identity.project_id, &superseded.event_id, "supersedes")
+            .unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            links[0].subject_id.as_deref(),
+            Some(replacement.learning.learning_id.as_str())
+        );
+
+        assert!(matches!(
+            review_learning_with_continuity_transition(
+                &project,
+                &vault,
+                &store,
+                &replacement.learning.learning_id,
+                ReviewLearningInput {
+                    request_id: request_id('8'),
+                    expected_event_count: Some(1),
+                    actor: LearningActor::User,
+                    action: LearningFeedbackAction::Supersede,
+                    note: "This would create a cycle.".to_owned(),
+                    replacement_learning_id: Some(obsolete.learning.learning_id.clone()),
+                },
+            ),
+            Err(LeyCoreError::InvalidLearningRequest(message))
+                if message.contains("cycle")
+        ));
+    }
+
+    #[test]
+    fn native_learning_mutation_preserves_idempotency_expected_count_and_session_dependency() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = private_continuity_store(&base, "native-learning");
+        crate::continuity_import::import_legacy_session_continuity(&project, &vault, &store)
+            .unwrap();
+
+        let (learning_id, proposal_pending) = native_proposal_pending(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('e'), &session_id, &record_id),
+        );
+        let first = mutate_learning_in_continuity_store(
+            &project,
+            &vault,
+            &store,
+            &identity,
+            &learning_id,
+            proposal_pending,
+        )
+        .unwrap();
+        assert!(!first.replayed);
+        assert_eq!(first.learning.event_count, 1);
+
+        let (_, replay_pending) = native_proposal_pending(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('e'), &session_id, &record_id),
+        );
+        let replay = mutate_learning_in_continuity_store(
+            &project,
+            &vault,
+            &store,
+            &identity,
+            &learning_id,
+            replay_pending,
+        )
+        .unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.event_id, first.event_id);
+        assert_eq!(replay.learning, first.learning);
+
+        let (_, mut conflict_pending) = native_proposal_pending(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('e'), &session_id, &record_id),
+        );
+        if let LearningEventPayload::Proposed { guidance, .. } = &mut conflict_pending.payload {
+            *guidance = "Conflicting retry content.".to_owned();
+        }
+        assert!(matches!(
+            mutate_learning_in_continuity_store(
+                &project,
+                &vault,
+                &store,
+                &identity,
+                &learning_id,
+                conflict_pending,
+            ),
+            Err(LeyCoreError::LearningIdempotencyConflict(_))
+        ));
+
+        let corrected = mutate_learning_in_continuity_store(
+            &project,
+            &vault,
+            &store,
+            &identity,
+            &learning_id,
+            native_correction_pending(
+                &project,
+                &vault,
+                &store,
+                &learning_id,
+                request_id('f'),
+                Some(1),
+                &session_id,
+                &record_id,
+                "Native corrected learning",
+            ),
+        )
+        .unwrap();
+        assert_eq!(corrected.learning.event_count, 2);
+        assert_eq!(corrected.learning.title, "Native corrected learning");
+
+        assert!(matches!(
+            mutate_learning_in_continuity_store(
+                &project,
+                &vault,
+                &store,
+                &identity,
+                &learning_id,
+                native_correction_pending(
+                    &project,
+                    &vault,
+                    &store,
+                    &learning_id,
+                    request_id('g'),
+                    Some(1),
+                    &session_id,
+                    &record_id,
+                    "Stale native correction",
+                ),
+            ),
+            Err(LeyCoreError::InvalidLearningRequest(message))
+                if message.contains("learning changed from 1 events to 2")
+        ));
+
+        let events = store.learning_events(&identity.project_id).unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|event| event.request_id.is_none()));
+        assert_eq!(events[0].kind, "learning-proposed");
+        assert_eq!(events[1].kind, "learning-corrected");
+        let dependencies = store
+            .linked_events(&identity.project_id, &first.event_id, "depends-on-session")
+            .unwrap();
+        assert_eq!(dependencies.len(), 1);
+        assert_eq!(
+            dependencies[0].session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+
+        let preview = store
+            .preview_session_erasure(&identity.project_id, &session_id)
+            .unwrap();
+        assert!(preview.dependent_subject_ids.contains(&learning_id));
+    }
+
+    #[test]
+    fn concurrent_native_learning_corrections_serialize_into_contiguous_sequences() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = private_continuity_store(&base, "native-learning-concurrency");
+        crate::continuity_import::import_legacy_session_continuity(&project, &vault, &store)
+            .unwrap();
+        let (learning_id, proposal_pending) = native_proposal_pending(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('a'), &session_id, &record_id),
+        );
+        mutate_learning_in_continuity_store(
+            &project,
+            &vault,
+            &store,
+            &identity,
+            &learning_id,
+            proposal_pending,
+        )
+        .unwrap();
+
+        let pending = [
+            native_correction_pending(
+                &project,
+                &vault,
+                &store,
+                &learning_id,
+                request_id('b'),
+                None,
+                &session_id,
+                &record_id,
+                "Concurrent native correction A",
+            ),
+            native_correction_pending(
+                &project,
+                &vault,
+                &store,
+                &learning_id,
+                request_id('c'),
+                None,
+                &session_id,
+                &record_id,
+                "Concurrent native correction B",
+            ),
+        ];
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+        for pending in pending {
+            let barrier = Arc::clone(&barrier);
+            let project = project.clone();
+            let vault = vault.clone();
+            let store = store.clone();
+            let identity = identity.clone();
+            let learning_id = learning_id.clone();
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                mutate_learning_in_continuity_store(
+                    &project,
+                    &vault,
+                    &store,
+                    &identity,
+                    &learning_id,
+                    pending,
+                )
+                .unwrap()
+            }));
+        }
+        barrier.wait();
+        let results = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>();
+        assert!(results.iter().all(|result| !result.replayed));
+
+        let events = store
+            .learning_events(&identity.project_id)
+            .unwrap()
+            .into_iter()
+            .map(learning_event_from_continuity)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let mut sequences = events
+            .iter()
+            .filter(|event| event.learning_id == learning_id)
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>();
+        sequences.sort_unstable();
+        assert_eq!(sequences, vec![1, 2, 3]);
+        let replayed = replay_one(&events, &identity.project_id, &learning_id).unwrap();
+        assert_eq!(replayed.event_count, 3);
     }
 
     #[test]

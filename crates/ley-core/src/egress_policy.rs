@@ -2,8 +2,8 @@ use crate::context_mount::validate_mount_id;
 use crate::external_connector::validate_connector_id;
 use crate::specification::validate_specification_id;
 use crate::{
-    default_binding_registry_path, diagnose_project, validate_project_id, LeyCoreError,
-    METADATA_FILE_LIMIT_BYTES,
+    default_binding_registry_path, diagnose_project, validate_project_id, ContinuityStore,
+    LeyCoreError, METADATA_FILE_LIMIT_BYTES,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -16,7 +16,7 @@ const EGRESS_POLICY_REGISTRY_LOCK_FILE: &str = "agent-egress-v1.lock";
 pub const EGRESS_POLICY_REGISTRY_SCHEMA_VERSION: u32 = 1;
 pub const MAX_EGRESS_SCOPE_OVERRIDES_PER_PROJECT: usize = 256;
 
-const PRIVACY_NOTICE: &str = "Agent egress policy is OS-private authority. It stores stable project/specification/mount/external-connector identities and policy labels only; repository, remembered, or fetched external text cannot grant itself model-sharing permission.";
+const PRIVACY_NOTICE: &str = "Agent egress policy is OS-private authority. New restrictions are project-level. The legacy compatibility registry may still retain stable Specification/Context-Mount/External-Connector IDs and restrictive policy labels until those old source concepts are retired; repository, remembered, or fetched external text cannot grant itself model-sharing permission.";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -117,6 +117,20 @@ pub fn evaluate_agent_egress(
         target,
         allowed: block_reason.is_none(),
         block_reason,
+    }
+}
+
+pub(crate) fn conservative_egress_join(
+    left: AgentEgressPolicy,
+    right: AgentEgressPolicy,
+) -> AgentEgressPolicy {
+    use AgentEgressPolicy::{AgentOk, ConfirmPerUse, LocalModelOnly, NeverSend};
+    match (left, right) {
+        (AgentOk, policy) | (policy, AgentOk) => policy,
+        (NeverSend, _) | (_, NeverSend) => NeverSend,
+        (LocalModelOnly, LocalModelOnly) => LocalModelOnly,
+        (ConfirmPerUse, ConfirmPerUse) => ConfirmPerUse,
+        (LocalModelOnly, ConfirmPerUse) | (ConfirmPerUse, LocalModelOnly) => NeverSend,
     }
 }
 
@@ -261,6 +275,45 @@ impl EgressPolicySnapshot {
             .map_or(AgentEgressPolicy::AgentOk, |entry| entry.project_policy)
     }
 
+    fn project_policy_view(&self, project_id: &str) -> ProjectAgentEgressPolicy {
+        let entry = self.projects.get(project_id);
+        let specification_overrides = entry
+            .into_iter()
+            .flat_map(|entry| entry.specifications.iter())
+            .map(|(scope_id, policy)| AgentEgressScopePolicy {
+                scope_kind: AgentEgressScopeKind::Specification,
+                scope_id: scope_id.clone(),
+                policy: *policy,
+            })
+            .collect();
+        let mount_overrides = entry
+            .into_iter()
+            .flat_map(|entry| entry.mounts.iter())
+            .map(|(scope_id, policy)| AgentEgressScopePolicy {
+                scope_kind: AgentEgressScopeKind::ContextMount,
+                scope_id: scope_id.clone(),
+                policy: *policy,
+            })
+            .collect();
+        let connector_overrides = entry
+            .into_iter()
+            .flat_map(|entry| entry.connectors.iter())
+            .map(|(scope_id, policy)| AgentEgressScopePolicy {
+                scope_kind: AgentEgressScopeKind::ExternalConnector,
+                scope_id: scope_id.clone(),
+                policy: *policy,
+            })
+            .collect();
+        ProjectAgentEgressPolicy {
+            project_id: project_id.to_owned(),
+            project_policy: self.project_policy(project_id),
+            specification_overrides,
+            mount_overrides,
+            connector_overrides,
+            privacy_notice: PRIVACY_NOTICE,
+        }
+    }
+
     pub fn specification_policy(
         &self,
         project_id: &str,
@@ -376,6 +429,88 @@ impl EgressPolicyRegistry {
         })
     }
 
+    pub fn set_project_policy_transition(
+        &self,
+        project_start: impl AsRef<Path>,
+        store: &ContinuityStore,
+        policy: AgentEgressPolicy,
+    ) -> Result<AgentEgressPolicyMutation, LeyCoreError> {
+        self.set_project_policy_transition_with_hook(project_start.as_ref(), store, policy, |_| {
+            Ok(())
+        })
+    }
+
+    fn set_project_policy_transition_with_hook(
+        &self,
+        project_start: &Path,
+        store: &ContinuityStore,
+        policy: AgentEgressPolicy,
+        mut phase_hook: impl FnMut(ProjectPolicyTransitionPhase) -> Result<(), LeyCoreError>,
+    ) -> Result<AgentEgressPolicyMutation, LeyCoreError> {
+        let diagnostic = diagnose_project(project_start)?;
+        let project_id = diagnostic.identity.project_id.clone();
+        store.register_project(&diagnostic.identity)?;
+
+        let legacy_lock = self.acquire_lock()?;
+        let result = (|| {
+            let mut document = self.read_document()?;
+            store.with_egress_authority_lock(|| {
+                // Preflight the native row while both authority locks are held. Registration above
+                // may create the row, but it must be readable before legacy policy is changed.
+                let _ = store.project_egress_state(&project_id)?;
+                let legacy_policy = document
+                    .projects
+                    .get(&project_id)
+                    .map_or(AgentEgressPolicy::AgentOk, |entry| entry.project_policy);
+                let guard_policy = conservative_egress_join(legacy_policy, policy);
+
+                if guard_policy != legacy_policy {
+                    set_document_project_policy(&mut document, &project_id, guard_policy);
+                    document.validate()?;
+                    self.write_document(&document).map_err(|error| {
+                        transition_incomplete(&project_id, policy, "legacy guard write", error)
+                    })?;
+                }
+                phase_hook(ProjectPolicyTransitionPhase::GuardDurable)?;
+
+                store
+                    .set_project_egress_policy_unlocked(&project_id, policy)
+                    .map_err(|error| {
+                        transition_incomplete(&project_id, policy, "native write", error)
+                    })?;
+                phase_hook(ProjectPolicyTransitionPhase::NativeDurable)?;
+
+                if guard_policy != policy {
+                    set_document_project_policy(&mut document, &project_id, policy);
+                    document.validate()?;
+                    self.write_document(&document).map_err(|error| {
+                        transition_incomplete(&project_id, policy, "final legacy write", error)
+                    })?;
+                }
+
+                Ok(AgentEgressPolicyMutation {
+                    project_id: project_id.clone(),
+                    scope: AgentEgressScopePolicy {
+                        scope_kind: AgentEgressScopeKind::Project,
+                        scope_id: project_id.clone(),
+                        policy,
+                    },
+                })
+            })
+        })();
+        let unlock_result = File::unlock(&legacy_lock);
+        match (result, unlock_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(source)) => Err(LeyCoreError::AgentEgressPolicyTransitionIncomplete {
+                project_id,
+                requested: policy.to_string(),
+                stage: "legacy lock release".to_owned(),
+                detail: source.to_string(),
+            }),
+        }
+    }
+
     pub fn set_specification_policy(
         &self,
         project_start: impl AsRef<Path>,
@@ -465,43 +600,17 @@ impl EgressPolicyRegistry {
         project_start: impl AsRef<Path>,
     ) -> Result<ProjectAgentEgressPolicy, LeyCoreError> {
         let project_id = diagnose_project(project_start)?.identity.project_id;
-        let document = self.read_locked()?;
-        let entry = document.projects.get(&project_id);
-        let project_policy = entry.map_or(AgentEgressPolicy::AgentOk, |entry| entry.project_policy);
-        let specification_overrides = entry
-            .into_iter()
-            .flat_map(|entry| entry.specifications.iter())
-            .map(|(scope_id, policy)| AgentEgressScopePolicy {
-                scope_kind: AgentEgressScopeKind::Specification,
-                scope_id: scope_id.clone(),
-                policy: *policy,
-            })
-            .collect();
-        let mount_overrides = entry
-            .into_iter()
-            .flat_map(|entry| entry.mounts.iter())
-            .map(|(scope_id, policy)| AgentEgressScopePolicy {
-                scope_kind: AgentEgressScopeKind::ContextMount,
-                scope_id: scope_id.clone(),
-                policy: *policy,
-            })
-            .collect();
-        let connector_overrides = entry
-            .into_iter()
-            .flat_map(|entry| entry.connectors.iter())
-            .map(|(scope_id, policy)| AgentEgressScopePolicy {
-                scope_kind: AgentEgressScopeKind::ExternalConnector,
-                scope_id: scope_id.clone(),
-                policy: *policy,
-            })
-            .collect();
-        Ok(ProjectAgentEgressPolicy {
-            project_id,
-            project_policy,
-            specification_overrides,
-            mount_overrides,
-            connector_overrides,
-            privacy_notice: PRIVACY_NOTICE,
+        self.with_snapshot_locked(|snapshot| Ok(snapshot.project_policy_view(&project_id)))
+    }
+
+    pub fn list_transition(
+        &self,
+        project_start: impl AsRef<Path>,
+        store: &ContinuityStore,
+    ) -> Result<ProjectAgentEgressPolicy, LeyCoreError> {
+        let project_id = diagnose_project(project_start)?.identity.project_id;
+        self.with_transition_snapshot_locked(store, |snapshot| {
+            Ok(snapshot.project_policy_view(&project_id))
         })
     }
 
@@ -571,6 +680,36 @@ impl EgressPolicyRegistry {
         }
     }
 
+    pub fn with_transition_snapshot_locked<T>(
+        &self,
+        store: &ContinuityStore,
+        operation: impl FnOnce(&EgressPolicySnapshot) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let legacy_lock = self.acquire_lock()?;
+        let result = (|| {
+            let document = self.read_document()?;
+            store.with_egress_authority_lock(|| {
+                let mut snapshot = EgressPolicySnapshot {
+                    projects: document.projects,
+                };
+                for (project_id, policy) in store.migrated_project_egress_policies_unlocked()? {
+                    let entry = snapshot.projects.entry(project_id).or_default();
+                    entry.project_policy = conservative_egress_join(entry.project_policy, policy);
+                }
+                operation(&snapshot)
+            })
+        })();
+        let unlock_result = File::unlock(&legacy_lock);
+        match (result, unlock_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(source)) => Err(LeyCoreError::Io {
+                path: self.lock_path(),
+                source,
+            }),
+        }
+    }
+
     pub fn with_project_egress_locked<T>(
         &self,
         project_start: impl AsRef<Path>,
@@ -579,6 +718,32 @@ impl EgressPolicyRegistry {
     ) -> Result<T, LeyCoreError> {
         let project_id = diagnose_project(project_start)?.identity.project_id;
         self.with_snapshot_locked(|snapshot| {
+            let decision = evaluate_agent_egress(snapshot.project_policy(&project_id), target);
+            if !decision.allowed {
+                return Err(LeyCoreError::AgentEgressDenied {
+                    policy: decision.policy.to_string(),
+                    target: target.to_string(),
+                });
+            }
+            operation()
+        })
+    }
+
+    /// Transitional project-level authority used while legacy scope policies still exist.
+    ///
+    /// Lock order is legacy registry first, then native continuity egress authority. Project
+    /// policy is conservatively joined across both stores, so a restriction present in either
+    /// store cannot be weakened during mixed-version rollout. The callback must not mutate egress
+    /// authority because both transition locks remain held for the operation.
+    pub fn with_transition_project_egress_locked<T>(
+        &self,
+        project_start: impl AsRef<Path>,
+        store: &ContinuityStore,
+        target: AgentEgressTarget,
+        operation: impl FnOnce() -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let project_id = diagnose_project(project_start)?.identity.project_id;
+        self.with_transition_snapshot_locked(store, |snapshot| {
             let decision = evaluate_agent_egress(snapshot.project_policy(&project_id), target);
             if !decision.allowed {
                 return Err(LeyCoreError::AgentEgressDenied {
@@ -753,6 +918,39 @@ impl EgressPolicyRegistry {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectPolicyTransitionPhase {
+    GuardDurable,
+    NativeDurable,
+}
+
+fn transition_incomplete(
+    project_id: &str,
+    requested: AgentEgressPolicy,
+    stage: &str,
+    error: LeyCoreError,
+) -> LeyCoreError {
+    LeyCoreError::AgentEgressPolicyTransitionIncomplete {
+        project_id: project_id.to_owned(),
+        requested: requested.to_string(),
+        stage: stage.to_owned(),
+        detail: error.to_string(),
+    }
+}
+
+fn set_document_project_policy(
+    document: &mut EgressPolicyRegistryDocument,
+    project_id: &str,
+    policy: AgentEgressPolicy,
+) {
+    document
+        .projects
+        .entry(project_id.to_owned())
+        .or_default()
+        .project_policy = policy;
+    prune_default_entry(document, project_id);
+}
+
 fn prune_default_entry(document: &mut EgressPolicyRegistryDocument, project_id: &str) {
     let remove = document.projects.get(project_id).is_some_and(|entry| {
         entry.project_policy == AgentEgressPolicy::AgentOk
@@ -906,6 +1104,333 @@ mod tests {
         assert!(listed.specification_overrides.is_empty());
         assert!(listed.mount_overrides.is_empty());
         assert!(listed.connector_overrides.is_empty());
+    }
+
+    #[test]
+    fn transition_snapshot_conservatively_joins_project_authorities_and_keeps_scope_overrides() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let initialized = initialize_project(
+            &project,
+            Some("Transition authority"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let project_id = initialized.identity.project_id.clone();
+        let registry = EgressPolicyRegistry::at(root.path().join("private/egress.json"));
+        let store = ContinuityStore::at(root.path().join("private/continuity.sqlite3"));
+        store.register_project(&initialized.identity).unwrap();
+        let specification_id = "spec_11111111111111111111111111111111";
+
+        registry
+            .set_project_policy(&project, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+        registry
+            .set_specification_policy(&project, specification_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+
+        registry
+            .with_transition_snapshot_locked(&store, |snapshot| {
+                assert_eq!(
+                    snapshot.project_policy(&project_id),
+                    AgentEgressPolicy::LocalModelOnly
+                );
+                assert_eq!(
+                    snapshot.specification_policy(&project_id, specification_id),
+                    AgentEgressPolicy::NeverSend
+                );
+                Ok(())
+            })
+            .unwrap();
+
+        store
+            .set_project_egress_policy(&project_id, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        registry
+            .with_transition_snapshot_locked(&store, |snapshot| {
+                assert_eq!(
+                    snapshot.project_policy(&project_id),
+                    AgentEgressPolicy::LocalModelOnly
+                );
+                assert_eq!(
+                    snapshot.specification_policy(&project_id, specification_id),
+                    AgentEgressPolicy::NeverSend
+                );
+                Ok(())
+            })
+            .unwrap();
+
+        store
+            .set_project_egress_policy(&project_id, AgentEgressPolicy::ConfirmPerUse)
+            .unwrap();
+        registry
+            .with_transition_snapshot_locked(&store, |snapshot| {
+                assert_eq!(
+                    snapshot.project_policy(&project_id),
+                    AgentEgressPolicy::NeverSend
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn transition_snapshot_includes_native_projects_absent_from_legacy_registry() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let initialized =
+            initialize_project(&project, Some("Native only"), CaptureMode::Structured).unwrap();
+        let project_id = initialized.identity.project_id.clone();
+        let registry = EgressPolicyRegistry::at(root.path().join("private/egress.json"));
+        let store = ContinuityStore::at(root.path().join("private/continuity.sqlite3"));
+        store.register_project(&initialized.identity).unwrap();
+        store
+            .set_project_egress_policy(&project_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+
+        registry
+            .with_transition_snapshot_locked(&store, |snapshot| {
+                assert_eq!(
+                    snapshot.project_policy(&project_id),
+                    AgentEgressPolicy::NeverSend
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn transition_project_gate_serializes_and_uses_conservative_project_policy() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let initialized =
+            initialize_project(&project, Some("Transition gate"), CaptureMode::Structured).unwrap();
+        let project_id = initialized.identity.project_id.clone();
+        let registry = EgressPolicyRegistry::at(root.path().join("private/egress.json"));
+        let store = ContinuityStore::at(root.path().join("private/continuity.sqlite3"));
+        store.register_project(&initialized.identity).unwrap();
+
+        registry
+            .set_project_policy(&project, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        store
+            .set_project_egress_policy(&project_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        assert!(matches!(
+            registry.with_transition_project_egress_locked(
+                &project,
+                &store,
+                AgentEgressTarget::Cloud,
+                || Ok(())
+            ),
+            Err(LeyCoreError::AgentEgressDenied { .. })
+        ));
+
+        store
+            .set_project_egress_policy(&project_id, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        registry
+            .set_project_policy(&project, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+        assert!(matches!(
+            registry.with_transition_project_egress_locked(
+                &project,
+                &store,
+                AgentEgressTarget::Cloud,
+                || Ok(())
+            ),
+            Err(LeyCoreError::AgentEgressDenied { .. })
+        ));
+        registry
+            .with_transition_project_egress_locked(
+                &project,
+                &store,
+                AgentEgressTarget::Local,
+                || Ok(()),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn transition_project_policy_write_converges_both_stores_and_keeps_scope_overrides() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let initialized =
+            initialize_project(&project, Some("Transition writer"), CaptureMode::Structured)
+                .unwrap();
+        let project_id = initialized.identity.project_id.clone();
+        let registry = EgressPolicyRegistry::at(root.path().join("private/egress.json"));
+        let store = ContinuityStore::at(root.path().join("private/continuity.sqlite3"));
+        let specification_id = "spec_11111111111111111111111111111111";
+        registry
+            .set_specification_policy(&project, specification_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+
+        registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        assert_eq!(
+            registry.list(&project).unwrap().project_policy,
+            AgentEgressPolicy::NeverSend
+        );
+        assert_eq!(
+            store.project_egress_policy(&project_id).unwrap(),
+            AgentEgressPolicy::NeverSend
+        );
+        assert!(store.project_egress_authority_ready(&project_id).unwrap());
+
+        registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        let legacy = registry.list(&project).unwrap();
+        assert_eq!(legacy.project_policy, AgentEgressPolicy::AgentOk);
+        assert_eq!(legacy.specification_overrides.len(), 1);
+        assert_eq!(
+            legacy.specification_overrides[0].policy,
+            AgentEgressPolicy::NeverSend
+        );
+        assert_eq!(
+            store.project_egress_policy(&project_id).unwrap(),
+            AgentEgressPolicy::AgentOk
+        );
+        let transition = registry.list_transition(&project, &store).unwrap();
+        assert_eq!(transition.project_policy, AgentEgressPolicy::AgentOk);
+        assert_eq!(transition.specification_overrides.len(), 1);
+        assert_eq!(
+            transition.specification_overrides[0].policy,
+            AgentEgressPolicy::NeverSend
+        );
+    }
+
+    #[test]
+    fn interrupted_transition_project_policy_writes_fail_closed_and_retry() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let initialized = initialize_project(
+            &project,
+            Some("Interrupted transition writer"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let project_id = initialized.identity.project_id.clone();
+        let registry = EgressPolicyRegistry::at(root.path().join("private/egress.json"));
+        let store = ContinuityStore::at(root.path().join("private/continuity.sqlite3"));
+
+        let guard_interrupted = registry.set_project_policy_transition_with_hook(
+            &project,
+            &store,
+            AgentEgressPolicy::NeverSend,
+            |phase| {
+                if phase == ProjectPolicyTransitionPhase::GuardDurable {
+                    return Err(LeyCoreError::InvalidEgressPolicyRequest(
+                        "injected after guard".to_owned(),
+                    ));
+                }
+                Ok(())
+            },
+        );
+        assert!(guard_interrupted.is_err());
+        assert_eq!(
+            registry.list(&project).unwrap().project_policy,
+            AgentEgressPolicy::NeverSend
+        );
+        assert_eq!(
+            store.project_egress_policy(&project_id).unwrap(),
+            AgentEgressPolicy::AgentOk
+        );
+        assert!(!store.project_egress_authority_ready(&project_id).unwrap());
+        assert_eq!(
+            registry
+                .list_transition(&project, &store)
+                .unwrap()
+                .project_policy,
+            AgentEgressPolicy::NeverSend
+        );
+        registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::NeverSend)
+            .unwrap();
+
+        let native_interrupted = registry.set_project_policy_transition_with_hook(
+            &project,
+            &store,
+            AgentEgressPolicy::AgentOk,
+            |phase| {
+                if phase == ProjectPolicyTransitionPhase::NativeDurable {
+                    return Err(LeyCoreError::InvalidEgressPolicyRequest(
+                        "injected after native write".to_owned(),
+                    ));
+                }
+                Ok(())
+            },
+        );
+        assert!(native_interrupted.is_err());
+        assert_eq!(
+            registry.list(&project).unwrap().project_policy,
+            AgentEgressPolicy::NeverSend
+        );
+        assert_eq!(
+            store.project_egress_policy(&project_id).unwrap(),
+            AgentEgressPolicy::AgentOk
+        );
+        assert_eq!(
+            registry
+                .list_transition(&project, &store)
+                .unwrap()
+                .project_policy,
+            AgentEgressPolicy::NeverSend
+        );
+        registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::AgentOk)
+            .unwrap();
+
+        registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+        let incomparable_interrupted = registry.set_project_policy_transition_with_hook(
+            &project,
+            &store,
+            AgentEgressPolicy::ConfirmPerUse,
+            |phase| {
+                if phase == ProjectPolicyTransitionPhase::GuardDurable {
+                    return Err(LeyCoreError::InvalidEgressPolicyRequest(
+                        "injected after incomparable guard".to_owned(),
+                    ));
+                }
+                Ok(())
+            },
+        );
+        assert!(incomparable_interrupted.is_err());
+        assert_eq!(
+            registry.list(&project).unwrap().project_policy,
+            AgentEgressPolicy::NeverSend
+        );
+        assert_eq!(
+            store.project_egress_policy(&project_id).unwrap(),
+            AgentEgressPolicy::LocalModelOnly
+        );
+        assert_eq!(
+            registry
+                .list_transition(&project, &store)
+                .unwrap()
+                .project_policy,
+            AgentEgressPolicy::NeverSend
+        );
+        registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::ConfirmPerUse)
+            .unwrap();
+        assert_eq!(
+            registry.list(&project).unwrap().project_policy,
+            AgentEgressPolicy::ConfirmPerUse
+        );
+        assert_eq!(
+            store.project_egress_policy(&project_id).unwrap(),
+            AgentEgressPolicy::ConfirmPerUse
+        );
     }
 
     #[test]

@@ -1,8 +1,10 @@
-use crate::session::visit_session_records;
+use crate::session::{visit_session_records, visit_session_records_with_continuity_transition};
 use crate::{
-    list_learnings, read_learning, ContextUtilityOutcomeEvidence, LearningEvidence,
-    LearningFreshness, LearningKind, LearningOriginLineage, LearningProvenance,
-    LearningReviewEntry, LearningState, LearningSummary, LearningTrustState, LeyCoreError,
+    list_learnings, list_learnings_with_continuity_transition, read_learning,
+    read_learning_with_continuity_transition, ContextUtilityOutcomeEvidence, ContinuityStore,
+    LearningEvidence, LearningFreshness, LearningKind, LearningOriginLineage, LearningProvenance,
+    LearningRecord, LearningReviewEntry, LearningState, LearningSummary, LearningTrustState,
+    LeyCoreError,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -135,13 +137,37 @@ pub fn list_learning_contexts(
     scope: LearningListScope,
     max_results: usize,
 ) -> Result<LearningList, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let project_id = crate::diagnose_project(project_start)?.identity.project_id;
+    let summaries = list_learnings(project_start, vault)?;
+    list_learning_contexts_from_summaries(project_id, summaries, scope, max_results)
+}
+
+pub fn list_learning_contexts_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    scope: LearningListScope,
+    max_results: usize,
+) -> Result<LearningList, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let project_id = crate::diagnose_project(project_start)?.identity.project_id;
+    let summaries = list_learnings_with_continuity_transition(project_start, legacy_vault, store)?;
+    list_learning_contexts_from_summaries(project_id, summaries, scope, max_results)
+}
+
+fn list_learning_contexts_from_summaries(
+    project_id: String,
+    summaries: Vec<LearningSummary>,
+    scope: LearningListScope,
+    max_results: usize,
+) -> Result<LearningList, LeyCoreError> {
     if max_results == 0 || max_results > MAX_LEARNING_LIST_RESULTS {
         return Err(LeyCoreError::InvalidLearningRequest(format!(
             "learning list maxResults must be between 1 and {MAX_LEARNING_LIST_RESULTS}"
         )));
     }
-    let project_id = crate::diagnose_project(&project_start)?.identity.project_id;
-    let matching = list_learnings(&project_start, vault)?
+    let matching = summaries
         .into_iter()
         .filter(|learning| matches_scope(learning, scope))
         .collect::<Vec<_>>();
@@ -175,7 +201,66 @@ pub fn read_learning_context(
         max_artifacts_per_evidence,
         max_text_characters,
     )?;
-    let learning = read_learning(&project_start, &vault, learning_id)?;
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let learning = read_learning(project_start, vault, learning_id)?;
+    build_learning_context(
+        project_start,
+        vault,
+        None,
+        learning,
+        learning_id,
+        max_evidence,
+        max_history,
+        max_artifacts_per_evidence,
+        max_text_characters,
+    )
+}
+
+pub fn read_learning_context_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    learning_id: &str,
+    max_evidence: usize,
+    max_history: usize,
+    max_artifacts_per_evidence: usize,
+    max_text_characters: usize,
+) -> Result<LearningContextPack, LeyCoreError> {
+    validate_context_limits(
+        max_evidence,
+        max_history,
+        max_artifacts_per_evidence,
+        max_text_characters,
+    )?;
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let learning =
+        read_learning_with_continuity_transition(project_start, legacy_vault, store, learning_id)?;
+    build_learning_context(
+        project_start,
+        legacy_vault,
+        Some(store),
+        learning,
+        learning_id,
+        max_evidence,
+        max_history,
+        max_artifacts_per_evidence,
+        max_text_characters,
+    )
+}
+
+fn build_learning_context(
+    project_start: &Path,
+    vault: &Path,
+    transition_store: Option<&ContinuityStore>,
+    learning: LearningRecord,
+    learning_id: &str,
+    max_evidence: usize,
+    max_history: usize,
+    max_artifacts_per_evidence: usize,
+    max_text_characters: usize,
+) -> Result<LearningContextPack, LeyCoreError> {
     let (origin_lineage, origin_source_count, omitted_origin_sources) =
         bounded_origin_lineage(learning.origin_lineage.clone());
     let mut budget = TextBudget::new(max_text_characters);
@@ -221,8 +306,9 @@ pub fn read_learning_context(
     let omitted_history = history_count.saturating_sub(history.len());
     let (raw_application_observations, application_observation_count) =
         procedure_application_observations(
-            &project_start,
-            &vault,
+            project_start,
+            vault,
+            transition_store,
             learning_id,
             learning.event_count,
         )?;
@@ -299,12 +385,15 @@ pub fn read_learning_context(
 fn procedure_application_observations(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
+    transition_store: Option<&ContinuityStore>,
     learning_id: &str,
     current_learning_event_count: u64,
 ) -> Result<(Vec<LearningApplicationObservation>, usize), LeyCoreError> {
     let mut observations = Vec::new();
     let mut total_observations = 0usize;
-    visit_session_records(project_start, vault, |session| {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let mut visit = |session: crate::AgentSession| {
         for observation in &session.context_utility_observations {
             if !observation
                 .claimed_applied_learning_ids
@@ -370,7 +459,16 @@ fn procedure_application_observations(
             observations.sort_by(application_observation_order);
             observations.truncate(MAX_LEARNING_CONTEXT_APPLICATION_OBSERVATIONS);
         }
-    })?;
+    };
+    match transition_store {
+        Some(store) => visit_session_records_with_continuity_transition(
+            project_start,
+            vault,
+            store,
+            &mut visit,
+        )?,
+        None => visit_session_records(project_start, vault, &mut visit)?,
+    };
     Ok((observations, total_observations))
 }
 

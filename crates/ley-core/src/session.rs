@@ -79,6 +79,7 @@ const SESSION_V14_FILE: &str = "session-v14.json";
 const SESSION_V15_FILE: &str = "session-v15.json";
 const SESSION_V16_FILE: &str = "session-v16.json";
 const SESSION_MARKDOWN_FILE: &str = "session.md";
+const SESSION_AUTHORITY_CUTOVER_EVENT_KIND: &str = "session-authority-cutover";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -751,6 +752,24 @@ pub struct SessionMutation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionWriteResult {
+    pub session: AgentSession,
+    pub event_id: String,
+    pub replayed: bool,
+}
+
+impl From<SessionMutation> for SessionWriteResult {
+    fn from(mutation: SessionMutation) -> Self {
+        Self {
+            session: mutation.session,
+            event_id: mutation.event_id,
+            replayed: mutation.replayed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SessionEvent {
     schema_version: u32,
     event_id: String,
@@ -834,6 +853,61 @@ pub fn derive_turn_reference(correlation_material: &str) -> String {
     )
 }
 
+enum TransitionSessionMemory {
+    Legacy(crate::ingestion::LoadedProjectMemory),
+    Native(crate::continuity_store::ContinuityArtifactAuthoritySnapshot),
+}
+
+struct TransitionSessionPreparation {
+    diagnostic: crate::ProjectDiagnostic,
+    memory: TransitionSessionMemory,
+}
+
+fn transition_session_preparation(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+) -> Result<TransitionSessionPreparation, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    match std::fs::symlink_metadata(legacy_vault) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(
+            LeyCoreError::UnsafeProjectLayout(legacy_vault.to_path_buf()),
+        ),
+        Ok(metadata) if metadata.is_dir() => Ok(TransitionSessionPreparation {
+            memory: TransitionSessionMemory::Legacy(load_project_memory(
+                &diagnostic.root,
+                legacy_vault,
+            )?),
+            diagnostic,
+        }),
+        Ok(_) => Err(LeyCoreError::NotDirectory(legacy_vault.to_path_buf())),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            if !session_authority_cutover_is_complete(store, &diagnostic.identity.project_id)? {
+                return Err(LeyCoreError::BoundVaultUnavailable {
+                    project_id: diagnostic.identity.project_id,
+                    path: legacy_vault.to_path_buf(),
+                });
+            }
+            let Some(snapshot) =
+                store.current_artifact_authority_snapshot(&diagnostic.identity.project_id)?
+            else {
+                return Err(LeyCoreError::ProjectMemoryUnavailable(
+                    "legacy vault is unavailable and native artifact authority is not ready"
+                        .to_owned(),
+                ));
+            };
+            Ok(TransitionSessionPreparation {
+                diagnostic,
+                memory: TransitionSessionMemory::Native(snapshot),
+            })
+        }
+        Err(source) => Err(LeyCoreError::Io {
+            path: legacy_vault.to_path_buf(),
+            source,
+        }),
+    }
+}
+
 /// Records an observed user prompt as a first-class immutable event.
 pub fn record_session_prompt(
     project_start: impl AsRef<Path>,
@@ -842,6 +916,24 @@ pub fn record_session_prompt(
     input: TurnEvidenceInput,
 ) -> Result<SessionMutation, LeyCoreError> {
     record_session_turn(project_start, vault, session_id, input, None, true)
+}
+
+pub fn record_session_prompt_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: TurnEvidenceInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    record_session_turn_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        input,
+        None,
+        true,
+    )
 }
 
 /// Records an observed assistant response as a first-class immutable event.
@@ -854,6 +946,24 @@ pub fn record_session_response(
     record_session_turn(project_start, vault, session_id, input, None, false)
 }
 
+pub fn record_session_response_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: TurnEvidenceInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    record_session_turn_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        input,
+        None,
+        false,
+    )
+}
+
 /// Records one supported host-observed shell tool lifecycle event.
 pub fn record_session_tool_observation(
     project_start: impl AsRef<Path>,
@@ -861,10 +971,56 @@ pub fn record_session_tool_observation(
     session_id: &str,
     input: ToolObservationInput,
 ) -> Result<SessionMutation, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let (identity, pending) =
+        prepare_session_tool_observation(project_start, vault, session_id, input)?;
+    mutate_session(&identity.project_id, session_id, pending, vault)
+}
+
+pub fn record_session_tool_observation_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: ToolObservationInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let preparation = transition_session_preparation(project_start, legacy_vault, store)?;
+    let (identity, pending) = prepare_session_tool_observation_with_diagnostic(
+        preparation.diagnostic,
+        session_id,
+        input,
+    )?;
+    mutate_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        &identity,
+        session_id,
+        pending,
+    )
+}
+
+fn prepare_session_tool_observation(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: ToolObservationInput,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    validate_project_memory(&diagnostic.root, vault)?;
+    prepare_session_tool_observation_with_diagnostic(diagnostic, session_id, input)
+}
+
+fn prepare_session_tool_observation_with_diagnostic(
+    diagnostic: crate::ProjectDiagnostic,
+    session_id: &str,
+    input: ToolObservationInput,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
-    let diagnostic = diagnose_project(&project_start)?;
-    validate_project_memory(&diagnostic.root, &vault)?;
     let event_id = deterministic_id(
         "evt",
         &format!("{session_id}:{}:tool-observed", input.request_id),
@@ -873,9 +1029,8 @@ pub fn record_session_tool_observation(
     let request_id = input.request_id.clone();
     let (observation, redactions) =
         normalize_tool_observation(input, &event_id, diagnostic.capture.mode)?;
-    mutate_session(
-        &diagnostic.identity.project_id,
-        session_id,
+    Ok((
+        diagnostic.identity,
         PendingEvent {
             event_id,
             request_id,
@@ -885,8 +1040,7 @@ pub fn record_session_tool_observation(
             allow_create: false,
             expected_event_count: None,
         },
-        vault,
-    )
+    ))
 }
 
 pub(crate) fn record_imported_session_prompt(
@@ -911,6 +1065,30 @@ pub(crate) fn record_imported_session_prompt(
     )
 }
 
+pub(crate) fn record_imported_session_prompt_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: TurnEvidenceInput,
+    source_recorded_at_unix_ms: u64,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    if input.origin != TurnEvidenceOrigin::Import {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "imported turn evidence must use import origin".to_owned(),
+        ));
+    }
+    record_session_turn_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        input,
+        Some(source_recorded_at_unix_ms),
+        true,
+    )
+}
+
 fn record_session_turn(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -919,10 +1097,74 @@ fn record_session_turn(
     source_recorded_at_unix_ms: Option<u64>,
     is_prompt: bool,
 ) -> Result<SessionMutation, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let (identity, pending) = prepare_session_turn(
+        project_start,
+        vault,
+        session_id,
+        input,
+        source_recorded_at_unix_ms,
+        is_prompt,
+    )?;
+    mutate_session(&identity.project_id, session_id, pending, vault)
+}
+
+fn record_session_turn_with_continuity_transition(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: TurnEvidenceInput,
+    source_recorded_at_unix_ms: Option<u64>,
+    is_prompt: bool,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let preparation = transition_session_preparation(project_start, legacy_vault, store)?;
+    let (identity, pending) = prepare_session_turn_with_diagnostic(
+        preparation.diagnostic,
+        session_id,
+        input,
+        source_recorded_at_unix_ms,
+        is_prompt,
+    )?;
+    mutate_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        &identity,
+        session_id,
+        pending,
+    )
+}
+
+fn prepare_session_turn(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: TurnEvidenceInput,
+    source_recorded_at_unix_ms: Option<u64>,
+    is_prompt: bool,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    validate_project_memory(&diagnostic.root, vault)?;
+    prepare_session_turn_with_diagnostic(
+        diagnostic,
+        session_id,
+        input,
+        source_recorded_at_unix_ms,
+        is_prompt,
+    )
+}
+
+fn prepare_session_turn_with_diagnostic(
+    diagnostic: crate::ProjectDiagnostic,
+    session_id: &str,
+    input: TurnEvidenceInput,
+    source_recorded_at_unix_ms: Option<u64>,
+    is_prompt: bool,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
-    let diagnostic = diagnose_project(&project_start)?;
-    validate_project_memory(&diagnostic.root, &vault)?;
     let kind = if is_prompt {
         "user-prompt-observed"
     } else {
@@ -950,9 +1192,8 @@ fn record_session_turn(
     } else {
         SessionEventPayload::AssistantResponseObserved(evidence)
     };
-    mutate_session(
-        &diagnostic.identity.project_id,
-        session_id,
+    Ok((
+        diagnostic.identity,
         PendingEvent {
             event_id,
             request_id,
@@ -966,8 +1207,7 @@ fn record_session_turn(
             allow_create: false,
             expected_event_count: None,
         },
-        vault,
-    )
+    ))
 }
 
 pub fn start_session(
@@ -975,9 +1215,53 @@ pub fn start_session(
     vault: impl AsRef<Path>,
     input: StartSessionInput,
 ) -> Result<SessionMutation, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let (identity, session_id, pending) = prepare_start_session(project_start, vault, input)?;
+    mutate_session(&identity.project_id, &session_id, pending, vault)
+}
+
+pub fn start_session_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    input: StartSessionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let preparation = transition_session_preparation(project_start, legacy_vault, store)?;
+    let artifact_snapshot_id = match &preparation.memory {
+        TransitionSessionMemory::Legacy(memory) => memory.manifest.snapshot_id.clone(),
+        TransitionSessionMemory::Native(snapshot) => snapshot.snapshot_id.clone(),
+    };
+    let (identity, session_id, pending) =
+        prepare_start_session_with_diagnostic(preparation.diagnostic, artifact_snapshot_id, input)?;
+    mutate_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        &identity,
+        &session_id,
+        pending,
+    )
+}
+
+fn prepare_start_session(
+    project_start: &Path,
+    vault: &Path,
+    input: StartSessionInput,
+) -> Result<(crate::ProjectIdentity, String, PendingEvent), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let artifact_snapshot_id = project_artifact_snapshot_id(&diagnostic.root, vault)?;
+    prepare_start_session_with_diagnostic(diagnostic, artifact_snapshot_id, input)
+}
+
+fn prepare_start_session_with_diagnostic(
+    diagnostic: crate::ProjectDiagnostic,
+    artifact_snapshot_id: String,
+    input: StartSessionInput,
+) -> Result<(crate::ProjectIdentity, String, PendingEvent), LeyCoreError> {
     validate_request_id(&input.request_id)?;
-    let diagnostic = diagnose_project(&project_start)?;
-    let artifact_snapshot_id = project_artifact_snapshot_id(&diagnostic.root, &vault)?;
     let mut redactions = Vec::new();
     let name = sanitize_text("name", &input.name, 1, 128, &mut redactions)?;
     let goal = sanitize_text("goal", &input.goal, 1, 16_000, &mut redactions)?;
@@ -998,9 +1282,9 @@ pub fn start_session(
         source,
         artifact_snapshot_id,
     };
-    mutate_session(
-        &diagnostic.identity.project_id,
-        &session_id,
+    Ok((
+        diagnostic.identity,
+        session_id,
         PendingEvent {
             event_id,
             request_id: input.request_id,
@@ -1010,8 +1294,7 @@ pub fn start_session(
             allow_create: true,
             expected_event_count: None,
         },
-        vault,
-    )
+    ))
 }
 
 pub fn checkpoint_session(
@@ -1042,6 +1325,41 @@ pub fn checkpoint_session_if_current(
     )
 }
 
+pub fn checkpoint_session_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: CheckpointInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    checkpoint_session_with_expected_count_and_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        input,
+        None,
+    )
+}
+
+pub fn checkpoint_session_if_current_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    expected_event_count: u64,
+    input: CheckpointInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    checkpoint_session_with_expected_count_and_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        input,
+        Some(expected_event_count),
+    )
+}
+
 fn checkpoint_session_with_expected_count(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -1049,11 +1367,170 @@ fn checkpoint_session_with_expected_count(
     input: CheckpointInput,
     expected_event_count: Option<u64>,
 ) -> Result<SessionMutation, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let (identity, pending) = prepare_checkpoint_session(
+        project_start,
+        vault,
+        session_id,
+        input,
+        expected_event_count,
+    )?;
+    mutate_session(&identity.project_id, session_id, pending, vault)
+}
+
+fn checkpoint_session_with_expected_count_and_transition(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: CheckpointInput,
+    expected_event_count: Option<u64>,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let (identity, pending) = prepare_checkpoint_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        session_id,
+        input,
+        expected_event_count,
+    )?;
+    mutate_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        &identity,
+        session_id,
+        pending,
+    )
+}
+
+#[derive(Debug, Clone)]
+struct CheckpointArtifactFile {
+    artifact_path: String,
+    content_hash: String,
+    media_type: Option<ArtifactMediaType>,
+    line_count: u64,
+}
+
+#[derive(Debug, Clone)]
+struct CheckpointArtifactAuthority {
+    artifact_snapshot_id: String,
+    graph_snapshot_id: String,
+    generated_at_unix_ms: u64,
+    captured_git: Option<crate::GitState>,
+    files: Vec<CheckpointArtifactFile>,
+}
+
+impl CheckpointArtifactAuthority {
+    fn from_legacy(memory: &crate::ingestion::LoadedProjectMemory) -> Self {
+        Self {
+            artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
+            graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
+            generated_at_unix_ms: memory.graph.generated_at_unix_ms,
+            captured_git: memory.graph.git.clone(),
+            files: memory
+                .manifest
+                .files
+                .iter()
+                .map(|artifact| CheckpointArtifactFile {
+                    artifact_path: artifact.path.clone(),
+                    content_hash: artifact.content_hash.clone(),
+                    media_type: artifact.media_type,
+                    line_count: artifact.line_count,
+                })
+                .collect(),
+        }
+    }
+
+    fn from_native(
+        snapshot: crate::continuity_store::ContinuityArtifactAuthoritySnapshot,
+    ) -> Result<Self, LeyCoreError> {
+        let mut files = Vec::with_capacity(snapshot.files.len());
+        for artifact in snapshot.files {
+            let media_type = match artifact.media_type.as_deref() {
+                None => None,
+                Some("png") => Some(ArtifactMediaType::Png),
+                Some("jpeg") => Some(ArtifactMediaType::Jpeg),
+                Some("webp") => Some(ArtifactMediaType::Webp),
+                Some(value) => {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "native artifact has unsupported media type {value:?}"
+                    )))
+                }
+            };
+            files.push(CheckpointArtifactFile {
+                artifact_path: artifact.artifact_path,
+                content_hash: artifact.content_hash,
+                media_type,
+                line_count: artifact.line_count,
+            });
+        }
+        Ok(Self {
+            artifact_snapshot_id: snapshot.snapshot_id,
+            graph_snapshot_id: snapshot.legacy_graph_snapshot_id,
+            generated_at_unix_ms: snapshot.generated_at_unix_ms,
+            captured_git: snapshot.captured_git,
+            files,
+        })
+    }
+}
+
+fn prepare_checkpoint_session_with_continuity_transition(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: CheckpointInput,
+    expected_event_count: Option<u64>,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
+    let preparation = transition_session_preparation(project_start, legacy_vault, store)?;
+    let artifacts = match preparation.memory {
+        TransitionSessionMemory::Legacy(memory) => {
+            CheckpointArtifactAuthority::from_legacy(&memory)
+        }
+        TransitionSessionMemory::Native(snapshot) => {
+            CheckpointArtifactAuthority::from_native(snapshot)?
+        }
+    };
+    prepare_checkpoint_session_with_artifacts(
+        preparation.diagnostic.identity,
+        session_id,
+        input,
+        expected_event_count,
+        &artifacts,
+    )
+}
+
+fn prepare_checkpoint_session(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: CheckpointInput,
+    expected_event_count: Option<u64>,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let memory = load_project_memory(&diagnostic.root, vault)?;
+    let artifacts = CheckpointArtifactAuthority::from_legacy(&memory);
+    prepare_checkpoint_session_with_artifacts(
+        diagnostic.identity,
+        session_id,
+        input,
+        expected_event_count,
+        &artifacts,
+    )
+}
+
+fn prepare_checkpoint_session_with_artifacts(
+    identity: crate::ProjectIdentity,
+    session_id: &str,
+    input: CheckpointInput,
+    expected_event_count: Option<u64>,
+    artifacts: &CheckpointArtifactAuthority,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
     let request_id = input.request_id.clone();
-    let diagnostic = diagnose_project(&project_start)?;
-    let memory = load_project_memory(&diagnostic.root, &vault)?;
     let has_verification_evidence = input
         .verification
         .iter()
@@ -1068,11 +1545,10 @@ fn checkpoint_session_with_expected_count(
                 .flat_map(|verification| verification.evidence_artifact_paths.iter()),
         )
         .any(|path| {
-            memory
-                .manifest
+            artifacts
                 .files
                 .iter()
-                .any(|artifact| artifact.path == *path && artifact.media_type.is_some())
+                .any(|artifact| artifact.artifact_path == *path && artifact.media_type.is_some())
         });
     let event_id = deterministic_id(
         "evt",
@@ -1080,10 +1556,9 @@ fn checkpoint_session_with_expected_count(
         64,
     );
     let recorded_at = unix_time_ms();
-    let (checkpoint, redactions) = normalize_checkpoint(input, &event_id, recorded_at, &memory)?;
-    mutate_session(
-        &diagnostic.identity.project_id,
-        session_id,
+    let (checkpoint, redactions) = normalize_checkpoint(input, &event_id, recorded_at, artifacts)?;
+    Ok((
+        identity,
         PendingEvent {
             event_id,
             request_id,
@@ -1099,8 +1574,7 @@ fn checkpoint_session_with_expected_count(
             allow_create: false,
             expected_event_count,
         },
-        vault,
-    )
+    ))
 }
 
 #[derive(Debug, Clone)]
@@ -1373,6 +1847,185 @@ pub(crate) fn checkpoint_recovered_composite_session(
     mutate_session(&project_id, session_id, pending, vault)
 }
 
+fn replay_recovered_pending_with_continuity_transition(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+    project_id: &str,
+    session_id: &str,
+    mut pending: PendingEvent,
+) -> Result<Option<SessionWriteResult>, LeyCoreError> {
+    let authority_project_id = ensure_native_session_authority(project_start, legacy_vault, store)?;
+    if authority_project_id != project_id {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "native recovery authority resolved to a different project".to_owned(),
+        ));
+    }
+    let existing = store
+        .events_for_session(project_id, session_id)?
+        .into_iter()
+        .map(session_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    if existing.is_empty() {
+        return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
+    }
+    let Some(event) = existing
+        .iter()
+        .find(|event| event.event_id == pending.event_id)
+    else {
+        if existing
+            .iter()
+            .any(|event| event.request_id == pending.request_id)
+        {
+            return Err(LeyCoreError::SessionIdempotencyConflict(pending.request_id));
+        }
+        return Ok(None);
+    };
+    align_turn_evidence_retry(&mut pending, &event.payload);
+    align_tool_observation_retry(&mut pending, &event.payload);
+    let request_fingerprint = request_fingerprint(
+        project_id,
+        session_id,
+        &pending.request_id,
+        &pending.payload,
+    )?;
+    if event.request_fingerprint != request_fingerprint
+        || !retry_payload_matches(&event.payload, &pending.payload)
+    {
+        return Err(LeyCoreError::SessionIdempotencyConflict(pending.request_id));
+    }
+    let session = replay_events(&existing, project_id, session_id)?;
+    Ok(Some(SessionWriteResult {
+        session,
+        event_id: pending.event_id,
+        replayed: true,
+    }))
+}
+
+fn checkpoint_recovered_pending_with_continuity_transition(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+    project_id: &str,
+    session_id: &str,
+    pending: PendingEvent,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let identity = diagnose_project(project_start)?.identity;
+    if identity.project_id != project_id {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "recovery checkpoint belongs to a different project".to_owned(),
+        ));
+    }
+    mutate_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        &identity,
+        session_id,
+        pending,
+    )
+}
+
+macro_rules! transition_recovery_helpers {
+    (
+        $replay_name:ident,
+        $checkpoint_name:ident,
+        $input:ty,
+        $pending_builder:ident
+    ) => {
+        pub(crate) fn $replay_name(
+            project_start: impl AsRef<Path>,
+            legacy_vault: impl AsRef<Path>,
+            store: &crate::ContinuityStore,
+            session_id: &str,
+            input: $input,
+        ) -> Result<Option<SessionWriteResult>, LeyCoreError> {
+            let project_start = project_start.as_ref();
+            let legacy_vault = legacy_vault.as_ref();
+            let (project_id, pending) =
+                $pending_builder(project_start, legacy_vault, session_id, input)?;
+            replay_recovered_pending_with_continuity_transition(
+                project_start,
+                legacy_vault,
+                store,
+                &project_id,
+                session_id,
+                pending,
+            )
+        }
+
+        pub(crate) fn $checkpoint_name(
+            project_start: impl AsRef<Path>,
+            legacy_vault: impl AsRef<Path>,
+            store: &crate::ContinuityStore,
+            session_id: &str,
+            input: $input,
+        ) -> Result<SessionWriteResult, LeyCoreError> {
+            let project_start = project_start.as_ref();
+            let legacy_vault = legacy_vault.as_ref();
+            let (project_id, pending) =
+                $pending_builder(project_start, legacy_vault, session_id, input)?;
+            checkpoint_recovered_pending_with_continuity_transition(
+                project_start,
+                legacy_vault,
+                store,
+                &project_id,
+                session_id,
+                pending,
+            )
+        }
+    };
+}
+
+transition_recovery_helpers!(
+    replay_recovered_unresolved_session_if_present_with_continuity_transition,
+    checkpoint_recovered_unresolved_session_with_continuity_transition,
+    RecoveredUnresolvedCheckpointInput,
+    recovered_unresolved_pending
+);
+transition_recovery_helpers!(
+    replay_recovered_structured_session_if_present_with_continuity_transition,
+    checkpoint_recovered_structured_session_with_continuity_transition,
+    RecoveredStructuredCheckpointInput,
+    recovered_structured_pending
+);
+transition_recovery_helpers!(
+    replay_recovered_task_session_if_present_with_continuity_transition,
+    checkpoint_recovered_task_session_with_continuity_transition,
+    RecoveredTaskCheckpointInput,
+    recovered_task_pending
+);
+transition_recovery_helpers!(
+    replay_recovered_plan_session_if_present_with_continuity_transition,
+    checkpoint_recovered_plan_session_with_continuity_transition,
+    RecoveredPlanCheckpointInput,
+    recovered_plan_pending
+);
+transition_recovery_helpers!(
+    replay_recovered_observed_command_session_if_present_with_continuity_transition,
+    checkpoint_recovered_observed_command_session_with_continuity_transition,
+    RecoveredObservedCommandCheckpointInput,
+    recovered_observed_command_pending
+);
+transition_recovery_helpers!(
+    replay_recovered_batch_session_if_present_with_continuity_transition,
+    checkpoint_recovered_batch_session_with_continuity_transition,
+    RecoveredBatchCheckpointInput,
+    recovered_batch_pending
+);
+transition_recovery_helpers!(
+    replay_recovered_rich_problem_session_if_present_with_continuity_transition,
+    checkpoint_recovered_rich_problem_session_with_continuity_transition,
+    RecoveredRichProblemCheckpointInput,
+    recovered_rich_problem_pending
+);
+transition_recovery_helpers!(
+    replay_recovered_composite_session_if_present_with_continuity_transition,
+    checkpoint_recovered_composite_session_with_continuity_transition,
+    RecoveredCompositeCheckpointInput,
+    recovered_composite_pending
+);
+
 fn recovered_unresolved_pending(
     project_start: &Path,
     vault: &Path,
@@ -1430,8 +2083,12 @@ fn recovered_unresolved_pending(
         verification: Vec::new(),
         unresolved: vec![input.unresolved],
     };
-    let (checkpoint, redactions) =
-        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let (checkpoint, redactions) = normalize_checkpoint(
+        checkpoint_input,
+        &event_id,
+        recorded_at,
+        &CheckpointArtifactAuthority::from_legacy(&memory),
+    )?;
     let binding_fingerprint = recovery_binding_fingerprint(
         session_id,
         input.expected_event_count,
@@ -1543,8 +2200,12 @@ fn recovered_structured_pending(
         verification: Vec::new(),
         unresolved: Vec::new(),
     };
-    let (checkpoint, redactions) =
-        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let (checkpoint, redactions) = normalize_checkpoint(
+        checkpoint_input,
+        &event_id,
+        recorded_at,
+        &CheckpointArtifactAuthority::from_legacy(&memory),
+    )?;
     let (kind, subject, statement) =
         typed_recovery_checkpoint_claim(&checkpoint).ok_or_else(|| {
             LeyCoreError::InvalidSessionRequest(
@@ -1646,8 +2307,12 @@ fn recovered_task_pending(
         verification: Vec::new(),
         unresolved: Vec::new(),
     };
-    let (checkpoint, redactions) =
-        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let (checkpoint, redactions) = normalize_checkpoint(
+        checkpoint_input,
+        &event_id,
+        recorded_at,
+        &CheckpointArtifactAuthority::from_legacy(&memory),
+    )?;
     let (title, status, details) =
         task_recovery_checkpoint_claim(&checkpoint).ok_or_else(|| {
             LeyCoreError::InvalidSessionRequest(
@@ -1748,8 +2413,12 @@ fn recovered_plan_pending(
         verification: Vec::new(),
         unresolved: Vec::new(),
     };
-    let (checkpoint, redactions) =
-        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let (checkpoint, redactions) = normalize_checkpoint(
+        checkpoint_input,
+        &event_id,
+        recorded_at,
+        &CheckpointArtifactAuthority::from_legacy(&memory),
+    )?;
     let (text, status) = plan_recovery_checkpoint_claim(&checkpoint).ok_or_else(|| {
         LeyCoreError::InvalidSessionRequest(
             "plan recovery checkpoint normalization produced an unsupported shape".to_owned(),
@@ -1839,8 +2508,12 @@ fn recovered_observed_command_pending(
         verification: Vec::new(),
         unresolved: Vec::new(),
     };
-    let (checkpoint, redactions) =
-        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let (checkpoint, redactions) = normalize_checkpoint(
+        checkpoint_input,
+        &event_id,
+        recorded_at,
+        &CheckpointArtifactAuthority::from_legacy(&memory),
+    )?;
     let command = observed_command_recovery_checkpoint_claim(&checkpoint).ok_or_else(|| {
         LeyCoreError::InvalidSessionRequest(
             "observed Command recovery normalization produced an unsupported shape".to_owned(),
@@ -2019,8 +2692,12 @@ fn recovered_batch_pending(
         verification: Vec::new(),
         unresolved,
     };
-    let (checkpoint, redactions) =
-        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let (checkpoint, redactions) = normalize_checkpoint(
+        checkpoint_input,
+        &event_id,
+        recorded_at,
+        &CheckpointArtifactAuthority::from_legacy(&memory),
+    )?;
 
     let mut record_bindings = Vec::with_capacity(input_candidate_count(&checkpoint));
     for (record, evidence) in checkpoint.plan.iter().zip(plan_evidence) {
@@ -2174,8 +2851,12 @@ fn recovered_rich_problem_pending(
         verification: Vec::new(),
         unresolved: Vec::new(),
     };
-    let (checkpoint, redactions) =
-        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let (checkpoint, redactions) = normalize_checkpoint(
+        checkpoint_input,
+        &event_id,
+        recorded_at,
+        &CheckpointArtifactAuthority::from_legacy(&memory),
+    )?;
     let problem = checkpoint.problems.first().ok_or_else(|| {
         LeyCoreError::InvalidSessionRequest(
             "rich problem recovery normalization produced no problem".to_owned(),
@@ -2431,8 +3112,12 @@ fn recovered_composite_pending(
         verification: Vec::new(),
         unresolved,
     };
-    let (checkpoint, redactions) =
-        normalize_checkpoint(checkpoint_input, &event_id, recorded_at, &memory)?;
+    let (checkpoint, redactions) = normalize_checkpoint(
+        checkpoint_input,
+        &event_id,
+        recorded_at,
+        &CheckpointArtifactAuthority::from_legacy(&memory),
+    )?;
 
     let mut record_bindings = Vec::with_capacity(component_count);
     for (record, evidence) in checkpoint.plan.iter().zip(plan_evidence) {
@@ -2598,6 +3283,50 @@ pub fn finish_session(
     session_id: &str,
     input: FinishSessionInput,
 ) -> Result<SessionMutation, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let (identity, pending) = prepare_finish_session(project_start, vault, session_id, input)?;
+    mutate_session(&identity.project_id, session_id, pending, vault)
+}
+
+pub fn finish_session_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: FinishSessionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let preparation = transition_session_preparation(project_start, legacy_vault, store)?;
+    let (identity, pending) =
+        prepare_finish_session_with_diagnostic(preparation.diagnostic, session_id, input)?;
+    mutate_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        &identity,
+        session_id,
+        pending,
+    )
+}
+
+fn prepare_finish_session(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: FinishSessionInput,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    validate_project_memory(&diagnostic.root, vault)?;
+    prepare_finish_session_with_diagnostic(diagnostic, session_id, input)
+}
+
+fn prepare_finish_session_with_diagnostic(
+    diagnostic: crate::ProjectDiagnostic,
+    session_id: &str,
+    input: FinishSessionInput,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
     if input.status == SessionStatus::Active {
@@ -2605,8 +3334,6 @@ pub fn finish_session(
             "finished session status cannot be active".to_owned(),
         ));
     }
-    let diagnostic = diagnose_project(&project_start)?;
-    validate_project_memory(&diagnostic.root, &vault)?;
     let event_id = deterministic_id(
         "evt",
         &format!("{session_id}:{}:session-finished", input.request_id),
@@ -2629,9 +3356,8 @@ pub fn finish_session(
         handoff: sanitize_text("handoff", &input.handoff, 0, 16_000, &mut redactions)?,
         unresolved: sanitize_list("unresolved", input.unresolved, 100, 4_000, &mut redactions)?,
     };
-    mutate_session(
-        &diagnostic.identity.project_id,
-        session_id,
+    Ok((
+        diagnostic.identity,
         PendingEvent {
             event_id,
             request_id: input.request_id,
@@ -2641,8 +3367,7 @@ pub fn finish_session(
             allow_create: false,
             expected_event_count: None,
         },
-        vault,
-    )
+    ))
 }
 
 pub fn bind_context_utility_pack(
@@ -2652,6 +3377,42 @@ pub fn bind_context_utility_pack(
     input: ContextUtilityBindingInput,
     pack: &CompiledContextPack,
 ) -> Result<SessionMutation, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let (identity, pending) =
+        prepare_context_utility_binding(project_start, vault, session_id, input, pack)?;
+    mutate_session(&identity.project_id, session_id, pending, vault)
+}
+
+pub fn bind_context_utility_pack_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: ContextUtilityBindingInput,
+    pack: &CompiledContextPack,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let (identity, pending) =
+        prepare_context_utility_binding(project_start, legacy_vault, session_id, input, pack)?;
+    mutate_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        &identity,
+        session_id,
+        pending,
+    )
+}
+
+fn prepare_context_utility_binding(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: ContextUtilityBindingInput,
+    pack: &CompiledContextPack,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
     if input.expected_event_count == 0 {
@@ -2691,8 +3452,8 @@ pub fn bind_context_utility_pack(
             "context utility maxTokens does not match the supplied pack".to_owned(),
         ));
     }
-    let diagnostic = diagnose_project(&project_start)?;
-    validate_project_memory(&diagnostic.root, &vault)?;
+    let diagnostic = diagnose_project(project_start)?;
+    validate_project_memory(&diagnostic.root, vault)?;
     if pack.project_id != diagnostic.identity.project_id {
         return Err(LeyCoreError::InvalidSessionRequest(
             "context utility pack belongs to a different project".to_owned(),
@@ -2739,9 +3500,8 @@ pub fn bind_context_utility_pack(
         context_pack_revalidated: true,
         context_usage_proven: false,
     };
-    mutate_session(
-        &diagnostic.identity.project_id,
-        session_id,
+    Ok((
+        diagnostic.identity,
         PendingEvent {
             event_id,
             request_id: input.request_id,
@@ -2751,8 +3511,7 @@ pub fn bind_context_utility_pack(
             allow_create: false,
             expected_event_count: Some(input.expected_event_count),
         },
-        vault,
-    )
+    ))
 }
 
 pub fn replay_context_utility_binding_if_present(
@@ -2837,12 +3596,142 @@ pub fn replay_context_utility_binding_if_present(
     Ok(Some(mutation(session, &event_id, true)))
 }
 
+pub fn replay_context_utility_binding_if_present_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: &ContextUtilityBindingInput,
+) -> Result<Option<SessionWriteResult>, LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_request_id(&input.request_id)?;
+    if input.expected_event_count == 0 {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility expectedEventCount must be positive".to_owned(),
+        ));
+    }
+    if !valid_prefixed_hex(&input.expected_context_pack_id, "cpk_", 64) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility contextPackId must be a cpk_ sha256 identifier".to_owned(),
+        ));
+    }
+    if !(1..=20).contains(&input.max_results) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility maxResults must be between 1 and 20".to_owned(),
+        ));
+    }
+    if !(500..=8_000).contains(&input.max_tokens) {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "context utility maxTokens must be between 500 and 8000".to_owned(),
+        ));
+    }
+    let mut task_redactions = Vec::new();
+    let task_excerpt = sanitize_text(
+        "contextUtility.taskExcerpt",
+        &input.task,
+        1,
+        256,
+        &mut task_redactions,
+    )?;
+
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let diagnostic = diagnose_project(project_start)?;
+    validate_project_memory(&diagnostic.root, legacy_vault)?;
+    let project_id = sync_legacy_continuity_for_session_read(project_start, legacy_vault, store)?;
+    if project_id != diagnostic.identity.project_id {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "session transition resolved to a different project".to_owned(),
+        ));
+    }
+    let event_id = deterministic_id(
+        "evt",
+        &format!("{session_id}:{}:context-utility-bound", input.request_id),
+        64,
+    );
+    let existing = store
+        .events_for_session(&project_id, session_id)?
+        .into_iter()
+        .map(session_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    if existing.is_empty() {
+        return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
+    }
+    let Some(event) = existing.iter().find(|event| event.event_id == event_id) else {
+        if existing
+            .iter()
+            .any(|event| event.request_id == input.request_id)
+        {
+            return Err(LeyCoreError::SessionIdempotencyConflict(
+                input.request_id.clone(),
+            ));
+        }
+        return Ok(None);
+    };
+    let SessionEventPayload::ContextUtilityBound(binding) = &event.payload else {
+        return Err(LeyCoreError::InvalidSessionStore(
+            "context utility binding event has the wrong payload kind".to_owned(),
+        ));
+    };
+    if event.request_id != input.request_id
+        || binding.expected_event_count != input.expected_event_count
+        || binding.context_pack_id != input.expected_context_pack_id
+        || binding.task_excerpt != task_excerpt
+        || binding.max_results != input.max_results
+        || binding.max_tokens != input.max_tokens
+    {
+        return Err(LeyCoreError::SessionIdempotencyConflict(
+            input.request_id.clone(),
+        ));
+    }
+    let session = replay_events(&existing, &project_id, session_id)?;
+    Ok(Some(SessionWriteResult {
+        session,
+        event_id,
+        replayed: true,
+    }))
+}
+
 pub fn record_context_utility_observation(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
     session_id: &str,
-    mut input: ContextUtilityObservationInput,
+    input: ContextUtilityObservationInput,
 ) -> Result<SessionMutation, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let (identity, pending) =
+        prepare_context_utility_observation(project_start, vault, session_id, input)?;
+    mutate_session(&identity.project_id, session_id, pending, vault)
+}
+
+pub fn record_context_utility_observation_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: ContextUtilityObservationInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let (identity, pending) =
+        prepare_context_utility_observation(project_start, legacy_vault, session_id, input)?;
+    mutate_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        &identity,
+        session_id,
+        pending,
+    )
+}
+
+fn prepare_context_utility_observation(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    mut input: ContextUtilityObservationInput,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
     if input.expected_event_count == 0 {
@@ -2897,8 +3786,8 @@ pub fn record_context_utility_observation(
             "context utility claimed applied learning IDs must be unique".to_owned(),
         ));
     }
-    let diagnostic = diagnose_project(&project_start)?;
-    validate_project_memory(&diagnostic.root, &vault)?;
+    let diagnostic = diagnose_project(project_start)?;
+    validate_project_memory(&diagnostic.root, vault)?;
     let event_id = deterministic_id(
         "evt",
         &format!("{session_id}:{}:context-utility-observed", input.request_id),
@@ -2920,9 +3809,8 @@ pub fn record_context_utility_observation(
         ranking_changes_applied: false,
     };
     let has_application_claims = !observation.claimed_applied_learning_ids.is_empty();
-    mutate_session(
-        &diagnostic.identity.project_id,
-        session_id,
+    Ok((
+        diagnostic.identity,
         PendingEvent {
             event_id,
             request_id: input.request_id,
@@ -2936,8 +3824,7 @@ pub fn record_context_utility_observation(
             allow_create: false,
             expected_event_count: Some(input.expected_event_count),
         },
-        vault,
-    )
+    ))
 }
 
 fn context_utility_included_records(
@@ -3028,10 +3915,52 @@ pub fn rename_session(
     session_id: &str,
     input: RenameSessionInput,
 ) -> Result<SessionMutation, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let (identity, pending) = prepare_rename_session(project_start, vault, session_id, input)?;
+    mutate_session(&identity.project_id, session_id, pending, vault)
+}
+
+pub fn rename_session_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: RenameSessionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let preparation = transition_session_preparation(project_start, legacy_vault, store)?;
+    let (identity, pending) =
+        prepare_rename_session_with_diagnostic(preparation.diagnostic, session_id, input)?;
+    mutate_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        &identity,
+        session_id,
+        pending,
+    )
+}
+
+fn prepare_rename_session(
+    project_start: &Path,
+    vault: &Path,
+    session_id: &str,
+    input: RenameSessionInput,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    validate_project_memory(&diagnostic.root, vault)?;
+    prepare_rename_session_with_diagnostic(diagnostic, session_id, input)
+}
+
+fn prepare_rename_session_with_diagnostic(
+    diagnostic: crate::ProjectDiagnostic,
+    session_id: &str,
+    input: RenameSessionInput,
+) -> Result<(crate::ProjectIdentity, PendingEvent), LeyCoreError> {
     validate_session_id(session_id)?;
     validate_request_id(&input.request_id)?;
-    let diagnostic = diagnose_project(&project_start)?;
-    validate_project_memory(&diagnostic.root, &vault)?;
     let event_id = deterministic_id(
         "evt",
         &format!("{session_id}:{}:session-renamed", input.request_id),
@@ -3045,9 +3974,8 @@ pub fn rename_session(
         name: sanitize_text("name", &input.name, 1, 128, &mut redactions)?,
         note: sanitize_text("note", &input.note, 1, 4_000, &mut redactions)?,
     };
-    mutate_session(
-        &diagnostic.identity.project_id,
-        session_id,
+    Ok((
+        diagnostic.identity,
         PendingEvent {
             event_id,
             request_id: input.request_id,
@@ -3057,8 +3985,7 @@ pub fn rename_session(
             allow_create: false,
             expected_event_count: input.expected_event_count,
         },
-        vault,
-    )
+    ))
 }
 
 pub fn read_session(
@@ -3074,6 +4001,469 @@ pub fn read_session(
     };
     let _lock = store.lock(true)?;
     store.rebuild_session(session_id)
+}
+
+pub(crate) fn read_session_from_continuity_snapshot(
+    store: &crate::ContinuityStore,
+    project_id: &str,
+    session_id: &str,
+) -> Result<AgentSession, LeyCoreError> {
+    crate::validate_project_id(project_id)?;
+    validate_session_id(session_id)?;
+    let events = store.events_for_session(project_id, session_id)?;
+    if events.is_empty() {
+        return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
+    }
+    let events = events
+        .into_iter()
+        .map(session_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    replay_events(&events, project_id, session_id)
+}
+
+pub(crate) fn list_sessions_from_continuity_snapshot(
+    store: &crate::ContinuityStore,
+    project_id: &str,
+) -> Result<Vec<SessionSummary>, LeyCoreError> {
+    crate::validate_project_id(project_id)?;
+    let mut sessions = store
+        .session_ids(project_id)?
+        .into_iter()
+        .map(|session_id| {
+            read_session_from_continuity_snapshot(store, project_id, &session_id)
+                .map(|session| SessionSummary::from(&session))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    sessions.sort_by(|left, right| {
+        right
+            .updated_at_unix_ms
+            .cmp(&left.updated_at_unix_ms)
+            .then_with(|| left.session_id.cmp(&right.session_id))
+    });
+    Ok(sessions)
+}
+
+fn session_event_from_continuity(
+    event: crate::ContinuityEvent,
+) -> Result<SessionEvent, LeyCoreError> {
+    if event.payload_version != 1 {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "session event {} has unsupported continuity payload version {}",
+            event.event_id, event.payload_version
+        )));
+    }
+    let decoded: SessionEvent = serde_json::from_value(event.payload.clone()).map_err(|error| {
+        LeyCoreError::InvalidContinuityStore(format!(
+            "session event {} has invalid embedded event payload: {error}",
+            event.event_id
+        ))
+    })?;
+    let legacy_kind = legacy_session_continuity_kind(&decoded.payload);
+    let native_kind = native_session_continuity_kind(&decoded.payload);
+    let (expected_head, expected_branch) = session_event_revision(&decoded.payload);
+    if (event.kind != legacy_kind && event.kind != native_kind)
+        || decoded.event_id != event.event_id
+        || decoded.project_id != event.project_id
+        || event.session_id.as_deref() != Some(decoded.session_id.as_str())
+        || event.session_sequence != Some(decoded.sequence)
+        || event.request_id.as_deref() != Some(decoded.request_id.as_str())
+        || event.request_fingerprint.as_deref() != Some(decoded.request_fingerprint.as_str())
+        || decoded.recorded_at_unix_ms != event.recorded_at_unix_ms
+        || event.revision_head != expected_head
+        || event.revision_branch != expected_branch
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "session event {} continuity envelope does not match its embedded event",
+            event.event_id
+        )));
+    }
+    Ok(decoded)
+}
+
+pub fn read_session_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+) -> Result<AgentSession, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let project_id =
+        sync_legacy_continuity_for_session_read(project_start, legacy_vault.as_ref(), store)?;
+    read_session_from_continuity_snapshot(store, &project_id, session_id)
+}
+
+pub fn list_sessions_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+) -> Result<Vec<SessionSummary>, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let project_id =
+        sync_legacy_continuity_for_session_read(project_start, legacy_vault.as_ref(), store)?;
+    list_sessions_from_continuity_snapshot(store, &project_id)
+}
+
+fn sync_legacy_continuity_for_session_read(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+) -> Result<String, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let project_id = diagnostic.identity.project_id.clone();
+    if session_authority_cutover_is_complete(store, &project_id)? {
+        return Ok(project_id);
+    }
+    match crate::import_legacy_continuity(project_start, legacy_vault, store) {
+        Ok(summary) => Ok(summary.project_id),
+        Err(error)
+            if matches!(
+                &error,
+                LeyCoreError::Io { source, .. }
+                    if source.kind() == std::io::ErrorKind::NotFound
+            ) =>
+        {
+            if store.has_legacy_snapshot_import(&project_id)? {
+                Ok(project_id)
+            } else {
+                Err(error)
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn session_authority_cutover_event_id(project_id: &str) -> String {
+    deterministic_id(
+        "cut",
+        &format!("ley-native-session-authority-v1:{project_id}"),
+        64,
+    )
+}
+
+// Staged durable fence for the native session-authority cutover. Holding the exclusive
+// project-memory lifecycle lock first drains every SessionStore that was opened by an older
+// writer. Making the dedicated session lock read-only then prevents a later legacy writer from
+// reopening it for an exclusive mutation while keeping legacy readers/import available.
+#[allow(dead_code)]
+fn fence_legacy_session_writes(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<bool, LeyCoreError> {
+    let diagnostic = diagnose_project(&project_start)?;
+    validate_project_memory(&diagnostic.root, &vault)?;
+    let vault_path = vault
+        .as_ref()
+        .canonicalize()
+        .map_err(|source| LeyCoreError::Io {
+            path: vault.as_ref().to_path_buf(),
+            source,
+        })?;
+    let _lifecycle =
+        lock_project_memory_lifecycle(&vault_path, &diagnostic.identity.project_id, false, true)?;
+    let vault_dir = Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
+        LeyCoreError::Io {
+            path: vault_path.clone(),
+            source,
+        }
+    })?;
+    let ley_dir = open_existing_dir(&vault_dir, STORE_ROOT)?;
+    let memory_dir = open_existing_dir(&ley_dir, AGENT_MEMORY_DIRECTORY)?;
+    let projects_dir = open_existing_dir(&memory_dir, PROJECTS_DIRECTORY)?;
+    let project_dir = open_existing_dir(&projects_dir, &diagnostic.identity.project_id)?;
+
+    let mut read_options = OpenOptions::new();
+    read_options.read(true).follow(FollowSymlinks::No);
+    let read_lock = match project_dir.open_with(SESSION_LOCK_FILE, &read_options) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            SessionStore::ensure_lock_file(&project_dir)?;
+            project_dir
+                .open_with(SESSION_LOCK_FILE, &read_options)
+                .map_err(|source| session_io(SESSION_LOCK_FILE, source))?
+        }
+        Err(source) => return Err(session_io(SESSION_LOCK_FILE, source)),
+    };
+    ensure_private_file(&read_lock, SESSION_LOCK_FILE)?;
+    if read_lock
+        .metadata()
+        .map_err(|source| session_io(SESSION_LOCK_FILE, source))?
+        .permissions()
+        .readonly()
+    {
+        return Ok(false);
+    }
+    drop(read_lock);
+
+    let mut write_options = OpenOptions::new();
+    write_options
+        .read(true)
+        .write(true)
+        .follow(FollowSymlinks::No);
+    let lock = project_dir
+        .open_with(SESSION_LOCK_FILE, &write_options)
+        .map_err(|source| session_io(SESSION_LOCK_FILE, source))?;
+    ensure_private_file(&lock, SESSION_LOCK_FILE)?;
+    let file = lock.into_std();
+    file.lock()
+        .map_err(|source| session_io(SESSION_LOCK_FILE, source))?;
+    let mut permissions = file
+        .metadata()
+        .map_err(|source| session_io(SESSION_LOCK_FILE, source))?
+        .permissions();
+    permissions.set_readonly(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o400);
+    }
+    file.set_permissions(permissions)
+        .map_err(|source| session_io(SESSION_LOCK_FILE, source))?;
+    file.sync_all()
+        .map_err(|source| session_io(SESSION_LOCK_FILE, source))?;
+    let metadata = file
+        .metadata()
+        .map_err(|source| session_io(SESSION_LOCK_FILE, source))?;
+    if !metadata.permissions().readonly() {
+        return Err(LeyCoreError::InvalidSessionStore(
+            "legacy session writer fence did not become read-only".to_owned(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o222 != 0 {
+            return Err(LeyCoreError::InvalidSessionStore(
+                "legacy session writer fence retained write permission".to_owned(),
+            ));
+        }
+    }
+    Ok(true)
+}
+
+// Marker construction for the one-way native session-authority cutover.
+fn session_authority_cutover_input(
+    summary: &crate::continuity_import::LegacySessionImportSummary,
+) -> crate::ContinuityEventInput {
+    crate::ContinuityEventInput {
+        event_id: session_authority_cutover_event_id(&summary.project_id),
+        project_id: summary.project_id.clone(),
+        subject_id: None,
+        session_id: None,
+        session_sequence: None,
+        request_id: None,
+        request_fingerprint: None,
+        kind: SESSION_AUTHORITY_CUTOVER_EVENT_KIND.to_owned(),
+        payload_version: 1,
+        recorded_at_unix_ms: summary.manifest_recorded_at_unix_ms.saturating_add(1),
+        revision_head: None,
+        revision_branch: None,
+        payload: serde_json::json!({
+            "source": "native-session-authority",
+            "formatVersion": 1,
+            "legacySessionSnapshotEventId": summary.manifest_event_id,
+            "legacySessionEventDigest": summary.source_digest,
+            "legacySessionEventCount": summary.session_events
+        }),
+    }
+}
+
+fn native_born_session_authority_input(
+    identity: &crate::ProjectIdentity,
+) -> crate::ContinuityEventInput {
+    crate::ContinuityEventInput {
+        event_id: session_authority_cutover_event_id(&identity.project_id),
+        project_id: identity.project_id.clone(),
+        subject_id: None,
+        session_id: None,
+        session_sequence: None,
+        request_id: None,
+        request_fingerprint: None,
+        kind: SESSION_AUTHORITY_CUTOVER_EVENT_KIND.to_owned(),
+        payload_version: 2,
+        recorded_at_unix_ms: identity.created_at_unix_ms.saturating_add(1),
+        revision_head: None,
+        revision_branch: None,
+        payload: serde_json::json!({
+            "source": "native-session-authority",
+            "formatVersion": 2,
+            "origin": "native-born"
+        }),
+    }
+}
+
+pub(crate) fn session_authority_cutover_is_complete(
+    store: &crate::ContinuityStore,
+    project_id: &str,
+) -> Result<bool, LeyCoreError> {
+    let event_id = session_authority_cutover_event_id(project_id);
+    let Some(event) = store.event(project_id, &event_id)? else {
+        return Ok(false);
+    };
+    if event.kind != SESSION_AUTHORITY_CUTOVER_EVENT_KIND
+        || event.subject_id.is_some()
+        || event.session_id.is_some()
+        || event.session_sequence.is_some()
+        || event.request_id.is_some()
+        || event.request_fingerprint.is_some()
+        || event.revision_head.is_some()
+        || event.revision_branch.is_some()
+        || event.payload["source"] != "native-session-authority"
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native session-authority marker is invalid".to_owned(),
+        ));
+    }
+    match event.payload["formatVersion"].as_u64() {
+        Some(2) => {
+            if event.payload_version != 2
+                || event.payload["origin"] != "native-born"
+                || event.payload.as_object().map_or(0, |payload| payload.len()) != 3
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(
+                    "native-born session-authority cutover marker is invalid".to_owned(),
+                ));
+            }
+            return Ok(true);
+        }
+        Some(1) => {}
+        _ => {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native session-authority marker has an unsupported format".to_owned(),
+            ))
+        }
+    }
+    let manifest_event_id = event.payload["legacySessionSnapshotEventId"]
+        .as_str()
+        .ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "native session-authority cutover marker is invalid".to_owned(),
+            )
+        })?;
+    let manifest_digest = event.payload["legacySessionEventDigest"]
+        .as_str()
+        .ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "native session-authority cutover marker is invalid".to_owned(),
+            )
+        })?;
+    let manifest_count = event.payload["legacySessionEventCount"]
+        .as_u64()
+        .ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "native session-authority cutover marker is invalid".to_owned(),
+            )
+        })?;
+    let Some(manifest) = store.event(project_id, manifest_event_id)? else {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native session-authority cutover marker references a missing session snapshot"
+                .to_owned(),
+        ));
+    };
+    if event.payload_version != 1
+        || event.recorded_at_unix_ms != manifest.recorded_at_unix_ms.saturating_add(1)
+        || event.payload.as_object().map_or(0, |payload| payload.len()) != 5
+        || manifest.kind != "legacy-session-snapshot-imported"
+        || manifest.session_id.is_some()
+        || manifest.session_sequence.is_some()
+        || manifest.request_id.is_some()
+        || manifest.request_fingerprint.is_some()
+        || manifest.payload["source"] != "legacy-session-memory"
+        || manifest.payload["formatVersion"] != 1
+        || manifest.payload["eventDigest"] != manifest_digest
+        || manifest.payload["sessionEventCount"] != manifest_count
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native session-authority cutover marker is invalid".to_owned(),
+        ));
+    }
+    Ok(true)
+}
+
+pub(crate) fn establish_native_born_session_authority(
+    project_start: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+) -> Result<String, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let project_id = diagnostic.identity.project_id.clone();
+    store.register_project(&diagnostic.identity)?;
+    if session_authority_cutover_is_complete(store, &project_id)? {
+        let marker = store
+            .event(
+                &project_id,
+                &session_authority_cutover_event_id(&project_id),
+            )?
+            .ok_or_else(|| {
+                LeyCoreError::InvalidContinuityStore(
+                    "native session-authority marker disappeared during initialization".to_owned(),
+                )
+            })?;
+        if marker.payload["origin"] == "native-born" {
+            return Ok(project_id);
+        }
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native-born session authority cannot replace a legacy-cutover authority".to_owned(),
+        ));
+    }
+    let input = native_born_session_authority_input(&diagnostic.identity);
+    match store.append_project_event_if_count(&input, 0) {
+        Ok(_) => {}
+        Err(error) => {
+            if session_authority_cutover_is_complete(store, &project_id)? {
+                if store
+                    .event(
+                        &project_id,
+                        &session_authority_cutover_event_id(&project_id),
+                    )?
+                    .is_some_and(|marker| marker.payload["origin"] == "native-born")
+                {
+                    return Ok(project_id);
+                }
+            }
+            return Err(error);
+        }
+    }
+    if !session_authority_cutover_is_complete(store, &project_id)? {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native-born session authority did not commit a valid marker".to_owned(),
+        ));
+    }
+    Ok(project_id)
+}
+
+pub fn native_session_authority_available(
+    store: &crate::ContinuityStore,
+    project_id: &str,
+) -> Result<bool, LeyCoreError> {
+    session_authority_cutover_is_complete(store, project_id)
+}
+
+// Crash-recoverable cutover coordinator. The fence is durable and idempotent; if the
+// process stops after fencing but before the snapshot/marker commit, the next invocation can
+// safely replay the final legacy session snapshot because no legacy writer can advance it.
+pub(crate) fn ensure_native_session_authority(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+) -> Result<String, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let project_id = diagnose_project(project_start)?.identity.project_id;
+    if session_authority_cutover_is_complete(store, &project_id)? {
+        return Ok(project_id);
+    }
+    fence_legacy_session_writes(project_start, legacy_vault)?;
+    let imported = crate::continuity_import::import_legacy_session_continuity(
+        project_start,
+        legacy_vault,
+        store,
+    )?;
+    store.append_event(&session_authority_cutover_input(&imported))?;
+    if !session_authority_cutover_is_complete(store, &project_id)? {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native session-authority cutover did not commit a valid marker".to_owned(),
+        ));
+    }
+    Ok(project_id)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3099,6 +4489,38 @@ pub(crate) fn read_recovery_derivation_origin(
     let _lock = store.lock(true)?;
     let session_dir = store.open_session(session_id)?;
     let events = store.read_events(session_id, &session_dir)?;
+    recovery_derivation_origin_from_events(events, checkpoint_event_id, record_id)
+}
+
+pub(crate) fn read_recovery_derivation_origin_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    checkpoint_event_id: &str,
+    record_id: &str,
+) -> Result<Option<SessionRecoveryDerivationOrigin>, LeyCoreError> {
+    validate_session_id(session_id)?;
+    validate_event_id(checkpoint_event_id)?;
+    let project_start = project_start.as_ref();
+    let project_id =
+        sync_legacy_continuity_for_session_read(project_start, legacy_vault.as_ref(), store)?;
+    let events = store
+        .events_for_session(&project_id, session_id)?
+        .into_iter()
+        .map(session_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    if events.is_empty() {
+        return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
+    }
+    recovery_derivation_origin_from_events(events, checkpoint_event_id, record_id)
+}
+
+fn recovery_derivation_origin_from_events(
+    events: Vec<SessionEvent>,
+    checkpoint_event_id: &str,
+    record_id: &str,
+) -> Result<Option<SessionRecoveryDerivationOrigin>, LeyCoreError> {
     let event = events
         .iter()
         .find(|event| event.event_id == checkpoint_event_id)
@@ -3158,6 +4580,35 @@ pub(crate) fn read_session_for_memory_compiler(
     let _lock = store.lock(true)?;
     let session_dir = store.open_session(session_id)?;
     let events = store.read_events(session_id, &session_dir)?;
+    memory_compiler_session_from_events(events, &diagnostic.identity.project_id, session_id)
+}
+
+pub(crate) fn read_session_for_memory_compiler_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+) -> Result<(AgentSession, Option<u64>), LeyCoreError> {
+    validate_session_id(session_id)?;
+    let project_start = project_start.as_ref();
+    let project_id =
+        sync_legacy_continuity_for_session_read(project_start, legacy_vault.as_ref(), store)?;
+    let events = store
+        .events_for_session(&project_id, session_id)?
+        .into_iter()
+        .map(session_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    if events.is_empty() {
+        return Err(LeyCoreError::SessionNotFound(session_id.to_owned()));
+    }
+    memory_compiler_session_from_events(events, &project_id, session_id)
+}
+
+fn memory_compiler_session_from_events(
+    events: Vec<SessionEvent>,
+    project_id: &str,
+    session_id: &str,
+) -> Result<(AgentSession, Option<u64>), LeyCoreError> {
     let latest_checkpoint_sequence = events.iter().rev().find_map(|event| {
         matches!(
             &event.payload,
@@ -3166,7 +4617,7 @@ pub(crate) fn read_session_for_memory_compiler(
         )
         .then_some(event.sequence)
     });
-    let session = replay_events(&events, &diagnostic.identity.project_id, session_id)?;
+    let session = replay_events(&events, project_id, session_id)?;
     if session.checkpoints.is_empty() != latest_checkpoint_sequence.is_none() {
         return Err(LeyCoreError::InvalidSessionStore(
             "checkpoint event boundary did not match the replayed session".to_owned(),
@@ -3258,6 +4709,108 @@ pub fn erase_session_memory(
     })
 }
 
+pub fn erase_session_memory_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    session_id: &str,
+    input: EraseSessionMemoryInput,
+) -> Result<SessionMemoryErasure, LeyCoreError> {
+    validate_session_id(session_id)?;
+    let project_start = project_start.as_ref();
+    let legacy_vault = legacy_vault.as_ref();
+    let diagnostic = diagnose_project(project_start)?;
+    let project_id = ensure_native_session_authority(project_start, legacy_vault, store)?;
+    if project_id != diagnostic.identity.project_id {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "native session erasure resolved to a different project".to_owned(),
+        ));
+    }
+    let session = read_session_from_continuity_snapshot(store, &project_id, session_id)?;
+    if session.event_count != input.expected_event_count {
+        return Err(LeyCoreError::InvalidSessionRequest(format!(
+            "session changed from {} events to {}; reload before erasing",
+            input.expected_event_count, session.event_count
+        )));
+    }
+    if session.name != input.expected_name {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "session name changed; reload and type the current name before erasing".to_owned(),
+        ));
+    }
+    let preview = store.preview_session_erasure(&project_id, session_id)?;
+
+    let mut erased_learning_ids = match store.artifact_write_authority_origin(&project_id)? {
+        Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn) => Vec::new(),
+        Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::LegacyCutover) | None => {
+            erase_legacy_session_copy_after_native_confirmation(
+                legacy_vault,
+                &project_id,
+                session_id,
+            )?
+        }
+    };
+    let native = store.with_artifact_authority_lock(|| {
+        let native = store.erase_session(&project_id, session_id, &preview.confirmation_digest)?;
+        if let Err(error) = store.garbage_collect_artifact_state_under_lock(&project_id) {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "session memory was erased, but native artifact cleanup failed: {error}"
+            )));
+        }
+        Ok(native)
+    })?;
+    erased_learning_ids.extend(native.erased_subject_ids);
+    erased_learning_ids.sort();
+    erased_learning_ids.dedup();
+
+    Ok(SessionMemoryErasure {
+        project_id,
+        session_id: session_id.to_owned(),
+        session_name: session.name,
+        erased_learning_ids,
+        ordinary_notes_preserved: true,
+        canvas_documents_preserved: true,
+        project_evidence_preserved: true,
+    })
+}
+
+fn erase_legacy_session_copy_after_native_confirmation(
+    vault: &Path,
+    project_id: &str,
+    session_id: &str,
+) -> Result<Vec<String>, LeyCoreError> {
+    let vault_path = vault.canonicalize().map_err(|source| LeyCoreError::Io {
+        path: vault.to_path_buf(),
+        source,
+    })?;
+    let _lifecycle = lock_project_memory_lifecycle(&vault_path, project_id, false, true)?;
+    let vault_dir = Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
+        LeyCoreError::Io {
+            path: vault_path.clone(),
+            source,
+        }
+    })?;
+    let ley_dir = open_existing_dir(&vault_dir, STORE_ROOT)?;
+    let memory_dir = open_existing_dir(&ley_dir, AGENT_MEMORY_DIRECTORY)?;
+    let projects_dir = open_existing_dir(&memory_dir, PROJECTS_DIRECTORY)?;
+    let project_dir = open_existing_dir(&projects_dir, project_id)?;
+    let erased_learning_ids =
+        erase_learnings_citing_session_under_lifecycle(&project_dir, project_id, session_id)?;
+    let sessions_dir = match project_dir.open_dir_nofollow(SESSIONS_DIRECTORY) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(erased_learning_ids)
+        }
+        Err(source) => return Err(session_io(SESSIONS_DIRECTORY, source)),
+    };
+    match sessions_dir.remove_dir_all(session_id) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => return Err(session_io(session_id, source)),
+    }
+    Ok(erased_learning_ids)
+}
+
 pub fn list_sessions(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -3302,6 +4855,29 @@ pub fn project_session_stats(
     Ok(stats)
 }
 
+pub fn project_session_stats_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+) -> Result<ProjectSessionStats, LeyCoreError> {
+    let mut stats = ProjectSessionStats::default();
+    visit_session_records_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        |session| {
+            stats.total_sessions += 1;
+            match session.status {
+                SessionStatus::Active => stats.active_sessions += 1,
+                SessionStatus::Paused => stats.paused_sessions += 1,
+                SessionStatus::Completed => stats.completed_sessions += 1,
+                SessionStatus::Abandoned => stats.abandoned_sessions += 1,
+            }
+        },
+    )?;
+    Ok(stats)
+}
+
 pub(crate) fn visit_session_records(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -3317,6 +4893,27 @@ pub(crate) fn visit_session_records(
     let total_sessions = session_ids.len();
     for session_id in session_ids {
         visitor(store.rebuild_session(&session_id)?);
+    }
+    Ok(total_sessions)
+}
+
+pub(crate) fn visit_session_records_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+    mut visitor: impl FnMut(AgentSession),
+) -> Result<usize, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let project_id =
+        sync_legacy_continuity_for_session_read(project_start, legacy_vault.as_ref(), store)?;
+    let session_ids = store.session_ids(&project_id)?;
+    let total_sessions = session_ids.len();
+    for session_id in session_ids {
+        visitor(read_session_from_continuity_snapshot(
+            store,
+            &project_id,
+            &session_id,
+        )?);
     }
     Ok(total_sessions)
 }
@@ -3337,50 +4934,8 @@ pub(crate) fn continuity_events_for_migration(
         let events = store.read_events(&session_id, &session_dir)?;
         replay_events(&events, &diagnostic.identity.project_id, &session_id)?;
         for event in events {
-            let (kind, revision_head, revision_branch) = match &event.payload {
-                SessionEventPayload::SessionStarted { .. } => {
-                    ("legacy-session-started", None, None)
-                }
-                SessionEventPayload::CheckpointRecorded(checkpoint) => (
-                    "legacy-checkpoint-recorded",
-                    checkpoint
-                        .project_revision
-                        .as_ref()
-                        .and_then(|revision| revision.head.clone()),
-                    checkpoint
-                        .project_revision
-                        .as_ref()
-                        .and_then(|revision| revision.branch.clone()),
-                ),
-                SessionEventPayload::RecoveryCheckpointRecorded(recovery) => (
-                    "legacy-recovery-checkpoint-recorded",
-                    recovery
-                        .checkpoint
-                        .project_revision
-                        .as_ref()
-                        .and_then(|revision| revision.head.clone()),
-                    recovery
-                        .checkpoint
-                        .project_revision
-                        .as_ref()
-                        .and_then(|revision| revision.branch.clone()),
-                ),
-                SessionEventPayload::SessionFinished(_) => ("legacy-session-finished", None, None),
-                SessionEventPayload::ContextUtilityBound(_) => {
-                    ("legacy-context-utility-bound", None, None)
-                }
-                SessionEventPayload::ContextUtilityObserved(_) => {
-                    ("legacy-context-utility-observed", None, None)
-                }
-                SessionEventPayload::SessionRenamed(_) => ("legacy-session-renamed", None, None),
-                SessionEventPayload::UserPromptObserved(_) => {
-                    ("legacy-user-prompt-observed", None, None)
-                }
-                SessionEventPayload::AssistantResponseObserved(_) => {
-                    ("legacy-assistant-response-observed", None, None)
-                }
-                SessionEventPayload::ToolObserved(_) => ("legacy-tool-observed", None, None),
-            };
+            let kind = legacy_session_continuity_kind(&event.payload);
+            let (revision_head, revision_branch) = session_event_revision(&event.payload);
             let payload = serde_json::to_value(&event).map_err(|error| {
                 LeyCoreError::InvalidSessionStore(format!(
                     "validated session event could not be serialized for migration: {error}"
@@ -3406,6 +4961,50 @@ pub(crate) fn continuity_events_for_migration(
     Ok(imported)
 }
 
+fn legacy_session_continuity_kind(payload: &SessionEventPayload) -> &'static str {
+    match payload {
+        SessionEventPayload::SessionStarted { .. } => "legacy-session-started",
+        SessionEventPayload::CheckpointRecorded(_) => "legacy-checkpoint-recorded",
+        SessionEventPayload::RecoveryCheckpointRecorded(_) => "legacy-recovery-checkpoint-recorded",
+        SessionEventPayload::SessionFinished(_) => "legacy-session-finished",
+        SessionEventPayload::ContextUtilityBound(_) => "legacy-context-utility-bound",
+        SessionEventPayload::ContextUtilityObserved(_) => "legacy-context-utility-observed",
+        SessionEventPayload::SessionRenamed(_) => "legacy-session-renamed",
+        SessionEventPayload::UserPromptObserved(_) => "legacy-user-prompt-observed",
+        SessionEventPayload::AssistantResponseObserved(_) => "legacy-assistant-response-observed",
+        SessionEventPayload::ToolObserved(_) => "legacy-tool-observed",
+    }
+}
+
+fn native_session_continuity_kind(payload: &SessionEventPayload) -> &'static str {
+    match payload {
+        SessionEventPayload::SessionStarted { .. } => "session-started",
+        SessionEventPayload::CheckpointRecorded(_) => "checkpoint-recorded",
+        SessionEventPayload::RecoveryCheckpointRecorded(_) => "recovery-checkpoint-recorded",
+        SessionEventPayload::SessionFinished(_) => "session-finished",
+        SessionEventPayload::ContextUtilityBound(_) => "context-utility-bound",
+        SessionEventPayload::ContextUtilityObserved(_) => "context-utility-observed",
+        SessionEventPayload::SessionRenamed(_) => "session-renamed",
+        SessionEventPayload::UserPromptObserved(_) => "user-prompt-observed",
+        SessionEventPayload::AssistantResponseObserved(_) => "assistant-response-observed",
+        SessionEventPayload::ToolObserved(_) => "tool-observed",
+    }
+}
+
+fn session_event_revision(payload: &SessionEventPayload) -> (Option<String>, Option<String>) {
+    let revision = match payload {
+        SessionEventPayload::CheckpointRecorded(checkpoint) => checkpoint.project_revision.as_ref(),
+        SessionEventPayload::RecoveryCheckpointRecorded(recovery) => {
+            recovery.checkpoint.project_revision.as_ref()
+        }
+        _ => None,
+    };
+    (
+        revision.and_then(|revision| revision.head.clone()),
+        revision.and_then(|revision| revision.branch.clone()),
+    )
+}
+
 impl From<&AgentSession> for SessionSummary {
     fn from(session: &AgentSession) -> Self {
         Self {
@@ -3429,7 +5028,7 @@ fn normalize_checkpoint(
     input: CheckpointInput,
     event_id: &str,
     recorded_at: u64,
-    memory: &crate::ingestion::LoadedProjectMemory,
+    artifacts: &CheckpointArtifactAuthority,
 ) -> Result<(SessionCheckpoint, Vec<MemoryRedaction>), LeyCoreError> {
     let verification_evidence_artifacts = input
         .verification
@@ -3610,19 +5209,24 @@ fn normalize_checkpoint(
         });
     }
     let touched_artifacts = artifact_citations_for_paths(
-        memory,
+        artifacts,
         input.touched_artifacts.into_iter().collect(),
         "touched artifact",
     )?;
     let project_revision = Some(SessionProjectRevision {
-        graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
-        artifact_snapshot_id: memory.graph.artifact_snapshot_id.clone(),
-        captured_at_unix_ms: memory.graph.generated_at_unix_ms,
-        head: memory.graph.git.as_ref().and_then(|git| git.head.clone()),
-        branch: memory.graph.git.as_ref().and_then(|git| git.branch.clone()),
-        tracked_changes: memory
-            .graph
-            .git
+        graph_snapshot_id: artifacts.graph_snapshot_id.clone(),
+        artifact_snapshot_id: artifacts.artifact_snapshot_id.clone(),
+        captured_at_unix_ms: artifacts.generated_at_unix_ms,
+        head: artifacts
+            .captured_git
+            .as_ref()
+            .and_then(|git| git.head.clone()),
+        branch: artifacts
+            .captured_git
+            .as_ref()
+            .and_then(|git| git.branch.clone()),
+        tracked_changes: artifacts
+            .captured_git
             .as_ref()
             .map_or(0, |git| git.changes.len() as u64),
     });
@@ -3650,7 +5254,7 @@ fn normalize_checkpoint(
     let mut verification = Vec::new();
     for (index, item) in input.verification.into_iter().enumerate() {
         let evidence_artifacts = artifact_citations_for_paths(
-            memory,
+            artifacts,
             item.evidence_artifact_paths,
             "verification evidence artifact",
         )?;
@@ -3707,7 +5311,7 @@ fn normalize_checkpoint(
 }
 
 fn artifact_citations_for_paths(
-    memory: &crate::ingestion::LoadedProjectMemory,
+    artifacts: &CheckpointArtifactAuthority,
     paths: Vec<String>,
     description: &str,
 ) -> Result<Vec<SessionArtifactCitation>, LeyCoreError> {
@@ -3717,19 +5321,18 @@ fn artifact_citations_for_paths(
         if !unique.insert(path.clone()) {
             continue;
         }
-        let artifact = memory
-            .manifest
+        let artifact = artifacts
             .files
             .iter()
-            .find(|artifact| artifact.path == path)
+            .find(|artifact| artifact.artifact_path == path)
             .ok_or_else(|| {
                 LeyCoreError::InvalidSessionRequest(format!(
                     "{description} is not in the current approved snapshot: {path}"
                 ))
             })?;
         citations.push(SessionArtifactCitation {
-            artifact_path: artifact.path.clone(),
-            artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
+            artifact_path: artifact.artifact_path.clone(),
+            artifact_snapshot_id: artifacts.artifact_snapshot_id.clone(),
             content_hash: artifact.content_hash.clone(),
             media_type: artifact.media_type,
             start_line: if artifact.media_type.is_some() { 0 } else { 1 },
@@ -4564,10 +6167,18 @@ fn context_utility_has_outcome_signal(outcome: &ContextUtilityOutcomeEvidence) -
         || outcome.unresolved_count > 0
 }
 
+enum PreparedSessionMutation {
+    Replay {
+        session: AgentSession,
+        event_id: String,
+    },
+    Append(SessionEvent),
+}
+
 fn mutate_session(
     project_id: &str,
     session_id: &str,
-    mut pending: PendingEvent,
+    pending: PendingEvent,
     vault: impl AsRef<Path>,
 ) -> Result<SessionMutation, LeyCoreError> {
     let store = SessionStore::open(&vault, project_id, pending.allow_create)?
@@ -4583,8 +6194,29 @@ fn mutate_session(
     } else {
         open_existing_dir(&session_dir, EVENTS_DIRECTORY)?
     };
-    let event_name = format!("{}.json", pending.event_id);
     let existing = store.read_events(session_id, &session_dir)?;
+    match prepare_session_mutation(project_id, session_id, pending, &existing)? {
+        PreparedSessionMutation::Replay { session, event_id } => {
+            store.persist_projection(&session_dir, &session)?;
+            Ok(mutation(session, &event_id, true))
+        }
+        PreparedSessionMutation::Append(event) => {
+            let event_name = format!("{}.json", event.event_id);
+            let body = json_body(&event, SESSION_EVENT_LIMIT_BYTES, &event_name)?;
+            write_immutable_private(&events_dir, &event_name, &body)?;
+            let session = store.rebuild_session_from_dir(session_id, &session_dir)?;
+            store.persist_projection(&session_dir, &session)?;
+            Ok(mutation(session, &event.event_id, false))
+        }
+    }
+}
+
+fn prepare_session_mutation(
+    project_id: &str,
+    session_id: &str,
+    mut pending: PendingEvent,
+    existing: &[SessionEvent],
+) -> Result<PreparedSessionMutation, LeyCoreError> {
     if let Some(event) = existing
         .iter()
         .find(|event| event.event_id == pending.event_id)
@@ -4604,9 +6236,11 @@ fn mutate_session(
         if !retry_payload_matches(&event.payload, &pending.payload) {
             return Err(LeyCoreError::SessionIdempotencyConflict(pending.request_id));
         }
-        let session = store.rebuild_session_from_dir(session_id, &session_dir)?;
-        store.persist_projection(&session_dir, &session)?;
-        return Ok(mutation(session, &pending.event_id, true));
+        let session = replay_events(existing, project_id, session_id)?;
+        return Ok(PreparedSessionMutation::Replay {
+            session,
+            event_id: pending.event_id,
+        });
     }
     apply_automatic_evidence_capacity(&mut pending, retained_automatic_evidence_bytes(&existing));
     resolve_pending_context_utility(&mut pending.payload, &existing)?;
@@ -4684,7 +6318,7 @@ fn mutate_session(
         .unwrap_or(1);
     let recorded_at_unix_ms =
         normalize_payload_recorded_at(&mut pending.payload, minimum_recorded_at);
-    let event = SessionEvent {
+    Ok(PreparedSessionMutation::Append(SessionEvent {
         schema_version: pending.schema_version,
         event_id: pending.event_id.clone(),
         project_id: project_id.to_owned(),
@@ -4695,12 +6329,123 @@ fn mutate_session(
         recorded_at_unix_ms,
         redactions: pending.redactions,
         payload: pending.payload,
-    };
-    let body = json_body(&event, SESSION_EVENT_LIMIT_BYTES, &event_name)?;
-    write_immutable_private(&events_dir, &event_name, &body)?;
-    let session = store.rebuild_session_from_dir(session_id, &session_dir)?;
-    store.persist_projection(&session_dir, &session)?;
-    Ok(mutation(session, &pending.event_id, false))
+    }))
+}
+
+// Staged native backend for the session-authority cutover. It deliberately returns no legacy
+// projection paths; production callers must not expose filesystem receipts for SQLite-only writes.
+#[allow(dead_code)]
+fn mutate_session_in_continuity_store(
+    store: &crate::ContinuityStore,
+    identity: &crate::ProjectIdentity,
+    session_id: &str,
+    pending: PendingEvent,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    crate::validate_project_id(&identity.project_id)?;
+    validate_session_id(session_id)?;
+    store.register_project(identity)?;
+    let (write, snapshot) = store.append_session_event_transactional(
+        &identity.project_id,
+        session_id,
+        |existing| {
+            let existing_session_events = existing
+                .iter()
+                .cloned()
+                .map(session_event_from_continuity)
+                .collect::<Result<Vec<_>, _>>()?;
+            match prepare_session_mutation(
+                &identity.project_id,
+                session_id,
+                pending,
+                &existing_session_events,
+            )? {
+                PreparedSessionMutation::Replay { event_id, .. } => {
+                    let existing = existing
+                        .iter()
+                        .find(|event| event.event_id == event_id)
+                        .ok_or_else(|| {
+                            LeyCoreError::InvalidContinuityStore(format!(
+                                "replayed session event {event_id} is missing from continuity storage"
+                            ))
+                        })?;
+                    Ok(continuity_event_input(existing))
+                }
+                PreparedSessionMutation::Append(event) => native_continuity_event_input(event),
+            }
+        },
+    )?;
+    let events = snapshot
+        .into_iter()
+        .map(session_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    let session = replay_events(&events, &identity.project_id, session_id)?;
+    Ok(SessionWriteResult {
+        session,
+        event_id: write.record.event_id,
+        replayed: !write.created,
+    })
+}
+
+fn mutate_session_with_continuity_transition(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+    identity: &crate::ProjectIdentity,
+    session_id: &str,
+    pending: PendingEvent,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let authority_project_id = ensure_native_session_authority(project_start, legacy_vault, store)?;
+    if authority_project_id != identity.project_id {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "native session authority resolved to a different project".to_owned(),
+        ));
+    }
+    mutate_session_in_continuity_store(store, identity, session_id, pending)
+}
+
+fn continuity_event_input(event: &crate::ContinuityEvent) -> crate::ContinuityEventInput {
+    crate::ContinuityEventInput {
+        event_id: event.event_id.clone(),
+        project_id: event.project_id.clone(),
+        subject_id: event.subject_id.clone(),
+        session_id: event.session_id.clone(),
+        session_sequence: event.session_sequence,
+        request_id: event.request_id.clone(),
+        request_fingerprint: event.request_fingerprint.clone(),
+        kind: event.kind.clone(),
+        payload_version: event.payload_version,
+        recorded_at_unix_ms: event.recorded_at_unix_ms,
+        revision_head: event.revision_head.clone(),
+        revision_branch: event.revision_branch.clone(),
+        payload: event.payload.clone(),
+    }
+}
+
+fn native_continuity_event_input(
+    event: SessionEvent,
+) -> Result<crate::ContinuityEventInput, LeyCoreError> {
+    let kind = native_session_continuity_kind(&event.payload).to_owned();
+    let (revision_head, revision_branch) = session_event_revision(&event.payload);
+    let payload = serde_json::to_value(&event).map_err(|error| {
+        LeyCoreError::InvalidContinuityStore(format!(
+            "native session event could not be serialized: {error}"
+        ))
+    })?;
+    Ok(crate::ContinuityEventInput {
+        event_id: event.event_id,
+        project_id: event.project_id,
+        subject_id: None,
+        session_id: Some(event.session_id),
+        session_sequence: Some(event.sequence),
+        request_id: Some(event.request_id),
+        request_fingerprint: Some(event.request_fingerprint),
+        kind,
+        payload_version: 1,
+        recorded_at_unix_ms: event.recorded_at_unix_ms,
+        revision_head,
+        revision_branch,
+        payload,
+    })
 }
 
 fn align_turn_evidence_retry(pending: &mut PendingEvent, stored: &SessionEventPayload) {
@@ -8922,6 +10667,1077 @@ mod tests {
             handoff: "Add reviewed learnings next".to_owned(),
             unresolved: vec!["Learning promotion remains".to_owned()],
         }
+    }
+
+    #[test]
+    fn continuity_snapshot_replays_sessions_after_legacy_vault_is_removed() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
+        let checkpointed = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            checkpoint_input(request_id('2'), "Native replay checkpoint"),
+        )
+        .unwrap();
+        let finished = finish_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            finish_input(request_id('3')),
+        )
+        .unwrap();
+        let legacy = read_session(&project, &vault, &started.session.session_id).unwrap();
+        assert_eq!(legacy, finished.session);
+        assert!(checkpointed.session.event_count < legacy.event_count);
+
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        crate::import_legacy_continuity(&project, &vault, &store).unwrap();
+        let diagnostic = diagnose_project(&project).unwrap();
+        let native = read_session_from_continuity_snapshot(
+            &store,
+            &diagnostic.identity.project_id,
+            &started.session.session_id,
+        )
+        .unwrap();
+        assert_eq!(native, legacy);
+        let listed =
+            list_sessions_from_continuity_snapshot(&store, &diagnostic.identity.project_id)
+                .unwrap();
+        assert_eq!(listed, vec![SessionSummary::from(&legacy)]);
+
+        std::fs::remove_dir_all(&vault).unwrap();
+        assert_eq!(
+            read_session_from_continuity_snapshot(
+                &store,
+                &diagnostic.identity.project_id,
+                &started.session.session_id,
+            )
+            .unwrap(),
+            legacy
+        );
+        assert_eq!(
+            list_sessions_from_continuity_snapshot(&store, &diagnostic.identity.project_id)
+                .unwrap(),
+            vec![SessionSummary::from(&legacy)]
+        );
+    }
+
+    #[test]
+    fn transition_session_read_resyncs_legacy_writes_before_native_replay() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('6'))).unwrap();
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+
+        let first = read_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+        )
+        .unwrap();
+        assert_eq!(first.event_count, started.session.event_count);
+
+        let checkpointed = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            checkpoint_input(request_id('7'), "Transition reader refresh"),
+        )
+        .unwrap();
+        let refreshed = read_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+        )
+        .unwrap();
+        assert_eq!(refreshed, checkpointed.session);
+        assert_eq!(
+            list_sessions_with_continuity_transition(&project, &vault, &store).unwrap(),
+            vec![SessionSummary::from(&checkpointed.session)]
+        );
+    }
+
+    #[test]
+    fn transition_session_read_uses_native_snapshot_only_after_proven_import() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('8'))).unwrap();
+        let private = base.path().join("private");
+        let store = crate::ContinuityStore::at(private.join("continuity.sqlite3"));
+
+        let missing_vault = base.path().join("missing-vault");
+        assert!(matches!(
+            read_session_with_continuity_transition(
+                &project,
+                &missing_vault,
+                &store,
+                &started.session.session_id,
+            ),
+            Err(LeyCoreError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound
+        ));
+
+        let imported = read_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+        )
+        .unwrap();
+        assert_eq!(imported, started.session);
+        std::fs::remove_dir_all(&vault).unwrap();
+        assert_eq!(
+            read_session_with_continuity_transition(
+                &project,
+                &vault,
+                &store,
+                &started.session.session_id,
+            )
+            .unwrap(),
+            started.session
+        );
+        assert_eq!(
+            list_sessions_with_continuity_transition(&project, &vault, &store).unwrap(),
+            vec![SessionSummary::from(&started.session)]
+        );
+    }
+
+    #[test]
+    fn transition_session_read_stops_consulting_legacy_store_after_cutover_marker() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('9'))).unwrap();
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let imported =
+            crate::continuity_import::import_legacy_session_continuity(&project, &vault, &store)
+                .unwrap();
+        let diagnostic = diagnose_project(&project).unwrap();
+        store
+            .append_event(&session_authority_cutover_input(&imported))
+            .unwrap();
+
+        let legacy_events = vault
+            .join(STORE_ROOT)
+            .join(AGENT_MEMORY_DIRECTORY)
+            .join(PROJECTS_DIRECTORY)
+            .join(&diagnostic.identity.project_id)
+            .join(SESSIONS_DIRECTORY)
+            .join(&started.session.session_id)
+            .join(EVENTS_DIRECTORY);
+        std::fs::write(
+            legacy_events.join("unexpected.txt"),
+            "stale legacy corruption",
+        )
+        .unwrap();
+
+        assert_eq!(
+            read_session_with_continuity_transition(
+                &project,
+                &vault,
+                &store,
+                &started.session.session_id,
+            )
+            .unwrap(),
+            started.session
+        );
+    }
+
+    #[test]
+    fn transition_session_read_rejects_invalid_cutover_marker() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('a'))).unwrap();
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let imported =
+            crate::continuity_import::import_legacy_session_continuity(&project, &vault, &store)
+                .unwrap();
+        let mut marker = session_authority_cutover_input(&imported);
+        marker.payload["formatVersion"] = serde_json::json!(2);
+        store.append_event(&marker).unwrap();
+
+        assert!(matches!(
+            read_session_with_continuity_transition(
+                &project,
+                &vault,
+                &store,
+                &started.session.session_id,
+            ),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("cutover marker is invalid")
+        ));
+    }
+
+    #[test]
+    fn continuity_session_replay_rejects_unknown_session_bound_event_kinds() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('4'))).unwrap();
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        crate::import_legacy_continuity(&project, &vault, &store).unwrap();
+        let diagnostic = diagnose_project(&project).unwrap();
+        store
+            .append_event(&crate::ContinuityEventInput {
+                event_id: format!("evt_{}", "f".repeat(64)),
+                project_id: diagnostic.identity.project_id.clone(),
+                subject_id: None,
+                session_id: Some(started.session.session_id.clone()),
+                session_sequence: Some(started.session.event_count + 1),
+                request_id: Some(request_id('5')),
+                request_fingerprint: Some(format!("sha256:{}", "a".repeat(64))),
+                kind: "future-session-event".to_owned(),
+                payload_version: 1,
+                recorded_at_unix_ms: started.session.updated_at_unix_ms.saturating_add(1),
+                revision_head: None,
+                revision_branch: None,
+                payload: serde_json::json!({"future": true}),
+            })
+            .unwrap();
+
+        assert!(matches!(
+            read_session_from_continuity_snapshot(
+                &store,
+                &diagnostic.identity.project_id,
+                &started.session.session_id,
+            ),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("invalid embedded event payload")
+        ));
+    }
+
+    #[test]
+    fn continuity_session_replay_accepts_native_session_event_kinds() {
+        let (base, project, vault) = setup_memory();
+        let diagnostic = diagnose_project(&project).unwrap();
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        store.register_project(&diagnostic.identity).unwrap();
+        let request_id = request_id('6');
+        let session_id = deterministic_id(
+            "ses",
+            &format!("{}:{request_id}", diagnostic.identity.project_id),
+            32,
+        );
+        let payload = SessionEventPayload::SessionStarted {
+            name: "Native continuity session".to_owned(),
+            goal: "Replay native SQLite session events".to_owned(),
+            source: SessionSource::default(),
+            artifact_snapshot_id: project_artifact_snapshot_id(&project, &vault).unwrap(),
+        };
+        let request_fingerprint = request_fingerprint(
+            &diagnostic.identity.project_id,
+            &session_id,
+            &request_id,
+            &payload,
+        )
+        .unwrap();
+        let event_id = deterministic_id(
+            "evt",
+            &format!("{session_id}:{request_id}:session-started"),
+            64,
+        );
+        let embedded = SessionEvent {
+            schema_version: SESSION_V1_SCHEMA_VERSION,
+            event_id: event_id.clone(),
+            project_id: diagnostic.identity.project_id.clone(),
+            session_id: session_id.clone(),
+            request_id: request_id.clone(),
+            request_fingerprint: request_fingerprint.clone(),
+            sequence: 1,
+            recorded_at_unix_ms: 20_000,
+            redactions: Vec::new(),
+            payload,
+        };
+        let serialized = serde_json::to_value(&embedded).unwrap();
+
+        let (write, events) = store
+            .append_session_event_transactional(
+                &diagnostic.identity.project_id,
+                &session_id,
+                |_| {
+                    Ok(crate::ContinuityEventInput {
+                        event_id,
+                        project_id: diagnostic.identity.project_id.clone(),
+                        subject_id: None,
+                        session_id: Some(session_id.clone()),
+                        session_sequence: Some(1),
+                        request_id: Some(request_id),
+                        request_fingerprint: Some(request_fingerprint),
+                        kind: "session-started".to_owned(),
+                        payload_version: 1,
+                        recorded_at_unix_ms: 20_000,
+                        revision_head: None,
+                        revision_branch: None,
+                        payload: serialized,
+                    })
+                },
+            )
+            .unwrap();
+        assert!(write.created);
+        assert_eq!(events.len(), 1);
+
+        let replayed = read_session_from_continuity_snapshot(
+            &store,
+            &diagnostic.identity.project_id,
+            &session_id,
+        )
+        .unwrap();
+        assert_eq!(replayed.name, "Native continuity session");
+        assert_eq!(replayed.goal, "Replay native SQLite session events");
+        assert_eq!(replayed.event_count, 1);
+    }
+
+    fn native_start_pending(
+        identity: &crate::ProjectIdentity,
+        project: &Path,
+        vault: &Path,
+        request_id: String,
+        name: &str,
+    ) -> (String, PendingEvent) {
+        let session_id =
+            deterministic_id("ses", &format!("{}:{request_id}", identity.project_id), 32);
+        let event_id = deterministic_id(
+            "evt",
+            &format!("{session_id}:{request_id}:session-started"),
+            64,
+        );
+        (
+            session_id,
+            PendingEvent {
+                event_id,
+                request_id,
+                redactions: Vec::new(),
+                payload: SessionEventPayload::SessionStarted {
+                    name: name.to_owned(),
+                    goal: "Exercise the native session mutation backend".to_owned(),
+                    source: SessionSource::default(),
+                    artifact_snapshot_id: project_artifact_snapshot_id(project, vault).unwrap(),
+                },
+                schema_version: SESSION_V1_SCHEMA_VERSION,
+                allow_create: true,
+                expected_event_count: None,
+            },
+        )
+    }
+
+    fn native_rename_pending(
+        session_id: &str,
+        request_id: String,
+        recorded_at_unix_ms: u64,
+        expected_event_count: u64,
+        name: &str,
+    ) -> PendingEvent {
+        let event_id = deterministic_id(
+            "evt",
+            &format!("{session_id}:{request_id}:session-renamed"),
+            64,
+        );
+        PendingEvent {
+            event_id: event_id.clone(),
+            request_id,
+            redactions: Vec::new(),
+            payload: SessionEventPayload::SessionRenamed(SessionRename {
+                event_id,
+                recorded_at_unix_ms,
+                name: name.to_owned(),
+                note: "Native mutation test".to_owned(),
+            }),
+            schema_version: SESSION_V1_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(expected_event_count),
+        }
+    }
+
+    #[test]
+    fn native_session_mutation_starts_replays_and_rejects_conflicting_retry() {
+        let (base, project, vault) = setup_memory();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let request = request_id('b');
+        let (session_id, pending) = native_start_pending(
+            &identity,
+            &project,
+            &vault,
+            request.clone(),
+            "Native session",
+        );
+        let first =
+            mutate_session_in_continuity_store(&store, &identity, &session_id, pending).unwrap();
+        assert!(!first.replayed);
+        assert_eq!(first.session.event_count, 1);
+        assert_eq!(first.session.name, "Native session");
+        assert_eq!(
+            store
+                .events_for_session(&identity.project_id, &session_id)
+                .unwrap()[0]
+                .kind,
+            "session-started"
+        );
+
+        let (_, retry_pending) = native_start_pending(
+            &identity,
+            &project,
+            &vault,
+            request.clone(),
+            "Native session",
+        );
+        let retry =
+            mutate_session_in_continuity_store(&store, &identity, &session_id, retry_pending)
+                .unwrap();
+        assert!(retry.replayed);
+        assert_eq!(retry.event_id, first.event_id);
+        assert_eq!(retry.session, first.session);
+
+        let (_, conflicting) =
+            native_start_pending(&identity, &project, &vault, request, "Conflicting name");
+        assert!(matches!(
+            mutate_session_in_continuity_store(&store, &identity, &session_id, conflicting),
+            Err(LeyCoreError::SessionIdempotencyConflict(_))
+        ));
+        assert_eq!(
+            store
+                .events_for_session(&identity.project_id, &session_id)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn native_session_mutation_enforces_expected_count_and_terminal_state() {
+        let (base, project, vault) = setup_memory();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let (session_id, start) = native_start_pending(
+            &identity,
+            &project,
+            &vault,
+            request_id('c'),
+            "Native guarded",
+        );
+        let started =
+            mutate_session_in_continuity_store(&store, &identity, &session_id, start).unwrap();
+
+        let rename = native_rename_pending(
+            &session_id,
+            request_id('d'),
+            started.session.updated_at_unix_ms.saturating_add(1),
+            1,
+            "Native guarded renamed",
+        );
+        let renamed =
+            mutate_session_in_continuity_store(&store, &identity, &session_id, rename).unwrap();
+        assert_eq!(renamed.session.event_count, 2);
+        assert_eq!(renamed.session.name, "Native guarded renamed");
+
+        let stale = native_rename_pending(
+            &session_id,
+            request_id('e'),
+            renamed.session.updated_at_unix_ms.saturating_add(1),
+            1,
+            "Stale rename",
+        );
+        assert!(matches!(
+            mutate_session_in_continuity_store(&store, &identity, &session_id, stale),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("session changed from 1 events to 2")
+        ));
+
+        let finish_request = request_id('f');
+        let finish_event_id = deterministic_id(
+            "evt",
+            &format!("{session_id}:{finish_request}:session-finished"),
+            64,
+        );
+        let finish = PendingEvent {
+            event_id: finish_event_id.clone(),
+            request_id: finish_request,
+            redactions: Vec::new(),
+            payload: SessionEventPayload::SessionFinished(SessionFinish {
+                event_id: finish_event_id,
+                recorded_at_unix_ms: renamed.session.updated_at_unix_ms.saturating_add(1),
+                status: SessionStatus::Completed,
+                summary: "Native session completed".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            }),
+            schema_version: SESSION_V1_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(2),
+        };
+        let finished =
+            mutate_session_in_continuity_store(&store, &identity, &session_id, finish).unwrap();
+        assert_eq!(finished.session.status, SessionStatus::Completed);
+
+        let post_finish = PendingEvent {
+            event_id: deterministic_id(
+                "evt",
+                &format!("{session_id}:{}:session-finished", request_id('1')),
+                64,
+            ),
+            request_id: request_id('1'),
+            redactions: Vec::new(),
+            payload: SessionEventPayload::SessionFinished(SessionFinish {
+                event_id: deterministic_id(
+                    "evt",
+                    &format!("{session_id}:{}:session-finished", request_id('1')),
+                    64,
+                ),
+                recorded_at_unix_ms: finished.session.updated_at_unix_ms.saturating_add(1),
+                status: SessionStatus::Abandoned,
+                summary: "Must not append after terminal state".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            }),
+            schema_version: SESSION_V1_SCHEMA_VERSION,
+            allow_create: false,
+            expected_event_count: Some(3),
+        };
+        assert!(matches!(
+            mutate_session_in_continuity_store(&store, &identity, &session_id, post_finish),
+            Err(LeyCoreError::InvalidSessionRequest(message))
+                if message.contains("already completed")
+        ));
+    }
+
+    #[test]
+    fn native_session_mutation_appends_after_imported_legacy_history() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('2'))).unwrap();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        crate::continuity_import::import_legacy_session_continuity(&project, &vault, &store)
+            .unwrap();
+
+        let rename = native_rename_pending(
+            &started.session.session_id,
+            request_id('3'),
+            started.session.updated_at_unix_ms.saturating_add(1),
+            1,
+            "Renamed after native cutover",
+        );
+        let mutation = mutate_session_in_continuity_store(
+            &store,
+            &identity,
+            &started.session.session_id,
+            rename,
+        )
+        .unwrap();
+        assert_eq!(mutation.session.event_count, 2);
+        assert_eq!(mutation.session.name, "Renamed after native cutover");
+
+        let events = store
+            .events_for_session(&identity.project_id, &started.session.session_id)
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].kind, "legacy-session-started");
+        assert_eq!(events[0].session_sequence, Some(1));
+        assert_eq!(events[1].kind, "session-renamed");
+        assert_eq!(events[1].session_sequence, Some(2));
+    }
+
+    #[test]
+    fn native_session_cutover_recovers_after_fence_and_resists_late_legacy_sync() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('4'))).unwrap();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+
+        assert!(fence_legacy_session_writes(&project, &vault).unwrap());
+        assert!(!fence_legacy_session_writes(&project, &vault).unwrap());
+        assert_eq!(
+            read_session(&project, &vault, &started.session.session_id)
+                .unwrap()
+                .event_count,
+            1
+        );
+        assert!(checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            checkpoint_input(request_id('5'), "Legacy writer must stay fenced"),
+        )
+        .is_err());
+        assert_eq!(
+            read_session(&project, &vault, &started.session.session_id)
+                .unwrap()
+                .event_count,
+            1
+        );
+
+        assert_eq!(
+            ensure_native_session_authority(&project, &vault, &store).unwrap(),
+            identity.project_id
+        );
+        assert!(session_authority_cutover_is_complete(&store, &identity.project_id).unwrap());
+
+        // A transition reader that began just before the marker commit can still finish its old
+        // full legacy sync. That reconciliation must preserve the cutover's session manifest.
+        crate::import_legacy_continuity(&project, &vault, &store).unwrap();
+        assert!(session_authority_cutover_is_complete(&store, &identity.project_id).unwrap());
+
+        let rename = native_rename_pending(
+            &started.session.session_id,
+            request_id('6'),
+            started.session.updated_at_unix_ms.saturating_add(1),
+            1,
+            "Native after recovered cutover",
+        );
+        let mutation = mutate_session_in_continuity_store(
+            &store,
+            &identity,
+            &started.session.session_id,
+            rename,
+        )
+        .unwrap();
+        assert_eq!(mutation.session.event_count, 2);
+        assert_eq!(mutation.session.name, "Native after recovered cutover");
+
+        assert_eq!(
+            ensure_native_session_authority(&project, &vault, &store).unwrap(),
+            identity.project_id
+        );
+        assert_eq!(
+            store
+                .events_for_session(&identity.project_id, &started.session.session_id)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn transition_session_writers_cut_over_once_and_append_only_native_events() {
+        let (base, project, vault) = setup_memory();
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let started = start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            StartSessionInput {
+                request_id: request_id('7'),
+                name: "Transition native session".to_owned(),
+                goal: "Exercise the public native session writer surface".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id.clone();
+        assert!(!started.replayed);
+
+        let prompt = record_session_prompt_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: request_id('8'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("transition-turn".to_owned()),
+                text: "Preserve this native prompt.".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(prompt.session.event_count, 2);
+
+        let tool = record_session_tool_observation_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            ToolObservationInput {
+                request_id: request_id('9'),
+                host: "codex".to_owned(),
+                turn_correlation_material: Some("transition-turn".to_owned()),
+                tool_call_correlation_material: "transition-tool".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test focused".to_owned(),
+                result: "observed output".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(tool.session.event_count, 3);
+
+        let checkpoint = checkpoint_session_if_current_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            3,
+            checkpoint_input(request_id('a'), "Native transition checkpoint"),
+        )
+        .unwrap();
+        assert_eq!(checkpoint.session.event_count, 4);
+
+        let renamed = rename_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            RenameSessionInput {
+                request_id: request_id('b'),
+                expected_event_count: Some(4),
+                name: "Transition native renamed".to_owned(),
+                note: "Keep the native writer path explicit".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(renamed.session.event_count, 5);
+
+        let response = record_session_response_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: request_id('c'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("transition-turn".to_owned()),
+                text: "Native response captured.".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(response.session.event_count, 6);
+
+        let finished = finish_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            FinishSessionInput {
+                request_id: request_id('d'),
+                status: SessionStatus::Completed,
+                summary: "Native transition writer verified".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(finished.session.event_count, 7);
+        assert_eq!(finished.session.status, SessionStatus::Completed);
+
+        let identity = diagnose_project(&project).unwrap().identity;
+        assert!(session_authority_cutover_is_complete(&store, &identity.project_id).unwrap());
+        let events = store
+            .events_for_session(&identity.project_id, &session_id)
+            .unwrap();
+        assert_eq!(events.len(), 7);
+        assert!(events
+            .iter()
+            .all(|event| !event.kind.starts_with("legacy-")));
+        assert_eq!(
+            read_session_with_continuity_transition(&project, &vault, &store, &session_id).unwrap(),
+            finished.session
+        );
+
+        assert!(start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('e'),
+                name: "Legacy writer must remain fenced".to_owned(),
+                goal: "This write must not land".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn transition_session_lifecycle_survives_vault_loss_after_cutover() {
+        let (base, project, vault) = setup_memory();
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let ingested =
+            crate::ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        let started = start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            StartSessionInput {
+                request_id: request_id('1'),
+                name: "Vault-loss lifecycle".to_owned(),
+                goal: "Keep native continuity writable after legacy storage disappears".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id.clone();
+        assert_eq!(
+            started.session.artifact_snapshot_id_at_start,
+            ingested.snapshot_id
+        );
+
+        std::fs::remove_dir_all(&vault).unwrap();
+
+        let prompt = record_session_prompt_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: request_id('2'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("vault-loss-turn".to_owned()),
+                text: "Continue from native continuity.".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(prompt.session.event_count, 2);
+
+        let tool = record_session_tool_observation_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            ToolObservationInput {
+                request_id: request_id('3'),
+                host: "codex".to_owned(),
+                turn_correlation_material: Some("vault-loss-turn".to_owned()),
+                tool_call_correlation_material: "vault-loss-tool".to_owned(),
+                tool_name: "Bash".to_owned(),
+                observation_kind: ToolObservationKind::Returned,
+                command: "cargo test focused".to_owned(),
+                result: "observed output".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(tool.session.event_count, 3);
+
+        let mut checkpoint_input = checkpoint_input(
+            request_id('4'),
+            "Native metadata still pins checkpoint evidence",
+        );
+        checkpoint_input.touched_artifacts = vec!["README.md".to_owned()];
+        let checkpoint = checkpoint_session_if_current_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            3,
+            checkpoint_input,
+        )
+        .unwrap();
+        assert_eq!(checkpoint.session.event_count, 4);
+        assert_eq!(
+            checkpoint.session.checkpoints[0].touched_artifacts[0].artifact_path,
+            "README.md"
+        );
+        assert_eq!(
+            checkpoint.session.checkpoints[0]
+                .project_revision
+                .as_ref()
+                .unwrap()
+                .artifact_snapshot_id,
+            ingested.snapshot_id
+        );
+
+        let renamed = rename_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            RenameSessionInput {
+                request_id: request_id('5'),
+                expected_event_count: Some(4),
+                name: "Vault-loss lifecycle renamed".to_owned(),
+                note: "Native authority no longer depends on the removed vault".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(renamed.session.event_count, 5);
+
+        let response = record_session_response_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            TurnEvidenceInput {
+                request_id: request_id('6'),
+                origin: TurnEvidenceOrigin::HostHook,
+                host: Some("codex".to_owned()),
+                correlation_material: Some("vault-loss-turn".to_owned()),
+                text: "Native lifecycle remained writable.".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(response.session.event_count, 6);
+
+        let finished = finish_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            FinishSessionInput {
+                request_id: request_id('7'),
+                status: SessionStatus::Completed,
+                summary: "Vault-loss lifecycle completed".to_owned(),
+                final_response: String::new(),
+                handoff: String::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(finished.session.event_count, 7);
+
+        let second = start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            StartSessionInput {
+                request_id: request_id('8'),
+                name: "Post-loss native session".to_owned(),
+                goal: "Start directly from native artifact and session authority".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            second.session.artifact_snapshot_id_at_start,
+            ingested.snapshot_id
+        );
+        assert_eq!(second.session.event_count, 1);
+    }
+
+    #[test]
+    fn transition_session_erasure_finishes_after_legacy_cleanup_crash_boundary() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('1'))).unwrap();
+        let learning = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: request_id('2'),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Session-bound learning".to_owned(),
+                guidance: "Erase this derivative when its evidence session is erased.".to_owned(),
+                confidence_percent: 70,
+                provenance: LearningProvenance::Inferred,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: started.session.session_id.clone(),
+                    record_id: started.session.session_id.clone(),
+                    note: "The session itself is the cited evidence.".to_owned(),
+                }],
+            },
+        )
+        .unwrap();
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        ensure_native_session_authority(&project, &vault, &store).unwrap();
+        let renamed = rename_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            RenameSessionInput {
+                request_id: request_id('3'),
+                expected_event_count: Some(1),
+                name: "Native erase target".to_owned(),
+                note: "Advance native history after cutover".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(renamed.session.event_count, 2);
+
+        let erased_legacy = erase_legacy_session_copy_after_native_confirmation(
+            &vault,
+            &renamed.session.project_id,
+            &renamed.session.session_id,
+        )
+        .unwrap();
+        assert_eq!(erased_legacy, vec![learning.learning.learning_id.clone()]);
+        assert!(read_learning(&project, &vault, &learning.learning.learning_id).is_err());
+        assert_eq!(
+            store
+                .events_for_session(&renamed.session.project_id, &renamed.session.session_id)
+                .unwrap()
+                .len(),
+            2
+        );
+
+        let erased = erase_session_memory_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &renamed.session.session_id,
+            EraseSessionMemoryInput {
+                expected_event_count: 2,
+                expected_name: "Native erase target".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(erased.session_id, renamed.session.session_id);
+        assert!(store
+            .events_for_session(&renamed.session.project_id, &renamed.session.session_id)
+            .unwrap()
+            .is_empty());
+        assert!(matches!(
+            read_session_with_continuity_transition(
+                &project,
+                &vault,
+                &store,
+                &renamed.session.session_id,
+            ),
+            Err(LeyCoreError::SessionNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn native_born_session_erasure_never_requires_a_legacy_vault() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("native-project");
+        let missing_vault = base.path().join("never-created-vault");
+        let private = base.path().join("private");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        initialize_project(
+            &project,
+            Some("Native session erase"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        std::fs::write(project.join("README.md"), "# Native session erase\n").unwrap();
+        let store = crate::ContinuityStore::at(private.join("continuity.sqlite3"));
+        crate::ingest_project_with_native_authority(&project, &store).unwrap();
+        crate::establish_native_born_project_authorities(&project, &store).unwrap();
+
+        let started = start_session_with_continuity_transition(
+            &project,
+            &missing_vault,
+            &store,
+            StartSessionInput {
+                request_id: request_id('a'),
+                name: "Native erase target".to_owned(),
+                goal: "Erase without inventing a legacy vault dependency".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let erased = erase_session_memory_with_continuity_transition(
+            &project,
+            &missing_vault,
+            &store,
+            &started.session.session_id,
+            EraseSessionMemoryInput {
+                expected_event_count: 1,
+                expected_name: "Native erase target".to_owned(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(erased.session_id, started.session.session_id);
+        assert!(store
+            .events_for_session(&erased.project_id, &erased.session_id)
+            .unwrap()
+            .is_empty());
+        assert!(!missing_vault.exists());
     }
 
     fn compile_test_pack(

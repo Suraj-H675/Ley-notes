@@ -1,5 +1,7 @@
 # ADR 0071: Derived Specification Verification methods
 
+> Current migration note: this derived projection is retired from Ley. Verification-method prose remains inside the exact approved Markdown source; APIs no longer expose `vmd_` objects, projection budgets, or the criterion/Verification review tool. The parser/review implementation and projection-specific tests have been removed rather than retained as compatibility architecture.
+
 ## Context
 
 LEY.md defines the intended requirement-verification chain as:

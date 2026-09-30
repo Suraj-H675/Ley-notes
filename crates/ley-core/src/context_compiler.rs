@@ -7,15 +7,12 @@ use crate::policy_bundle::{
 };
 use crate::revision::{estimate_revision_applicability_tokens, estimate_revision_freshness_tokens};
 use crate::specification::{
-    acceptance_criteria_projection_tokens, derive_specification_acceptance_criteria,
-    derive_specification_verification_methods, omit_acceptance_criteria_for_budget,
-    omit_verification_methods_for_budget, verification_methods_projection_tokens,
-    SpecificationAcceptanceCriteria, SpecificationVerificationMethods, TaskSpecificationCandidate,
-    TaskSpecificationExclusionReason, TaskSpecificationScan,
+    TaskSpecificationCandidate, TaskSpecificationExclusionReason, TaskSpecificationScan,
 };
 use crate::{
-    evaluate_agent_egress, search_project_memory, AgentEgressBlockReason, AgentEgressPolicy,
-    AgentEgressScopeKind, AgentEgressTarget, ContextMountRegistry, ContextMountStatus,
+    evaluate_agent_egress, search_project_memory, search_project_memory_with_continuity_transition,
+    AgentEgressBlockReason, AgentEgressPolicy, AgentEgressScopeKind, AgentEgressTarget,
+    ApprovedSourceRegistry, ContextMountRegistry, ContextMountStatus, ContinuityStore,
     EgressPolicyRegistry, GraphCitation, KnowledgeScopeKind, KnowledgeScopeRegistry,
     KnowledgeScopeSourceStatus, LearningFreshness, LearningKind, LearningOriginSummary,
     LearningState, LearningTrustState, LeyCoreError, PolicyBundleRegistry, ProjectMemoryConflict,
@@ -89,6 +86,7 @@ impl Default for ContextCompileLimits {
 #[derive(Debug, Clone, Copy)]
 pub struct AgentContextAuthorities<'a> {
     pub specifications: &'a SpecificationRegistry,
+    pub approved_sources: &'a ApprovedSourceRegistry,
     pub mounts: &'a ContextMountRegistry,
     pub knowledge_scopes: &'a KnowledgeScopeRegistry,
     pub policy_bundles: &'a PolicyBundleRegistry,
@@ -237,10 +235,6 @@ pub struct CompiledSpecificationItem {
     pub content_hash: String,
     pub approved_at_unix_ms: u64,
     pub source: String,
-    pub acceptance_criteria_tokens: usize,
-    pub acceptance_criteria: SpecificationAcceptanceCriteria,
-    pub verification_methods_tokens: usize,
-    pub verification_methods: SpecificationVerificationMethods,
     pub relevance_score: u32,
     pub exact_match: bool,
     pub authority: &'static str,
@@ -310,10 +304,6 @@ pub struct CompiledPolicyBundleItem {
     pub content_hash: String,
     pub approved_at_unix_ms: u64,
     pub source: String,
-    pub acceptance_criteria_tokens: usize,
-    pub acceptance_criteria: SpecificationAcceptanceCriteria,
-    pub verification_methods_tokens: usize,
-    pub verification_methods: SpecificationVerificationMethods,
     pub relevance_score: u32,
     pub exact_match: bool,
     pub authority: &'static str,
@@ -801,17 +791,38 @@ pub fn compile_project_context(
     limits: ContextCompileLimits,
 ) -> Result<CompiledContextPack, LeyCoreError> {
     let specification_registry = SpecificationRegistry::system_default()?;
+    let approved_source_registry = ApprovedSourceRegistry::system_default()?;
     let mount_registry = ContextMountRegistry::system_default()?;
-    compile_project_context_with_registries(
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    crate::import_legacy_approved_sources(
         project_start,
         vault,
-        task,
-        limits,
         &specification_registry,
-        &mount_registry,
-    )
+        approved_source_registry.store(),
+    )?;
+    validate_limits(task, limits)?;
+    approved_source_registry.with_task_scan_locked(project_start, task, |specification_scan| {
+        let search = active_project_search(project_start, vault, task)?;
+        if specification_scan.project_id != search.project_id {
+            return Err(LeyCoreError::InvalidSpecificationRequest(
+                "Approved-source authority and captured memory resolved to different projects"
+                    .to_owned(),
+            ));
+        }
+        let pack = compile_search_result_with_specifications_unfinalized(
+            search,
+            specification_scan,
+            limits,
+        );
+        mount_registry.with_resolved_project_mounts_locked(project_start, |mounts| {
+            append_mounted_references(pack, mounts, task, limits)
+                .map(finalize_context_pack_with_specification_projections)
+        })
+    })
 }
 
+#[cfg(test)]
 pub fn compile_project_context_with_registry(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -838,6 +849,7 @@ pub fn compile_project_context_with_registry(
     })
 }
 
+#[cfg(test)]
 pub fn compile_project_context_with_registries(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -877,11 +889,49 @@ pub fn compile_project_context_for_agent_with_registries(
     authorities: AgentContextAuthorities<'_>,
     target: AgentEgressTarget,
 ) -> Result<CompiledContextPack, LeyCoreError> {
+    compile_project_context_for_agent_with_authority(
+        project_start.as_ref(),
+        vault.as_ref(),
+        task,
+        limits,
+        authorities,
+        None,
+        target,
+    )
+}
+
+pub fn compile_project_context_for_agent_with_transition_registries(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    task: &str,
+    limits: ContextCompileLimits,
+    authorities: AgentContextAuthorities<'_>,
+    continuity_store: &ContinuityStore,
+    target: AgentEgressTarget,
+) -> Result<CompiledContextPack, LeyCoreError> {
+    compile_project_context_for_agent_with_authority(
+        project_start.as_ref(),
+        vault.as_ref(),
+        task,
+        limits,
+        authorities,
+        Some(continuity_store),
+        target,
+    )
+}
+
+fn compile_project_context_for_agent_with_authority(
+    project_start: &Path,
+    vault: &Path,
+    task: &str,
+    limits: ContextCompileLimits,
+    authorities: AgentContextAuthorities<'_>,
+    transition_store: Option<&ContinuityStore>,
+    target: AgentEgressTarget,
+) -> Result<CompiledContextPack, LeyCoreError> {
     validate_limits(task, limits)?;
-    let project_start = project_start.as_ref();
-    let vault = vault.as_ref();
     let project_id = crate::diagnose_project(project_start)?.identity.project_id;
-    authorities.egress.with_snapshot_locked(|egress_snapshot| {
+    let compile = |egress_snapshot: &EgressPolicySnapshot| {
         let project_decision =
             evaluate_agent_egress(egress_snapshot.project_policy(&project_id), target);
         if !project_decision.allowed {
@@ -891,9 +941,14 @@ pub fn compile_project_context_for_agent_with_registries(
             });
         }
 
-        authorities.specifications.with_task_scan_for_agent_locked(
+        crate::import_legacy_approved_sources(
             project_start,
             vault,
+            authorities.specifications,
+            authorities.approved_sources.store(),
+        )?;
+        authorities.approved_sources.with_task_scan_for_agent_locked(
+            project_start,
             task,
             egress_snapshot,
             target,
@@ -1048,7 +1103,12 @@ pub fn compile_project_context_for_agent_with_registries(
                     });
                     egress_exclusions.dedup();
                     let historical_memory_withheld = !egress_exclusions.is_empty();
-                    let mut search = active_project_search(project_start, vault, task)?;
+                    let mut search = match transition_store {
+                        Some(store) => {
+                            active_project_search_with_transition(project_start, vault, store, task)?
+                        }
+                        None => active_project_search(project_start, vault, task)?,
+                    };
                     if specification_scan.project_id != search.project_id
                         || search.project_id != project_id
                     {
@@ -1126,7 +1186,13 @@ pub fn compile_project_context_for_agent_with_registries(
                 })
             },
         )
-    })
+    };
+    match transition_store {
+        Some(store) => authorities
+            .egress
+            .with_transition_snapshot_locked(store, compile),
+        None => authorities.egress.with_snapshot_locked(compile),
+    }
 }
 
 fn withhold_unproven_derived_memory(search: &mut ProjectMemorySearch) -> usize {
@@ -1172,6 +1238,25 @@ fn active_project_search(
     )
 }
 
+fn active_project_search_with_transition(
+    project_start: &Path,
+    vault: &Path,
+    store: &ContinuityStore,
+    task: &str,
+) -> Result<ProjectMemorySearch, LeyCoreError> {
+    search_project_memory_with_continuity_transition(
+        project_start,
+        vault,
+        store,
+        task,
+        ProjectMemorySearchLimits {
+            max_results: MAX_PROJECT_MEMORY_SEARCH_RESULTS,
+            max_tokens: MAX_PROJECT_MEMORY_SEARCH_TOKENS,
+        },
+        None,
+    )
+}
+
 #[cfg(test)]
 fn compile_search_result(
     search: ProjectMemorySearch,
@@ -1190,6 +1275,7 @@ fn compile_search_result(
     compile_search_result_with_specifications(search, specification_scan, limits)
 }
 
+#[cfg(test)]
 fn compile_search_result_with_specifications(
     search: ProjectMemorySearch,
     specification_scan: TaskSpecificationScan,
@@ -1322,16 +1408,6 @@ fn compile_search_result_with_authorities(
             ));
             continue;
         }
-        let acceptance_criteria = derive_specification_acceptance_criteria(
-            &candidate.source.specification_id,
-            &candidate.source.content_hash,
-            &candidate.source.source,
-        );
-        let verification_methods = derive_specification_verification_methods(
-            &candidate.source.specification_id,
-            &candidate.source.content_hash,
-            &candidate.source.source,
-        );
         item_tokens = item_tokens.saturating_add(estimated_tokens);
         specifications.push(CompiledSpecificationItem {
             specification_id: candidate.source.specification_id,
@@ -1339,10 +1415,6 @@ fn compile_search_result_with_authorities(
             content_hash: candidate.source.content_hash,
             approved_at_unix_ms: candidate.source.approved_at_unix_ms,
             source: candidate.source.source,
-            acceptance_criteria_tokens: 0,
-            acceptance_criteria,
-            verification_methods_tokens: 0,
-            verification_methods,
             relevance_score: candidate.lexical_score,
             exact_match: candidate.exact_match,
             authority: candidate.source.authority,
@@ -1385,16 +1457,6 @@ fn compile_search_result_with_authorities(
             ));
             continue;
         }
-        let acceptance_criteria = derive_specification_acceptance_criteria(
-            &candidate.source.specification_id,
-            &candidate.source.content_hash,
-            &candidate.source.source,
-        );
-        let verification_methods = derive_specification_verification_methods(
-            &candidate.source.specification_id,
-            &candidate.source.content_hash,
-            &candidate.source.source,
-        );
         item_tokens = item_tokens.saturating_add(estimated_tokens);
         policy_bundle_policies.push(CompiledPolicyBundleItem {
             bundle_id: candidate.bundle_id,
@@ -1407,10 +1469,6 @@ fn compile_search_result_with_authorities(
             content_hash: candidate.source.content_hash,
             approved_at_unix_ms: candidate.source.approved_at_unix_ms,
             source: candidate.source.source,
-            acceptance_criteria_tokens: 0,
-            acceptance_criteria,
-            verification_methods_tokens: 0,
-            verification_methods,
             relevance_score: candidate.lexical_score,
             exact_match: candidate.exact_match,
             authority: POLICY_BUNDLE_AUTHORITY,
@@ -1639,26 +1697,8 @@ fn compile_search_result_with_authorities(
 }
 
 fn finalize_context_pack_with_specification_projections(
-    mut pack: CompiledContextPack,
+    pack: CompiledContextPack,
 ) -> CompiledContextPack {
-    let acceptance_criteria_tokens = fit_compiled_acceptance_criteria_tokens(
-        &mut pack.specifications,
-        &mut pack.policy_bundle_policies,
-        pack.max_tokens.saturating_sub(pack.estimated_tokens),
-    );
-    pack.estimated_tokens = pack
-        .estimated_tokens
-        .saturating_add(acceptance_criteria_tokens)
-        .min(pack.max_tokens);
-    let verification_methods_tokens = fit_compiled_verification_methods_tokens(
-        &mut pack.specifications,
-        &mut pack.policy_bundle_policies,
-        pack.max_tokens.saturating_sub(pack.estimated_tokens),
-    );
-    pack.estimated_tokens = pack
-        .estimated_tokens
-        .saturating_add(verification_methods_tokens)
-        .min(pack.max_tokens);
     finalize_context_pack(pack)
 }
 
@@ -2821,92 +2861,6 @@ fn estimate_specification_tokens(candidate: &TaskSpecificationCandidate) -> usiz
             .saturating_add(candidate.source.source.chars().count())
             .div_ceil(4),
     )
-}
-
-fn fit_compiled_acceptance_criteria_tokens(
-    specifications: &mut [CompiledSpecificationItem],
-    policy_bundle_policies: &mut [CompiledPolicyBundleItem],
-    mut remaining_tokens: usize,
-) -> usize {
-    let mut used = 0usize;
-    for specification in specifications {
-        let required = acceptance_criteria_projection_tokens(&specification.acceptance_criteria);
-        if required == 0 {
-            specification.acceptance_criteria_tokens = 0;
-            continue;
-        }
-        if required <= remaining_tokens {
-            specification.acceptance_criteria_tokens = required;
-            specification.estimated_tokens =
-                specification.estimated_tokens.saturating_add(required);
-            remaining_tokens -= required;
-            used = used.saturating_add(required);
-        } else {
-            omit_acceptance_criteria_for_budget(&mut specification.acceptance_criteria);
-            specification.acceptance_criteria_tokens = 0;
-        }
-    }
-    for specification in policy_bundle_policies {
-        let required = acceptance_criteria_projection_tokens(&specification.acceptance_criteria);
-        if required == 0 {
-            specification.acceptance_criteria_tokens = 0;
-            continue;
-        }
-        if required <= remaining_tokens {
-            specification.acceptance_criteria_tokens = required;
-            specification.estimated_tokens =
-                specification.estimated_tokens.saturating_add(required);
-            remaining_tokens -= required;
-            used = used.saturating_add(required);
-        } else {
-            omit_acceptance_criteria_for_budget(&mut specification.acceptance_criteria);
-            specification.acceptance_criteria_tokens = 0;
-        }
-    }
-    used
-}
-
-fn fit_compiled_verification_methods_tokens(
-    specifications: &mut [CompiledSpecificationItem],
-    policy_bundle_policies: &mut [CompiledPolicyBundleItem],
-    mut remaining_tokens: usize,
-) -> usize {
-    let mut used = 0usize;
-    for specification in specifications {
-        let required = verification_methods_projection_tokens(&specification.verification_methods);
-        if required == 0 {
-            specification.verification_methods_tokens = 0;
-            continue;
-        }
-        if required <= remaining_tokens {
-            specification.verification_methods_tokens = required;
-            specification.estimated_tokens =
-                specification.estimated_tokens.saturating_add(required);
-            remaining_tokens -= required;
-            used = used.saturating_add(required);
-        } else {
-            omit_verification_methods_for_budget(&mut specification.verification_methods);
-            specification.verification_methods_tokens = 0;
-        }
-    }
-    for specification in policy_bundle_policies {
-        let required = verification_methods_projection_tokens(&specification.verification_methods);
-        if required == 0 {
-            specification.verification_methods_tokens = 0;
-            continue;
-        }
-        if required <= remaining_tokens {
-            specification.verification_methods_tokens = required;
-            specification.estimated_tokens =
-                specification.estimated_tokens.saturating_add(required);
-            remaining_tokens -= required;
-            used = used.saturating_add(required);
-        } else {
-            omit_verification_methods_for_budget(&mut specification.verification_methods);
-            specification.verification_methods_tokens = 0;
-        }
-    }
-    used
 }
 
 fn specification_assembly_exclusion(
@@ -4678,16 +4632,13 @@ mod tests {
         assert!(pack.specifications[0]
             .source
             .contains("Acceptance criteria"));
-        assert_eq!(
-            pack.specifications[0].acceptance_criteria.state,
-            crate::SpecificationAcceptanceCriteriaState::Available
-        );
-        assert_eq!(pack.specifications[0].acceptance_criteria.criteria.len(), 1);
-        assert_eq!(
-            pack.specifications[0].acceptance_criteria.criteria[0].text,
-            "- Offline mode works without network access."
-        );
-        assert!(pack.specifications[0].acceptance_criteria_tokens > 0);
+        let serialized = serde_json::to_value(&pack).unwrap();
+        assert!(serialized["specifications"][0]
+            .get("acceptanceCriteria")
+            .is_none());
+        assert!(serialized["specifications"][0]
+            .get("verificationMethods")
+            .is_none());
         assert_eq!(pack.specification_coverage.total_approved, 2);
         assert_eq!(pack.specification_coverage.low_relevance_approved, 1);
         assert_eq!(pack.source_boundary, "mixed-authority-context");
@@ -4695,7 +4646,7 @@ mod tests {
     }
 
     #[test]
-    fn acceptance_criteria_projection_uses_only_spare_context_budget() {
+    fn approved_source_uses_context_budget_without_derived_projection_overhead() {
         let root = tempdir().unwrap();
         let project = root.path().join("project");
         let vault = root.path().join("vault");
@@ -4737,21 +4688,15 @@ mod tests {
         assert_eq!(pack.specifications.len(), 1);
         assert_eq!(pack.specifications[0].specification_id, specification_id);
         assert!(pack.specifications[0].source.contains(&criterion));
-        assert_eq!(
-            pack.specifications[0].acceptance_criteria.state,
-            crate::SpecificationAcceptanceCriteriaState::OmittedBudget
-        );
-        assert_eq!(pack.specifications[0].acceptance_criteria.total_criteria, 1);
-        assert!(pack.specifications[0]
-            .acceptance_criteria
-            .criteria
-            .is_empty());
-        assert_eq!(pack.specifications[0].acceptance_criteria_tokens, 0);
+        let serialized = serde_json::to_value(&pack).unwrap();
+        assert!(serialized["specifications"][0]
+            .get("acceptanceCriteria")
+            .is_none());
         assert!(pack.estimated_tokens <= 500);
     }
 
     #[test]
-    fn verification_methods_use_only_budget_left_after_acceptance_criteria() {
+    fn approved_source_keeps_verification_method_markdown_without_derived_budget() {
         let root = tempdir().unwrap();
         let project = root.path().join("project");
         let vault = root.path().join("vault");
@@ -4788,22 +4733,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(pack.specifications.len(), 1);
-        assert_eq!(
-            pack.specifications[0].acceptance_criteria.state,
-            crate::SpecificationAcceptanceCriteriaState::Available
-        );
-        assert!(pack.specifications[0].acceptance_criteria_tokens > 0);
-        assert_eq!(
-            pack.specifications[0].verification_methods.state,
-            crate::SpecificationVerificationMethodsState::OmittedBudget
-        );
-        assert_eq!(pack.specifications[0].verification_methods.total_methods, 1);
-        assert!(pack.specifications[0]
-            .verification_methods
-            .methods
-            .is_empty());
-        assert_eq!(pack.specifications[0].verification_methods_tokens, 0);
         assert!(pack.specifications[0].source.contains(&method));
+        assert!(pack.specifications[0]
+            .source
+            .contains("## Verification method"));
+        let serialized = serde_json::to_value(&pack).unwrap();
+        assert!(serialized["specifications"][0]
+            .get("verificationMethods")
+            .is_none());
         assert!(pack.estimated_tokens <= 600);
     }
 
@@ -4968,12 +4905,16 @@ mod tests {
         .unwrap();
         ingest_project(&project, &vault).unwrap();
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
         let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
         let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
         let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
         let authorities = AgentContextAuthorities {
             specifications: &specifications,
+            approved_sources: &approved_sources,
             mounts: &mounts,
             knowledge_scopes: &scopes,
             policy_bundles: &policy_bundles,
@@ -5026,6 +4967,86 @@ mod tests {
     }
 
     #[test]
+    fn transition_agent_compiler_applies_migrated_native_project_policy() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        let config = root.path().join("config");
+        for path in [&project, &vault, &config] {
+            fs::create_dir_all(path).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let initialized = initialize_project(
+            &project,
+            Some("Transition compiler"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        fs::write(
+            project.join("README.md"),
+            "transition_native_policy_marker private project evidence\n",
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
+        let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
+        let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
+        let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
+        let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
+        let store = ContinuityStore::at(config.join("continuity.sqlite3"));
+        store.register_project(&initialized.identity).unwrap();
+        store
+            .set_project_egress_policy(
+                &initialized.identity.project_id,
+                AgentEgressPolicy::NeverSend,
+            )
+            .unwrap();
+        let authorities = AgentContextAuthorities {
+            specifications: &specifications,
+            approved_sources: &approved_sources,
+            mounts: &mounts,
+            knowledge_scopes: &scopes,
+            policy_bundles: &policy_bundles,
+            egress: &egress,
+        };
+
+        let legacy = compile_project_context_for_agent_with_registries(
+            &project,
+            &vault,
+            "transition_native_policy_marker",
+            ContextCompileLimits::default(),
+            authorities,
+            AgentEgressTarget::Cloud,
+        )
+        .unwrap();
+        assert!(legacy
+            .items
+            .iter()
+            .any(|item| item.excerpt.contains("transition_native_policy_marker")));
+
+        assert!(matches!(
+            compile_project_context_for_agent_with_transition_registries(
+                &project,
+                &vault,
+                "transition_native_policy_marker",
+                ContextCompileLimits::default(),
+                authorities,
+                &store,
+                AgentEgressTarget::Cloud,
+            ),
+            Err(LeyCoreError::AgentEgressDenied { policy, target })
+                if policy == "never-send" && target == "cloud"
+        ));
+    }
+
+    #[test]
     fn blocked_specification_cannot_leak_or_steer_cloud_context() {
         let root = tempdir().unwrap();
         let project = root.path().join("project");
@@ -5054,6 +5075,9 @@ mod tests {
         )
         .unwrap();
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let specification_id = crate::generate_specification_id();
         specifications
             .approve(&project, &vault, &specification_id, "Specs/Private.md")
@@ -5099,6 +5123,7 @@ mod tests {
         let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
         let authorities = AgentContextAuthorities {
             specifications: &specifications,
+            approved_sources: &approved_sources,
             mounts: &mounts,
             knowledge_scopes: &scopes,
             policy_bundles: &policy_bundles,
@@ -5306,6 +5331,9 @@ mod tests {
         .unwrap();
 
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
         let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
         let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
@@ -5316,6 +5344,7 @@ mod tests {
             .unwrap();
         let authorities = AgentContextAuthorities {
             specifications: &specifications,
+            approved_sources: &approved_sources,
             mounts: &mounts,
             knowledge_scopes: &scopes,
             policy_bundles: &policy_bundles,
@@ -5403,6 +5432,9 @@ mod tests {
         ingest_project(&active, &active_vault).unwrap();
         ingest_project(&reference, &reference_vault).unwrap();
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
         let mounted = mounts.mount_project(&active, &reference).unwrap();
         let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
@@ -5410,6 +5442,7 @@ mod tests {
         let egress = EgressPolicyRegistry::at(config.join("agent-egress-v1.json"));
         let authorities = AgentContextAuthorities {
             specifications: &specifications,
+            approved_sources: &approved_sources,
             mounts: &mounts,
             knowledge_scopes: &scopes,
             policy_bundles: &policy_bundles,
@@ -5661,6 +5694,9 @@ mod tests {
         ingest_project(&reference, &reference_vault).unwrap();
 
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
         let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
         let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
@@ -5678,6 +5714,7 @@ mod tests {
             .unwrap();
         let authorities = AgentContextAuthorities {
             specifications: &specifications,
+            approved_sources: &approved_sources,
             mounts: &mounts,
             knowledge_scopes: &scopes,
             policy_bundles: &policy_bundles,
@@ -6280,6 +6317,9 @@ mod tests {
             .clone();
 
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
         let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
         let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
@@ -6303,6 +6343,7 @@ mod tests {
             },
             AgentContextAuthorities {
                 specifications: &specifications,
+                approved_sources: &approved_sources,
                 mounts: &mounts,
                 knowledge_scopes: &scopes,
                 policy_bundles: &policy_bundles,
@@ -6399,6 +6440,9 @@ mod tests {
         ingest_project(&unrelated, &unrelated_vault).unwrap();
 
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let mounts = ContextMountRegistry::at(config.join(CONTEXT_MOUNT_REGISTRY_FILE));
         let scopes = KnowledgeScopeRegistry::at(config.join(KNOWLEDGE_SCOPE_REGISTRY_FILE));
         let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
@@ -6423,6 +6467,7 @@ mod tests {
                 limits,
                 AgentContextAuthorities {
                     specifications: &specifications,
+                    approved_sources: &approved_sources,
                     mounts: &mounts,
                     knowledge_scopes: &scopes,
                     policy_bundles: &policy_bundles,
@@ -6485,7 +6530,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_knowledge_keeps_budget_precedence_over_acceptance_projection() {
+    fn shared_knowledge_and_whole_approved_source_share_budget_without_projection_layer() {
         let root = tempdir().unwrap();
         let config = root.path().join("config");
         let active = root.path().join("active");
@@ -6529,6 +6574,9 @@ mod tests {
         )
         .unwrap();
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let specification_id = crate::generate_specification_id();
         specifications
             .approve(&active, &active_vault, &specification_id, "Specs/Budget.md")
@@ -6556,6 +6604,7 @@ mod tests {
             },
             AgentContextAuthorities {
                 specifications: &specifications,
+                approved_sources: &approved_sources,
                 mounts: &mounts,
                 knowledge_scopes: &scopes,
                 policy_bundles: &policy_bundles,
@@ -6570,11 +6619,9 @@ mod tests {
             .shared_knowledge_references
             .iter()
             .any(|item| { item.excerpt.contains("criteria_shared_budget_marker") }));
-        assert_eq!(
-            pack.specifications[0].acceptance_criteria.state,
-            crate::SpecificationAcceptanceCriteriaState::OmittedBudget
-        );
-        assert_eq!(pack.specifications[0].acceptance_criteria_tokens, 0);
+        assert!(pack.specifications[0]
+            .source
+            .contains("criteria_shared_budget_marker"));
         assert!(pack.estimated_tokens <= pack.max_tokens);
     }
 
@@ -6640,7 +6687,7 @@ mod tests {
     }
 
     #[test]
-    fn mounted_reference_keeps_budget_precedence_over_acceptance_projection() {
+    fn mounted_reference_and_whole_approved_source_share_budget_without_projection_layer() {
         let root = tempdir().unwrap();
         let config = root.path().join("config");
         let active = root.path().join("active");
@@ -6709,11 +6756,7 @@ mod tests {
             .mounted_references
             .iter()
             .any(|item| { item.excerpt.contains("criteria_mount_budget_marker") }));
-        assert_eq!(
-            pack.specifications[0].acceptance_criteria.state,
-            crate::SpecificationAcceptanceCriteriaState::OmittedBudget
-        );
-        assert_eq!(pack.specifications[0].acceptance_criteria_tokens, 0);
+        assert!(pack.specifications[0].source.contains(&criterion));
         assert!(pack.estimated_tokens <= pack.max_tokens);
     }
 
@@ -7007,6 +7050,11 @@ mod tests {
         for path in [&config, &active, &active_vault, &source, &source_vault] {
             fs::create_dir_all(path).unwrap();
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
         initialize_project(&source, Some("Team policy source"), CaptureMode::Structured).unwrap();
         fs::write(
@@ -7033,6 +7081,9 @@ mod tests {
         .unwrap();
 
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let active_specification_id = crate::generate_specification_id();
         let source_specification_id = crate::generate_specification_id();
         specifications
@@ -7113,6 +7164,7 @@ mod tests {
             .unwrap();
         let authorities = AgentContextAuthorities {
             specifications: &specifications,
+            approved_sources: &approved_sources,
             mounts: &mounts,
             knowledge_scopes: &scopes,
             policy_bundles: &policy_bundles,
@@ -7221,6 +7273,11 @@ mod tests {
         for path in [&config, &active, &active_vault, &source, &source_vault] {
             fs::create_dir_all(path).unwrap();
         }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
         initialize_project(
             &source,
@@ -7246,6 +7303,9 @@ mod tests {
         )
         .unwrap();
         let specifications = SpecificationRegistry::at(config.join("specifications-v1.json"));
+        let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+            config.join("approved-source-private/continuity.sqlite3"),
+        ));
         let source_specification_id = crate::generate_specification_id();
         specifications
             .approve(
@@ -7322,6 +7382,7 @@ mod tests {
             .unwrap();
         let authorities = AgentContextAuthorities {
             specifications: &specifications,
+            approved_sources: &approved_sources,
             mounts: &mounts,
             knowledge_scopes: &scopes,
             policy_bundles: &policy_bundles,
@@ -7356,30 +7417,11 @@ mod tests {
             .iter()
             .find(|item| item.specification_id == source_specification_id)
             .unwrap();
-        assert_eq!(
-            local_policy.acceptance_criteria.state,
-            crate::SpecificationAcceptanceCriteriaState::Available
-        );
-        assert_eq!(local_policy.acceptance_criteria.criteria.len(), 1);
-        assert!(local_policy.acceptance_criteria.criteria[0]
-            .text
-            .contains(acceptance_marker));
-        assert!(local_policy.acceptance_criteria_tokens > 0);
-        assert_eq!(
-            local_policy.verification_methods.state,
-            crate::SpecificationVerificationMethodsState::Available
-        );
-        assert_eq!(local_policy.verification_methods.methods.len(), 1);
-        assert!(local_policy.verification_methods.methods[0]
-            .text
-            .contains(verification_method_marker));
-        assert!(!local_policy.verification_methods.criterion_binding_proven);
-        assert!(
-            !local_policy
-                .verification_methods
-                .observed_result_binding_proven
-        );
-        assert!(local_policy.verification_methods_tokens > 0);
+        assert!(local_policy.source.contains(acceptance_marker));
+        assert!(local_policy.source.contains(verification_method_marker));
+        let serialized = serde_json::to_value(local_policy).unwrap();
+        assert!(serialized.get("acceptanceCriteria").is_none());
+        assert!(serialized.get("verificationMethods").is_none());
         assert!(local.egress_exclusions.is_empty());
 
         fs::remove_dir_all(&source_vault).unwrap();

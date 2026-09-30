@@ -109,15 +109,21 @@ Artifact-backed evidence pins the approved ingestion snapshot. After a cited fil
 
 Evidence records without touched artifacts are `uncited`. They still preserve the session record that motivated the lesson, but Ley makes no current-source claim.
 
-## On-disk contract
+## Durable storage contract
 
-Immutable events live at:
+For projects that have crossed learning-authority cutover, authoritative learning events live in Ley's OS-private continuity SQLite database. Each continuity row embeds the validated schema-v3 `LearningEvent`; learning request identity remains inside that event, and provenance/deletion relationships are stored as explicit `depends-on-session` and `supersedes` links. Native learning mutations are serialized transactionally and do not create or update legacy learning projection files.
+
+Older projects may still have the compatibility ledger at:
 
 ```text
 <vault>/.ley/agent-memory/projects/<project-id>/learnings/events/
 ```
 
-`learnings-v1.json` and `review.md` are derived views. Do not edit them as the source of truth. Ley can rebuild them from the events. Current learning events use schema v3 and persist bounded `originLineage`, including distinct `tool-evidence` origins for schema-v16 recovered Commands. Previous schema-v2 lineage-bearing events remain readable, and legacy v1 events remain readable with reconstructed lineage explicitly marked as not mechanically complete. Lineage is included in the immutable request fingerprint, so changing it without the matching event fingerprint fails validation. The event engine bounds text and collections, redacts recognized credentials, rejects malformed or symlinked entries, verifies contiguous history, and serializes concurrent writers.
+Before the first native learning write, transition reads can reconcile that current legacy ledger into continuity. The first transition write requires native session authority, fences the legacy learning writer, imports one final learning-only snapshot, records the `learning-authority-cutover` marker, and then appends only native continuity events. After that marker, the legacy learning tree is not re-synchronized as authority. `learnings-v1.json` and `review.md` are legacy derived views, not authoritative state.
+
+Current learning events still use schema v3 and persist bounded `originLineage`, including distinct `tool-evidence` origins for schema-v16 recovered Commands. Previous schema-v2 lineage-bearing events remain readable through migration, and legacy v1 events remain readable with reconstructed lineage explicitly marked as not mechanically complete. Lineage is included in the immutable request fingerprint, so changing it without the matching event fingerprint fails validation. The event engine bounds text and collections, redacts recognized credentials, validates contiguous per-learning history, and serializes concurrent native writers.
+
+The private captured-memory vault remains relevant for cited artifact snapshots and freshness checks. That dependency does not make the legacy learning event files authoritative again.
 
 The durable ledger retains at most 256 origin identities per learning derivation chain. Explicit learning inspection returns at most 32 of those sources and discloses any additional omissions by marking the returned lineage unresolved. Broad lists/search/context carry only compact origin counts/flags. Full source text is not copied into lineage merely because the source was cited.
 

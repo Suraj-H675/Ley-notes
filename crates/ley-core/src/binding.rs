@@ -83,7 +83,11 @@ pub struct BindingRegistry {
 
 impl BindingRegistry {
     pub fn system_default() -> Result<Self, LeyCoreError> {
-        Ok(Self::at(default_binding_registry_path()?))
+        let path = default_binding_registry_path()?;
+        Ok(Self {
+            path,
+            project_catalog: ProjectCatalog::system_default()?,
+        })
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {
@@ -105,7 +109,7 @@ impl BindingRegistry {
         vault: impl AsRef<Path>,
     ) -> Result<ProjectVaultBinding, LeyCoreError> {
         let diagnostic = diagnose_project(project_start)?;
-        self.project_catalog.observe_diagnostic(&diagnostic)?;
+        self.observe_diagnostic(&diagnostic)?;
         let vault_path = canonical_directory(vault.as_ref())?;
         let vault_string = vault_path
             .to_str()
@@ -131,7 +135,7 @@ impl BindingRegistry {
         vault_override: Option<&Path>,
     ) -> Result<ProjectVaultBinding, LeyCoreError> {
         let diagnostic = diagnose_project(project_start)?;
-        self.project_catalog.observe_diagnostic(&diagnostic)?;
+        self.observe_diagnostic(&diagnostic)?;
         self.resolve_diagnostic(&diagnostic, vault_override)
     }
 
@@ -217,7 +221,7 @@ impl BindingRegistry {
         project_start: impl AsRef<Path>,
     ) -> Result<Option<ProjectVaultBinding>, LeyCoreError> {
         let diagnostic = diagnose_project(project_start)?;
-        self.project_catalog.observe_diagnostic(&diagnostic)?;
+        self.observe_diagnostic(&diagnostic)?;
         let project_id = diagnostic.identity.project_id;
         let removed = self.mutate(|document| Ok(document.bindings.remove(&project_id)))?;
         Ok(removed.map(|vault_path| ProjectVaultBinding {
@@ -225,6 +229,14 @@ impl BindingRegistry {
             vault_path: PathBuf::from(vault_path),
             source: BindingSource::Persisted,
         }))
+    }
+
+    fn observe_diagnostic(
+        &self,
+        diagnostic: &crate::ProjectDiagnostic,
+    ) -> Result<(), LeyCoreError> {
+        self.project_catalog.observe_diagnostic(diagnostic)?;
+        Ok(())
     }
 
     fn read_locked(&self) -> Result<RegistryDocument, LeyCoreError> {
@@ -429,7 +441,7 @@ fn reject_non_regular_if_present(path: &Path) -> Result<(), LeyCoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{initialize_project, CaptureMode};
+    use crate::{initialize_project, CaptureMode, ContinuityStore};
     use std::sync::{mpsc, Arc, Barrier};
     use std::time::Duration;
     use tempfile::tempdir;
@@ -519,6 +531,64 @@ mod tests {
             registry.resolve(&project, None),
             Err(LeyCoreError::VaultNotBound(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn system_style_binding_mirrors_project_observations_into_native_catalog() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = tempdir().unwrap();
+        let config = base.path().join("config");
+        fs::create_dir(&config).unwrap();
+        fs::set_permissions(&config, fs::Permissions::from_mode(0o700)).unwrap();
+        let project = base.path().join("project-native-catalog");
+        let vault = base.path().join("vault-native-catalog");
+        fs::create_dir(&project).unwrap();
+        fs::create_dir(&vault).unwrap();
+        let initialized = initialize_project(
+            &project,
+            Some("Native catalog binding"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+
+        let binding_path = config.join(BINDING_REGISTRY_FILE);
+        let legacy_catalog_path = config.join(crate::PROJECT_CATALOG_FILE);
+        let store = ContinuityStore::at(config.join(crate::CONTINUITY_DATABASE_FILE));
+        let native_catalog = ProjectCatalog::native_at(&legacy_catalog_path, store);
+        let mut registry = BindingRegistry::at(&binding_path);
+        registry.project_catalog = native_catalog.clone();
+
+        registry.bind(&project, &vault).unwrap();
+        assert_eq!(
+            native_catalog
+                .list(crate::DEFAULT_PROJECT_CATALOG_RESULTS)
+                .unwrap()
+                .projects[0]
+                .project_id,
+            initialized.identity.project_id
+        );
+
+        native_catalog
+            .forget(&initialized.identity.project_id)
+            .unwrap()
+            .unwrap();
+        assert!(native_catalog
+            .list(crate::DEFAULT_PROJECT_CATALOG_RESULTS)
+            .unwrap()
+            .projects
+            .is_empty());
+
+        registry.resolve(&project, None).unwrap();
+        assert_eq!(
+            native_catalog
+                .list(crate::DEFAULT_PROJECT_CATALOG_RESULTS)
+                .unwrap()
+                .projects[0]
+                .project_id,
+            initialized.identity.project_id
+        );
     }
 
     #[test]

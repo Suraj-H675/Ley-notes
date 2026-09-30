@@ -1,5 +1,7 @@
 # ADR 0049: Explicit public GitHub reference connectors
 
+> Current migration note: the provider lifecycle in this ADR is retired. Current Ley does not create or refresh connectors and the CLI no longer links the GitHub fetch client for this flow. Existing connector authority/snapshots remain listable, readable, removable, and egress-checked only as compatibility evidence while retained generic evidence/provenance is migrated into the simpler continuity model.
+
 Status: Accepted
 
 ## Context
@@ -47,6 +49,8 @@ The first external connector supports **public GitHub issues and pull requests o
 - There is no MCP network-refresh or connector-mutation route.
 - Connector restrictions join the existing conservative non-laundering ceiling: if a connector is blocked, broad historical session/decision/problem/learning derivatives are withheld when Ley cannot prove causal independence. Direct captured active-project evidence remains governed by the active project's policy.
 - Restrictive connector egress overrides remain keyed by deterministic connector ID after connector removal. Remove/re-add cannot clear the restriction implicitly; only an explicit local `ley egress connector ... agent-ok` change can do that.
+
+Current migration note: Ley no longer creates new connector-specific egress restrictions. Existing connector overrides are compatibility state and remain enforced until explicitly cleared with `agent-ok`; new restrictions are set at project scope while the legacy connector model is being retired/rebuilt.
 
 ## Consequences
 

@@ -46,6 +46,8 @@ coverage/
 .parcel-cache/
 .eslintcache
 .vite/
+__pycache__/
+*.py[cod]
 
 # OS
 .DS_Store

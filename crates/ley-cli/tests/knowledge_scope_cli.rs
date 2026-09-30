@@ -1,3 +1,4 @@
+use ley_core::{diagnose_project, APP_IDENTIFIER, KNOWLEDGE_SCOPE_REGISTRY_FILE};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -50,8 +51,46 @@ fn init_and_bind(config: &Path, project: &Path, vault: &Path, name: &str) {
     );
 }
 
+fn seed_legacy_scope(config: &Path, active: &Path, sources: &[&Path], scope_id: &str, name: &str) {
+    let active_id = diagnose_project(active).unwrap().identity.project_id;
+    let source_ids = sources
+        .iter()
+        .map(|source| diagnose_project(source).unwrap().identity.project_id)
+        .collect::<Vec<_>>();
+    let path = config
+        .join(APP_IDENTIFIER)
+        .join(KNOWLEDGE_SCOPE_REGISTRY_FILE);
+    let document = serde_json::json!({
+        "schemaVersion": 1,
+        "scopes": {
+            scope_id: {
+                "kind": "team",
+                "name": name,
+                "sourceProjectIds": source_ids.clone(),
+                "createdAtUnixMs": 1_700_000_000_000_u64,
+            }
+        },
+        "attachments": {
+            active_id.clone(): {
+                scope_id: 1_700_000_000_100_u64,
+            }
+        },
+        "attachmentHistory": {
+            active_id: {
+                scope_id: source_ids,
+            }
+        }
+    });
+    fs::write(&path, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+}
+
 #[test]
-fn cli_creates_and_attaches_reusable_team_scope_without_machine_path_leakage() {
+fn cli_retires_scope_growth_but_lists_and_detaches_legacy_scope_without_path_leakage() {
     let base = tempdir().unwrap();
     let config = base.path().join("config");
     let active = base.path().join("active");
@@ -67,7 +106,7 @@ fn cli_creates_and_attaches_reusable_team_scope_without_machine_path_leakage() {
     init_and_bind(&config, &security, &security_vault, "Security reference");
     init_and_bind(&config, &unrelated, &unrelated_vault, "Unrelated project");
 
-    let created = json_stdout(ley(
+    let create_rejected = run_ley(
         &config,
         &[
             "scope",
@@ -78,18 +117,20 @@ fn cli_creates_and_attaches_reusable_team_scope_without_machine_path_leakage() {
             security.to_str().unwrap(),
             "--json",
         ],
-    ));
-    assert_eq!(created["created"], true);
-    assert_eq!(created["scope"]["kind"], "team");
-    assert_eq!(created["scope"]["name"], "Platform team");
-    assert_eq!(created["scope"]["permission"], "read-only");
-    assert_eq!(created["scope"]["sources"].as_array().unwrap().len(), 2);
-    assert!(created["scope"]["sources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|source| source["status"] == "ready"));
-    let scope_id = created["scope"]["scopeId"].as_str().unwrap().to_owned();
+    );
+    assert!(!create_rejected.status.success());
+    let create_stderr = String::from_utf8_lossy(&create_rejected.stderr);
+    assert!(create_stderr.contains("Knowledge Scope creation is retired"));
+    assert!(create_stderr.contains("per-task source selection"));
+
+    let scope_id = "ksc_11111111111111111111111111111111";
+    seed_legacy_scope(
+        &config,
+        &active,
+        &[platform.as_path(), security.as_path()],
+        scope_id,
+        "Platform team",
+    );
 
     let listed = json_stdout(ley(&config, &["scope", "list", "--json"]));
     assert_eq!(listed["scopes"].as_array().unwrap().len(), 1);
@@ -101,7 +142,7 @@ fn cli_creates_and_attaches_reusable_team_scope_without_machine_path_leakage() {
     assert!(!serialized.contains(unrelated.to_str().unwrap()));
     assert!(!serialized.contains("Unrelated project"));
 
-    let attached = json_stdout(ley(
+    let attach_rejected = run_ley(
         &config,
         &[
             "scope",
@@ -110,24 +151,11 @@ fn cli_creates_and_attaches_reusable_team_scope_without_machine_path_leakage() {
             active.to_str().unwrap(),
             "--json",
         ],
-    ));
-    assert_eq!(attached["created"], true);
-    assert_eq!(attached["attachment"]["scopeId"], scope_id);
-    assert_eq!(attached["attachment"]["permission"], "read-only");
-    assert_eq!(attached["attachment"]["kind"], "team");
-    assert_eq!(attached["attachment"]["name"], "Platform team");
-
-    let duplicate = json_stdout(ley(
-        &config,
-        &[
-            "scope",
-            "attach",
-            &scope_id,
-            active.to_str().unwrap(),
-            "--json",
-        ],
-    ));
-    assert_eq!(duplicate["created"], false);
+    );
+    assert!(!attach_rejected.status.success());
+    let attach_stderr = String::from_utf8_lossy(&attach_rejected.stderr);
+    assert!(attach_stderr.contains("Knowledge Scope attachment is retired"));
+    assert!(attach_stderr.contains("per-task source selection"));
 
     let active_scopes = json_stdout(ley(
         &config,

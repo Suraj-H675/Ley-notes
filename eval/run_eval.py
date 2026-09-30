@@ -951,8 +951,17 @@ def mcp_call_result(
                 timeout_message=f"MCP call {name} timed out waiting for id {expected_id}",
             )
             if not line:
+                exit_code = proc.poll()
+                stderr = ""
+                if exit_code is not None and proc.stderr is not None:
+                    stderr = proc.stderr.read().strip()
+                detail = (
+                    f"; exit={exit_code}; stderr={stderr!r}"
+                    if exit_code is not None or stderr
+                    else ""
+                )
                 raise RuntimeError(
-                    f"MCP call {name} returned no result before stdout closed: {responses!r}"
+                    f"MCP call {name} returned no result before stdout closed: {responses!r}{detail}"
                 )
             if not line.strip():
                 continue

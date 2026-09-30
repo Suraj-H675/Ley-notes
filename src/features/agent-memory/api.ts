@@ -8,14 +8,12 @@ import type {
   AgentProjectSearch,
   AgentProjectCatalog,
   AgentProjectInspection,
+  ApprovedSourceAuthorityList,
   LearningAction,
   LearningContext,
   ProjectActivityView,
   ProjectArtifactInventory,
-  ProjectGraphEvidenceExcerpt,
-  ProjectGraphFilters,
-  ProjectGraphHistory,
-  ProjectGraphView,
+  ProjectEvidenceExcerpt,
   GraphCitation,
   ProjectProblemScope,
   ProjectMemorySearch,
@@ -24,7 +22,6 @@ import type {
   SemanticModelSetup,
   SessionContext,
   SessionTurnsContext,
-  SpecificationAuthorityList,
 } from "./types";
 
 export async function chooseAgentProject(): Promise<string | null> {
@@ -116,46 +113,48 @@ export function verifyAgentProjectNoteVault(
   });
 }
 
-export function readAgentProjectSpecifications(
+export function readAgentProjectApprovedSources(
   projectPath: string,
-): Promise<SpecificationAuthorityList> {
-  return invoke("read_agent_project_specifications", { projectPath });
+): Promise<ApprovedSourceAuthorityList> {
+  return invoke("read_agent_project_approved_sources", { projectPath });
 }
 
-export function approveAgentProjectSpecification(
+export function approveAgentProjectFileSource(
   projectPath: string,
-  openVaultPath: string,
-  specificationId: string,
   relativePath: string,
-): Promise<SpecificationAuthorityList> {
-  return invoke("approve_agent_project_specification", {
+): Promise<ApprovedSourceAuthorityList> {
+  return invoke("approve_agent_project_file_source", {
     projectPath,
-    openVaultPath,
-    specificationId,
     relativePath,
   });
 }
 
-export function revokeAgentProjectSpecification(
+export function reapproveAgentProjectFileSource(
   projectPath: string,
-  openVaultPath: string,
-  specificationId: string,
-): Promise<SpecificationAuthorityList> {
-  return invoke("revoke_agent_project_specification", {
+  sourceId: string,
+): Promise<ApprovedSourceAuthorityList> {
+  return invoke("reapprove_agent_project_file_source", {
     projectPath,
-    openVaultPath,
-    specificationId,
+    sourceId,
+  });
+}
+
+export function revokeAgentProjectApprovedSource(
+  projectPath: string,
+  sourceId: string,
+): Promise<ApprovedSourceAuthorityList> {
+  return invoke("revoke_agent_project_approved_source", {
+    projectPath,
+    sourceId,
   });
 }
 
 export function initializeAgentProject(
   projectPath: string,
-  vaultPath: string,
   expectedApprovalFingerprint: string,
 ): Promise<AgentMemoryDashboard> {
   return invoke("initialize_agent_project", {
     projectPath,
-    vaultPath,
     expectedApprovalFingerprint,
   });
 }
@@ -255,49 +254,10 @@ export function readAgentMediaEvidence(
   });
 }
 
-export function readAgentProjectGraphView(
-  projectPath: string,
-  query = "",
-  graphSnapshotId?: string,
-  filters?: ProjectGraphFilters,
-): Promise<ProjectGraphView> {
-  return invoke("read_agent_project_graph_view", {
-    projectPath,
-    graphSnapshotId,
-    query,
-    maxNodes: 180,
-    maxEdges: 600,
-    filters,
-  });
-}
-
-export function readAgentProjectGraphHistory(
-  projectPath: string,
-): Promise<ProjectGraphHistory> {
-  return invoke("read_agent_project_graph_history", {
-    projectPath,
-    maxResults: 100,
-  });
-}
-
-export function readAgentProjectGraphEvidence(
-  projectPath: string,
-  graphSnapshotId: string,
-  citation: GraphCitation,
-): Promise<ProjectGraphEvidenceExcerpt> {
-  return invoke("read_agent_project_graph_evidence", {
-    projectPath,
-    graphSnapshotId,
-    citation,
-    contextLines: 3,
-    maxCharacters: 8_000,
-  });
-}
-
 export function readAgentCitedEvidence(
   projectPath: string,
   citation: GraphCitation,
-): Promise<ProjectGraphEvidenceExcerpt> {
+): Promise<ProjectEvidenceExcerpt> {
   return invoke("read_agent_cited_evidence", {
     projectPath,
     citation,

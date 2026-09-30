@@ -4,6 +4,8 @@
 - Date: 2026-09-20
 - Extends: ADR 0058
 
+> Current migration note: creation of new Bootstrap Reference grants is retired. Existing `brg_` grants remain listable, detachable, egress-checked, and consumable by the read-only bootstrap MCP compatibility path until they are removed or the target is initialized. The surviving uninitialized-workspace authority is the narrower approved Bootstrap Specification source from ADR 0058; future broader cross-project reuse should use explicit per-task/session source selection rather than persistent Bootstrap Reference grants. This ADR remains the historical record of the original design and safety invariants.
+
 ## Context
 
 ADR 0058 lets an uninitialized workspace consume an explicitly attached, exact approved

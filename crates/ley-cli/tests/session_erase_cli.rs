@@ -153,7 +153,18 @@ fn local_cli_erases_one_session_and_its_learning_but_preserves_user_files() {
         serde_json::json!([])
     );
 
-    ley(&config, &["graph", project.to_str().unwrap(), "--json"]);
+    let retained_search = json_stdout(ley(
+        &config,
+        &[
+            "search",
+            "Keep this project",
+            project.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    assert!(retained_search["results"]
+        .as_array()
+        .is_some_and(|results| !results.is_empty()));
     assert_eq!(
         fs::read_to_string(project.join("README.md")).unwrap(),
         "# Keep this project\n"

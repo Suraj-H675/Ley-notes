@@ -138,7 +138,7 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
         .as_str()
         .unwrap();
     assert!(prompt_context.contains(session_id));
-    assert!(prompt_context.contains("ley_session_checkpoint"));
+    assert!(prompt_context.contains("ley_checkpoint"));
     assert!(prompt_context.contains("# Ley task context (automatic)"));
     assert!(prompt_context.contains("cpk_"));
     assert!(automatic_context_block(prompt_context).len() <= 3_500);
@@ -252,6 +252,73 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
     assert!(!vault_text.contains("NEVER_PERSIST_CLAUDE_PROMPT"));
     assert!(!vault_text.contains("private-transcript.jsonl"));
     assert!(!vault_text.contains("/forged/other/project"));
+}
+
+#[test]
+fn installed_hook_uses_native_continuity_without_a_vault_binding() {
+    let base = tempdir().unwrap();
+    let project = base.path().join("native-project");
+    let config = base.path().join("config");
+    fs::create_dir(&project).unwrap();
+    fs::write(
+        project.join("README.md"),
+        "# Native hook project\n\nnative_hook_evidence_72c1\n",
+    )
+    .unwrap();
+
+    ley(
+        &config,
+        &[
+            "init",
+            project.to_str().unwrap(),
+            "--name",
+            "Native hook project",
+        ],
+        None,
+    );
+    ley(&config, &["ingest", project.to_str().unwrap()], None);
+
+    let start = json_stdout(ley(
+        &config,
+        &["hook", "--host", "codex", project.to_str().unwrap()],
+        Some(&json!({
+            "session_id": "native-hook-thread",
+            "cwd": project,
+            "hook_event_name": "SessionStart",
+            "source": "startup"
+        })),
+    ));
+    let start_context = start["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(start_context.contains("Native hook project"));
+    assert!(start_context.contains("Current Ley session: ses_"));
+
+    let prompt = json_stdout(ley(
+        &config,
+        &["hook", "--host", "codex", project.to_str().unwrap()],
+        Some(&json!({
+            "session_id": "native-hook-thread",
+            "cwd": project,
+            "hook_event_name": "UserPromptSubmit",
+            "turn_id": "native-turn-one",
+            "prompt": "Use native_hook_evidence_72c1 without a continuity vault."
+        })),
+    ));
+    let prompt_context = prompt["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(prompt_context.contains("# Ley task context (automatic)"));
+    assert!(prompt_context.contains("native_hook_evidence_72c1"));
+    assert!(prompt_context.contains("cpk_"));
+
+    let sessions = json_stdout(ley(
+        &config,
+        &["session", "list", project.to_str().unwrap(), "--json"],
+        None,
+    ));
+    assert_eq!(sessions.as_array().unwrap().len(), 1);
+    assert_eq!(sessions[0]["prompts"], 1);
 }
 
 fn walk_text(directory: &Path) -> String {

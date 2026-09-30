@@ -1,8 +1,9 @@
 use crate::{
-    diagnose_project, evaluate_agent_egress, read_learning, AgentEgressTarget,
-    ContextMountRegistry, EgressPolicyRegistry, KnowledgeScopeRegistry, LearningFreshness,
-    LearningKind, LearningProvenance, LearningState, LearningTrustState, LeyCoreError,
-    PolicyBundleRegistry,
+    diagnose_project, evaluate_agent_egress, read_learning,
+    read_learning_with_continuity_transition, AgentEgressTarget, ContextMountRegistry,
+    ContinuityStore, EgressPolicyRegistry, EgressPolicySnapshot, KnowledgeScopeRegistry,
+    LearningFreshness, LearningKind, LearningProvenance, LearningState, LearningTrustState,
+    LeyCoreError, PolicyBundleRegistry,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -129,7 +130,30 @@ pub fn compile_reviewed_runbook(
     vault: impl AsRef<Path>,
     input: ReviewedRunbookInput,
 ) -> Result<ReviewedRunbook, LeyCoreError> {
-    let diagnostic = diagnose_project(&project_start)?;
+    compile_reviewed_runbook_with_authority(project_start.as_ref(), vault.as_ref(), input, None)
+}
+
+pub fn compile_reviewed_runbook_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    input: ReviewedRunbookInput,
+) -> Result<ReviewedRunbook, LeyCoreError> {
+    compile_reviewed_runbook_with_authority(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        input,
+        Some(store),
+    )
+}
+
+fn compile_reviewed_runbook_with_authority(
+    project_start: &Path,
+    vault: &Path,
+    input: ReviewedRunbookInput,
+    transition_store: Option<&ContinuityStore>,
+) -> Result<ReviewedRunbook, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
     let title = validate_title(&input.title)?;
     validate_learning_ids(&input.learning_ids)?;
 
@@ -137,7 +161,15 @@ pub fn compile_reviewed_runbook(
     let mut pitfalls = Vec::new();
     let mut conventions = Vec::new();
     for learning_id in &input.learning_ids {
-        let learning = read_learning(&diagnostic.root, &vault, learning_id)?;
+        let learning = match transition_store {
+            Some(store) => read_learning_with_continuity_transition(
+                &diagnostic.root,
+                vault,
+                store,
+                learning_id,
+            )?,
+            None => read_learning(&diagnostic.root, vault, learning_id)?,
+        };
         if learning.project_id != diagnostic.identity.project_id {
             return Err(LeyCoreError::InvalidRunbookRequest(format!(
                 "learning {learning_id} belongs to another project"
@@ -270,16 +302,66 @@ pub fn export_reviewed_runbook_skill(
     knowledge_scope_registry: &KnowledgeScopeRegistry,
     policy_bundle_registry: &PolicyBundleRegistry,
 ) -> Result<RunbookSkillExport, LeyCoreError> {
+    export_reviewed_runbook_skill_with_authority(
+        project_start.as_ref(),
+        vault.as_ref(),
+        input,
+        egress_registry,
+        context_mount_registry,
+        knowledge_scope_registry,
+        policy_bundle_registry,
+        None,
+    )
+}
+
+pub fn export_reviewed_runbook_skill_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    input: RunbookSkillExportInput,
+    egress_registry: &EgressPolicyRegistry,
+    context_mount_registry: &ContextMountRegistry,
+    knowledge_scope_registry: &KnowledgeScopeRegistry,
+    policy_bundle_registry: &PolicyBundleRegistry,
+    continuity_store: &ContinuityStore,
+) -> Result<RunbookSkillExport, LeyCoreError> {
+    export_reviewed_runbook_skill_with_authority(
+        project_start.as_ref(),
+        vault.as_ref(),
+        input,
+        egress_registry,
+        context_mount_registry,
+        knowledge_scope_registry,
+        policy_bundle_registry,
+        Some(continuity_store),
+    )
+}
+
+fn export_reviewed_runbook_skill_with_authority(
+    project_start: &Path,
+    vault: &Path,
+    input: RunbookSkillExportInput,
+    egress_registry: &EgressPolicyRegistry,
+    context_mount_registry: &ContextMountRegistry,
+    knowledge_scope_registry: &KnowledgeScopeRegistry,
+    policy_bundle_registry: &PolicyBundleRegistry,
+    transition_store: Option<&ContinuityStore>,
+) -> Result<RunbookSkillExport, LeyCoreError> {
     validate_runbook_id(&input.expected_runbook_id)?;
     enforce_historical_egress(
-        project_start.as_ref(),
+        project_start,
         input.egress_target,
         egress_registry,
         context_mount_registry,
         knowledge_scope_registry,
         policy_bundle_registry,
+        transition_store,
     )?;
-    let runbook = compile_reviewed_runbook(&project_start, vault, input.runbook)?;
+    let runbook = compile_reviewed_runbook_with_authority(
+        project_start,
+        vault,
+        input.runbook,
+        transition_store,
+    )?;
     if runbook.runbook_id != input.expected_runbook_id {
         return Err(LeyCoreError::InvalidRunbookRequest(format!(
             "reviewed runbook changed: expected {}, current {}; compile and review the current runbook before exporting it",
@@ -313,9 +395,10 @@ fn enforce_historical_egress(
     context_mount_registry: &ContextMountRegistry,
     knowledge_scope_registry: &KnowledgeScopeRegistry,
     policy_bundle_registry: &PolicyBundleRegistry,
+    transition_store: Option<&ContinuityStore>,
 ) -> Result<(), LeyCoreError> {
     let project_id = diagnose_project(project_start)?.identity.project_id;
-    egress_registry.with_snapshot_locked(|policies| {
+    let enforce = |policies: &EgressPolicySnapshot| {
         let project_decision = evaluate_agent_egress(policies.project_policy(&project_id), target);
         if !project_decision.allowed {
             return Err(LeyCoreError::AgentEgressDenied {
@@ -383,7 +466,11 @@ fn enforce_historical_egress(
                 },
             )
         })
-    })
+    };
+    match transition_store {
+        Some(store) => egress_registry.with_transition_snapshot_locked(store, enforce),
+        None => egress_registry.with_snapshot_locked(enforce),
+    }
 }
 
 fn validate_title(value: &str) -> Result<String, LeyCoreError> {
@@ -858,7 +945,7 @@ mod tests {
             &project,
             &vault,
             RunbookSkillExportInput {
-                runbook: input,
+                runbook: input.clone(),
                 expected_runbook_id: runbook.runbook_id.clone(),
                 host: RunbookSkillHost::ClaudeCode,
                 egress_target: AgentEgressTarget::Local,
@@ -885,6 +972,58 @@ mod tests {
             .content
             .contains(project.to_string_lossy().as_ref()));
         assert!(!exported.content.contains(vault.to_string_lossy().as_ref()));
+
+        egress
+            .set_project_policy(&project, AgentEgressPolicy::AgentOk)
+            .unwrap();
+        export_reviewed_runbook_skill(
+            &project,
+            &vault,
+            RunbookSkillExportInput {
+                runbook: input.clone(),
+                expected_runbook_id: runbook.runbook_id.clone(),
+                host: RunbookSkillHost::Codex,
+                egress_target: AgentEgressTarget::Cloud,
+            },
+            &egress,
+            &mounts,
+            &scopes,
+            &policy_bundles,
+        )
+        .unwrap();
+
+        let private = temporary.path().join("private");
+        std::fs::create_dir(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        let identity = diagnose_project(&project).unwrap().identity;
+        store.register_project(&identity).unwrap();
+        store
+            .set_project_egress_policy(&identity.project_id, crate::AgentEgressPolicy::NeverSend)
+            .unwrap();
+        assert!(matches!(
+            export_reviewed_runbook_skill_transition(
+                &project,
+                &vault,
+                RunbookSkillExportInput {
+                    runbook: input,
+                    expected_runbook_id: runbook.runbook_id.clone(),
+                    host: RunbookSkillHost::Codex,
+                    egress_target: AgentEgressTarget::Cloud,
+                },
+                &egress,
+                &mounts,
+                &scopes,
+                &policy_bundles,
+                &store,
+            ),
+            Err(LeyCoreError::AgentEgressDenied { policy, target })
+                if policy == "never-send" && target == "cloud"
+        ));
     }
 
     #[test]
@@ -1033,6 +1172,11 @@ mod tests {
         let config = temporary.path().join("config");
         for path in [&project, &vault, &source, &source_vault, &config] {
             std::fs::create_dir(path).unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         initialize_project(&project, Some("Runbook active"), CaptureMode::Structured).unwrap();
         initialize_project(

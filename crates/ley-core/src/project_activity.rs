@@ -1,7 +1,7 @@
-use crate::session::visit_session_records;
+use crate::session::{visit_session_records, visit_session_records_with_continuity_transition};
 use crate::{
-    AgentSession, ArtifactMediaType, AttemptOutcome, LeyCoreError, SessionArtifactCitation,
-    SessionStatus,
+    AgentSession, ArtifactMediaType, AttemptOutcome, ContinuityStore, LeyCoreError,
+    SessionArtifactCitation, SessionStatus,
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -136,6 +136,42 @@ pub fn project_activity_view(
             &mut activity,
         );
     })?;
+    Ok(finish_project_activity(
+        &diagnostic.identity.project_id,
+        query,
+        problem_scope,
+        max_results,
+        total_sessions,
+        activity,
+    ))
+}
+
+pub fn project_activity_view_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    query: &str,
+    problem_scope: ProjectProblemScope,
+    max_results: usize,
+) -> Result<ProjectActivityView, LeyCoreError> {
+    validate_request(query, max_results)?;
+    let diagnostic = crate::diagnose_project(&project_start)?;
+    let normalized = query.trim().to_lowercase();
+    let mut activity = ActivityAccumulator::default();
+    let total_sessions = visit_session_records_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        |session| {
+            collect_session_activity(
+                &session,
+                &normalized,
+                problem_scope,
+                max_results,
+                &mut activity,
+            );
+        },
+    )?;
     Ok(finish_project_activity(
         &diagnostic.identity.project_id,
         query,
@@ -433,9 +469,11 @@ fn excerpt(value: &str, max_characters: usize) -> (String, bool) {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, ingest_project, initialize_project, start_session, AttemptInput,
-        CheckpointInput, DecisionInput, ProblemInput, ResolutionInput, SessionSource,
-        StartSessionInput,
+        checkpoint_session, checkpoint_session_with_continuity_transition,
+        establish_native_born_project_authorities, ingest_project,
+        ingest_project_with_native_authority, initialize_project, start_session,
+        start_session_with_continuity_transition, AttemptInput, CheckpointInput, DecisionInput,
+        ProblemInput, ResolutionInput, SessionSource, StartSessionInput,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -621,5 +659,85 @@ mod tests {
             validate_request(&"x".repeat(MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS + 1), 1),
             Err(LeyCoreError::InvalidSessionRequest(_))
         ));
+    }
+
+    #[test]
+    fn native_born_project_activity_never_requires_a_legacy_vault() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("native-project");
+        let missing_vault = root.path().join("never-created-vault");
+        let private = root.path().join("private");
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::create_dir_all(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        fs::write(project.join("src/main.rs"), "fn main() {}\n").unwrap();
+        initialize_project(
+            &project,
+            Some("Native activity"),
+            crate::CaptureMode::Structured,
+        )
+        .unwrap();
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        ingest_project_with_native_authority(&project, &store).unwrap();
+        establish_native_born_project_authorities(&project, &store).unwrap();
+
+        let session = start_session_with_continuity_transition(
+            &project,
+            &missing_vault,
+            &store,
+            StartSessionInput {
+                request_id: format!("req_{}", "a".repeat(32)),
+                name: "Native activity session".to_owned(),
+                goal: "Keep activity independent from legacy storage.".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session_with_continuity_transition(
+            &project,
+            &missing_vault,
+            &store,
+            &session.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "b".repeat(32)),
+                summary: "Recorded native activity.".to_owned(),
+                plan: vec![],
+                decisions: vec![DecisionInput {
+                    title: "Native-only activity".to_owned(),
+                    decision: "Read project activity from native session authority.".to_owned(),
+                    rationale: "The legacy vault is not part of fresh-project storage.".to_owned(),
+                    alternatives: vec![],
+                }],
+                tasks: vec![],
+                problems: vec![],
+                touched_artifacts: vec!["src/main.rs".to_owned()],
+                commands: vec![],
+                verification: vec![],
+                unresolved: vec![],
+            },
+        )
+        .unwrap();
+
+        let activity = project_activity_view_with_continuity_transition(
+            &project,
+            &missing_vault,
+            &store,
+            "native-only",
+            ProjectProblemScope::All,
+            DEFAULT_PROJECT_ACTIVITY_RESULTS,
+        )
+        .unwrap();
+        assert_eq!(activity.total_sessions, 1);
+        assert_eq!(activity.total_matching_decisions, 1);
+        assert_eq!(activity.decisions.len(), 1);
+        assert_eq!(
+            activity.decisions[0].artifact_citations[0].artifact_path,
+            "src/main.rs"
+        );
+        assert!(!missing_vault.exists());
     }
 }

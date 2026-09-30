@@ -1,22 +1,46 @@
 use crate::session::{
-    checkpoint_recovered_batch_session, checkpoint_recovered_composite_session,
-    checkpoint_recovered_observed_command_session, checkpoint_recovered_plan_session,
-    checkpoint_recovered_rich_problem_session, checkpoint_recovered_structured_session,
-    checkpoint_recovered_task_session, checkpoint_recovered_unresolved_session,
-    read_session_for_memory_compiler, replay_recovered_batch_session_if_present,
+    checkpoint_recovered_batch_session,
+    checkpoint_recovered_batch_session_with_continuity_transition,
+    checkpoint_recovered_composite_session,
+    checkpoint_recovered_composite_session_with_continuity_transition,
+    checkpoint_recovered_observed_command_session,
+    checkpoint_recovered_observed_command_session_with_continuity_transition,
+    checkpoint_recovered_plan_session,
+    checkpoint_recovered_plan_session_with_continuity_transition,
+    checkpoint_recovered_rich_problem_session,
+    checkpoint_recovered_rich_problem_session_with_continuity_transition,
+    checkpoint_recovered_structured_session,
+    checkpoint_recovered_structured_session_with_continuity_transition,
+    checkpoint_recovered_task_session,
+    checkpoint_recovered_task_session_with_continuity_transition,
+    checkpoint_recovered_unresolved_session,
+    checkpoint_recovered_unresolved_session_with_continuity_transition,
+    read_session_for_memory_compiler, read_session_for_memory_compiler_with_continuity_transition,
+    replay_recovered_batch_session_if_present,
+    replay_recovered_batch_session_if_present_with_continuity_transition,
     replay_recovered_composite_session_if_present,
-    replay_recovered_observed_command_session_if_present, replay_recovered_plan_session_if_present,
+    replay_recovered_composite_session_if_present_with_continuity_transition,
+    replay_recovered_observed_command_session_if_present,
+    replay_recovered_observed_command_session_if_present_with_continuity_transition,
+    replay_recovered_plan_session_if_present,
+    replay_recovered_plan_session_if_present_with_continuity_transition,
     replay_recovered_rich_problem_session_if_present,
-    replay_recovered_structured_session_if_present, replay_recovered_task_session_if_present,
-    replay_recovered_unresolved_session_if_present, RecoveredBatchCheckpointInput,
-    RecoveredCompositeCheckpointInput, RecoveredObservedCommandCheckpointInput,
-    RecoveredPlanCheckpointInput, RecoveredRichProblemCheckpointInput,
-    RecoveredStructuredCheckpointInput, RecoveredStructuredKind, RecoveredTaskCheckpointInput,
-    RecoveredUnresolvedCheckpointInput,
+    replay_recovered_rich_problem_session_if_present_with_continuity_transition,
+    replay_recovered_structured_session_if_present,
+    replay_recovered_structured_session_if_present_with_continuity_transition,
+    replay_recovered_task_session_if_present,
+    replay_recovered_task_session_if_present_with_continuity_transition,
+    replay_recovered_unresolved_session_if_present,
+    replay_recovered_unresolved_session_if_present_with_continuity_transition,
+    RecoveredBatchCheckpointInput, RecoveredCompositeCheckpointInput,
+    RecoveredObservedCommandCheckpointInput, RecoveredPlanCheckpointInput,
+    RecoveredRichProblemCheckpointInput, RecoveredStructuredCheckpointInput,
+    RecoveredStructuredKind, RecoveredTaskCheckpointInput, RecoveredUnresolvedCheckpointInput,
 };
 use crate::{
-    AgentSession, AttemptOutcome, LeyCoreError, PlanStatus, ProblemRecord, SessionMutation,
-    SessionStatus, SessionTurnEvidence, TaskStatus, TurnEvidenceRetention, SESSION_EVENT_LIMIT,
+    AgentSession, AttemptOutcome, ContinuityStore, LeyCoreError, PlanStatus, ProblemRecord,
+    SessionMutation, SessionStatus, SessionTurnEvidence, SessionWriteResult, TaskStatus,
+    TurnEvidenceRetention, SESSION_EVENT_LIMIT,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -491,6 +515,28 @@ pub fn verify_memory_transition(
     ))
 }
 
+pub fn verify_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: MemoryTransitionInput,
+) -> Result<MemoryTransitionVerification, LeyCoreError> {
+    validate_input(&input)?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler_with_continuity_transition(
+            project_start,
+            legacy_vault,
+            store,
+            session_id,
+        )?;
+    Ok(verify_transition(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        input,
+    ))
+}
+
 pub fn verify_observed_command_memory_transition(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -500,6 +546,29 @@ pub fn verify_observed_command_memory_transition(
     validate_observed_command_input(&input)?;
     let (session, latest_checkpoint_sequence) =
         read_session_for_memory_compiler(project_start, vault, session_id)?;
+    Ok(verify_observed_command_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        input,
+    ))
+}
+
+pub fn verify_observed_command_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: ObservedCommandMemoryTransitionInput,
+) -> Result<ObservedCommandTransitionVerification, LeyCoreError> {
+    validate_observed_command_input(&input)?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler_with_continuity_transition(
+            project_start,
+            legacy_vault,
+            store,
+            session_id,
+        )?;
     Ok(verify_observed_command_memory_transition_against_session(
         &session,
         latest_checkpoint_sequence.unwrap_or(0),
@@ -759,6 +828,94 @@ pub fn commit_observed_command_memory_transition(
     checkpoint_recovered_observed_command_session(project_start, vault, session_id, bound_input)
 }
 
+pub fn commit_observed_command_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: CommitObservedCommandMemoryTransitionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    validate_observed_command_input(&ObservedCommandMemoryTransitionInput {
+        expected_event_count: input.expected_event_count,
+        source_record_id: input.source_record_id.clone(),
+    })?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler_with_continuity_transition(
+            project_start.as_ref(),
+            legacy_vault.as_ref(),
+            store,
+            session_id,
+        )?;
+    let observation = session
+        .tool_observations
+        .iter()
+        .find(|observation| observation.record_id == input.source_record_id)
+        .ok_or_else(|| {
+            LeyCoreError::InvalidSessionRequest(
+                "bound observed Command sourceRecordId is not retained in this session".to_owned(),
+            )
+        })?;
+    let command = observation
+        .command
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            LeyCoreError::InvalidSessionRequest(
+                "bound observed Command source has no retained command".to_owned(),
+            )
+        })?;
+    let bound_input = RecoveredObservedCommandCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        source_record_id: input.source_record_id.clone(),
+        source_event_id: observation.event_id.clone(),
+        observation_kind: observation.observation_kind,
+        command: command.to_owned(),
+    };
+    if let Some(replayed) =
+        replay_recovered_observed_command_session_if_present_with_continuity_transition(
+            project_start.as_ref(),
+            legacy_vault.as_ref(),
+            store,
+            session_id,
+            bound_input.clone(),
+        )?
+    {
+        return Ok(replayed);
+    }
+    let verification = verify_observed_command_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        ObservedCommandMemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            source_record_id: input.source_record_id,
+        },
+    );
+    if verification.state != ObservedCommandTransitionState::ReviewRequired
+        || !verification.candidate_binding_allowed
+    {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "bound observed Command recovery requires one current review-required Bash observation with no current turn evidence or sibling tool observations"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "observed Command candidate fingerprint does not match the current verified transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_observed_command_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        session_id,
+        bound_input,
+    )
+}
+
 pub fn verify_typed_memory_transition(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -768,9 +925,45 @@ pub fn verify_typed_memory_transition(
     validate_typed_input(&input)?;
     let (session, latest_checkpoint_sequence) =
         read_session_for_memory_compiler(project_start, vault, session_id)?;
+    Ok(verify_typed_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        input,
+    ))
+}
+
+pub fn verify_typed_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: TypedMemoryTransitionInput,
+) -> Result<MemoryTransitionVerification, LeyCoreError> {
+    validate_typed_input(&input)?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler_with_continuity_transition(
+            project_start,
+            legacy_vault,
+            store,
+            session_id,
+        )?;
+    Ok(verify_typed_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        input,
+    ))
+}
+
+fn verify_typed_memory_transition_against_session(
+    session: &AgentSession,
+    latest_checkpoint_sequence: u64,
+    session_id: &str,
+    input: TypedMemoryTransitionInput,
+) -> MemoryTransitionVerification {
     let generic = typed_candidate_as_generic_input(&input);
-    let mut verification =
-        verify_transition(&session, latest_checkpoint_sequence.unwrap_or(0), generic);
+    let mut verification = verify_transition(session, latest_checkpoint_sequence, generic);
     verification.issues.retain(|issue| {
         !matches!(
             issue.kind,
@@ -785,7 +978,7 @@ pub fn verify_typed_memory_transition(
                 check.subject = text.trim().to_owned();
             }
             if !text.trim().is_empty() {
-                for overlap in find_plan_overlaps(0, text, *status, &session) {
+                for overlap in find_plan_overlaps(0, text, *status, session) {
                     if verification.overlaps.len() >= MAX_MEMORY_TRANSITION_OVERLAPS {
                         break;
                     }
@@ -801,7 +994,7 @@ pub fn verify_typed_memory_transition(
             ..
         } => {
             if !title.trim().is_empty() {
-                for overlap in find_task_overlaps(0, title, *status, details, &session) {
+                for overlap in find_task_overlaps(0, title, *status, details, session) {
                     if verification.overlaps.len() >= MAX_MEMORY_TRANSITION_OVERLAPS {
                         break;
                     }
@@ -813,7 +1006,7 @@ pub fn verify_typed_memory_transition(
     }
     verification.state = typed_transition_state(&verification);
     verification.candidate_fingerprint = typed_candidate_fingerprint(session_id, &input);
-    Ok(verification)
+    verification
 }
 
 pub fn verify_rich_problem_memory_transition(
@@ -825,6 +1018,29 @@ pub fn verify_rich_problem_memory_transition(
     validate_rich_problem_input(&input)?;
     let (session, latest_checkpoint_sequence) =
         read_session_for_memory_compiler(project_start, vault, session_id)?;
+    verify_rich_problem_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        input,
+    )
+}
+
+pub fn verify_rich_problem_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: RichProblemMemoryTransitionInput,
+) -> Result<MemoryTransitionVerification, LeyCoreError> {
+    validate_rich_problem_input(&input)?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler_with_continuity_transition(
+            project_start,
+            legacy_vault,
+            store,
+            session_id,
+        )?;
     verify_rich_problem_memory_transition_against_session(
         &session,
         latest_checkpoint_sequence.unwrap_or(0),
@@ -873,6 +1089,29 @@ pub fn verify_composite_memory_transition(
     validate_composite_input(&input)?;
     let (session, latest_checkpoint_sequence) =
         read_session_for_memory_compiler(project_start, vault, session_id)?;
+    verify_composite_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        input,
+    )
+}
+
+pub fn verify_composite_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: CompositeMemoryTransitionInput,
+) -> Result<MemoryTransitionVerification, LeyCoreError> {
+    validate_composite_input(&input)?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler_with_continuity_transition(
+            project_start,
+            legacy_vault,
+            store,
+            session_id,
+        )?;
     verify_composite_memory_transition_against_session(
         &session,
         latest_checkpoint_sequence.unwrap_or(0),
@@ -1010,6 +1249,29 @@ pub fn verify_batch_memory_transition(
     )
 }
 
+pub fn verify_batch_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: BatchMemoryTransitionInput,
+) -> Result<MemoryTransitionVerification, LeyCoreError> {
+    validate_batch_input(&input)?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler_with_continuity_transition(
+            project_start,
+            legacy_vault,
+            store,
+            session_id,
+        )?;
+    verify_batch_memory_transition_against_session(
+        &session,
+        latest_checkpoint_sequence.unwrap_or(0),
+        session_id,
+        input,
+    )
+}
+
 pub(crate) fn verify_batch_memory_transition_against_session(
     session: &AgentSession,
     boundary_sequence: u64,
@@ -1138,6 +1400,69 @@ pub fn commit_unresolved_memory_transition(
     checkpoint_recovered_unresolved_session(project_start, vault, session_id, bound_input)
 }
 
+pub fn commit_unresolved_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: CommitUnresolvedMemoryTransitionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let bound_input = RecoveredUnresolvedCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        evidence_record_ids: input.evidence_record_ids.clone(),
+        summary: input.subject.clone(),
+        unresolved: input.statement.clone(),
+    };
+    if let Some(replayed) =
+        replay_recovered_unresolved_session_if_present_with_continuity_transition(
+            project_start.as_ref(),
+            legacy_vault.as_ref(),
+            store,
+            session_id,
+            bound_input.clone(),
+        )?
+    {
+        return Ok(replayed);
+    }
+    let verification = verify_memory_transition_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        MemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            claims: vec![MemoryCandidateClaim {
+                kind: MemoryCandidateKind::Unresolved,
+                subject: input.subject,
+                statement: input.statement,
+                evidence_record_ids: input.evidence_record_ids,
+            }],
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "bound recovery commit requires a current review-required unresolved candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery candidate fingerprint does not match the current verified transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_unresolved_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        session_id,
+        bound_input,
+    )
+}
+
 pub fn commit_structured_memory_transition(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -1202,6 +1527,80 @@ pub fn commit_structured_memory_transition(
     checkpoint_recovered_structured_session(project_start, vault, session_id, bound_input)
 }
 
+pub fn commit_structured_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: CommitStructuredMemoryTransitionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let structured_kind = match input.kind {
+        MemoryCandidateKind::Decision => RecoveredStructuredKind::Decision,
+        MemoryCandidateKind::Problem => RecoveredStructuredKind::Problem,
+        _ => {
+            return Err(LeyCoreError::InvalidSessionRequest(
+                "bound structured recovery commit supports only decision or problem candidates"
+                    .to_owned(),
+            ))
+        }
+    };
+    let bound_input = RecoveredStructuredCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        evidence_record_ids: input.evidence_record_ids.clone(),
+        kind: structured_kind,
+        subject: input.subject.clone(),
+        statement: input.statement.clone(),
+    };
+    if let Some(replayed) =
+        replay_recovered_structured_session_if_present_with_continuity_transition(
+            project_start.as_ref(),
+            legacy_vault.as_ref(),
+            store,
+            session_id,
+            bound_input.clone(),
+        )?
+    {
+        return Ok(replayed);
+    }
+    let verification = verify_memory_transition_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        MemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            claims: vec![MemoryCandidateClaim {
+                kind: input.kind,
+                subject: input.subject,
+                statement: input.statement,
+                evidence_record_ids: input.evidence_record_ids,
+            }],
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "bound structured recovery commit requires one current review-required decision or problem candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "recovery candidate fingerprint does not match the current verified transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_structured_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        session_id,
+        bound_input,
+    )
+}
+
 pub fn commit_task_memory_transition(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -1255,6 +1654,68 @@ pub fn commit_task_memory_transition(
     checkpoint_recovered_task_session(project_start, vault, session_id, bound_input)
 }
 
+pub fn commit_task_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: CommitTaskMemoryTransitionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let bound_input = RecoveredTaskCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        evidence_record_ids: input.evidence_record_ids.clone(),
+        title: input.title.clone(),
+        status: input.status,
+        details: input.details.clone(),
+    };
+    if let Some(replayed) = replay_recovered_task_session_if_present_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        bound_input.clone(),
+    )? {
+        return Ok(replayed);
+    }
+    let verification = verify_typed_memory_transition_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        TypedMemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            candidate: TypedMemoryCandidateClaim::Task {
+                title: input.title,
+                status: input.status,
+                details: input.details,
+                evidence_record_ids: input.evidence_record_ids,
+            },
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "bound task recovery commit requires one current review-required task candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "task recovery candidate fingerprint does not match the current typed transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_task_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        session_id,
+        bound_input,
+    )
+}
+
 pub fn commit_plan_memory_transition(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -1306,6 +1767,66 @@ pub fn commit_plan_memory_transition(
     checkpoint_recovered_plan_session(project_start, vault, session_id, bound_input)
 }
 
+pub fn commit_plan_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: CommitPlanMemoryTransitionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let bound_input = RecoveredPlanCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        evidence_record_ids: input.evidence_record_ids.clone(),
+        text: input.text.clone(),
+        status: input.status,
+    };
+    if let Some(replayed) = replay_recovered_plan_session_if_present_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        bound_input.clone(),
+    )? {
+        return Ok(replayed);
+    }
+    let verification = verify_typed_memory_transition_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        TypedMemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            candidate: TypedMemoryCandidateClaim::Plan {
+                text: input.text,
+                status: input.status,
+                evidence_record_ids: input.evidence_record_ids,
+            },
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "bound plan recovery commit requires one current review-required plan candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "plan recovery candidate fingerprint does not match the current typed transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_plan_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        session_id,
+        bound_input,
+    )
+}
+
 pub fn commit_rich_problem_memory_transition(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -1349,6 +1870,62 @@ pub fn commit_rich_problem_memory_transition(
         ));
     }
     checkpoint_recovered_rich_problem_session(project_start, vault, session_id, bound_input)
+}
+
+pub fn commit_rich_problem_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: CommitRichProblemMemoryTransitionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let bound_input = RecoveredRichProblemCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        candidate: input.candidate.clone(),
+    };
+    if let Some(replayed) =
+        replay_recovered_rich_problem_session_if_present_with_continuity_transition(
+            project_start.as_ref(),
+            legacy_vault.as_ref(),
+            store,
+            session_id,
+            bound_input.clone(),
+        )?
+    {
+        return Ok(replayed);
+    }
+    let verification = verify_rich_problem_memory_transition_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        RichProblemMemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            candidate: input.candidate,
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "rich problem recovery commit requires one current review-required rich problem candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "rich problem recovery candidate fingerprint does not match the current typed transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_rich_problem_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        session_id,
+        bound_input,
+    )
 }
 
 pub fn commit_batch_memory_transition(
@@ -1398,6 +1975,62 @@ pub fn commit_batch_memory_transition(
     checkpoint_recovered_batch_session(project_start, vault, session_id, bound_input)
 }
 
+pub fn commit_batch_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: CommitBatchMemoryTransitionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let bound_input = RecoveredBatchCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        checkpoint_summary: input.checkpoint_summary.clone(),
+        candidates: input.candidates.clone(),
+    };
+    if let Some(replayed) = replay_recovered_batch_session_if_present_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        bound_input.clone(),
+    )? {
+        return Ok(replayed);
+    }
+    let verification = verify_batch_memory_transition_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        BatchMemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            checkpoint_summary: input.checkpoint_summary,
+            candidates: input.candidates,
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "atomic recovery commit requires a current review-required batch with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "atomic recovery candidate fingerprint does not match the current batch transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_batch_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        session_id,
+        bound_input,
+    )
+}
+
 pub fn commit_composite_memory_transition(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -1445,6 +2078,66 @@ pub fn commit_composite_memory_transition(
         ));
     }
     checkpoint_recovered_composite_session(project_start, vault, session_id, bound_input)
+}
+
+pub fn commit_composite_memory_transition_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    input: CommitCompositeMemoryTransitionInput,
+) -> Result<SessionWriteResult, LeyCoreError> {
+    let bound_input = RecoveredCompositeCheckpointInput {
+        request_id: input.request_id.clone(),
+        expected_event_count: input.expected_event_count,
+        candidate_fingerprint: input.candidate_fingerprint.clone(),
+        checkpoint_summary: input.checkpoint_summary.clone(),
+        rich_problem: input.rich_problem.clone(),
+        siblings: input.siblings.clone(),
+    };
+    if let Some(replayed) =
+        replay_recovered_composite_session_if_present_with_continuity_transition(
+            project_start.as_ref(),
+            legacy_vault.as_ref(),
+            store,
+            session_id,
+            bound_input.clone(),
+        )?
+    {
+        return Ok(replayed);
+    }
+    let verification = verify_composite_memory_transition_with_continuity_transition(
+        project_start.as_ref(),
+        legacy_vault.as_ref(),
+        store,
+        session_id,
+        CompositeMemoryTransitionInput {
+            expected_event_count: input.expected_event_count,
+            checkpoint_summary: input.checkpoint_summary,
+            rich_problem: input.rich_problem,
+            siblings: input.siblings,
+            deferred_evidence_record_ids: Vec::new(),
+        },
+    )?;
+    if verification.state != MemoryTransitionState::ReviewRequired {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "composite recovery commit requires a current review-required composite candidate with no deferred evidence"
+                .to_owned(),
+        ));
+    }
+    if verification.candidate_fingerprint != input.candidate_fingerprint {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "composite recovery candidate fingerprint does not match the current composite transition"
+                .to_owned(),
+        ));
+    }
+    checkpoint_recovered_composite_session_with_continuity_transition(
+        project_start,
+        legacy_vault,
+        store,
+        session_id,
+        bound_input,
+    )
 }
 
 fn validate_typed_input(input: &TypedMemoryTransitionInput) -> Result<(), LeyCoreError> {

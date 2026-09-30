@@ -1,6 +1,7 @@
 use ley_core::{
-    generate_specification_id, initialize_project, CaptureMode, SpecificationRegistry,
-    APP_IDENTIFIER, BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, SPECIFICATION_REGISTRY_FILE,
+    diagnose_project, generate_specification_id, initialize_project, ApprovedSourceRegistry,
+    CaptureMode, ContinuityStore, SpecificationRegistry, APP_IDENTIFIER,
+    BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, CONTINUITY_DATABASE_FILE, SPECIFICATION_REGISTRY_FILE,
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -62,6 +63,79 @@ fn ley_with_input(config: &Path, arguments: &[&str], input: &Value) -> Output {
 
 fn json_stdout(output: Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn seed_legacy_bootstrap_reference(
+    config: &Path,
+    target: &Path,
+    source: &Path,
+    source_vault: &Path,
+    reference_grant_id: &str,
+) {
+    let seed_relative = "BootstrapReferenceSeed.md";
+    fs::write(
+        source.join(seed_relative),
+        "# Bootstrap reference fixture seed\n",
+    )
+    .unwrap();
+    let specifications = SpecificationRegistry::at(
+        config
+            .join(APP_IDENTIFIER)
+            .join(SPECIFICATION_REGISTRY_FILE),
+    );
+    let approved_sources = ApprovedSourceRegistry::at(ContinuityStore::at(
+        config.join(APP_IDENTIFIER).join(CONTINUITY_DATABASE_FILE),
+    ));
+    if !approved_sources.authority_ready(source).unwrap() {
+        approved_sources
+            .migrate_legacy_specifications(source, source_vault, &specifications)
+            .unwrap();
+    }
+    let approved = approved_sources
+        .approve_project_file(source, seed_relative)
+        .unwrap();
+    let attached = json_stdout(ley(
+        config,
+        &[
+            "bootstrap-spec",
+            "attach",
+            source.to_str().unwrap(),
+            &approved.source_id,
+            target.to_str().unwrap(),
+            "--json",
+        ],
+    ));
+    let seed_grant_id = attached["grant"]["grantId"].as_str().unwrap();
+    let path = config
+        .join(APP_IDENTIFIER)
+        .join(BOOTSTRAP_SPECIFICATION_REGISTRY_FILE);
+    let mut document: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let source_project_id = diagnose_project(source).unwrap().identity.project_id;
+    let workspaces = document["workspaces"].as_object_mut().unwrap();
+    let workspace = workspaces
+        .values_mut()
+        .find(|entry| entry["grants"].get(seed_grant_id).is_some())
+        .expect("temporary bootstrap Specification grant identifies target workspace entry");
+    workspace["grants"]
+        .as_object_mut()
+        .unwrap()
+        .remove(seed_grant_id);
+    workspace["referenceGrants"]
+        .as_object_mut()
+        .unwrap()
+        .insert(
+            reference_grant_id.to_owned(),
+            json!({
+                "sourceProjectId": source_project_id,
+                "attachedAtUnixMs": 1_700_000_000_500_u64,
+            }),
+        );
+    fs::write(&path, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
 }
 
 fn inactive_mcp_tools(config: &Path, target: &Path) -> (Output, Vec<Value>) {
@@ -220,17 +294,13 @@ fn cli_bootstrap_specification_is_explicit_read_only_and_retires_on_initializati
         ],
     ));
     assert_eq!(attached["created"], true);
-    let attached_reference = json_stdout(ley(
+    seed_legacy_bootstrap_reference(
         &config,
-        &[
-            "bootstrap-ref",
-            "attach",
-            source.to_str().unwrap(),
-            target.to_str().unwrap(),
-            "--json",
-        ],
-    ));
-    assert_eq!(attached_reference["created"], true);
+        &target,
+        &source,
+        &source_vault,
+        "brg_1111111111111111111111111111111111111111111111111111111111111111",
+    );
     assert_eq!(attached["grant"]["specificationId"], specification_id);
     assert!(attached["grant"]["grantId"]
         .as_str()
@@ -378,7 +448,8 @@ fn cli_bootstrap_specification_is_explicit_read_only_and_retires_on_initializati
 
 #[cfg(unix)]
 #[test]
-fn cli_bootstrap_reference_authority_is_explicit_and_retires_on_initialization() {
+fn cli_retires_bootstrap_reference_growth_but_preserves_legacy_read_detach_and_initialization_cleanup(
+) {
     let base = tempdir().unwrap();
     let config = base.path().join("config");
     let source = base.path().join("reference-source");
@@ -410,7 +481,7 @@ fn cli_bootstrap_reference_authority_is_explicit_and_retires_on_initialization()
         ],
     );
 
-    let attached = json_stdout(ley(
+    let attach_rejected = run_ley(
         &config,
         &[
             "bootstrap-ref",
@@ -419,29 +490,16 @@ fn cli_bootstrap_reference_authority_is_explicit_and_retires_on_initialization()
             target.to_str().unwrap(),
             "--json",
         ],
-    ));
-    assert_eq!(attached["created"], true);
-    let grant_id = attached["grant"]["grantId"].as_str().unwrap().to_owned();
-    assert!(grant_id.starts_with("brg_"));
-    assert_eq!(attached["grant"]["status"], "ready");
-    assert!(!target.join(".ley").exists());
-    let serialized = attached.to_string();
-    assert!(!serialized.contains(source.to_str().unwrap()));
-    assert!(!serialized.contains(source_vault.to_str().unwrap()));
-    assert!(!serialized.contains(target.to_str().unwrap()));
+    );
+    assert!(!attach_rejected.status.success());
+    let attach_stderr = String::from_utf8_lossy(&attach_rejected.stderr);
+    assert!(attach_stderr.contains("Bootstrap Reference attachment is retired"));
+    assert!(attach_stderr.contains("per-task selection"));
 
-    let replayed = json_stdout(ley(
-        &config,
-        &[
-            "bootstrap-ref",
-            "attach",
-            source.to_str().unwrap(),
-            target.to_str().unwrap(),
-            "--json",
-        ],
-    ));
-    assert_eq!(replayed["created"], false);
-    assert_eq!(replayed["grant"]["grantId"], grant_id);
+    let grant_id = "brg_2222222222222222222222222222222222222222222222222222222222222222";
+    seed_legacy_bootstrap_reference(&config, &target, &source, &source_vault, grant_id);
+    assert!(!target.join(".ley").exists());
+    seed_legacy_bootstrap_reference(&config, &target, &source, &source_vault, grant_id);
 
     let listed = json_stdout(ley(
         &config,
@@ -509,16 +567,7 @@ fn cli_bootstrap_reference_authority_is_explicit_and_retires_on_initialization()
         0
     );
 
-    ley(
-        &config,
-        &[
-            "bootstrap-ref",
-            "attach",
-            source.to_str().unwrap(),
-            target.to_str().unwrap(),
-            "--json",
-        ],
-    );
+    seed_legacy_bootstrap_reference(&config, &target, &source, &source_vault, grant_id);
     let initialized = json_stdout(ley(
         &config,
         &[

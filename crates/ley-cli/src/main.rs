@@ -1,32 +1,43 @@
 use ley_core::{
-    checkpoint_session, compile_reviewed_runbook, consolidation_inbox, correct_learning,
-    diagnose_project, erase_session_memory, export_reviewed_runbook_skill, finish_session,
-    generate_learning_request_id, generate_request_id, import_codex_message_history,
-    ingest_project, initialize_project_retiring_bootstrap, learning_review_inbox, list_learnings,
-    list_sessions, preview_capture, process_bootstrap_host_hook_for_agent_with_registries,
-    process_host_hook_for_agent_with_registries, project_resume_context, propose_learning,
-    read_external_connector_snapshot_with_registry, read_learning, read_project_graph,
-    read_session, read_session_context, read_session_turns_context, record_session_prompt,
-    record_session_response, remove_external_connector_with_registry, rename_session,
-    review_learning, search_project_memory, semantic_model_status, start_session,
-    store_external_connector_snapshot_with_registry, supported_semantic_model, AgentEgressPolicy,
-    AgentEgressTarget, AgentHost, BindingRegistry, BootstrapSpecificationRegistry, CaptureMode,
-    CheckpointInput, CommandInput, ConsolidationInboxLimits, ContextMountRegistry,
-    CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput, ExternalConnectorRegistry,
-    FinishSessionInput, GraphNodeKind, HostAgentContextRegistries, KnowledgeScopeKind,
-    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningFeedbackAction,
-    LearningKind, LearningProvenance, LearningState, LearningTrustState, LeyCoreError,
-    PolicyBundleRegistry, PolicyBundleSourceInput, ProjectMemorySearchLimits, ProposeLearningInput,
-    RenameSessionInput, ReviewLearningInput, ReviewedRunbookInput, RevisionCompatibility,
-    RunbookSkillExportInput, RunbookSkillHost, SemanticModelStatus, SessionSource,
-    SessionSourceKind, SessionStatus, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
-    TurnEvidenceOrigin, VerificationInput, VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
+    checkpoint_session_with_continuity_transition,
+    compile_reviewed_runbook_with_continuity_transition,
+    consolidation_inbox_with_continuity_transition, correct_learning_with_continuity_transition,
+    diagnose_project, erase_session_memory_with_continuity_transition,
+    establish_native_born_project_authorities, export_reviewed_runbook_skill_transition,
+    finish_session_with_continuity_transition, generate_learning_request_id, generate_request_id,
+    import_codex_message_history_with_continuity_transition,
+    ingest_project_with_continuity_transition, ingest_project_with_native_authority,
+    initialize_project_retiring_bootstrap, learning_review_inbox_with_continuity_transition,
+    list_learnings_with_continuity_transition, list_sessions_with_continuity_transition,
+    native_born_project_registration_exists, prepare_legacy_project_binding, preview_capture,
+    process_bootstrap_host_hook_for_agent_with_transition_registries,
+    process_host_hook_for_agent_with_transition_registries,
+    project_resume_context_with_continuity_transition, propose_learning_with_continuity_transition,
+    read_external_connector_snapshot_with_registry, read_learning_with_continuity_transition,
+    read_session_context_with_continuity_transition,
+    read_session_turns_context_with_continuity_transition, read_session_with_continuity_transition,
+    record_session_prompt_with_continuity_transition,
+    record_session_response_with_continuity_transition, register_native_born_project,
+    remove_external_connector_with_registry, rename_session_with_continuity_transition,
+    review_learning_with_continuity_transition, search_project_memory_with_continuity_transition,
+    semantic_model_status, start_session_with_continuity_transition, supported_semantic_model,
+    AgentEgressPolicy, AgentEgressTarget, AgentHost, ApprovedSourceRegistry, BindingRegistry,
+    BindingSource, BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, CommandInput,
+    ConsolidationInboxLimits, ContextMountRegistry, ContinuityStore, CorrectLearningInput,
+    EgressPolicyRegistry, EraseSessionMemoryInput, ExternalConnectorRegistry, FinishSessionInput,
+    HostAgentContextRegistries, KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput,
+    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
+    LeyCoreError, PolicyBundleRegistry, ProjectCatalog, ProjectMemorySearchLimits,
+    ProjectVaultBinding, ProposeLearningInput, RenameSessionInput, ReviewLearningInput,
+    ReviewedRunbookInput, RevisionCompatibility, RunbookSkillExportInput, RunbookSkillHost,
+    SemanticModelStatus, SessionSource, SessionSourceKind, SessionStatus, SessionWriteResult,
+    SpecificationRegistry, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
+    VerificationInput, VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
     DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
     DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
     DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
     DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
-use ley_github_connector::{fetch_public_github_reference, GitHubConnectorError};
 use ley_mcp::{
     run_bootstrap_stdio_with_egress_target, run_stdio_with_egress_target, run_unavailable_stdio,
 };
@@ -55,7 +66,6 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "binding" => binding(&arguments[1..]),
         "unbind" => unbind(&arguments[1..]),
         "ingest" => ingest(&arguments[1..]),
-        "graph" => graph(&arguments[1..]),
         "hook" => hook(&arguments[1..]),
         "mcp" => mcp(&arguments[1..]),
         "egress" => egress(&arguments[1..]),
@@ -206,7 +216,8 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
             }
             let project =
                 project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-            let result = registry.list(&project)?;
+            let store = ContinuityStore::system_default()?;
+            let result = registry.list_transition(&project, &store)?;
             if json {
                 println!(
                     "{}",
@@ -249,7 +260,8 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
             )?;
             let project =
                 project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-            let result = registry.set_project_policy(&project, policy)?;
+            let store = ContinuityStore::system_default()?;
+            let result = registry.set_project_policy_transition(&project, &store, policy)?;
             print_egress_mutation(&result, json)
         }
         "specification" => {
@@ -262,15 +274,19 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
                 &arguments[2..],
                 "egress specification requires SPECIFICATION_ID POLICY [PROJECT]",
             )?;
+            require_legacy_scope_egress_cleanup("Specification", policy)?;
             let project =
                 project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-            let specifications = SpecificationRegistry::system_default()?;
-            let approved = specifications.contains_approval(&project, specification_id)?;
             let retained_override =
                 registry.has_specification_override(&project, specification_id)?;
+            let approved = match approved_source_exists_for_cleanup(&project, specification_id) {
+                Ok(approved) => approved,
+                Err(_) if retained_override => false,
+                Err(error) => return Err(error),
+            };
             if !approved && !retained_override {
                 return Err(CliError::Usage(format!(
-                    "Specification {specification_id} is neither approved nor retained by egress policy for this project"
+                    "Approved source {specification_id} is neither current authority nor retained by legacy egress policy for this project"
                 )));
             }
             let result = registry.set_specification_policy(&project, specification_id, policy)?;
@@ -284,6 +300,7 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
                 &arguments[2..],
                 "egress mount requires MOUNT_ID POLICY [PROJECT]",
             )?;
+            require_legacy_scope_egress_cleanup("Context Mount", policy)?;
             let project =
                 project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
             let mounts = ContextMountRegistry::system_default()?;
@@ -307,6 +324,7 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
                 &arguments[2..],
                 "egress connector requires CONNECTOR_ID POLICY [PROJECT]",
             )?;
+            require_legacy_scope_egress_cleanup("External Connector", policy)?;
             let project =
                 project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
             let connectors = ExternalConnectorRegistry::system_default()?;
@@ -324,6 +342,37 @@ fn egress(arguments: &[String]) -> Result<(), CliError> {
             "unknown egress command '{other}'; use list, project, specification, mount, or connector"
         ))),
     }
+}
+
+fn approved_source_exists_for_cleanup(project: &Path, source_id: &str) -> Result<bool, CliError> {
+    let approved_sources = ApprovedSourceRegistry::system_default()?;
+    if !approved_sources.authority_ready(project)? {
+        let binding = match BindingRegistry::system_default()?.resolve(project, None) {
+            Ok(binding) => binding,
+            Err(LeyCoreError::VaultNotBound(_))
+            | Err(LeyCoreError::BoundVaultUnavailable { .. }) => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        let legacy = SpecificationRegistry::system_default()?;
+        approved_sources.migrate_legacy_specifications(project, &binding.vault_path, &legacy)?;
+    }
+    Ok(approved_sources
+        .authority(project)?
+        .sources
+        .iter()
+        .any(|source| source.approval.source_id == source_id))
+}
+
+fn require_legacy_scope_egress_cleanup(
+    scope_label: &str,
+    policy: AgentEgressPolicy,
+) -> Result<(), CliError> {
+    if policy == AgentEgressPolicy::AgentOk {
+        return Ok(());
+    }
+    Err(CliError::Usage(format!(
+        "{scope_label} egress overrides are legacy compatibility state; only agent-ok is accepted to clear an existing override. Use 'ley egress project POLICY [PROJECT]' for new restrictions."
+    )))
 }
 
 fn parse_egress_scope_arguments(
@@ -375,57 +424,16 @@ fn print_egress_mutation(
 fn connector(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "connector requires add, list, refresh, show, or remove".to_owned(),
+            "connector requires list, show, or remove; connector creation/refresh is retired"
+                .to_owned(),
         ));
     };
     let registry = ExternalConnectorRegistry::system_default()?;
     match command {
-        "add" => {
-            let mut url = None;
-            let mut project = None;
-            let mut json = false;
-            for argument in &arguments[1..] {
-                match argument.as_str() {
-                    "--json" => json = true,
-                    value if value.starts_with('-') => {
-                        return Err(CliError::Usage(format!("unknown option '{value}'")))
-                    }
-                    value if url.is_none() => url = Some(value.to_owned()),
-                    value if project.is_none() => project = Some(PathBuf::from(value)),
-                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
-                }
-            }
-            let url = url.ok_or_else(|| {
-                CliError::Usage(
-                    "connector add requires GITHUB_ISSUE_PR_OR_PINNED_DOC_URL".to_owned(),
-                )
-            })?;
-            let project =
-                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-            let result = registry.add_public_github_reference(&project, &url)?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result)
-                        .expect("external connector mutation is serializable")
-                );
-            } else {
-                println!(
-                    "External connector: {}  {}",
-                    result.connector.connector_id, result.connector.source.canonical_url
-                );
-                println!("Permission: read-only public GitHub reference");
-                println!(
-                    "Network: no request was made; run 'ley connector refresh {}' explicitly.",
-                    result.connector.connector_id
-                );
-                println!("Agent context: enabled subject to project + connector egress policy.");
-                if !result.created {
-                    println!("Existing connector reused.");
-                }
-            }
-            Ok(())
-        }
+        "add" => Err(CliError::Usage(
+            "External Connector creation is retired; existing local connector state may be listed, shown, or removed during compatibility cleanup"
+                .to_owned(),
+        )),
         "list" => {
             let mut project = None;
             let mut json = false;
@@ -464,39 +472,10 @@ fn connector(arguments: &[String]) -> Result<(), CliError> {
             }
             Ok(())
         }
-        "refresh" => {
-            let (connector_id, project, vault, json) = parse_connector_store_arguments(
-                &arguments[1..],
-                "connector refresh requires CONNECTOR_ID [PROJECT]",
-            )?;
-            let project =
-                project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-            let binding = BindingRegistry::system_default()?.resolve(&project, vault.as_deref())?;
-            read_project_graph(&project, &binding.vault_path)?;
-            let connector = registry.get(&project, &connector_id)?;
-            let fetched = fetch_public_github_reference(&connector.source)?;
-            let result = store_external_connector_snapshot_with_registry(
-                &project,
-                &binding.vault_path,
-                &registry,
-                &connector_id,
-                fetched,
-            )?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result)
-                        .expect("external connector refresh is serializable")
-                );
-            } else {
-                println!("External connector refreshed: {}", connector_id);
-                println!("Snapshot: {}", result.snapshot_id);
-                println!("Changed: {}", if result.changed { "yes" } else { "no" });
-                println!("Redaction findings: {}", result.redactions.len());
-                println!("Source remains untrusted external evidence; no GitHub write permission was granted.");
-            }
-            Ok(())
-        }
+        "refresh" => Err(CliError::Usage(
+            "External Connector refresh is retired; Ley no longer performs provider lifecycle/network refresh for this legacy connector model"
+                .to_owned(),
+        )),
         "show" => {
             let (connector_id, project, vault, json) = parse_connector_store_arguments(
                 &arguments[1..],
@@ -571,7 +550,7 @@ fn connector(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!(
-            "unknown connector command '{other}'; use add, list, refresh, show, or remove"
+            "unknown connector command '{other}'; use list, show, or remove (add/refresh are retired)"
         ))),
     }
 }
@@ -623,55 +602,15 @@ fn terminal_safe(value: &str) -> String {
 fn mount(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "mount requires add, list, or remove".to_owned(),
+            "mount requires list or remove; standing Context Mount creation is retired".to_owned(),
         ));
     };
     let registry = ContextMountRegistry::system_default()?;
     match command {
-        "add" => {
-            let mut reference = None;
-            let mut active = None;
-            let mut json = false;
-            for argument in &arguments[1..] {
-                match argument.as_str() {
-                    "--json" => json = true,
-                    value if value.starts_with('-') => {
-                        return Err(CliError::Usage(format!("unknown option '{value}'")))
-                    }
-                    value if reference.is_none() => reference = Some(PathBuf::from(value)),
-                    value if active.is_none() => active = Some(PathBuf::from(value)),
-                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
-                }
-            }
-            let reference = reference.ok_or_else(|| {
-                CliError::Usage("mount add requires REFERENCE_PROJECT".to_owned())
-            })?;
-            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-            let result = registry.mount_project(active, reference)?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result).expect("mount result is serializable")
-                );
-            } else {
-                let name = result
-                    .mount
-                    .source_project_name
-                    .as_deref()
-                    .unwrap_or(&result.mount.source_project_id);
-                println!("Mounted reference: {name} ({})", result.mount.mount_id);
-                println!("Permission: read-only");
-                println!(
-                    "Agent context: enabled for bounded ley_compile_context reference retrieval"
-                );
-                println!("Status: {:?}", result.mount.status);
-                println!("Privacy: returned reference text may be sent to the connected agent/model provider; live source and reference-project writes remain unavailable.");
-                if !result.created {
-                    println!("Existing mount reused and agent context enabled.");
-                }
-            }
-            Ok(())
-        }
+        "add" => Err(CliError::Usage(
+            "standing Context Mount creation is retired; existing mounts may be listed or removed while Ley moves to explicit per-task source selection"
+                .to_owned(),
+        )),
         "list" => {
             let mut active = None;
             let mut json = false;
@@ -748,7 +687,7 @@ fn mount(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!(
-            "unknown mount command '{other}'; use add, list, or remove"
+            "unknown mount command '{other}'; use list or remove (add is retired)"
         ))),
     }
 }
@@ -898,54 +837,16 @@ fn bootstrap_specification(arguments: &[String]) -> Result<(), CliError> {
 fn bootstrap_reference(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "bootstrap-ref requires attach, list, or detach".to_owned(),
+            "bootstrap-ref requires list or detach; Bootstrap Reference attachment is retired"
+                .to_owned(),
         ));
     };
     let registry = BootstrapSpecificationRegistry::system_default()?;
     match command {
-        "attach" => {
-            let mut source_project = None;
-            let mut workspace = None;
-            let mut json = false;
-            for argument in &arguments[1..] {
-                match argument.as_str() {
-                    "--json" => json = true,
-                    value if value.starts_with('-') => {
-                        return Err(CliError::Usage(format!("unknown option '{value}'")))
-                    }
-                    value if source_project.is_none() => {
-                        source_project = Some(PathBuf::from(value))
-                    }
-                    value if workspace.is_none() => workspace = Some(PathBuf::from(value)),
-                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
-                }
-            }
-            let source_project = source_project.ok_or_else(|| {
-                CliError::Usage(
-                    "bootstrap-ref attach requires SOURCE_PROJECT [WORKSPACE]".to_owned(),
-                )
-            })?;
-            let workspace =
-                workspace.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-            let result = registry.attach_reference(&workspace, &source_project)?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result)
-                        .expect("bootstrap reference attachment is serializable")
-                );
-            } else {
-                println!("Bootstrap Reference: {}", result.grant.grant_id);
-                println!("Source project: {}", result.grant.source_project_id);
-                if let Some(name) = &result.grant.source_project_name {
-                    println!("Source name: {name}");
-                }
-                println!("Status: {:?}", result.grant.status);
-                println!("Target: uninitialized read-only bootstrap authority");
-                println!("Created: {}", result.created);
-            }
-            Ok(())
-        }
+        "attach" => Err(CliError::Usage(
+            "Bootstrap Reference attachment is retired; existing grants may be listed or detached while uninitialized-workspace reuse moves to approved sources and explicit per-task selection"
+                .to_owned(),
+        )),
         "list" => {
             let mut workspace = None;
             let mut json = false;
@@ -971,7 +872,7 @@ fn bootstrap_reference(arguments: &[String]) -> Result<(), CliError> {
             } else if result.grants.is_empty() {
                 println!("No Bootstrap References.");
                 if result.target_initialized {
-                    println!("This workspace is initialized; use normal Ley Context Mounts.");
+                    println!("This workspace is initialized; use normal Ley project context.");
                 }
             } else {
                 println!("Bootstrap References: {}", result.grants.len());
@@ -1020,7 +921,7 @@ fn bootstrap_reference(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         _ => Err(CliError::Usage(
-            "bootstrap-ref requires attach, list, or detach".to_owned(),
+            "bootstrap-ref requires list or detach (attach is retired)".to_owned(),
         )),
     }
 }
@@ -1028,53 +929,16 @@ fn bootstrap_reference(arguments: &[String]) -> Result<(), CliError> {
 fn scope(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "scope requires create, list, attach, attached, or detach".to_owned(),
+            "scope requires list, attached, or detach; Knowledge Scope creation/attachment is retired"
+                .to_owned(),
         ));
     };
     let registry = KnowledgeScopeRegistry::system_default()?;
     match command {
-        "create" => {
-            let kind = arguments
-                .get(1)
-                .ok_or_else(|| {
-                    CliError::Usage("scope create requires KIND NAME SOURCE_PROJECT...".to_owned())
-                })
-                .and_then(|value| KnowledgeScopeKind::parse(value).map_err(CliError::Core))?;
-            let name = arguments.get(2).ok_or_else(|| {
-                CliError::Usage("scope create requires KIND NAME SOURCE_PROJECT...".to_owned())
-            })?;
-            let mut sources = Vec::new();
-            let mut json = false;
-            for argument in &arguments[3..] {
-                match argument.as_str() {
-                    "--json" => json = true,
-                    value if value.starts_with('-') => {
-                        return Err(CliError::Usage(format!("unknown option '{value}'")))
-                    }
-                    value => sources.push(PathBuf::from(value)),
-                }
-            }
-            let result = registry.create(kind, name, &sources)?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result)
-                        .expect("knowledge scope result is serializable")
-                );
-            } else {
-                println!(
-                    "Knowledge scope: {} ({})",
-                    result.scope.name, result.scope.scope_id
-                );
-                println!("Kind: {:?}", result.scope.kind);
-                println!("Permission: read-only");
-                println!("Sources: {}", result.scope.sources.len());
-                if !result.created {
-                    println!("Existing immutable scope reused.");
-                }
-            }
-            Ok(())
-        }
+        "create" => Err(CliError::Usage(
+            "Knowledge Scope creation is retired; existing scopes remain listable/detachable during migration to explicit per-task source selection"
+                .to_owned(),
+        )),
         "list" => {
             let mut json = false;
             for argument in &arguments[1..] {
@@ -1106,43 +970,10 @@ fn scope(arguments: &[String]) -> Result<(), CliError> {
             }
             Ok(())
         }
-        "attach" => {
-            let mut scope_id = None;
-            let mut active = None;
-            let mut json = false;
-            for argument in &arguments[1..] {
-                match argument.as_str() {
-                    "--json" => json = true,
-                    value if value.starts_with('-') => {
-                        return Err(CliError::Usage(format!("unknown option '{value}'")))
-                    }
-                    value if scope_id.is_none() => scope_id = Some(value.to_owned()),
-                    value if active.is_none() => active = Some(PathBuf::from(value)),
-                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
-                }
-            }
-            let scope_id = scope_id
-                .ok_or_else(|| CliError::Usage("scope attach requires SCOPE_ID".to_owned()))?;
-            let active = active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-            let result = registry.attach(active, &scope_id)?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result)
-                        .expect("knowledge scope attachment is serializable")
-                );
-            } else {
-                println!(
-                    "Attached knowledge scope: {} ({})",
-                    result.attachment.name, result.attachment.scope_id
-                );
-                println!("Permission: read-only");
-                if !result.created {
-                    println!("Existing attachment reused.");
-                }
-            }
-            Ok(())
-        }
+        "attach" => Err(CliError::Usage(
+            "Knowledge Scope attachment is retired; existing attachments may be inspected or detached while Ley moves to explicit per-task source selection"
+                .to_owned(),
+        )),
         "attached" => {
             let mut active = None;
             let mut json = false;
@@ -1213,7 +1044,7 @@ fn scope(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!(
-            "unknown scope command '{other}'; use create, list, attach, attached, or detach"
+            "unknown scope command '{other}'; use list, attached, or detach (create/attach are retired)"
         ))),
     }
 }
@@ -1221,92 +1052,17 @@ fn scope(arguments: &[String]) -> Result<(), CliError> {
 fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
     let Some(command) = arguments.first().map(String::as_str) else {
         return Err(CliError::Usage(
-            "policy-bundle requires create, list, attach, attached, status, or detach".to_owned(),
+            "policy-bundle requires list, attached, status, or detach; creation/attachment is retired"
+                .to_owned(),
         ));
     };
     let registry = PolicyBundleRegistry::system_default()?;
     let scopes = KnowledgeScopeRegistry::system_default()?;
     match command {
-        "create" => {
-            let scope_id = arguments.get(1).ok_or_else(|| {
-                CliError::Usage(
-                    "policy-bundle create requires SCOPE_ID NAME --source PROJECT SPECIFICATION_ID..."
-                        .to_owned(),
-                )
-            })?;
-            let name = arguments.get(2).ok_or_else(|| {
-                CliError::Usage(
-                    "policy-bundle create requires SCOPE_ID NAME --source PROJECT SPECIFICATION_ID..."
-                        .to_owned(),
-                )
-            })?;
-            let specifications = SpecificationRegistry::system_default()?;
-            let mut sources = Vec::new();
-            let mut json = false;
-            let mut index = 3;
-            while index < arguments.len() {
-                match arguments[index].as_str() {
-                    "--source" => {
-                        let project = PathBuf::from(required_value(
-                            arguments,
-                            index + 1,
-                            "--source PROJECT",
-                        )?);
-                        let specification_id = required_value(
-                            arguments,
-                            index + 2,
-                            "--source PROJECT SPECIFICATION_ID",
-                        )?
-                        .to_owned();
-                        sources.push(PolicyBundleSourceInput {
-                            source_project: project,
-                            specification_id,
-                        });
-                        index += 2;
-                    }
-                    "--json" => json = true,
-                    value => {
-                        return Err(CliError::Usage(format!(
-                            "unexpected policy-bundle create argument '{value}'"
-                        )))
-                    }
-                }
-                index += 1;
-            }
-            if sources.is_empty() {
-                return Err(CliError::Usage(
-                    "policy-bundle create requires at least one --source PROJECT SPECIFICATION_ID"
-                        .to_owned(),
-                ));
-            }
-            let result =
-                registry.create(scope_id, name, &sources, &scopes, &specifications)?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result)
-                        .expect("policy bundle result is serializable")
-                );
-            } else {
-                println!(
-                    "Policy bundle: {} ({})",
-                    result.bundle.name, result.bundle.bundle_id
-                );
-                println!(
-                    "Scope: {} {:?} {}",
-                    result.bundle.scope_id, result.bundle.scope_kind, result.bundle.scope_name
-                );
-                println!("Sources: {}", result.bundle.sources.len());
-                println!("Authority: exact approved Specification revisions");
-                println!(
-                    "Precedence: active-project Specifications override conflicting bundled policy"
-                );
-                if !result.created {
-                    println!("Existing immutable policy bundle reused.");
-                }
-            }
-            Ok(())
-        }
+        "create" => Err(CliError::Usage(
+            "Policy Bundle creation is retired; existing bundles remain inspectable/detachable while Ley retires the persistent bundle authority graph"
+                .to_owned(),
+        )),
         "list" => {
             let mut json = false;
             for argument in &arguments[1..] {
@@ -1348,46 +1104,10 @@ fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
             }
             Ok(())
         }
-        "attach" => {
-            let mut bundle_id = None;
-            let mut active = None;
-            let mut json = false;
-            for argument in &arguments[1..] {
-                match argument.as_str() {
-                    "--json" => json = true,
-                    value if value.starts_with('-') => {
-                        return Err(CliError::Usage(format!("unknown option '{value}'")))
-                    }
-                    value if bundle_id.is_none() => bundle_id = Some(value.to_owned()),
-                    value if active.is_none() => active = Some(PathBuf::from(value)),
-                    value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
-                }
-            }
-            let bundle_id = bundle_id.ok_or_else(|| {
-                CliError::Usage("policy-bundle attach requires BUNDLE_ID".to_owned())
-            })?;
-            let active =
-                active.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-            let result = registry.attach(&active, &bundle_id, &scopes)?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result)
-                        .expect("policy bundle attachment is serializable")
-                );
-            } else {
-                println!(
-                    "Attached policy bundle: {} ({})",
-                    result.attachment.bundle_name, result.attachment.bundle_id
-                );
-                println!("Scope: {}", result.attachment.scope_id);
-                println!("Sources: {}", result.attachment.source_count);
-                if !result.created {
-                    println!("Existing attachment reused.");
-                }
-            }
-            Ok(())
-        }
+        "attach" => Err(CliError::Usage(
+            "Policy Bundle attachment is retired; existing attachments may be inspected or detached during compatibility cleanup"
+                .to_owned(),
+        )),
         "attached" | "status" => {
             let mut active = None;
             let mut json = false;
@@ -1463,7 +1183,7 @@ fn policy_bundle(arguments: &[String]) -> Result<(), CliError> {
             Ok(())
         }
         other => Err(CliError::Usage(format!(
-            "unknown policy-bundle command '{other}'; use create, list, attach, attached, status, or detach"
+            "unknown policy-bundle command '{other}'; use list, attached, status, or detach (create/attach are retired)"
         ))),
     }
 }
@@ -1517,17 +1237,19 @@ fn search(arguments: &[String]) -> Result<(), CliError> {
     }
     let query = query.ok_or_else(|| CliError::Usage("search requires QUERY".to_owned()))?;
     let project = project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-    let binding = BindingRegistry::system_default()?.resolve(&project, vault.as_deref())?;
-    let result = search_project_memory(
-        &project,
-        &binding.vault_path,
-        &query,
-        ProjectMemorySearchLimits {
-            max_results,
-            max_tokens,
-        },
-        revision_filter,
-    )?;
+    let result = with_cli_continuity_access(&project, vault.as_deref(), |access, store| {
+        search_project_memory_with_continuity_transition(
+            &project,
+            &access.legacy_vault_path,
+            store,
+            &query,
+            ProjectMemorySearchLimits {
+                max_results,
+                max_tokens,
+            },
+            revision_filter,
+        )
+    })?;
     if json {
         println!(
             "{}",
@@ -1612,8 +1334,8 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
     let project = project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
 
     // Hooks are intended to be installable at user/plugin scope. Projects that
-    // have not explicitly initialized and bound Ley must remain untouched and
-    // must not produce a warning on every agent turn.
+    // have not explicitly initialized usable Ley continuity must remain untouched
+    // and must not produce a warning on every agent turn.
     match diagnose_project(&project) {
         Ok(_) => {}
         Err(LeyCoreError::ProjectNotFound(_)) => {
@@ -1636,12 +1358,15 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
             let payload = read_hook_payload()?;
             let egress_registry = EgressPolicyRegistry::system_default()
                 .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
-            let result = process_bootstrap_host_hook_for_agent_with_registries(
+            let continuity_store = ContinuityStore::system_default()
+                .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
+            let result = process_bootstrap_host_hook_for_agent_with_transition_registries(
                 &project,
                 host,
                 payload,
                 &bootstrap,
                 &egress_registry,
+                &continuity_store,
                 egress_target,
             )
             .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
@@ -1657,25 +1382,35 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
         }
         Err(error) => return Err(error.into()),
     }
-    let registry = BindingRegistry::system_default()?;
-    let binding = match registry.resolve(&project, vault.as_deref()) {
-        Ok(binding) => binding,
-        Err(LeyCoreError::VaultNotBound(_)) | Err(LeyCoreError::BoundVaultUnavailable { .. }) => {
-            println!("{{}}");
-            return Ok(());
-        }
-        Err(error) => return Err(error.into()),
-    };
-
     let payload = read_hook_payload()?;
     let egress_registry = EgressPolicyRegistry::system_default()?;
+    let continuity_store = ContinuityStore::system_default()?;
     let mount_registry = ContextMountRegistry::system_default()?;
     let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
     let policy_bundle_registry = PolicyBundleRegistry::system_default()?;
     let specification_registry = SpecificationRegistry::system_default()?;
-    let result = process_host_hook_for_agent_with_registries(
+    let registry = BindingRegistry::system_default()?;
+    let legacy_vault_path = match registry.resolve(&project, vault.as_deref()) {
+        Ok(binding) => binding.vault_path,
+        Err(LeyCoreError::VaultNotBound(project_id)) if vault.is_none() => {
+            if !ley_core::native_canonical_read_authority_available(&project, &continuity_store)? {
+                println!("{{}}");
+                return Ok(());
+            }
+            native_cli_legacy_placeholder(&project_id, &continuity_store)?
+        }
+        Err(LeyCoreError::BoundVaultUnavailable { path, .. }) if vault.is_none() => {
+            if !ley_core::native_canonical_read_authority_available(&project, &continuity_store)? {
+                println!("{{}}");
+                return Ok(());
+            }
+            path
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let result = process_host_hook_for_agent_with_transition_registries(
         &project,
-        &binding.vault_path,
+        &legacy_vault_path,
         host,
         payload,
         HostAgentContextRegistries {
@@ -1685,6 +1420,7 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
             knowledge_scopes: &knowledge_scope_registry,
             policy_bundles: &policy_bundle_registry,
         },
+        &continuity_store,
         egress_target,
     )?;
     println!(
@@ -1751,15 +1487,16 @@ fn resume(arguments: &[String]) -> Result<(), CliError> {
         index += 1;
     }
     let project = project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-    let registry = BindingRegistry::system_default()?;
-    let binding = registry.resolve(&project, vault.as_deref())?;
-    let resume = project_resume_context(
-        &project,
-        &binding.vault_path,
-        max_sessions,
-        max_learnings,
-        max_characters,
-    )?;
+    let resume = with_cli_continuity_access(&project, vault.as_deref(), |access, store| {
+        project_resume_context_with_continuity_transition(
+            &project,
+            &access.legacy_vault_path,
+            store,
+            max_sessions,
+            max_learnings,
+            max_characters,
+        )
+    })?;
     if json {
         println!(
             "{}",
@@ -1872,15 +1609,17 @@ fn consolidation(arguments: &[String]) -> Result<(), CliError> {
         index += 1;
     }
     let project = project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
-    let binding = BindingRegistry::system_default()?.resolve(&project, vault.as_deref())?;
-    let inbox = consolidation_inbox(
-        &project,
-        &binding.vault_path,
-        ConsolidationInboxLimits {
-            max_items,
-            max_sessions,
-        },
-    )?;
+    let inbox = with_cli_continuity_access(&project, vault.as_deref(), |access, store| {
+        consolidation_inbox_with_continuity_transition(
+            &project,
+            &access.legacy_vault_path,
+            store,
+            ConsolidationInboxLimits {
+                max_items,
+                max_sessions,
+            },
+        )
+    })?;
     if json {
         println!(
             "{}",
@@ -2028,30 +1767,24 @@ fn learning_propose(arguments: &[String]) -> Result<(), CliError> {
         }
         index += 1;
     }
-    let binding = resolve_learning_binding(&common)?;
-    let result = propose_learning(
-        common.project_path()?,
-        &binding.vault_path,
-        ProposeLearningInput {
-            request_id: request_id.unwrap_or_else(generate_learning_request_id),
-            actor: actor
-                .ok_or_else(|| CliError::Usage("learning propose requires --actor".to_owned()))?,
-            kind: kind
-                .ok_or_else(|| CliError::Usage("learning propose requires --kind".to_owned()))?,
-            title: title
-                .ok_or_else(|| CliError::Usage("learning propose requires --title".to_owned()))?,
-            guidance: guidance.ok_or_else(|| {
-                CliError::Usage("learning propose requires --guidance".to_owned())
-            })?,
-            confidence_percent: confidence.ok_or_else(|| {
-                CliError::Usage("learning propose requires --confidence".to_owned())
-            })?,
-            provenance: provenance.ok_or_else(|| {
-                CliError::Usage("learning propose requires --provenance".to_owned())
-            })?,
-            evidence,
-        },
-    )?;
+    let input = ProposeLearningInput {
+        request_id: request_id.unwrap_or_else(generate_learning_request_id),
+        actor: actor
+            .ok_or_else(|| CliError::Usage("learning propose requires --actor".to_owned()))?,
+        kind: kind.ok_or_else(|| CliError::Usage("learning propose requires --kind".to_owned()))?,
+        title: title
+            .ok_or_else(|| CliError::Usage("learning propose requires --title".to_owned()))?,
+        guidance: guidance
+            .ok_or_else(|| CliError::Usage("learning propose requires --guidance".to_owned()))?,
+        confidence_percent: confidence
+            .ok_or_else(|| CliError::Usage("learning propose requires --confidence".to_owned()))?,
+        provenance: provenance
+            .ok_or_else(|| CliError::Usage("learning propose requires --provenance".to_owned()))?,
+        evidence,
+    };
+    let result = with_learning_access(&common, |project, legacy_vault, store| {
+        propose_learning_with_continuity_transition(project, legacy_vault, store, input)
+    })?;
     print_learning_mutation(&result, common.json, "Proposed")
 }
 
@@ -2115,28 +1848,29 @@ fn learning_correct(arguments: &[String]) -> Result<(), CliError> {
     }
     let learning_id = learning_id
         .ok_or_else(|| CliError::Usage("learning correct requires LEARNING".to_owned()))?;
-    let binding = resolve_learning_binding(&common)?;
-    let result = correct_learning(
-        common.project_path()?,
-        &binding.vault_path,
-        &learning_id,
-        CorrectLearningInput {
-            request_id: request_id.unwrap_or_else(generate_learning_request_id),
-            expected_event_count: None,
-            actor: actor
-                .ok_or_else(|| CliError::Usage("learning correct requires --actor".to_owned()))?,
-            title: title
-                .ok_or_else(|| CliError::Usage("learning correct requires --title".to_owned()))?,
-            guidance: guidance.ok_or_else(|| {
-                CliError::Usage("learning correct requires --guidance".to_owned())
-            })?,
-            confidence_percent: confidence.ok_or_else(|| {
-                CliError::Usage("learning correct requires --confidence".to_owned())
-            })?,
-            evidence,
-            note,
-        },
-    )?;
+    let input = CorrectLearningInput {
+        request_id: request_id.unwrap_or_else(generate_learning_request_id),
+        expected_event_count: None,
+        actor: actor
+            .ok_or_else(|| CliError::Usage("learning correct requires --actor".to_owned()))?,
+        title: title
+            .ok_or_else(|| CliError::Usage("learning correct requires --title".to_owned()))?,
+        guidance: guidance
+            .ok_or_else(|| CliError::Usage("learning correct requires --guidance".to_owned()))?,
+        confidence_percent: confidence
+            .ok_or_else(|| CliError::Usage("learning correct requires --confidence".to_owned()))?,
+        evidence,
+        note,
+    };
+    let result = with_learning_access(&common, |project, legacy_vault, store| {
+        correct_learning_with_continuity_transition(
+            project,
+            legacy_vault,
+            store,
+            &learning_id,
+            input,
+        )
+    })?;
     print_learning_mutation(&result, common.json, "Corrected")
 }
 
@@ -2185,22 +1919,25 @@ fn learning_review(arguments: &[String]) -> Result<(), CliError> {
     }
     let learning_id = learning_id
         .ok_or_else(|| CliError::Usage("learning review requires LEARNING".to_owned()))?;
-    let binding = resolve_learning_binding(&common)?;
-    let result = review_learning(
-        common.project_path()?,
-        &binding.vault_path,
-        &learning_id,
-        ReviewLearningInput {
-            request_id: request_id.unwrap_or_else(generate_learning_request_id),
-            expected_event_count: None,
-            actor: actor
-                .ok_or_else(|| CliError::Usage("learning review requires --actor".to_owned()))?,
-            action: action
-                .ok_or_else(|| CliError::Usage("learning review requires --action".to_owned()))?,
-            note,
-            replacement_learning_id,
-        },
-    )?;
+    let input = ReviewLearningInput {
+        request_id: request_id.unwrap_or_else(generate_learning_request_id),
+        expected_event_count: None,
+        actor: actor
+            .ok_or_else(|| CliError::Usage("learning review requires --actor".to_owned()))?,
+        action: action
+            .ok_or_else(|| CliError::Usage("learning review requires --action".to_owned()))?,
+        note,
+        replacement_learning_id,
+    };
+    let result = with_learning_access(&common, |project, legacy_vault, store| {
+        review_learning_with_continuity_transition(
+            project,
+            legacy_vault,
+            store,
+            &learning_id,
+            input,
+        )
+    })?;
     print_learning_mutation(&result, common.json, "Reviewed")
 }
 
@@ -2217,13 +1954,13 @@ fn learning_list(arguments: &[String]) -> Result<(), CliError> {
         }
         index += 1;
     }
-    let binding = resolve_learning_binding(&common)?;
-    let project = common.project_path()?;
-    let learnings = if review_only {
-        learning_review_inbox(&project, &binding.vault_path)?
-    } else {
-        list_learnings(&project, &binding.vault_path)?
-    };
+    let learnings = with_learning_access(&common, |project, legacy_vault, store| {
+        if review_only {
+            learning_review_inbox_with_continuity_transition(project, legacy_vault, store)
+        } else {
+            list_learnings_with_continuity_transition(project, legacy_vault, store)
+        }
+    })?;
     if common.json {
         println!(
             "{}",
@@ -2268,8 +2005,9 @@ fn learning_show(arguments: &[String]) -> Result<(), CliError> {
     }
     let learning_id =
         learning_id.ok_or_else(|| CliError::Usage("learning show requires LEARNING".to_owned()))?;
-    let binding = resolve_learning_binding(&common)?;
-    let learning = read_learning(common.project_path()?, &binding.vault_path, &learning_id)?;
+    let learning = with_learning_access(&common, |project, legacy_vault, store| {
+        read_learning_with_continuity_transition(project, legacy_vault, store, &learning_id)
+    })?;
     if common.json {
         println!(
             "{}",
@@ -2313,18 +2051,23 @@ fn runbook(arguments: &[String]) -> Result<(), CliError> {
 
 fn runbook_compile(arguments: &[String]) -> Result<(), CliError> {
     let common = parse_runbook_arguments(arguments, "runbook compile")?;
-    let binding = resolve_runbook_binding(&common)?;
-    let runbook = compile_reviewed_runbook(
-        common.project_path()?,
-        &binding.vault_path,
-        ReviewedRunbookInput {
-            title: common
-                .title
-                .clone()
-                .ok_or_else(|| CliError::Usage("runbook compile requires --title".to_owned()))?,
-            learning_ids: common.learning_ids.clone(),
-        },
-    )?;
+    let project = common.project_path()?;
+    let input = ReviewedRunbookInput {
+        title: common
+            .title
+            .clone()
+            .ok_or_else(|| CliError::Usage("runbook compile requires --title".to_owned()))?,
+        learning_ids: common.learning_ids.clone(),
+    };
+    let runbook =
+        with_cli_continuity_access(&project, common.vault.as_deref(), |access, store| {
+            compile_reviewed_runbook_with_continuity_transition(
+                &project,
+                &access.legacy_vault_path,
+                store,
+                input,
+            )
+        })?;
     if common.json {
         println!(
             "{}",
@@ -2371,38 +2114,41 @@ fn runbook_export_skill(arguments: &[String]) -> Result<(), CliError> {
         index += 1;
     }
     let common = parse_runbook_arguments(&retained, "runbook export-skill")?;
-    let binding = resolve_runbook_binding(&common)?;
+    let project = common.project_path()?;
     let egress_registry = EgressPolicyRegistry::system_default()?;
     let mount_registry = ContextMountRegistry::system_default()?;
     let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
     let policy_bundle_registry = PolicyBundleRegistry::system_default()?;
-    let exported = export_reviewed_runbook_skill(
-        common.project_path()?,
-        &binding.vault_path,
-        RunbookSkillExportInput {
-            runbook: ReviewedRunbookInput {
-                title: common.title.clone().ok_or_else(|| {
-                    CliError::Usage("runbook export-skill requires --title".to_owned())
-                })?,
-                learning_ids: common.learning_ids.clone(),
-            },
-            expected_runbook_id: expected_runbook_id.ok_or_else(|| {
-                CliError::Usage("runbook export-skill requires --expected-runbook".to_owned())
+    let input = RunbookSkillExportInput {
+        runbook: ReviewedRunbookInput {
+            title: common.title.clone().ok_or_else(|| {
+                CliError::Usage("runbook export-skill requires --title".to_owned())
             })?,
-            host: host.ok_or_else(|| {
-                CliError::Usage("runbook export-skill requires --host codex|claude-code".to_owned())
-            })?,
-            egress_target: egress_target.ok_or_else(|| {
-                CliError::Usage(
-                    "runbook export-skill requires --egress-target cloud|local".to_owned(),
-                )
-            })?,
+            learning_ids: common.learning_ids.clone(),
         },
-        &egress_registry,
-        &mount_registry,
-        &knowledge_scope_registry,
-        &policy_bundle_registry,
-    )?;
+        expected_runbook_id: expected_runbook_id.ok_or_else(|| {
+            CliError::Usage("runbook export-skill requires --expected-runbook".to_owned())
+        })?,
+        host: host.ok_or_else(|| {
+            CliError::Usage("runbook export-skill requires --host codex|claude-code".to_owned())
+        })?,
+        egress_target: egress_target.ok_or_else(|| {
+            CliError::Usage("runbook export-skill requires --egress-target cloud|local".to_owned())
+        })?,
+    };
+    let exported =
+        with_cli_continuity_access(&project, common.vault.as_deref(), |access, store| {
+            export_reviewed_runbook_skill_transition(
+                &project,
+                &access.legacy_vault_path,
+                input,
+                &egress_registry,
+                &mount_registry,
+                &knowledge_scope_registry,
+                &policy_bundle_registry,
+                store,
+            )
+        })?;
     if common.json {
         println!(
             "{}",
@@ -2471,13 +2217,6 @@ fn parse_runbook_arguments(
     Ok(parsed)
 }
 
-fn resolve_runbook_binding(
-    arguments: &RunbookArguments,
-) -> Result<ley_core::ProjectVaultBinding, CliError> {
-    let registry = BindingRegistry::system_default()?;
-    Ok(registry.resolve(arguments.project_path()?, arguments.vault.as_deref())?)
-}
-
 #[derive(Default)]
 struct LearningArguments {
     project: Option<PathBuf>,
@@ -2515,11 +2254,14 @@ fn parse_learning_common(
     Ok(())
 }
 
-fn resolve_learning_binding(
+fn with_learning_access<T>(
     common: &LearningArguments,
-) -> Result<ley_core::ProjectVaultBinding, CliError> {
-    let registry = BindingRegistry::system_default()?;
-    Ok(registry.resolve(common.project_path()?, common.vault.as_deref())?)
+    operation: impl FnOnce(&Path, &Path, &ContinuityStore) -> Result<T, LeyCoreError>,
+) -> Result<T, CliError> {
+    let project = common.project_path()?;
+    with_cli_continuity_access(&project, common.vault.as_deref(), |access, store| {
+        operation(&project, &access.legacy_vault_path, store)
+    })
 }
 
 fn parse_learning_actor(value: &str) -> Result<LearningActor, CliError> {
@@ -2594,7 +2336,7 @@ fn parse_learning_evidence(value: &str) -> Result<LearningEvidenceInput, CliErro
 }
 
 fn print_learning_mutation(
-    result: &ley_core::LearningMutation,
+    result: &ley_core::LearningWriteResult,
     json: bool,
     verb: &str,
 ) -> Result<(), CliError> {
@@ -2624,8 +2366,7 @@ fn print_learning_mutation(
                 "recorded"
             }
         );
-        println!("Index: {}", result.index_path);
-        println!("Review: {}", result.review_path);
+        println!("Storage: native continuity");
     }
     Ok(())
 }
@@ -2727,8 +2468,20 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
         ));
     }
     let registry = BindingRegistry::system_default()?;
-    let binding = match registry.resolve(&parsed.project, parsed.vault.as_deref()) {
-        Ok(binding) => binding,
+    let vault_path = match registry.resolve(&parsed.project, parsed.vault.as_deref()) {
+        Ok(binding) => binding.vault_path,
+        Err(LeyCoreError::BoundVaultUnavailable { path, .. }) => path,
+        Err(LeyCoreError::VaultNotBound(project_id)) if parsed.vault.is_none() => {
+            let store = ContinuityStore::system_default()?;
+            if ley_core::native_canonical_read_authority_available(&parsed.project, &store)? {
+                native_cli_legacy_placeholder(&project_id, &store)?
+            } else {
+                return run_unavailable_stdio(
+                    "Ley is initialized but canonical continuity is not ready. Run a deliberate 'ley ingest' for native projects, or reconnect/migrate the legacy vault for older projects.",
+                )
+                .map_err(CliError::Mcp);
+            }
+        }
         Err(LeyCoreError::ProjectNotFound(_)) => {
             let bootstrap = BootstrapSpecificationRegistry::system_default()
                 .map_err(|_| CliError::BootstrapAuthorityUnavailable)?;
@@ -2758,11 +2511,9 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
             )
             .map_err(CliError::Mcp);
         }
-        Err(LeyCoreError::NotDirectory(_))
-        | Err(LeyCoreError::VaultNotBound(_))
-        | Err(LeyCoreError::BoundVaultUnavailable { .. }) => {
+        Err(LeyCoreError::NotDirectory(_)) => {
             return run_unavailable_stdio(
-                "Ley is inactive for this workspace. Initialize the project, bind a filesystem vault, and capture a snapshot to enable local memory tools.",
+                "Ley is inactive for this workspace. Initialize the project and capture native continuity, or reconnect/migrate the legacy vault for an older project.",
             )
             .map_err(CliError::Mcp)
         }
@@ -2770,7 +2521,7 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
     };
     match run_stdio_with_egress_target(
         parsed.project,
-        binding.vault_path,
+        vault_path,
         allow_session_writes,
         allow_learning_proposals,
         egress_target,
@@ -2786,7 +2537,8 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
         Err(ley_mcp::McpServerError::Project(
             LeyCoreError::ProjectMemoryUnavailable(_)
             | LeyCoreError::InvalidArtifactStore(_)
-            | LeyCoreError::InvalidProjectGraph(_),
+            | LeyCoreError::InvalidProjectGraph(_)
+            | LeyCoreError::BoundVaultUnavailable { .. },
         )) => run_unavailable_stdio(
             "Ley found this workspace, but its captured memory is unavailable or inconsistent. Run 'ley doctor' and then a deliberate 'ley ingest' before using agent memory tools.",
         )
@@ -2856,10 +2608,15 @@ fn session_import(arguments: &[String]) -> Result<(), CliError> {
             "session import codex-history requires --host-session SESSION_UUID".to_owned(),
         )
     })?;
-    let project = common.project_path()?;
-    let binding = resolve_session_binding(&common)?;
-    let result =
-        import_codex_message_history(&project, &binding.vault_path, &source, &host_session)?;
+    let result = with_transition_session_operation(&common, |project, vault, store| {
+        import_codex_message_history_with_continuity_transition(
+            project,
+            vault,
+            store,
+            &source,
+            &host_session,
+        )
+    })?;
     if common.json {
         println!(
             "{}",
@@ -2937,7 +2694,6 @@ fn session_turn_record(arguments: &[String], is_prompt: bool) -> Result<(), CliE
             "session {label} input cannot be empty"
         )));
     }
-    let binding = resolve_session_binding(&common)?;
     let input = TurnEvidenceInput {
         request_id: request_id.unwrap_or_else(generate_request_id),
         origin: TurnEvidenceOrigin::ManualCli,
@@ -2945,21 +2701,25 @@ fn session_turn_record(arguments: &[String], is_prompt: bool) -> Result<(), CliE
         correlation_material: None,
         text,
     };
-    let result = if is_prompt {
-        record_session_prompt(
-            &common.project_path()?,
-            &binding.vault_path,
-            &session_id,
-            input,
-        )?
-    } else {
-        record_session_response(
-            &common.project_path()?,
-            &binding.vault_path,
-            &session_id,
-            input,
-        )?
-    };
+    let result = with_transition_session_operation(&common, |project, vault, store| {
+        if is_prompt {
+            record_session_prompt_with_continuity_transition(
+                project,
+                vault,
+                store,
+                &session_id,
+                input,
+            )
+        } else {
+            record_session_response_with_continuity_transition(
+                project,
+                vault,
+                store,
+                &session_id,
+                input,
+            )
+        }
+    })?;
     print_session_mutation(
         &result,
         common.json,
@@ -3007,16 +2767,18 @@ fn session_erase(arguments: &[String]) -> Result<(), CliError> {
         .ok_or_else(|| CliError::Usage("session erase requires --expected-events".to_owned()))?;
     let expected_name = expected_name
         .ok_or_else(|| CliError::Usage("session erase requires --confirm-name".to_owned()))?;
-    let binding = resolve_session_binding(&common)?;
-    let result = erase_session_memory(
-        &common.project_path()?,
-        &binding.vault_path,
-        &session_id,
-        EraseSessionMemoryInput {
-            expected_event_count,
-            expected_name,
-        },
-    )?;
+    let result = with_transition_session_operation(&common, |project, vault, store| {
+        erase_session_memory_with_continuity_transition(
+            project,
+            vault,
+            store,
+            &session_id,
+            EraseSessionMemoryInput {
+                expected_event_count,
+                expected_name,
+            },
+        )
+    })?;
     if common.json {
         println!(
             "{}",
@@ -3071,28 +2833,30 @@ fn session_start(arguments: &[String]) -> Result<(), CliError> {
         }
         index += 1;
     }
-    let binding = resolve_session_binding(&common)?;
-    let result = start_session(
-        &common.project_path()?,
-        &binding.vault_path,
-        StartSessionInput {
-            request_id: request_id.unwrap_or_else(generate_request_id),
-            name: name
-                .ok_or_else(|| CliError::Usage("session start requires --name".to_owned()))?,
-            goal: goal
-                .ok_or_else(|| CliError::Usage("session start requires --goal".to_owned()))?,
-            source: SessionSource {
-                kind: if host.is_some() || agent.is_some() {
-                    SessionSourceKind::HostHook
-                } else {
-                    SessionSourceKind::ManualCli
+    let name = name.ok_or_else(|| CliError::Usage("session start requires --name".to_owned()))?;
+    let goal = goal.ok_or_else(|| CliError::Usage("session start requires --goal".to_owned()))?;
+    let result = with_transition_session_operation(&common, |project, vault, store| {
+        start_session_with_continuity_transition(
+            project,
+            vault,
+            store,
+            StartSessionInput {
+                request_id: request_id.unwrap_or_else(generate_request_id),
+                name,
+                goal,
+                source: SessionSource {
+                    kind: if host.is_some() || agent.is_some() {
+                        SessionSourceKind::HostHook
+                    } else {
+                        SessionSourceKind::ManualCli
+                    },
+                    host,
+                    agent,
+                    source_reference: None,
                 },
-                host,
-                agent,
-                source_reference: None,
             },
-        },
-    )?;
+        )
+    })?;
     print_session_mutation(&result, common.json, "Started")
 }
 
@@ -3137,20 +2901,22 @@ fn session_rename(arguments: &[String]) -> Result<(), CliError> {
     }
     let session_id =
         session_id.ok_or_else(|| CliError::Usage("session rename requires SESSION".to_owned()))?;
-    let binding = resolve_session_binding(&common)?;
-    let result = rename_session(
-        &common.project_path()?,
-        &binding.vault_path,
-        &session_id,
-        RenameSessionInput {
-            request_id: request_id.unwrap_or_else(generate_request_id),
-            expected_event_count,
-            name: name
-                .ok_or_else(|| CliError::Usage("session rename requires --name".to_owned()))?,
-            note: note
-                .ok_or_else(|| CliError::Usage("session rename requires --note".to_owned()))?,
-        },
-    )?;
+    let name = name.ok_or_else(|| CliError::Usage("session rename requires --name".to_owned()))?;
+    let note = note.ok_or_else(|| CliError::Usage("session rename requires --note".to_owned()))?;
+    let result = with_transition_session_operation(&common, |project, vault, store| {
+        rename_session_with_continuity_transition(
+            project,
+            vault,
+            store,
+            &session_id,
+            RenameSessionInput {
+                request_id: request_id.unwrap_or_else(generate_request_id),
+                expected_event_count,
+                name,
+                note,
+            },
+        )
+    })?;
     print_session_mutation(&result, common.json, "Renamed")
 }
 
@@ -3257,13 +3023,9 @@ fn session_checkpoint(arguments: &[String]) -> Result<(), CliError> {
             unresolved,
         }
     };
-    let binding = resolve_session_binding(&common)?;
-    let result = checkpoint_session(
-        &common.project_path()?,
-        &binding.vault_path,
-        &session_id,
-        input,
-    )?;
+    let result = with_transition_session_operation(&common, |project, vault, store| {
+        checkpoint_session_with_continuity_transition(project, vault, store, &session_id, input)
+    })?;
     print_session_mutation(&result, common.json, "Checkpointed")
 }
 
@@ -3312,28 +3074,32 @@ fn session_finish(arguments: &[String]) -> Result<(), CliError> {
     }
     let session_id =
         session_id.ok_or_else(|| CliError::Usage("session finish requires SESSION".to_owned()))?;
-    let binding = resolve_session_binding(&common)?;
-    let result = finish_session(
-        &common.project_path()?,
-        &binding.vault_path,
-        &session_id,
-        FinishSessionInput {
-            request_id: request_id.unwrap_or_else(generate_request_id),
-            status,
-            summary: summary
-                .ok_or_else(|| CliError::Usage("session finish requires --summary".to_owned()))?,
-            final_response,
-            handoff,
-            unresolved,
-        },
-    )?;
+    let summary =
+        summary.ok_or_else(|| CliError::Usage("session finish requires --summary".to_owned()))?;
+    let result = with_transition_session_operation(&common, |project, vault, store| {
+        finish_session_with_continuity_transition(
+            project,
+            vault,
+            store,
+            &session_id,
+            FinishSessionInput {
+                request_id: request_id.unwrap_or_else(generate_request_id),
+                status,
+                summary,
+                final_response,
+                handoff,
+                unresolved,
+            },
+        )
+    })?;
     print_session_mutation(&result, common.json, "Finished")
 }
 
 fn session_list(arguments: &[String]) -> Result<(), CliError> {
     let common = parse_session_read_arguments(arguments, false)?;
-    let binding = resolve_session_binding(&common)?;
-    let sessions = list_sessions(&common.project_path()?, &binding.vault_path)?;
+    let sessions = with_transition_session_read(&common, |project, vault, store| {
+        list_sessions_with_continuity_transition(project, vault, store)
+    })?;
     if common.json {
         println!(
             "{}",
@@ -3361,21 +3127,25 @@ fn session_show(arguments: &[String]) -> Result<(), CliError> {
         .session_id
         .as_deref()
         .expect("show validation requires a session ID");
-    let binding = resolve_session_binding(&common)?;
     if common.json {
-        let session = read_session_context(
-            &common.project_path()?,
-            &binding.vault_path,
-            session_id,
-            DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
-            DEFAULT_SESSION_CONTEXT_CHARACTERS,
-        )?;
+        let session = with_transition_session_read(&common, |project, vault, store| {
+            read_session_context_with_continuity_transition(
+                project,
+                vault,
+                store,
+                session_id,
+                DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+                DEFAULT_SESSION_CONTEXT_CHARACTERS,
+            )
+        })?;
         println!(
             "{}",
             serde_json::to_string_pretty(&session).expect("session is serializable")
         );
     } else {
-        let session = read_session(&common.project_path()?, &binding.vault_path, session_id)?;
+        let session = with_transition_session_read(&common, |project, vault, store| {
+            read_session_with_continuity_transition(project, vault, store, session_id)
+        })?;
         println!("Session: {} ({})", session.name, session.session_id);
         println!("Status: {}", session_status_label(session.status));
         println!("Goal: {}", session.goal);
@@ -3424,14 +3194,16 @@ fn session_turns(arguments: &[String]) -> Result<(), CliError> {
     }
     let session_id =
         session_id.ok_or_else(|| CliError::Usage("session turns requires SESSION".to_owned()))?;
-    let binding = resolve_session_binding(&common)?;
-    let turns = read_session_turns_context(
-        &common.project_path()?,
-        &binding.vault_path,
-        &session_id,
-        max_results,
-        max_characters,
-    )?;
+    let turns = with_transition_session_read(&common, |project, vault, store| {
+        read_session_turns_context_with_continuity_transition(
+            project,
+            vault,
+            store,
+            &session_id,
+            max_results,
+            max_characters,
+        )
+    })?;
     if common.json {
         println!(
             "{}",
@@ -3516,11 +3288,106 @@ fn parse_session_read_arguments(
     Ok(common)
 }
 
-fn resolve_session_binding(
+fn with_transition_session_read<T>(
     common: &SessionArguments,
-) -> Result<ley_core::ProjectVaultBinding, CliError> {
+    operation: impl FnOnce(&Path, &Path, &ContinuityStore) -> Result<T, LeyCoreError>,
+) -> Result<T, CliError> {
+    with_transition_session_operation(common, operation)
+}
+
+struct CliContinuityAccess {
+    legacy_vault_path: PathBuf,
+    binding: Option<ProjectVaultBinding>,
+    native_born_registered: bool,
+}
+
+fn native_cli_legacy_placeholder(
+    project_id: &str,
+    store: &ContinuityStore,
+) -> Result<PathBuf, LeyCoreError> {
+    let parent = store.path().parent().ok_or_else(|| {
+        LeyCoreError::InvalidContinuityStore(
+            "continuity database has no parent directory for native CLI access".to_owned(),
+        )
+    })?;
+    let path = parent.join("native-no-legacy-vault").join(project_id);
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path),
+        Err(source) => Err(LeyCoreError::Io { path, source }),
+        Ok(_) => Err(LeyCoreError::UnsafeProjectLayout(path)),
+    }
+}
+
+fn with_cli_continuity_access<T>(
+    project: &Path,
+    vault_override: Option<&Path>,
+    operation: impl FnOnce(&CliContinuityAccess, &ContinuityStore) -> Result<T, LeyCoreError>,
+) -> Result<T, CliError> {
     let registry = BindingRegistry::system_default()?;
-    Ok(registry.resolve(common.project_path()?, common.vault.as_deref())?)
+    let store = ContinuityStore::system_default()?;
+    match registry.resolve(project, vault_override) {
+        Ok(binding) => {
+            let access = CliContinuityAccess {
+                legacy_vault_path: binding.vault_path.clone(),
+                binding: Some(binding),
+                native_born_registered: false,
+            };
+            Ok(operation(&access, &store)?)
+        }
+        Err(LeyCoreError::VaultNotBound(project_id)) if vault_override.is_none() => {
+            let native_ready =
+                ley_core::native_canonical_read_authority_available(project, &store)?;
+            let native_born_registered = native_born_project_registration_exists(project, &store)?;
+            if !native_ready && !native_born_registered {
+                return Err(LeyCoreError::VaultNotBound(project_id).into());
+            }
+            let access = CliContinuityAccess {
+                legacy_vault_path: native_cli_legacy_placeholder(&project_id, &store)?,
+                binding: None,
+                native_born_registered,
+            };
+            Ok(operation(&access, &store)?)
+        }
+        Err(LeyCoreError::BoundVaultUnavailable { project_id, path })
+            if vault_override.is_none() =>
+        {
+            let unavailable_path = path.clone();
+            let unavailable = LeyCoreError::BoundVaultUnavailable {
+                project_id: project_id.clone(),
+                path: path.clone(),
+            };
+            let access = CliContinuityAccess {
+                legacy_vault_path: path.clone(),
+                binding: Some(ProjectVaultBinding {
+                    project_id,
+                    vault_path: path,
+                    source: BindingSource::Persisted,
+                }),
+                native_born_registered: false,
+            };
+            match operation(&access, &store) {
+                Ok(value) => Ok(value),
+                Err(LeyCoreError::Io { path, source })
+                    if source.kind() == std::io::ErrorKind::NotFound
+                        && (path == unavailable_path || path.starts_with(&unavailable_path)) =>
+                {
+                    Err(unavailable.into())
+                }
+                Err(error) => Err(error.into()),
+            }
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn with_transition_session_operation<T>(
+    common: &SessionArguments,
+    operation: impl FnOnce(&Path, &Path, &ContinuityStore) -> Result<T, LeyCoreError>,
+) -> Result<T, CliError> {
+    let project = common.project_path()?;
+    with_cli_continuity_access(&project, common.vault.as_deref(), |access, store| {
+        operation(&project, &access.legacy_vault_path, store)
+    })
 }
 
 fn parse_finished_status(value: &str) -> Result<SessionStatus, CliError> {
@@ -3562,7 +3429,7 @@ fn read_bounded_json(path: &Path) -> Result<CheckpointInput, CliError> {
 }
 
 fn print_session_mutation(
-    result: &ley_core::SessionMutation,
+    result: &SessionWriteResult,
     json: bool,
     verb: &str,
 ) -> Result<(), CliError> {
@@ -3571,8 +3438,7 @@ fn print_session_mutation(
         let receipt = serde_json::json!({
             "eventId": result.event_id,
             "replayed": result.replayed,
-            "sessionPath": result.session_path,
-            "markdownPath": result.markdown_path,
+            "storage": "native-continuity",
             "session": {
                 "schemaVersion": session.schema_version,
                 "projectId": session.project_id,
@@ -3602,22 +3468,36 @@ fn print_session_mutation(
                 "recorded"
             }
         );
-        println!("Projection: {}", result.session_path);
-        println!("Markdown: {}", result.markdown_path);
+        println!("Storage: native continuity");
     }
     Ok(())
 }
 
 fn ingest(arguments: &[String]) -> Result<(), CliError> {
     let parsed = binding_arguments(arguments, false)?;
-    let registry = BindingRegistry::system_default()?;
-    let binding = registry.resolve(&parsed.project, parsed.vault.as_deref())?;
-    let result = ingest_project(&parsed.project, &binding.vault_path)?;
+    let (result, binding, native_storage) =
+        with_cli_continuity_access(&parsed.project, parsed.vault.as_deref(), |access, store| {
+            let result = if access.binding.is_none() {
+                let result = ingest_project_with_native_authority(&parsed.project, store)?;
+                if access.native_born_registered {
+                    establish_native_born_project_authorities(&parsed.project, store)?;
+                }
+                result
+            } else {
+                ingest_project_with_continuity_transition(
+                    &parsed.project,
+                    &access.legacy_vault_path,
+                    store,
+                )?
+            };
+            Ok((result, access.binding.clone(), access.binding.is_none()))
+        })?;
     if parsed.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "binding": binding,
+                "storage": if native_storage { "native-continuity" } else { "legacy-vault" },
                 "ingestion": result,
             }))
             .expect("CLI result is serializable")
@@ -3625,11 +3505,19 @@ fn ingest(arguments: &[String]) -> Result<(), CliError> {
     } else {
         println!("Ingested project: {}", result.project_id);
         println!("Snapshot: {}", result.snapshot_id);
-        println!(
-            "Vault: {} ({})",
-            binding.vault_path.display(),
-            binding.source
-        );
+        if let Some(binding) = &binding {
+            if binding.vault_path.exists() {
+                println!(
+                    "Legacy vault: {} ({})",
+                    binding.vault_path.display(),
+                    binding.source
+                );
+            } else {
+                println!("Storage: native continuity (legacy vault unavailable)");
+            }
+        } else {
+            println!("Storage: native continuity");
+        }
         println!(
             "Artifacts: {} files / {} stored / {} redacted / {} skipped",
             result.files,
@@ -3656,7 +3544,9 @@ fn ingest(arguments: &[String]) -> Result<(), CliError> {
                 result.renamed.len(),
                 result.deleted.len()
             );
-            println!("Manifest: {}", result.manifest_path);
+            if let Some(manifest_path) = &result.manifest_path {
+                println!("Legacy manifest: {manifest_path}");
+            }
         } else {
             println!("No source changes; the durable snapshot was left untouched");
         }
@@ -3664,60 +3554,11 @@ fn ingest(arguments: &[String]) -> Result<(), CliError> {
     Ok(())
 }
 
-fn graph(arguments: &[String]) -> Result<(), CliError> {
-    let parsed = binding_arguments(arguments, false)?;
-    let registry = BindingRegistry::system_default()?;
-    let binding = registry.resolve(&parsed.project, parsed.vault.as_deref())?;
-    let graph = read_project_graph(&parsed.project, &binding.vault_path)?;
-    if parsed.json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&graph).expect("project graph is serializable")
-        );
-        return Ok(());
-    }
-
-    let symbols = graph
-        .nodes
-        .iter()
-        .filter(|node| node.kind == GraphNodeKind::Symbol)
-        .count();
-    let dependencies = graph
-        .nodes
-        .iter()
-        .filter(|node| node.kind == GraphNodeKind::Dependency)
-        .count();
-    println!("Project graph: {}", graph.project_name);
-    println!("Snapshot: {}", graph.graph_snapshot_id);
-    println!("Source snapshot: {}", graph.artifact_snapshot_id);
-    println!(
-        "Nodes: {} total / {} symbols / {} dependencies",
-        graph.nodes.len(),
-        symbols,
-        dependencies
-    );
-    println!("Edges: {}", graph.edges.len());
-    println!("Diagnostics: {}", graph.diagnostics.len());
-    if let Some(git) = &graph.git {
-        println!(
-            "Git: {} @ {} / {} tracked changes",
-            git.branch.as_deref().unwrap_or("detached"),
-            git.head
-                .as_deref()
-                .map(|head| &head[..head.len().min(12)])
-                .unwrap_or("unborn"),
-            git.changes.len()
-        );
-    } else {
-        println!("Git: not a repository or Git is unavailable");
-    }
-    println!("Vault: {}", binding.vault_path.display());
-    Ok(())
-}
-
 fn bind(arguments: &[String]) -> Result<(), CliError> {
     let parsed = binding_arguments(arguments, true)?;
     let registry = BindingRegistry::system_default()?;
+    let store = ContinuityStore::system_default()?;
+    prepare_legacy_project_binding(&parsed.project, &store)?;
     let vault = parsed
         .vault
         .expect("binding argument validation requires a vault");
@@ -3890,6 +3731,12 @@ fn initialize(arguments: &[String]) -> Result<(), CliError> {
     }
     let root = path.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
     let result = initialize_project_retiring_bootstrap(&root, name.as_deref(), capture)?;
+    if result.created {
+        let store = ContinuityStore::system_default()?;
+        let catalog = ProjectCatalog::system_default()?;
+        catalog.observe(&result.root)?;
+        register_native_born_project(&result.root, &store)?;
+    }
     if json {
         println!(
             "{}",
@@ -3977,7 +3824,6 @@ fn print_help() {
     println!("  ley binding [path] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley unbind [path] [--json]");
     println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
-    println!("  ley graph [path] [--vault TEMPORARY_VAULT] [--json]");
     println!(
         "  ley hook [path] --host codex|claude [--vault TEMPORARY_VAULT] [--egress-target cloud|local]"
     );
@@ -3985,33 +3831,25 @@ fn print_help() {
     println!("      [--allow-learning-proposals] [--egress-target cloud|local]");
     println!("  ley egress list [PROJECT] [--json]");
     println!("  ley egress project POLICY [PROJECT] [--json]");
-    println!("  ley egress specification SPECIFICATION_ID POLICY [PROJECT] [--json]");
-    println!("  ley egress mount MOUNT_ID POLICY [PROJECT] [--json]");
-    println!("  ley egress connector CONNECTOR_ID POLICY [PROJECT] [--json]");
-    println!("  ley connector add GITHUB_ISSUE_PR_OR_PINNED_DOC_URL [PROJECT] [--json]");
+    println!("  ley egress specification SPECIFICATION_ID agent-ok [PROJECT] [--json]  # clear legacy override");
+    println!("  ley egress mount MOUNT_ID agent-ok [PROJECT] [--json]  # clear legacy override");
+    println!(
+        "  ley egress connector CONNECTOR_ID agent-ok [PROJECT] [--json]  # clear legacy override"
+    );
     println!("  ley connector list [PROJECT] [--json]");
-    println!("  ley connector refresh CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley connector show CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley connector remove CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
     println!("  ley bootstrap-spec attach SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE] [--json]");
     println!("  ley bootstrap-spec list [WORKSPACE] [--json]");
     println!("  ley bootstrap-spec detach GRANT_ID [WORKSPACE] [--json]");
-    println!("  ley bootstrap-ref attach SOURCE_PROJECT [WORKSPACE] [--json]");
     println!("  ley bootstrap-ref list [WORKSPACE] [--json]");
     println!("  ley bootstrap-ref detach GRANT_ID [WORKSPACE] [--json]");
-    println!("  ley mount add REFERENCE_PROJECT [ACTIVE_PROJECT] [--json]");
     println!("  ley mount list [ACTIVE_PROJECT] [--json]");
     println!("  ley mount remove MOUNT_ID [ACTIVE_PROJECT] [--json]");
-    println!("  ley scope create team|organization NAME SOURCE_PROJECT... [--json]");
     println!("  ley scope list [--json]");
-    println!("  ley scope attach SCOPE_ID [ACTIVE_PROJECT] [--json]");
     println!("  ley scope attached [ACTIVE_PROJECT] [--json]");
     println!("  ley scope detach SCOPE_ID [ACTIVE_PROJECT] [--json]");
-    println!(
-        "  ley policy-bundle create SCOPE_ID NAME --source SOURCE_PROJECT SPECIFICATION_ID... [--json]"
-    );
     println!("  ley policy-bundle list [--json]");
-    println!("  ley policy-bundle attach BUNDLE_ID [ACTIVE_PROJECT] [--json]");
     println!("  ley policy-bundle attached [ACTIVE_PROJECT] [--json]");
     println!("  ley policy-bundle status [ACTIVE_PROJECT] [--json]");
     println!("  ley policy-bundle detach BUNDLE_ID [ACTIVE_PROJECT] [--json]");
@@ -4064,7 +3902,6 @@ enum CliError {
     Usage(String),
     BootstrapAuthorityUnavailable,
     Core(LeyCoreError),
-    GitHubConnector(GitHubConnectorError),
     Mcp(ley_mcp::McpServerError),
     CurrentDirectory(std::io::Error),
     HookInput(std::io::Error),
@@ -4088,7 +3925,6 @@ impl std::fmt::Display for CliError {
                 )
             }
             Self::Core(error) => error.fmt(formatter),
-            Self::GitHubConnector(error) => error.fmt(formatter),
             Self::Mcp(error) => error.fmt(formatter),
             Self::CurrentDirectory(error) => {
                 write!(formatter, "could not read current directory: {error}")
@@ -4111,11 +3947,5 @@ impl std::fmt::Display for CliError {
 impl From<LeyCoreError> for CliError {
     fn from(value: LeyCoreError) -> Self {
         Self::Core(value)
-    }
-}
-
-impl From<GitHubConnectorError> for CliError {
-    fn from(value: GitHubConnectorError) -> Self {
-        Self::GitHubConnector(value)
     }
 }

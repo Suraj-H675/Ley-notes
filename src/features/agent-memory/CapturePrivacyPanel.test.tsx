@@ -39,7 +39,8 @@ const settings: AgentCaptureSettings = {
 };
 
 const dashboard = {
-  binding: {
+  storage: {
+    kind: "legacy-vault",
     projectId: "prj_test",
     vaultName: "Private vault",
     source: "persisted",
@@ -58,7 +59,7 @@ const erasedInspection: AgentProjectInspection = {
   projectId: "prj_test",
   projectName: "Ley",
   captureMode: "structured",
-  binding: dashboard.binding,
+  storage: dashboard.storage,
 };
 
 describe("CapturePrivacyPanel memory erasure", () => {

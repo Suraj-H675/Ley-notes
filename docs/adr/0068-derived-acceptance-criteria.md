@@ -1,5 +1,7 @@
 # ADR 0068: Derived acceptance criteria from approved Specifications
 
+> Current migration note: this derived projection is retired from Ley. The exact approved Markdown revision remains the human-intent authority, but “Acceptance criteria” content now stays ordinary Markdown inside that source rather than becoming separate `acr_` product objects or consuming a separate projection budget. The projection parser, IDs, and projection-specific tests have been removed rather than retained as compatibility architecture.
+
 - Status: Accepted
 - Date: 2026-09-21
 - Extends: ADR 0031, ADR 0032, ADR 0058

@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -50,6 +51,7 @@ pub struct ContextMount {
     pub created_at_unix_ms: u64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextMountMutation {
@@ -276,9 +278,12 @@ pub struct ContextMountRegistry {
 
 impl ContextMountRegistry {
     pub fn system_default() -> Result<Self, LeyCoreError> {
-        Ok(Self::at(
-            default_binding_registry_path()?.with_file_name(CONTEXT_MOUNT_REGISTRY_FILE),
-        ))
+        let path = default_binding_registry_path()?.with_file_name(CONTEXT_MOUNT_REGISTRY_FILE);
+        Ok(Self {
+            project_catalog: ProjectCatalog::system_default()?,
+            binding_registry: BindingRegistry::system_default()?,
+            path,
+        })
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {
@@ -327,6 +332,7 @@ impl ContextMountRegistry {
                 .is_some_and(|mounts| mounts.contains_key(mount_id)))
     }
 
+    #[cfg(test)]
     pub fn mount_project(
         &self,
         active_project: impl AsRef<Path>,
@@ -829,6 +835,7 @@ impl ContextMountRegistry {
     }
 }
 
+#[cfg(test)]
 fn generate_mount_id() -> String {
     format!("mnt_{}", Uuid::new_v4().simple())
 }
@@ -848,6 +855,7 @@ pub(crate) fn validate_mount_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn unix_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

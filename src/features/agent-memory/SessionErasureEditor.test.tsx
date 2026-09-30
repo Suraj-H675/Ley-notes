@@ -61,7 +61,8 @@ const session: SessionContext = {
 };
 
 const dashboard: AgentMemoryDashboard = {
-  binding: {
+  storage: {
+    kind: "legacy-vault",
     projectId: "prj_test",
     vaultName: "Private vault",
     source: "persisted",

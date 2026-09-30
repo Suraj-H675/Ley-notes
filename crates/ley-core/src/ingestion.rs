@@ -2,12 +2,16 @@ use crate::graph::{
     build_project_graph, graph_body, validate_project_graph, GraphSource, ProjectGraph,
     PROJECT_GRAPH_LIMIT_BYTES,
 };
-use crate::{diagnose_project, preview_capture, validate_project_id, CaptureMode, LeyCoreError};
+use crate::{
+    diagnose_project, preview_capture, validate_project_id, CaptureMode, ContinuityStore,
+    LeyCoreError,
+};
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -134,8 +138,8 @@ pub struct IngestionResult {
     pub modified: Vec<String>,
     pub renamed: Vec<RenamedArtifact>,
     pub deleted: Vec<String>,
-    pub manifest_path: String,
-    pub graph_path: String,
+    pub manifest_path: Option<String>,
+    pub graph_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,6 +219,75 @@ pub(crate) struct PortableArtifactSnapshot {
     pub(crate) snapshot_id: String,
     pub(crate) artifacts: Vec<PortableArtifactReference>,
     pub(crate) blobs: Vec<PortableArtifactBlob>,
+}
+
+pub(crate) fn collect_artifact_citations(
+    events: &[crate::ContinuityEvent],
+) -> Result<Vec<PortableArtifactCitation>, LeyCoreError> {
+    let mut citations = BTreeSet::new();
+    for event in events {
+        collect_artifact_citations_from_value(&event.payload, &mut citations)?;
+    }
+    Ok(citations.into_iter().collect())
+}
+
+fn collect_artifact_citations_from_value(
+    value: &Value,
+    citations: &mut BTreeSet<PortableArtifactCitation>,
+) -> Result<(), LeyCoreError> {
+    match value {
+        Value::Object(object) => {
+            let snapshot = object.get("artifactSnapshotId");
+            let path = object.get("artifactPath");
+            let hash = object.get("contentHash");
+            let present = usize::from(snapshot.is_some())
+                + usize::from(path.is_some())
+                + usize::from(hash.is_some());
+            if present >= 2 && present < 3 {
+                return Err(LeyCoreError::InvalidContinuityStore(
+                    "continuity event contains an incomplete artifact citation".to_owned(),
+                ));
+            }
+            if present == 3 {
+                citations.insert(PortableArtifactCitation {
+                    artifact_snapshot_id: snapshot
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            LeyCoreError::InvalidContinuityStore(
+                                "artifactSnapshotId must be text".to_owned(),
+                            )
+                        })?
+                        .to_owned(),
+                    artifact_path: path
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            LeyCoreError::InvalidContinuityStore(
+                                "artifactPath must be text".to_owned(),
+                            )
+                        })?
+                        .to_owned(),
+                    content_hash: hash
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            LeyCoreError::InvalidContinuityStore(
+                                "contentHash must be text".to_owned(),
+                            )
+                        })?
+                        .to_owned(),
+                });
+            }
+            for nested in object.values() {
+                collect_artifact_citations_from_value(nested, citations)?;
+            }
+        }
+        Value::Array(values) => {
+            for nested in values {
+                collect_artifact_citations_from_value(nested, citations)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -324,6 +397,59 @@ pub fn erase_project_memory(
     })
 }
 
+pub fn erase_project_memory_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<ProjectMemoryErasure, LeyCoreError> {
+    let project_start = project_start.as_ref();
+    let vault = vault.as_ref();
+    let diagnostic = diagnose_project(project_start)?;
+    let project_id = diagnostic.identity.project_id.clone();
+    match erase_project_memory(project_start, vault) {
+        Ok(_) | Err(LeyCoreError::ProjectMemoryUnavailable(_)) => {}
+        Err(error) => return Err(error),
+    }
+    store.erase_project(&project_id)?;
+    Ok(ProjectMemoryErasure {
+        project_id,
+        erased: true,
+        project_metadata_preserved: true,
+        binding_preserved: true,
+    })
+}
+
+pub fn erase_project_memory_with_native_authority(
+    project_start: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<ProjectMemoryErasure, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let project_id = diagnostic.identity.project_id.clone();
+    match store.artifact_write_authority_origin(&project_id)? {
+        Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn) => {}
+        Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::LegacyCutover) => {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native-only project erasure cannot erase legacy-cutover authority".to_owned(),
+            ))
+        }
+        None => match store.project_continuity_origin(&project_id)? {
+            Some(crate::continuity_store::ContinuityProjectOrigin::NativeBorn) => {}
+            Some(crate::continuity_store::ContinuityProjectOrigin::LegacyUnknown) | None => {
+                return Err(LeyCoreError::InvalidContinuityStore(
+                    "native-only project erasure requires native-born authority".to_owned(),
+                ))
+            }
+        },
+    }
+    store.erase_project(&project_id)?;
+    Ok(ProjectMemoryErasure {
+        project_id,
+        erased: true,
+        project_metadata_preserved: true,
+        binding_preserved: false,
+    })
+}
+
 pub(crate) fn lock_project_memory_lifecycle(
     vault: &Path,
     project_id: &str,
@@ -417,11 +543,430 @@ pub(crate) fn lock_project_memory_lifecycle(
     Ok(ProjectMemoryLifecycleLock { file })
 }
 
+fn legacy_artifact_write_fence_state(
+    project_start: &Path,
+    vault: &Path,
+) -> Result<Option<bool>, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let vault_path = vault.canonicalize().map_err(|source| LeyCoreError::Io {
+        path: vault.to_path_buf(),
+        source,
+    })?;
+    let store = match ArtifactStore::open_existing(&vault_path, &diagnostic.identity.project_id) {
+        Ok(store) => store,
+        Err(LeyCoreError::ProjectMemoryUnavailable(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let lock = store
+        .artifacts_dir
+        .open_with(INGEST_LOCK_FILE, &options)
+        .map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
+    ensure_private_file_permissions(&lock, INGEST_LOCK_FILE)?;
+    Ok(Some(
+        lock.metadata()
+            .map_err(|source| store_io(INGEST_LOCK_FILE, source))?
+            .permissions()
+            .readonly(),
+    ))
+}
+
+fn fence_legacy_artifact_writes(project_start: &Path, vault: &Path) -> Result<bool, LeyCoreError> {
+    use cap_fs_ext::DirExt;
+
+    let diagnostic = diagnose_project(project_start)?;
+    load_project_memory(&diagnostic.root, vault)?;
+    let vault_path = vault.canonicalize().map_err(|source| LeyCoreError::Io {
+        path: vault.to_path_buf(),
+        source,
+    })?;
+    let _lifecycle =
+        lock_project_memory_lifecycle(&vault_path, &diagnostic.identity.project_id, false, true)?;
+    let vault_dir = Dir::open_ambient_dir(&vault_path, ambient_authority()).map_err(|source| {
+        LeyCoreError::Io {
+            path: vault_path.clone(),
+            source,
+        }
+    })?;
+    let open = |parent: &Dir, name: &str| {
+        parent
+            .open_dir_nofollow(name)
+            .map_err(|source| LeyCoreError::Io {
+                path: PathBuf::from(name),
+                source,
+            })
+    };
+    let ley_dir = open(&vault_dir, STORE_ROOT)?;
+    let memory_dir = open(&ley_dir, AGENT_MEMORY_DIRECTORY)?;
+    let projects_dir = open(&memory_dir, PROJECTS_DIRECTORY)?;
+    let project_dir = open(&projects_dir, &diagnostic.identity.project_id)?;
+    let artifacts_dir = open(&project_dir, ARTIFACTS_DIRECTORY)?;
+
+    let mut read_options = OpenOptions::new();
+    read_options.read(true).follow(FollowSymlinks::No);
+    let read_lock = artifacts_dir
+        .open_with(INGEST_LOCK_FILE, &read_options)
+        .map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
+    ensure_private_file_permissions(&read_lock, INGEST_LOCK_FILE)?;
+    if read_lock
+        .metadata()
+        .map_err(|source| store_io(INGEST_LOCK_FILE, source))?
+        .permissions()
+        .readonly()
+    {
+        return Ok(false);
+    }
+    drop(read_lock);
+
+    let mut write_options = OpenOptions::new();
+    write_options
+        .read(true)
+        .write(true)
+        .follow(FollowSymlinks::No);
+    let lock = artifacts_dir
+        .open_with(INGEST_LOCK_FILE, &write_options)
+        .map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
+    ensure_private_file_permissions(&lock, INGEST_LOCK_FILE)?;
+    let file = lock.into_std();
+    file.lock()
+        .map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
+    let mut permissions = file
+        .metadata()
+        .map_err(|source| store_io(INGEST_LOCK_FILE, source))?
+        .permissions();
+    permissions.set_readonly(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o400);
+    }
+    file.set_permissions(permissions)
+        .map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
+    file.sync_all()
+        .map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
+    let metadata = file
+        .metadata()
+        .map_err(|source| store_io(INGEST_LOCK_FILE, source))?;
+    if !metadata.permissions().readonly() {
+        return Err(LeyCoreError::InvalidArtifactStore(
+            "legacy artifact writer fence did not become read-only".to_owned(),
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o222 != 0 {
+            return Err(LeyCoreError::InvalidArtifactStore(
+                "legacy artifact writer fence retained write permission".to_owned(),
+            ));
+        }
+    }
+    Ok(true)
+}
+
 pub fn ingest_project(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<IngestionResult, LeyCoreError> {
     ingest_project_inner(project_start, vault, None)
+}
+
+pub fn ingest_project_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+) -> Result<IngestionResult, LeyCoreError> {
+    ingest_project_with_transition_inner(project_start.as_ref(), vault.as_ref(), store, None)
+}
+
+pub fn ingest_project_with_expected_capture_plan_and_continuity_transition(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    expected_plan_fingerprint: &str,
+    store: &crate::ContinuityStore,
+) -> Result<IngestionResult, LeyCoreError> {
+    ingest_project_with_transition_inner(
+        project_start.as_ref(),
+        vault.as_ref(),
+        store,
+        Some(expected_plan_fingerprint),
+    )
+}
+
+fn ingest_project_with_transition_inner(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+    expected_plan_fingerprint: Option<&str>,
+) -> Result<IngestionResult, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    if store.artifact_write_authority_ready(&diagnostic.identity.project_id)? {
+        return ingest_project_native_after_authority(
+            &diagnostic,
+            store,
+            expected_plan_fingerprint,
+        );
+    }
+
+    if legacy_artifact_write_fence_state(project_start, legacy_vault)? != Some(true) {
+        ingest_project_inner(project_start, legacy_vault, expected_plan_fingerprint)?;
+        fence_legacy_artifact_writes(project_start, legacy_vault)?;
+    }
+    finalize_legacy_artifact_authority_cutover(project_start, legacy_vault, store)?;
+    ingest_project_native_after_authority(&diagnostic, store, expected_plan_fingerprint)
+}
+
+pub fn ingest_project_with_native_authority(
+    project_start: impl AsRef<Path>,
+    store: &crate::ContinuityStore,
+) -> Result<IngestionResult, LeyCoreError> {
+    ingest_project_with_native_authority_inner(project_start.as_ref(), store, None)
+}
+
+pub fn ingest_project_with_expected_capture_plan_and_native_authority(
+    project_start: impl AsRef<Path>,
+    expected_plan_fingerprint: &str,
+    store: &crate::ContinuityStore,
+) -> Result<IngestionResult, LeyCoreError> {
+    ingest_project_with_native_authority_inner(
+        project_start.as_ref(),
+        store,
+        Some(expected_plan_fingerprint),
+    )
+}
+
+fn ingest_project_with_native_authority_inner(
+    project_start: &Path,
+    store: &crate::ContinuityStore,
+    expected_plan_fingerprint: Option<&str>,
+) -> Result<IngestionResult, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    if store.artifact_write_authority_ready(&diagnostic.identity.project_id)? {
+        return ingest_project_native_after_authority(
+            &diagnostic,
+            store,
+            expected_plan_fingerprint,
+        );
+    }
+
+    store.with_artifact_authority_lock(|| {
+        if store.artifact_write_authority_ready(&diagnostic.identity.project_id)? {
+            return ingest_project_native_after_authority_under_lock(
+                &diagnostic,
+                store,
+                expected_plan_fingerprint,
+            );
+        }
+        store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)?;
+        let baseline = store.artifact_write_baseline_under_lock(&diagnostic.identity.project_id)?;
+        if baseline.current_snapshot_id.is_some() {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native-born artifact authority found current artifact state without write authority"
+                    .to_owned(),
+            ));
+        }
+
+        let prepared = match prepare_artifact_capture(
+            &diagnostic,
+            expected_plan_fingerprint,
+            |_name, content_hash, bytes| {
+                store.install_artifact_blob(
+                    &diagnostic.identity.project_id,
+                    content_hash,
+                    bytes.len() as u64,
+                    bytes,
+                )
+            },
+        ) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)?;
+                return Err(error);
+            }
+        };
+        let PreparedArtifactCapture { manifest, graph } = prepared;
+        let changes = calculate_changes_from_hashes(&baseline.content_hashes, &manifest);
+        let commit = (|| {
+            store.stage_artifact_snapshot_metadata(&diagnostic.identity, &manifest)?;
+            store.activate_initial_artifact_write_authority(
+                &manifest,
+                graph.generated_at_unix_ms,
+                Some(&graph.graph_snapshot_id),
+                graph.git.as_ref(),
+                crate::continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn,
+            )?;
+            store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)
+        })();
+        if let Err(error) = commit {
+            store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)?;
+            return Err(error);
+        }
+
+        Ok(native_ingestion_result(manifest, graph, true, true, changes))
+    })
+}
+
+fn finalize_legacy_artifact_authority_cutover(
+    project_start: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+) -> Result<(), LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let memory = load_project_memory(project_start, legacy_vault)?;
+    if memory.manifest.project_id != diagnostic.identity.project_id {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "fenced legacy artifact snapshot belongs to a different project".to_owned(),
+        ));
+    }
+    store.with_artifact_authority_lock(|| {
+        store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)?;
+        store.stage_artifact_snapshot_metadata(&diagnostic.identity, &memory.manifest)?;
+        for artifact in &memory.manifest.files {
+            if artifact.content_blob.is_none() {
+                continue;
+            }
+            let bytes = memory.read_artifact_blob_bytes(artifact)?.ok_or_else(|| {
+                LeyCoreError::InvalidArtifactStore(format!(
+                    "captured content bytes are missing for {}",
+                    artifact.path
+                ))
+            })?;
+            store.install_artifact_blob(
+                &diagnostic.identity.project_id,
+                &artifact.content_hash,
+                artifact.stored_bytes,
+                &bytes,
+            )?;
+        }
+        store.activate_artifact_snapshot(
+            &diagnostic.identity.project_id,
+            &memory.manifest.snapshot_id,
+            memory.graph.generated_at_unix_ms,
+            Some(&memory.graph.graph_snapshot_id),
+            memory.graph.git.as_ref(),
+        )?;
+        store.mark_artifact_write_authority_under_lock(
+            &memory.manifest,
+            crate::continuity_store::ArtifactWriteAuthorityOrigin::LegacyCutover,
+        )?;
+        store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)
+    })
+}
+
+fn ingest_project_native_after_authority(
+    diagnostic: &crate::ProjectDiagnostic,
+    store: &crate::ContinuityStore,
+    expected_plan_fingerprint: Option<&str>,
+) -> Result<IngestionResult, LeyCoreError> {
+    if !store.artifact_write_authority_ready(&diagnostic.identity.project_id)? {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "native artifact writes require established artifact write authority".to_owned(),
+        ));
+    }
+    store.with_artifact_authority_lock(|| {
+        ingest_project_native_after_authority_under_lock(
+            diagnostic,
+            store,
+            expected_plan_fingerprint,
+        )
+    })
+}
+
+fn ingest_project_native_after_authority_under_lock(
+    diagnostic: &crate::ProjectDiagnostic,
+    store: &crate::ContinuityStore,
+    expected_plan_fingerprint: Option<&str>,
+) -> Result<IngestionResult, LeyCoreError> {
+    store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)?;
+    let baseline = store.artifact_write_baseline_under_lock(&diagnostic.identity.project_id)?;
+    let prepared = match prepare_artifact_capture(
+        diagnostic,
+        expected_plan_fingerprint,
+        |_name, content_hash, bytes| {
+            store.install_artifact_blob(
+                &diagnostic.identity.project_id,
+                content_hash,
+                bytes.len() as u64,
+                bytes,
+            )
+        },
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)?;
+            return Err(error);
+        }
+    };
+    let PreparedArtifactCapture { manifest, graph } = prepared;
+    let changed = baseline.current_snapshot_id.as_deref() != Some(manifest.snapshot_id.as_str());
+    let graph_changed =
+        baseline.legacy_graph_snapshot_id.as_deref() != Some(graph.graph_snapshot_id.as_str());
+    let changes = calculate_changes_from_hashes(&baseline.content_hashes, &manifest);
+
+    let commit = (|| {
+        store.stage_artifact_snapshot_metadata(&diagnostic.identity, &manifest)?;
+        store.activate_artifact_snapshot(
+            &diagnostic.identity.project_id,
+            &manifest.snapshot_id,
+            graph.generated_at_unix_ms,
+            Some(&graph.graph_snapshot_id),
+            graph.git.as_ref(),
+        )?;
+        store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)
+    })();
+    if let Err(error) = commit {
+        store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)?;
+        return Err(error);
+    }
+
+    Ok(native_ingestion_result(
+        manifest,
+        graph,
+        changed,
+        graph_changed,
+        changes,
+    ))
+}
+
+fn native_ingestion_result(
+    manifest: ArtifactManifest,
+    graph: ProjectGraph,
+    changed: bool,
+    graph_changed: bool,
+    changes: ArtifactChanges,
+) -> IngestionResult {
+    IngestionResult {
+        project_id: manifest.project_id,
+        snapshot_id: manifest.snapshot_id,
+        changed,
+        graph_snapshot_id: graph.graph_snapshot_id,
+        graph_changed,
+        graph_nodes: graph.nodes.len(),
+        graph_edges: graph.edges.len(),
+        files: manifest.files.len(),
+        stored_files: manifest
+            .files
+            .iter()
+            .filter(|file| file.content_blob.is_some())
+            .count(),
+        redacted_files: manifest
+            .files
+            .iter()
+            .filter(|file| !file.redactions.is_empty())
+            .count(),
+        skipped: manifest.skipped,
+        added: if changed { changes.added } else { Vec::new() },
+        modified: if changed {
+            changes.modified
+        } else {
+            Vec::new()
+        },
+        renamed: if changed { changes.renamed } else { Vec::new() },
+        deleted: if changed { changes.deleted } else { Vec::new() },
+        manifest_path: None,
+        graph_path: None,
+    }
 }
 
 pub fn ingest_project_with_expected_capture_plan(
@@ -432,43 +977,19 @@ pub fn ingest_project_with_expected_capture_plan(
     ingest_project_inner(project_start, vault, Some(expected_plan_fingerprint))
 }
 
-fn ingest_project_inner(
-    project_start: impl AsRef<Path>,
-    vault: impl AsRef<Path>,
-    expected_plan_fingerprint: Option<&str>,
-) -> Result<IngestionResult, LeyCoreError> {
-    let diagnostic = diagnose_project(project_start)?;
-    let vault_path = vault
-        .as_ref()
-        .canonicalize()
-        .map_err(|source| LeyCoreError::Io {
-            path: vault.as_ref().to_path_buf(),
-            source,
-        })?;
-    if !vault_path.is_dir() {
-        return Err(LeyCoreError::NotDirectory(vault.as_ref().to_path_buf()));
-    }
-    if vault_path.starts_with(&diagnostic.root) {
-        return Err(LeyCoreError::OverlappingProjectVault(vault_path));
-    }
+pub(crate) struct PreparedArtifactCapture {
+    pub(crate) manifest: ArtifactManifest,
+    pub(crate) graph: ProjectGraph,
+}
 
+pub(crate) fn prepare_artifact_capture(
+    diagnostic: &crate::ProjectDiagnostic,
+    expected_plan_fingerprint: Option<&str>,
+    mut retain_blob: impl FnMut(&str, &str, &[u8]) -> Result<(), LeyCoreError>,
+) -> Result<PreparedArtifactCapture, LeyCoreError> {
     let preview = preview_capture(&diagnostic.root)?;
     if expected_plan_fingerprint.is_some_and(|expected| expected != preview.plan_fingerprint) {
         return Err(LeyCoreError::CapturePreviewChanged);
-    }
-
-    let store = ArtifactStore::open(&vault_path, &diagnostic.identity.project_id)?;
-    let _lock = store.lock()?;
-    let previous = store.read_manifest()?;
-    if let Some(manifest) = &previous {
-        validate_manifest(manifest, &diagnostic.identity.project_id)?;
-        store.verify_snapshot(manifest)?;
-        store.verify_content_blobs(manifest)?;
-    }
-    let previous_graph = store.read_graph()?;
-    if let Some(graph) = &previous_graph {
-        validate_project_graph(graph, &diagnostic.identity.project_id)?;
-        store.verify_graph_snapshot(graph)?;
     }
 
     let root_dir =
@@ -534,7 +1055,7 @@ fn ingest_project_inner(
                 None
             } else {
                 let name = format!("{digest}.bin");
-                store.write_blob_if_absent(&name, &bytes)?;
+                retain_blob(&name, &content_hash, &bytes)?;
                 Some(format!("{CONTENT_DIRECTORY}/{name}"))
             };
             files.push(ArtifactRecord {
@@ -578,7 +1099,7 @@ fn ingest_project_inner(
             None
         } else {
             let name = format!("{digest}.txt");
-            store.write_blob_if_absent(&name, stored)?;
+            retain_blob(&name, &content_hash, stored)?;
             Some(format!("{CONTENT_DIRECTORY}/{name}"))
         };
         let (kind, language) = classify_artifact(&candidate.path);
@@ -615,17 +1136,79 @@ fn ingest_project_inner(
         &serde_json::to_vec(&identity).expect("artifact snapshot identity is serializable"),
     );
     let snapshot_id = format!("snp_{snapshot_hash}");
+    let captured_at_unix_ms = unix_time_ms();
     let graph = build_project_graph(
         &diagnostic.root,
         &diagnostic.identity.project_id,
         &diagnostic.identity.name,
         &snapshot_id,
         &graph_sources,
-        unix_time_ms(),
+        captured_at_unix_ms,
+    )?;
+    let manifest = ArtifactManifest {
+        schema_version: ARTIFACT_MANIFEST_SCHEMA_VERSION,
+        project_id: diagnostic.identity.project_id.clone(),
+        project_name: diagnostic.identity.name.clone(),
+        snapshot_id,
+        generated_at_unix_ms: captured_at_unix_ms,
+        capture_mode: diagnostic.capture.mode,
+        capture_policy: diagnostic.capture.clone(),
+        capture_fingerprint: preview.capture_fingerprint,
+        files,
+        skipped,
+    };
+    validate_manifest(&manifest, &diagnostic.identity.project_id)?;
+    Ok(PreparedArtifactCapture { manifest, graph })
+}
+
+fn ingest_project_inner(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+    expected_plan_fingerprint: Option<&str>,
+) -> Result<IngestionResult, LeyCoreError> {
+    let diagnostic = diagnose_project(project_start)?;
+    let vault_path = vault
+        .as_ref()
+        .canonicalize()
+        .map_err(|source| LeyCoreError::Io {
+            path: vault.as_ref().to_path_buf(),
+            source,
+        })?;
+    if !vault_path.is_dir() {
+        return Err(LeyCoreError::NotDirectory(vault.as_ref().to_path_buf()));
+    }
+    if vault_path.starts_with(&diagnostic.root) {
+        return Err(LeyCoreError::OverlappingProjectVault(vault_path));
+    }
+    if let Some(expected) = expected_plan_fingerprint {
+        let preview = preview_capture(&diagnostic.root)?;
+        if expected != preview.plan_fingerprint {
+            return Err(LeyCoreError::CapturePreviewChanged);
+        }
+    }
+
+    let store = ArtifactStore::open(&vault_path, &diagnostic.identity.project_id)?;
+    let _lock = store.lock()?;
+    let previous = store.read_manifest()?;
+    if let Some(manifest) = &previous {
+        validate_manifest(manifest, &diagnostic.identity.project_id)?;
+        store.verify_snapshot(manifest)?;
+        store.verify_content_blobs(manifest)?;
+    }
+    let previous_graph = store.read_graph()?;
+    if let Some(graph) = &previous_graph {
+        validate_project_graph(graph, &diagnostic.identity.project_id)?;
+        store.verify_graph_snapshot(graph)?;
+    }
+
+    let PreparedArtifactCapture { manifest, graph } = prepare_artifact_capture(
+        &diagnostic,
+        expected_plan_fingerprint,
+        |name, _content_hash, bytes| store.write_blob_if_absent(name, bytes),
     )?;
     if previous
         .as_ref()
-        .is_some_and(|manifest| manifest.snapshot_id == snapshot_id)
+        .is_some_and(|previous| previous.snapshot_id == manifest.snapshot_id)
     {
         let graph_changed = store.persist_graph(previous_graph.as_ref(), &graph)?;
         let old = previous.expect("checked as present");
@@ -653,33 +1236,20 @@ fn ingest_project_inner(
             modified: Vec::new(),
             renamed: Vec::new(),
             deleted: Vec::new(),
-            manifest_path: manifest_relative_path(&diagnostic.identity.project_id),
-            graph_path: graph_relative_path(&diagnostic.identity.project_id),
+            manifest_path: Some(manifest_relative_path(&diagnostic.identity.project_id)),
+            graph_path: Some(graph_relative_path(&diagnostic.identity.project_id)),
         });
     }
 
-    let manifest = ArtifactManifest {
-        schema_version: ARTIFACT_MANIFEST_SCHEMA_VERSION,
-        project_id: diagnostic.identity.project_id.clone(),
-        project_name: diagnostic.identity.name,
-        snapshot_id: snapshot_id.clone(),
-        generated_at_unix_ms: unix_time_ms(),
-        capture_mode: diagnostic.capture.mode,
-        capture_policy: diagnostic.capture,
-        capture_fingerprint: preview.capture_fingerprint,
-        files,
-        skipped,
-    };
-    validate_manifest(&manifest, &diagnostic.identity.project_id)?;
     let body = manifest_body(&manifest)?;
     let changes = calculate_changes(previous.as_ref(), &manifest);
-    store.write_snapshot_if_absent(&snapshot_id, &body)?;
+    store.write_snapshot_if_absent(&manifest.snapshot_id, &body)?;
     let graph_changed = store.persist_graph(previous_graph.as_ref(), &graph)?;
     store.write_manifest(&body)?;
 
     Ok(IngestionResult {
         project_id: manifest.project_id,
-        snapshot_id,
+        snapshot_id: manifest.snapshot_id,
         changed: true,
         graph_snapshot_id: graph.graph_snapshot_id,
         graph_changed,
@@ -701,12 +1271,13 @@ fn ingest_project_inner(
         modified: changes.modified,
         renamed: changes.renamed,
         deleted: changes.deleted,
-        manifest_path: manifest_relative_path(&diagnostic.identity.project_id),
-        graph_path: graph_relative_path(&diagnostic.identity.project_id),
+        manifest_path: Some(manifest_relative_path(&diagnostic.identity.project_id)),
+        graph_path: Some(graph_relative_path(&diagnostic.identity.project_id)),
     })
 }
 
-pub fn read_project_graph(
+#[cfg(test)]
+pub(crate) fn read_project_graph(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<ProjectGraph, LeyCoreError> {
@@ -1898,14 +2469,21 @@ fn calculate_changes(
             manifest
                 .files
                 .iter()
-                .map(|file| (file.path.as_str(), file))
+                .map(|file| (file.path.clone(), file.content_hash.clone()))
                 .collect::<BTreeMap<_, _>>()
         })
         .unwrap_or_default();
+    calculate_changes_from_hashes(&old, current)
+}
+
+fn calculate_changes_from_hashes(
+    old: &BTreeMap<String, String>,
+    current: &ArtifactManifest,
+) -> ArtifactChanges {
     let new = current
         .files
         .iter()
-        .map(|file| (file.path.as_str(), file))
+        .map(|file| (file.path.as_str(), file.content_hash.as_str()))
         .collect::<BTreeMap<_, _>>();
     let mut added = new
         .keys()
@@ -1914,14 +2492,14 @@ fn calculate_changes(
         .collect::<Vec<_>>();
     let mut deleted = old
         .keys()
-        .filter(|path| !new.contains_key(**path))
-        .map(|path| (*path).to_owned())
+        .filter(|path| !new.contains_key(path.as_str()))
+        .cloned()
         .collect::<Vec<_>>();
     let modified = new
         .iter()
-        .filter_map(|(path, file)| {
-            old.get(path)
-                .filter(|old_file| old_file.content_hash != file.content_hash)
+        .filter_map(|(path, content_hash)| {
+            old.get(*path)
+                .filter(|old_hash| old_hash.as_str() != *content_hash)
                 .map(|_| (*path).to_owned())
         })
         .collect::<Vec<_>>();
@@ -1929,14 +2507,14 @@ fn calculate_changes(
     let mut added_by_hash = BTreeMap::<&str, Vec<&str>>::new();
     for path in &added {
         added_by_hash
-            .entry(new[path.as_str()].content_hash.as_str())
+            .entry(new[path.as_str()])
             .or_default()
             .push(path);
     }
     let mut deleted_by_hash = BTreeMap::<&str, Vec<&str>>::new();
     for path in &deleted {
         deleted_by_hash
-            .entry(old[path.as_str()].content_hash.as_str())
+            .entry(old[path].as_str())
             .or_default()
             .push(path);
     }
@@ -2344,6 +2922,240 @@ mod tests {
         let recaptured = ingest_project(&project, &vault).unwrap();
         assert!(recaptured.changed);
         assert!(project_store.is_dir());
+    }
+
+    #[test]
+    fn transition_project_erasure_finishes_native_cleanup_after_legacy_erasure() {
+        let (base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(project.join("README.md"), "# Erasure transition\n").unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let identity = diagnose_project(&project).unwrap().identity;
+        let store = ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        store.register_project(&identity).unwrap();
+        let event = crate::ContinuityEventInput {
+            event_id: format!("evt_{}", "a".repeat(64)),
+            project_id: identity.project_id.clone(),
+            subject_id: None,
+            session_id: None,
+            session_sequence: None,
+            request_id: None,
+            request_fingerprint: None,
+            kind: "native-erasure-probe".to_owned(),
+            payload_version: 1,
+            recorded_at_unix_ms: 1,
+            revision_head: None,
+            revision_branch: None,
+            payload: serde_json::json!({"probe": true}),
+        };
+        store.append_event(&event).unwrap();
+
+        erase_project_memory(&project, &vault).unwrap();
+        assert!(store
+            .event(&identity.project_id, &event.event_id)
+            .unwrap()
+            .is_some());
+
+        let erased =
+            erase_project_memory_with_continuity_transition(&project, &vault, &store).unwrap();
+        assert!(erased.erased);
+        assert_eq!(erased.project_id, identity.project_id);
+        assert!(store
+            .event(&identity.project_id, &event.event_id)
+            .unwrap()
+            .is_none());
+        assert!(project.join(LEY_DIRECTORY).join("project.json").is_file());
+        assert!(
+            erase_project_memory_with_continuity_transition(&project, &vault, &store)
+                .unwrap()
+                .erased
+        );
+    }
+
+    #[test]
+    fn native_born_artifact_authority_captures_without_a_legacy_vault() {
+        let (base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(
+            project.join("README.md"),
+            "# Native-born artifact authority\n",
+        )
+        .unwrap();
+        std::fs::remove_dir_all(&vault).unwrap();
+        let store = ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let preview = preview_capture(&project).unwrap();
+
+        let first = ingest_project_with_expected_capture_plan_and_native_authority(
+            &project,
+            &preview.plan_fingerprint,
+            &store,
+        )
+        .unwrap();
+        assert!(first.changed);
+        assert!(first.manifest_path.is_none());
+        assert!(first.graph_path.is_none());
+        assert!(!vault.exists());
+
+        let identity = diagnose_project(&project).unwrap().identity;
+        assert!(store
+            .artifact_write_authority_ready(&identity.project_id)
+            .unwrap());
+        assert_eq!(
+            store
+                .artifact_write_authority_origin(&identity.project_id)
+                .unwrap(),
+            Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn)
+        );
+        assert_eq!(
+            store
+                .current_artifact_snapshot(&identity.project_id)
+                .unwrap()
+                .unwrap()
+                .snapshot_id,
+            first.snapshot_id
+        );
+        crate::establish_native_born_project_authorities(&project, &store).unwrap();
+        crate::establish_native_born_project_authorities(&project, &store).unwrap();
+        assert!(crate::native_canonical_read_authority_available(&project, &store).unwrap());
+        let catalog = crate::ProjectCatalog::native_at(
+            base.path().join("private/projects-v1.json"),
+            store.clone(),
+        );
+        catalog.forget(&identity.project_id).unwrap();
+        assert_eq!(
+            store
+                .project_continuity_origin(&identity.project_id)
+                .unwrap(),
+            None
+        );
+        catalog.observe(&project).unwrap();
+        assert_eq!(
+            store
+                .project_continuity_origin(&identity.project_id)
+                .unwrap(),
+            Some(crate::continuity_store::ContinuityProjectOrigin::NativeBorn)
+        );
+        assert!(crate::prepare_legacy_project_binding(&project, &store).is_err());
+        assert!(store
+            .project_egress_authority_ready(&identity.project_id)
+            .unwrap());
+        assert!(store
+            .approved_source_authority_ready(&identity.project_id)
+            .unwrap());
+        assert!(crate::native_session_authority_available(&store, &identity.project_id).unwrap());
+        assert!(crate::learning::learning_authority_cutover_is_complete(
+            &store,
+            &identity.project_id
+        )
+        .unwrap());
+        assert!(
+            crate::list_sessions_with_continuity_transition(&project, &vault, &store)
+                .unwrap()
+                .is_empty()
+        );
+
+        let started = crate::start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            crate::StartSessionInput {
+                request_id: crate::generate_request_id(),
+                name: "Native-born session".to_owned(),
+                goal: "Prove fresh projects never require a legacy vault".to_owned(),
+                source: crate::SessionSource::default(),
+            },
+        )
+        .unwrap();
+        assert_eq!(started.session.event_count, 1);
+        assert_eq!(
+            crate::list_sessions_with_continuity_transition(&project, &vault, &store)
+                .unwrap()
+                .len(),
+            1
+        );
+        let resume = crate::project_resume_context_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            crate::DEFAULT_RESUME_SESSIONS,
+            crate::DEFAULT_RESUME_LEARNINGS,
+            crate::DEFAULT_RESUME_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(resume.project_id, identity.project_id);
+        assert_eq!(resume.total_sessions, 1);
+        assert!(!vault.exists());
+
+        let unchanged = ingest_project_with_native_authority(&project, &store).unwrap();
+        assert_eq!(unchanged.snapshot_id, first.snapshot_id);
+        assert!(!unchanged.changed);
+        assert!(!vault.exists());
+
+        std::fs::write(
+            project.join("README.md"),
+            "# Native-born artifact authority\nsecond capture\n",
+        )
+        .unwrap();
+        let changed = ingest_project_with_native_authority(&project, &store).unwrap();
+        assert_ne!(changed.snapshot_id, first.snapshot_id);
+        assert!(changed.changed);
+        assert!(!vault.exists());
+
+        let transition =
+            ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        assert_eq!(transition.snapshot_id, changed.snapshot_id);
+        assert!(!transition.changed);
+        assert!(!vault.exists());
+    }
+
+    #[test]
+    fn legacy_artifact_cutover_reclassifies_provisional_native_origin_atomically() {
+        let (base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(project.join("README.md"), "# Legacy cutover origin\n").unwrap();
+        let store = ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+
+        crate::register_native_born_project(&project, &store).unwrap();
+        let identity = diagnose_project(&project).unwrap().identity;
+        assert_eq!(
+            store
+                .project_continuity_origin(&identity.project_id)
+                .unwrap(),
+            Some(crate::continuity_store::ContinuityProjectOrigin::NativeBorn)
+        );
+
+        ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+
+        assert_eq!(
+            store
+                .artifact_write_authority_origin(&identity.project_id)
+                .unwrap(),
+            Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::LegacyCutover)
+        );
+        assert_eq!(
+            store
+                .project_continuity_origin(&identity.project_id)
+                .unwrap(),
+            Some(crate::continuity_store::ContinuityProjectOrigin::LegacyUnknown)
+        );
+        assert!(!crate::native_born_project_registration_exists(&project, &store).unwrap());
+        let catalog = crate::ProjectCatalog::native_at(
+            base.path().join("private/projects-v1.json"),
+            store.clone(),
+        );
+        catalog.forget(&identity.project_id).unwrap();
+        assert_eq!(
+            store
+                .project_continuity_origin(&identity.project_id)
+                .unwrap(),
+            None
+        );
+        catalog.observe(&project).unwrap();
+        assert_eq!(
+            store
+                .project_continuity_origin(&identity.project_id)
+                .unwrap(),
+            Some(crate::continuity_store::ContinuityProjectOrigin::LegacyUnknown)
+        );
+        assert!(crate::register_native_born_project(&project, &store).is_err());
+        assert!(crate::prepare_legacy_project_binding(&project, &store).is_err());
     }
 
     #[test]

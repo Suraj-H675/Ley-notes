@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -75,6 +76,7 @@ pub struct KnowledgeScope {
     pub created_at_unix_ms: u64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeScopeMutation {
@@ -101,6 +103,7 @@ pub struct KnowledgeScopeAttachment {
     pub attached_at_unix_ms: u64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeScopeAttachmentMutation {
@@ -305,9 +308,12 @@ pub struct KnowledgeScopeRegistry {
 
 impl KnowledgeScopeRegistry {
     pub fn system_default() -> Result<Self, LeyCoreError> {
-        Ok(Self::at(
-            default_binding_registry_path()?.with_file_name(KNOWLEDGE_SCOPE_REGISTRY_FILE),
-        ))
+        let path = default_binding_registry_path()?.with_file_name(KNOWLEDGE_SCOPE_REGISTRY_FILE);
+        Ok(Self {
+            project_catalog: ProjectCatalog::system_default()?,
+            binding_registry: BindingRegistry::system_default()?,
+            path,
+        })
     }
 
     pub fn at(path: impl Into<PathBuf>) -> Self {
@@ -323,6 +329,7 @@ impl KnowledgeScopeRegistry {
         &self.path
     }
 
+    #[cfg(test)]
     pub fn create(
         &self,
         kind: KnowledgeScopeKind,
@@ -402,6 +409,7 @@ impl KnowledgeScopeRegistry {
         })
     }
 
+    #[cfg(test)]
     pub fn attach(
         &self,
         active_project: impl AsRef<Path>,
@@ -950,6 +958,7 @@ fn validate_scope_name(value: &str) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
+#[cfg(test)]
 fn generate_scope_id() -> String {
     format!("ksc_{}", Uuid::new_v4().simple())
 }
@@ -969,6 +978,7 @@ pub(crate) fn validate_knowledge_scope_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 fn unix_time_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

@@ -1,23 +1,329 @@
+use crate::ingestion::{
+    ArtifactManifest, PortableArtifactBlob, PortableArtifactCitation, PortableArtifactReference,
+    PortableArtifactSnapshot,
+};
 use crate::{
-    validate_identity, validate_project_id, LeyCoreError, ProjectIdentity, APP_IDENTIFIER,
+    validate_identity, validate_project_id, ArtifactKind, ArtifactMediaType, LeyCoreError,
+    ProjectIdentity, APP_IDENTIFIER,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const CONTINUITY_DATABASE_FILE: &str = "continuity.sqlite3";
-pub const CONTINUITY_SCHEMA_VERSION: u32 = 2;
+pub const CONTINUITY_SCHEMA_VERSION: u32 = 11;
 pub const CONTINUITY_EVENT_LIMIT_BYTES: usize = 1_048_576;
+const CONTINUITY_APPROVED_SOURCE_LIMIT_BYTES: usize = 1_048_576;
+const CONTINUITY_EGRESS_AUTHORITY_LOCK_FILE: &str = "continuity-egress.lock";
+const CONTINUITY_APPROVED_SOURCE_AUTHORITY_LOCK_FILE: &str = "continuity-approved-source.lock";
+const CONTINUITY_ARTIFACT_AUTHORITY_LOCK_FILE: &str = "continuity-artifacts.lock";
+const CONTINUITY_ARTIFACT_CONTENT_DIRECTORY: &str = "artifact-content";
+// Portable continuity bundles were introduced with schema v2. Their event layout is the
+// compatibility floor for bundle validation; normal ContinuityStore opening migrates them forward.
+const PORTABLE_DATABASE_SCHEMA_FLOOR: u32 = 2;
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+thread_local! {
+    static ACTIVE_EGRESS_AUTHORITY_LOCKS: RefCell<HashSet<PathBuf>> = RefCell::new(HashSet::new());
+    static ACTIVE_APPROVED_SOURCE_AUTHORITY_LOCKS: RefCell<HashSet<PathBuf>> = RefCell::new(HashSet::new());
+}
 
 #[derive(Debug, Clone)]
 pub struct ContinuityStore {
     path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityProjectObservation {
+    pub project_id: String,
+    pub root_path: PathBuf,
+    pub last_opened_at_unix_ms: u64,
+    pub continuity_origin: ContinuityProjectOrigin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContinuityProjectOrigin {
+    LegacyUnknown,
+    NativeBorn,
+}
+
+impl ContinuityProjectOrigin {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::LegacyUnknown => "legacy-unknown",
+            Self::NativeBorn => "native-born",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, LeyCoreError> {
+        match value {
+            "legacy-unknown" => Ok(Self::LegacyUnknown),
+            "native-born" => Ok(Self::NativeBorn),
+            _ => Err(LeyCoreError::InvalidContinuityStore(format!(
+                "project continuity origin is invalid: {value:?}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityArtifactFileMetadata {
+    pub artifact_path: String,
+    pub kind: String,
+    pub language: Option<String>,
+    pub media_type: Option<String>,
+    pub source_bytes: u64,
+    pub stored_bytes: u64,
+    pub line_count: u64,
+    pub content_hash: String,
+    pub content_captured: bool,
+    pub redactions_json: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityArtifactSnapshotSync {
+    pub project_id: String,
+    pub snapshot_id: String,
+    pub created: bool,
+    pub previous_current_snapshot_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityArtifactContent {
+    pub artifact_path: String,
+    pub content_hash: String,
+    pub media_type: Option<String>,
+    pub source_bytes: u64,
+    pub stored_bytes: u64,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityCurrentArtifactFile {
+    pub artifact_path: String,
+    pub kind: crate::ArtifactKind,
+    pub language: Option<String>,
+    pub media_type: Option<String>,
+    pub source_bytes: u64,
+    pub stored_bytes: u64,
+    pub line_count: u64,
+    pub content_hash: String,
+    pub content_captured: bool,
+    pub redactions: Vec<crate::RedactionFinding>,
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityCurrentArtifactSnapshot {
+    pub project_id: String,
+    pub project_name: String,
+    pub capture_mode: crate::CaptureMode,
+    pub snapshot_id: String,
+    pub generated_at_unix_ms: u64,
+    pub skipped_files: usize,
+    pub skipped: Vec<crate::SkippedArtifact>,
+    pub legacy_graph_snapshot_id: Option<String>,
+    pub captured_git: Option<crate::GitState>,
+    pub files: Vec<ContinuityCurrentArtifactFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityArtifactAuthorityFile {
+    pub artifact_path: String,
+    pub media_type: Option<String>,
+    pub line_count: u64,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityArtifactAuthoritySnapshot {
+    pub project_id: String,
+    pub snapshot_id: String,
+    pub generated_at_unix_ms: u64,
+    pub legacy_graph_snapshot_id: String,
+    pub captured_git: Option<crate::GitState>,
+    pub files: Vec<ContinuityArtifactAuthorityFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityArtifactWriteBaseline {
+    pub current_snapshot_id: Option<String>,
+    pub legacy_graph_snapshot_id: Option<String>,
+    pub content_hashes: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArtifactWriteAuthorityOrigin {
+    LegacyCutover,
+    NativeBorn,
+}
+
+impl ArtifactWriteAuthorityOrigin {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::LegacyCutover => "legacy-cutover",
+            Self::NativeBorn => "native-born",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, LeyCoreError> {
+        match value {
+            "legacy-cutover" => Ok(Self::LegacyCutover),
+            "native-born" => Ok(Self::NativeBorn),
+            _ => Err(LeyCoreError::InvalidContinuityStore(
+                "native artifact write-authority origin is invalid".to_owned(),
+            )),
+        }
+    }
+
+    fn project_origin(self) -> ContinuityProjectOrigin {
+        match self {
+            Self::LegacyCutover => ContinuityProjectOrigin::LegacyUnknown,
+            Self::NativeBorn => ContinuityProjectOrigin::NativeBorn,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityApprovedSourceSnapshotInput {
+    pub source_id: String,
+    pub display_name: String,
+    pub content_hash: String,
+    pub approved_at_unix_ms: u64,
+    pub content_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContinuityApprovedSourceKind {
+    ProjectFile,
+    ImportedSnapshot,
+}
+
+impl ContinuityApprovedSourceKind {
+    fn parse(value: &str) -> Result<Self, LeyCoreError> {
+        match value {
+            "project-file" => Ok(Self::ProjectFile),
+            "imported-snapshot" => Ok(Self::ImportedSnapshot),
+            other => Err(LeyCoreError::InvalidContinuityStore(format!(
+                "approved source has unsupported kind {other:?}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityApprovedSourceRecord {
+    pub project_id: String,
+    pub source_id: String,
+    pub source_kind: ContinuityApprovedSourceKind,
+    pub display_name: String,
+    pub project_relative_path: Option<String>,
+    pub content_hash: String,
+    pub approved_at_unix_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContinuityApprovedSourceIssueReason {
+    Changed,
+    Missing,
+    Invalid,
+}
+
+impl ContinuityApprovedSourceIssueReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Changed => "changed",
+            Self::Missing => "missing",
+            Self::Invalid => "invalid",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, LeyCoreError> {
+        match value {
+            "changed" => Ok(Self::Changed),
+            "missing" => Ok(Self::Missing),
+            "invalid" => Ok(Self::Invalid),
+            other => Err(LeyCoreError::InvalidContinuityStore(format!(
+                "approved-source issue has unsupported reason {other:?}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityApprovedSourceIssueInput {
+    pub source_id: String,
+    pub display_name: String,
+    pub approved_content_hash: String,
+    pub approved_at_unix_ms: u64,
+    pub reason: ContinuityApprovedSourceIssueReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ContinuityApprovedSourceIssueRecord {
+    pub project_id: String,
+    pub source_id: String,
+    pub display_name: String,
+    pub approved_content_hash: String,
+    pub approved_at_unix_ms: u64,
+    pub reason: ContinuityApprovedSourceIssueReason,
+}
+
+struct EgressAuthorityReentryGuard {
+    path: PathBuf,
+}
+
+impl EgressAuthorityReentryGuard {
+    fn enter(path: &Path) -> Result<Self, LeyCoreError> {
+        let inserted = ACTIVE_EGRESS_AUTHORITY_LOCKS
+            .with(|active| active.borrow_mut().insert(path.to_path_buf()));
+        if !inserted {
+            return Err(LeyCoreError::AgentEgressAuthorityReentrant);
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for EgressAuthorityReentryGuard {
+    fn drop(&mut self) {
+        ACTIVE_EGRESS_AUTHORITY_LOCKS.with(|active| {
+            active.borrow_mut().remove(&self.path);
+        });
+    }
+}
+
+struct ApprovedSourceAuthorityReentryGuard {
+    path: PathBuf,
+}
+
+impl ApprovedSourceAuthorityReentryGuard {
+    fn enter(path: &Path) -> Result<Self, LeyCoreError> {
+        let inserted = ACTIVE_APPROVED_SOURCE_AUTHORITY_LOCKS
+            .with(|active| active.borrow_mut().insert(path.to_path_buf()));
+        if !inserted {
+            return Err(LeyCoreError::ApprovedSourceAuthorityReentrant);
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+        })
+    }
+}
+
+impl Drop for ApprovedSourceAuthorityReentryGuard {
+    fn drop(&mut self) {
+        ACTIVE_APPROVED_SOURCE_AUTHORITY_LOCKS.with(|active| {
+            active.borrow_mut().remove(&self.path);
+        });
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -153,12 +459,2590 @@ impl ContinuityStore {
         register_project_on(&connection, identity, &self.path)
     }
 
+    pub(crate) fn stage_artifact_snapshot_metadata(
+        &self,
+        identity: &ProjectIdentity,
+        manifest: &ArtifactManifest,
+    ) -> Result<ContinuityArtifactSnapshotSync, LeyCoreError> {
+        validate_identity(identity)?;
+        crate::ingestion::validate_manifest(manifest, &identity.project_id)?;
+        if manifest.project_name != identity.name {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "artifact snapshot project name does not match project identity".to_owned(),
+            ));
+        }
+        let capture_policy_json =
+            serde_json::to_string(&manifest.capture_policy).map_err(|error| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "artifact capture policy could not be serialized: {error}"
+                ))
+            })?;
+        let skipped_json = serde_json::to_string(&manifest.skipped).map_err(|error| {
+            LeyCoreError::InvalidContinuityStore(format!(
+                "artifact skipped inventory could not be serialized: {error}"
+            ))
+        })?;
+        let expected_files = continuity_artifact_files(manifest)?;
+        let generated_at_unix_ms = sqlite_u64(
+            manifest.generated_at_unix_ms,
+            "artifact generated-at timestamp",
+        )?;
+
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        register_project_on(&transaction, identity, &self.path)?;
+        let previous_current_snapshot_id = transaction
+            .query_row(
+                "SELECT current_snapshot_id FROM project_artifact_state WHERE project_id = ?1",
+                [&identity.project_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        let created = transaction
+            .execute(
+                "INSERT OR IGNORE INTO artifact_snapshots(
+                    project_id, snapshot_id, project_name, generated_at_unix_ms, capture_mode,
+                    capture_fingerprint, capture_policy_json, skipped_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    identity.project_id,
+                    manifest.snapshot_id,
+                    manifest.project_name,
+                    generated_at_unix_ms,
+                    manifest.capture_mode.to_string(),
+                    manifest.capture_fingerprint,
+                    capture_policy_json,
+                    skipped_json,
+                ],
+            )
+            .map_err(|error| self.database_error(error))?
+            == 1;
+        if created {
+            for file in &expected_files {
+                let source_bytes = sqlite_u64(file.source_bytes, "artifact source byte count")?;
+                let stored_bytes = sqlite_u64(file.stored_bytes, "artifact stored byte count")?;
+                let line_count = sqlite_u64(file.line_count, "artifact line count")?;
+                transaction
+                    .execute(
+                        "INSERT INTO artifact_files(
+                            project_id, snapshot_id, artifact_path, kind, language, media_type,
+                            source_bytes, stored_bytes, line_count, content_hash, content_captured,
+                            redactions_json
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                        params![
+                            identity.project_id,
+                            manifest.snapshot_id,
+                            file.artifact_path,
+                            file.kind,
+                            file.language,
+                            file.media_type,
+                            source_bytes,
+                            stored_bytes,
+                            line_count,
+                            file.content_hash,
+                            i64::from(file.content_captured),
+                            file.redactions_json,
+                        ],
+                    )
+                    .map_err(|error| self.database_error(error))?;
+            }
+        } else {
+            validate_artifact_snapshot_matches(
+                &transaction,
+                &self.path,
+                identity,
+                manifest,
+                &capture_policy_json,
+                &skipped_json,
+                &expected_files,
+            )?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(ContinuityArtifactSnapshotSync {
+            project_id: identity.project_id.clone(),
+            snapshot_id: manifest.snapshot_id.clone(),
+            created,
+            previous_current_snapshot_id,
+        })
+    }
+
+    pub(crate) fn activate_artifact_snapshot(
+        &self,
+        project_id: &str,
+        snapshot_id: &str,
+        captured_at_unix_ms: u64,
+        legacy_graph_snapshot_id: Option<&str>,
+        captured_git: Option<&crate::GitState>,
+    ) -> Result<Option<String>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let captured_at_unix_ms = sqlite_u64(captured_at_unix_ms, "artifact capture timestamp")?;
+        if legacy_graph_snapshot_id.is_some_and(|value| !valid_graph_snapshot_id(value)) {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "legacy graph snapshot ID is invalid".to_owned(),
+            ));
+        }
+        let captured_git_json = captured_git
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "captured Git state could not be serialized: {error}"
+                ))
+            })?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM artifact_snapshots
+                    WHERE project_id = ?1 AND snapshot_id = ?2
+                 )",
+                params![project_id, snapshot_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        if !exists {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "artifact snapshot {snapshot_id} is not staged for project {project_id}"
+            )));
+        }
+        let previous = transaction
+            .query_row(
+                "SELECT current_snapshot_id FROM project_artifact_state WHERE project_id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .execute(
+                "INSERT INTO project_artifact_state(
+                    project_id, current_snapshot_id, legacy_graph_snapshot_id, captured_git_json,
+                    captured_at_unix_ms
+                 )
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(project_id) DO UPDATE
+                     SET current_snapshot_id = excluded.current_snapshot_id,
+                         legacy_graph_snapshot_id = excluded.legacy_graph_snapshot_id,
+                         captured_git_json = excluded.captured_git_json,
+                         captured_at_unix_ms = excluded.captured_at_unix_ms",
+                params![
+                    project_id,
+                    snapshot_id,
+                    legacy_graph_snapshot_id,
+                    captured_git_json,
+                    captured_at_unix_ms
+                ],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(previous)
+    }
+
+    pub(crate) fn activate_initial_artifact_write_authority(
+        &self,
+        manifest: &ArtifactManifest,
+        captured_at_unix_ms: u64,
+        legacy_graph_snapshot_id: Option<&str>,
+        captured_git: Option<&crate::GitState>,
+        origin: ArtifactWriteAuthorityOrigin,
+    ) -> Result<(), LeyCoreError> {
+        validate_project_id(&manifest.project_id)?;
+        crate::ingestion::validate_manifest(manifest, &manifest.project_id)?;
+        let captured_at_unix_ms = sqlite_u64(captured_at_unix_ms, "artifact capture timestamp")?;
+        if legacy_graph_snapshot_id.is_some_and(|value| !valid_graph_snapshot_id(value)) {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "legacy graph snapshot ID is invalid".to_owned(),
+            ));
+        }
+        let captured_git_json = captured_git
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "captured Git state could not be serialized: {error}"
+                ))
+            })?;
+        let recorded_at_unix_ms: i64 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(
+                    "system clock is before the Unix epoch".to_owned(),
+                )
+            })?
+            .as_millis()
+            .try_into()
+            .map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(
+                    "artifact authority timestamp exceeds SQLite range".to_owned(),
+                )
+            })?;
+        let file_count = sqlite_u64(manifest.files.len() as u64, "artifact file count")?;
+
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let snapshot_exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM artifact_snapshots
+                    WHERE project_id = ?1 AND snapshot_id = ?2
+                 )",
+                params![manifest.project_id, manifest.snapshot_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        if !snapshot_exists {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "artifact snapshot {} is not staged for project {}",
+                manifest.snapshot_id, manifest.project_id
+            )));
+        }
+        let has_current: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM project_artifact_state WHERE project_id = ?1
+                 )",
+                [&manifest.project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        let has_authority: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM artifact_write_authority WHERE project_id = ?1
+                 )",
+                [&manifest.project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        if has_current || has_authority {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "initial artifact write authority cannot replace existing artifact authority"
+                    .to_owned(),
+            ));
+        }
+        transaction
+            .execute(
+                "INSERT INTO project_artifact_state(
+                    project_id, current_snapshot_id, legacy_graph_snapshot_id, captured_git_json,
+                    captured_at_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    manifest.project_id,
+                    manifest.snapshot_id,
+                    legacy_graph_snapshot_id,
+                    captured_git_json,
+                    captured_at_unix_ms
+                ],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .execute(
+                "INSERT INTO artifact_write_authority(
+                    project_id, origin, initial_snapshot_id, initial_capture_fingerprint,
+                    initial_file_count, recorded_at_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    manifest.project_id,
+                    origin.as_str(),
+                    manifest.snapshot_id,
+                    manifest.capture_fingerprint,
+                    file_count,
+                    recorded_at_unix_ms
+                ],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .execute(
+                "UPDATE project_observations
+                 SET continuity_origin = ?2
+                 WHERE project_id = ?1",
+                params![manifest.project_id, origin.project_origin().as_str()],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))
+    }
+
+    pub fn project_egress_policy(
+        &self,
+        project_id: &str,
+    ) -> Result<crate::AgentEgressPolicy, LeyCoreError> {
+        self.project_egress_state(project_id).map(|state| state.0)
+    }
+
+    pub fn project_egress_authority_ready(&self, project_id: &str) -> Result<bool, LeyCoreError> {
+        self.project_egress_state(project_id).map(|state| state.1)
+    }
+
+    pub(crate) fn approved_source_authority_ready(
+        &self,
+        project_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        let migrated: Option<i64> = connection
+            .query_row(
+                "SELECT approved_source_authority_migrated
+                 FROM projects WHERE project_id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        match migrated {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            Some(value) => Err(LeyCoreError::InvalidContinuityStore(format!(
+                "project {project_id} has invalid approved-source migration marker {value}"
+            ))),
+            None => Err(LeyCoreError::InvalidContinuityStore(format!(
+                "project {project_id} is not present in the continuity database"
+            ))),
+        }
+    }
+
+    pub(crate) fn approved_sources(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ContinuityApprovedSourceRecord>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.require_approved_source_authority_ready(project_id)?;
+        let connection = self.open_connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT project_id, source_id, source_kind, display_name,
+                        project_relative_path, content_hash, approved_at_unix_ms
+                 FROM approved_sources
+                 WHERE project_id = ?1
+                 ORDER BY approved_at_unix_ms DESC, source_id",
+            )
+            .map_err(|error| self.database_error(error))?;
+        let rows = statement
+            .query_map([project_id], row_to_approved_source)
+            .map_err(|error| self.database_error(error))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| self.database_error(error))
+    }
+
+    pub(crate) fn approved_source(
+        &self,
+        project_id: &str,
+        source_id: &str,
+    ) -> Result<Option<ContinuityApprovedSourceRecord>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.require_approved_source_authority_ready(project_id)?;
+        let connection = self.open_connection()?;
+        connection
+            .query_row(
+                "SELECT project_id, source_id, source_kind, display_name,
+                        project_relative_path, content_hash, approved_at_unix_ms
+                 FROM approved_sources
+                 WHERE project_id = ?1 AND source_id = ?2",
+                params![project_id, source_id],
+                row_to_approved_source,
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))
+    }
+
+    pub(crate) fn approved_source_issues(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ContinuityApprovedSourceIssueRecord>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.require_approved_source_authority_ready(project_id)?;
+        let connection = self.open_connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT project_id, source_id, display_name, approved_content_hash,
+                        approved_at_unix_ms, reason
+                 FROM legacy_approved_source_issues
+                 WHERE project_id = ?1
+                 ORDER BY approved_at_unix_ms DESC, source_id",
+            )
+            .map_err(|error| self.database_error(error))?;
+        let rows = statement
+            .query_map([project_id], |row| {
+                let reason: String = row.get(5)?;
+                let reason =
+                    ContinuityApprovedSourceIssueReason::parse(&reason).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            reason.len(),
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                Ok(ContinuityApprovedSourceIssueRecord {
+                    project_id: row.get(0)?,
+                    source_id: row.get(1)?,
+                    display_name: row.get(2)?,
+                    approved_content_hash: row.get(3)?,
+                    approved_at_unix_ms: i64_to_u64_sql(
+                        row.get(4)?,
+                        "approved source issue approval time",
+                    )?,
+                    reason,
+                })
+            })
+            .map_err(|error| self.database_error(error))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| self.database_error(error))
+    }
+
+    pub(crate) fn approved_project_file_for_path(
+        &self,
+        project_id: &str,
+        relative_path: &str,
+    ) -> Result<Option<ContinuityApprovedSourceRecord>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.require_approved_source_authority_ready(project_id)?;
+        let connection = self.open_connection()?;
+        connection
+            .query_row(
+                "SELECT project_id, source_id, source_kind, display_name,
+                        project_relative_path, content_hash, approved_at_unix_ms
+                 FROM approved_sources
+                 WHERE project_id = ?1 AND source_kind = 'project-file'
+                   AND project_relative_path = ?2",
+                params![project_id, relative_path],
+                row_to_approved_source,
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn approve_project_file_source(
+        &self,
+        project_id: &str,
+        source_id: &str,
+        display_name: &str,
+        relative_path: &str,
+        content_hash: &str,
+        approved_at_unix_ms: u64,
+    ) -> Result<ContinuityApprovedSourceRecord, LeyCoreError> {
+        self.with_approved_source_authority_lock(|| {
+            self.approve_project_file_source_unlocked(
+                project_id,
+                source_id,
+                display_name,
+                relative_path,
+                content_hash,
+                approved_at_unix_ms,
+            )
+        })
+    }
+
+    pub(crate) fn approve_project_file_source_unlocked(
+        &self,
+        project_id: &str,
+        source_id: &str,
+        display_name: &str,
+        relative_path: &str,
+        content_hash: &str,
+        approved_at_unix_ms: u64,
+    ) -> Result<ContinuityApprovedSourceRecord, LeyCoreError> {
+        validate_project_id(project_id)?;
+        validate_approved_source_identity(
+            source_id,
+            display_name,
+            content_hash,
+            approved_at_unix_ms,
+        )?;
+        if relative_path.is_empty() || relative_path.chars().count() > 1_024 {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "approved source {source_id} has an invalid project-relative path"
+            )));
+        }
+
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        require_approved_source_authority_ready_on(&transaction, project_id, &self.path)?;
+
+        let existing_kind: Option<String> = transaction
+            .query_row(
+                "SELECT source_kind FROM approved_sources
+                 WHERE project_id = ?1 AND source_id = ?2",
+                params![project_id, source_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        if existing_kind.as_deref() == Some("imported-snapshot") {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "approved source {source_id} is an imported snapshot and cannot be silently relinked to a project file"
+            )));
+        }
+        let path_owner: Option<String> = transaction
+            .query_row(
+                "SELECT source_id FROM approved_sources
+                 WHERE project_id = ?1 AND source_kind = 'project-file'
+                   AND project_relative_path = ?2",
+                params![project_id, relative_path],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        if path_owner
+            .as_deref()
+            .is_some_and(|owner| owner != source_id)
+        {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "project file {relative_path:?} is already approved under {}",
+                path_owner.expect("checked as some")
+            )));
+        }
+
+        transaction
+            .execute(
+                "INSERT INTO approved_sources(
+                    project_id, source_id, source_kind, display_name,
+                    project_relative_path, content_hash, snapshot_blob_hash,
+                    approved_at_unix_ms
+                 ) VALUES (?1, ?2, 'project-file', ?3, ?4, ?5, NULL, ?6)
+                 ON CONFLICT(project_id, source_id) DO UPDATE SET
+                    source_kind = 'project-file',
+                    display_name = excluded.display_name,
+                    project_relative_path = excluded.project_relative_path,
+                    content_hash = excluded.content_hash,
+                    snapshot_blob_hash = NULL,
+                    approved_at_unix_ms = excluded.approved_at_unix_ms",
+                params![
+                    project_id,
+                    source_id,
+                    display_name,
+                    relative_path,
+                    content_hash,
+                    u64_to_i64(approved_at_unix_ms, "approved source approval time")?
+                ],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .execute(
+                "DELETE FROM legacy_approved_source_issues
+                 WHERE project_id = ?1 AND source_id = ?2",
+                params![project_id, source_id],
+            )
+            .map_err(|error| self.database_error(error))?;
+        let record = transaction
+            .query_row(
+                "SELECT project_id, source_id, source_kind, display_name,
+                        project_relative_path, content_hash, approved_at_unix_ms
+                 FROM approved_sources
+                 WHERE project_id = ?1 AND source_id = ?2",
+                params![project_id, source_id],
+                row_to_approved_source,
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(record)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn revoke_approved_source(
+        &self,
+        project_id: &str,
+        source_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        self.with_approved_source_authority_lock(|| {
+            self.revoke_approved_source_unlocked(project_id, source_id)
+        })
+    }
+
+    pub(crate) fn revoke_approved_source_unlocked(
+        &self,
+        project_id: &str,
+        source_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        require_approved_source_authority_ready_on(&transaction, project_id, &self.path)?;
+        let snapshot_hash: Option<Option<String>> = transaction
+            .query_row(
+                "SELECT snapshot_blob_hash FROM approved_sources
+                 WHERE project_id = ?1 AND source_id = ?2",
+                params![project_id, source_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        let issue_deleted = transaction
+            .execute(
+                "DELETE FROM legacy_approved_source_issues
+                 WHERE project_id = ?1 AND source_id = ?2",
+                params![project_id, source_id],
+            )
+            .map_err(|error| self.database_error(error))?
+            > 0;
+        let deleted = transaction
+            .execute(
+                "DELETE FROM approved_sources
+                 WHERE project_id = ?1 AND source_id = ?2",
+                params![project_id, source_id],
+            )
+            .map_err(|error| self.database_error(error))?
+            > 0;
+        if let Some(Some(hash)) = snapshot_hash {
+            transaction
+                .execute(
+                    "DELETE FROM approved_source_blobs
+                     WHERE project_id = ?1 AND content_hash = ?2
+                       AND NOT EXISTS(
+                           SELECT 1 FROM approved_sources
+                           WHERE project_id = ?1 AND snapshot_blob_hash = ?2
+                       )",
+                    params![project_id, hash],
+                )
+                .map_err(|error| self.database_error(error))?;
+        }
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(deleted || issue_deleted)
+    }
+
+    pub(crate) fn approved_snapshot_bytes(
+        &self,
+        project_id: &str,
+        source_id: &str,
+    ) -> Result<Option<Vec<u8>>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.require_approved_source_authority_ready(project_id)?;
+        let connection = self.open_connection()?;
+        connection
+            .query_row(
+                "SELECT b.content_bytes
+                 FROM approved_sources s
+                 JOIN approved_source_blobs b
+                   ON b.project_id = s.project_id AND b.content_hash = s.snapshot_blob_hash
+                 WHERE s.project_id = ?1 AND s.source_id = ?2
+                   AND s.source_kind = 'imported-snapshot'",
+                params![project_id, source_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))
+    }
+
+    fn require_approved_source_authority_ready(
+        &self,
+        project_id: &str,
+    ) -> Result<(), LeyCoreError> {
+        let connection = self.open_connection()?;
+        require_approved_source_authority_ready_on(&connection, project_id, &self.path)
+    }
+
+    pub(crate) fn establish_empty_approved_source_authority(
+        &self,
+        project_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.with_approved_source_authority_lock(|| {
+            self.import_legacy_approved_source_authority_unlocked(project_id, &[], &[])
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn import_legacy_approved_source_authority(
+        &self,
+        project_id: &str,
+        snapshots: &[ContinuityApprovedSourceSnapshotInput],
+        issues: &[ContinuityApprovedSourceIssueInput],
+    ) -> Result<bool, LeyCoreError> {
+        self.with_approved_source_authority_lock(|| {
+            self.import_legacy_approved_source_authority_unlocked(project_id, snapshots, issues)
+        })
+    }
+
+    pub(crate) fn import_legacy_approved_source_authority_unlocked(
+        &self,
+        project_id: &str,
+        snapshots: &[ContinuityApprovedSourceSnapshotInput],
+        issues: &[ContinuityApprovedSourceIssueInput],
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_id(project_id)?;
+        validate_approved_source_import_inventory(snapshots, issues)?;
+
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let migrated: Option<i64> = transaction
+            .query_row(
+                "SELECT approved_source_authority_migrated
+                 FROM projects WHERE project_id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        match migrated {
+            None => {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "project {project_id} is not present in the continuity database"
+                )))
+            }
+            Some(1) => {
+                transaction
+                    .commit()
+                    .map_err(|error| self.database_error(error))?;
+                return Ok(false);
+            }
+            Some(0) => {}
+            Some(value) => {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "project {project_id} has invalid approved-source migration marker {value}"
+                )))
+            }
+        }
+
+        for table in [
+            "approved_sources",
+            "approved_source_blobs",
+            "legacy_approved_source_issues",
+        ] {
+            let existing: i64 = transaction
+                .query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE project_id = ?1"),
+                    [project_id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| self.database_error(error))?;
+            if existing != 0 {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "project {project_id} has pending approved-source rows before legacy authority migration"
+                )));
+            }
+        }
+
+        let mut inserted_blobs = BTreeSet::new();
+        for snapshot in snapshots {
+            if inserted_blobs.insert(snapshot.content_hash.as_str()) {
+                transaction
+                    .execute(
+                        "INSERT INTO approved_source_blobs(project_id, content_hash, content_bytes)
+                         VALUES (?1, ?2, ?3)",
+                        params![project_id, snapshot.content_hash, snapshot.content_bytes],
+                    )
+                    .map_err(|error| self.database_error(error))?;
+            }
+            transaction
+                .execute(
+                    "INSERT INTO approved_sources(
+                        project_id, source_id, source_kind, display_name,
+                        project_relative_path, content_hash, snapshot_blob_hash,
+                        approved_at_unix_ms
+                     ) VALUES (?1, ?2, 'imported-snapshot', ?3, NULL, ?4, ?4, ?5)",
+                    params![
+                        project_id,
+                        snapshot.source_id,
+                        snapshot.display_name,
+                        snapshot.content_hash,
+                        u64_to_i64(
+                            snapshot.approved_at_unix_ms,
+                            "approved source approval time"
+                        )?
+                    ],
+                )
+                .map_err(|error| self.database_error(error))?;
+        }
+        for issue in issues {
+            transaction
+                .execute(
+                    "INSERT INTO legacy_approved_source_issues(
+                        project_id, source_id, display_name, approved_content_hash,
+                        approved_at_unix_ms, reason
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        project_id,
+                        issue.source_id,
+                        issue.display_name,
+                        issue.approved_content_hash,
+                        u64_to_i64(
+                            issue.approved_at_unix_ms,
+                            "approved source issue approval time"
+                        )?,
+                        issue.reason.as_str()
+                    ],
+                )
+                .map_err(|error| self.database_error(error))?;
+        }
+        transaction
+            .execute(
+                "UPDATE projects
+                 SET approved_source_authority_migrated = 1
+                 WHERE project_id = ?1",
+                [project_id],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(true)
+    }
+
+    pub(crate) fn project_egress_state(
+        &self,
+        project_id: &str,
+    ) -> Result<(crate::AgentEgressPolicy, bool), LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        let state: Option<(String, i64)> = connection
+            .query_row(
+                "SELECT agent_egress_policy, agent_egress_policy_migrated
+                 FROM projects WHERE project_id = ?1",
+                [project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        let (policy, migrated) = state.ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(format!(
+                "project {project_id} is not present in the continuity database"
+            ))
+        })?;
+        let policy = continuity_egress_policy(&policy)?;
+        match migrated {
+            0 => Ok((policy, false)),
+            1 => Ok((policy, true)),
+            value => Err(LeyCoreError::InvalidContinuityStore(format!(
+                "project {project_id} has invalid egress migration marker {value}"
+            ))),
+        }
+    }
+
+    pub fn set_project_egress_policy(
+        &self,
+        project_id: &str,
+        policy: crate::AgentEgressPolicy,
+    ) -> Result<(), LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.with_egress_authority_lock(|| {
+            self.set_project_egress_policy_unlocked(project_id, policy)
+        })
+    }
+
+    pub(crate) fn establish_default_project_egress_authority(
+        &self,
+        project_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.with_egress_authority_lock(|| {
+            let (policy, migrated) = self.project_egress_state(project_id)?;
+            if migrated {
+                return Ok(false);
+            }
+            if policy != crate::AgentEgressPolicy::AgentOk {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "native-born project {project_id} has staged non-default egress policy before authority initialization"
+                )));
+            }
+            self.set_project_egress_policy_unlocked(project_id, crate::AgentEgressPolicy::AgentOk)?;
+            Ok(true)
+        })
+    }
+
+    /// Runs one egress-bearing operation while project egress authority is held.
+    ///
+    /// The callback must not call another egress-authority operation on this store. Re-entry is
+    /// rejected rather than waiting on the lock held by the current thread.
+    pub fn with_project_egress_locked<T>(
+        &self,
+        project_id: &str,
+        target: crate::AgentEgressTarget,
+        operation: impl FnOnce() -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.with_egress_authority_lock(|| {
+            let (policy, migrated) = self.project_egress_state(project_id)?;
+            if !migrated {
+                return Err(LeyCoreError::AgentEgressPolicyMigrationPending {
+                    project_id: project_id.to_owned(),
+                });
+            }
+            let decision = crate::evaluate_agent_egress(policy, target);
+            if !decision.allowed {
+                return Err(LeyCoreError::AgentEgressDenied {
+                    policy: decision.policy.to_string(),
+                    target: target.to_string(),
+                });
+            }
+            operation()
+        })
+    }
+
+    pub(crate) fn set_project_egress_policy_unlocked(
+        &self,
+        project_id: &str,
+        policy: crate::AgentEgressPolicy,
+    ) -> Result<(), LeyCoreError> {
+        let connection = self.open_connection()?;
+        let changed = connection
+            .execute(
+                "UPDATE projects
+                 SET agent_egress_policy = ?1, agent_egress_policy_migrated = 1
+                 WHERE project_id = ?2",
+                params![policy.to_string(), project_id],
+            )
+            .map_err(|error| self.database_error(error))?;
+        if changed != 1 {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "project {project_id} is not present in the continuity database"
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn import_legacy_project_egress_policy(
+        &self,
+        project_id: &str,
+        policy: crate::AgentEgressPolicy,
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.with_egress_authority_lock(|| {
+            self.import_legacy_project_egress_policy_unlocked(project_id, policy)
+        })
+    }
+
+    fn import_legacy_project_egress_policy_unlocked(
+        &self,
+        project_id: &str,
+        policy: crate::AgentEgressPolicy,
+    ) -> Result<bool, LeyCoreError> {
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let current: Option<(String, i64)> = transaction
+            .query_row(
+                "SELECT agent_egress_policy, agent_egress_policy_migrated
+                 FROM projects WHERE project_id = ?1",
+                [project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        let (current_policy, migrated) = current.ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(format!(
+                "project {project_id} is not present in the continuity database"
+            ))
+        })?;
+        let current_policy = continuity_egress_policy(&current_policy)?;
+        match migrated {
+            0 => {
+                if current_policy != crate::AgentEgressPolicy::AgentOk && current_policy != policy {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "project {project_id} has pending staged egress policy {current_policy} that conflicts with legacy policy {policy}"
+                    )));
+                }
+                transaction
+                    .execute(
+                        "UPDATE projects
+                         SET agent_egress_policy = ?1, agent_egress_policy_migrated = 1
+                         WHERE project_id = ?2",
+                        params![policy.to_string(), project_id],
+                    )
+                    .map_err(|error| self.database_error(error))?;
+                transaction
+                    .commit()
+                    .map_err(|error| self.database_error(error))?;
+                Ok(true)
+            }
+            1 => {
+                transaction
+                    .commit()
+                    .map_err(|error| self.database_error(error))?;
+                Ok(false)
+            }
+            value => Err(LeyCoreError::InvalidContinuityStore(format!(
+                "project {project_id} has invalid egress migration marker {value}"
+            ))),
+        }
+    }
+
+    pub(crate) fn with_egress_authority_lock<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let _reentry_guard =
+            EgressAuthorityReentryGuard::enter(&self.egress_authority_lock_path())?;
+        let lock = self.acquire_egress_authority_lock()?;
+        let result = operation();
+        let unlock_result = File::unlock(&lock);
+        match (result, unlock_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(source)) => Err(LeyCoreError::Io {
+                path: self.egress_authority_lock_path(),
+                source,
+            }),
+        }
+    }
+
+    fn acquire_egress_authority_lock(&self) -> Result<File, LeyCoreError> {
+        let lock_path = self.egress_authority_lock_path();
+        let parent = lock_path.parent().ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "egress authority lock has no parent directory".to_owned(),
+            )
+        })?;
+        ensure_private_directory(parent)?;
+        validate_private_lock_path_if_present(&lock_path, "egress authority lock")?;
+
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options
+            .open(&lock_path)
+            .map_err(|source| LeyCoreError::Io {
+                path: lock_path.clone(),
+                source,
+            })?;
+        validate_private_lock_metadata(
+            &lock_path,
+            &lock.metadata().map_err(|source| LeyCoreError::Io {
+                path: lock_path.clone(),
+                source,
+            })?,
+            "egress authority lock",
+        )?;
+        lock.lock().map_err(|source| LeyCoreError::Io {
+            path: lock_path,
+            source,
+        })?;
+        Ok(lock)
+    }
+
+    fn egress_authority_lock_path(&self) -> PathBuf {
+        self.path
+            .with_file_name(CONTINUITY_EGRESS_AUTHORITY_LOCK_FILE)
+    }
+
+    pub(crate) fn with_approved_source_authority_lock<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let lock_path = self.approved_source_authority_lock_path();
+        let _reentry_guard = ApprovedSourceAuthorityReentryGuard::enter(&lock_path)?;
+        let lock = self.acquire_approved_source_authority_lock()?;
+        let result = operation();
+        let unlock_result = File::unlock(&lock);
+        match (result, unlock_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(source)) => Err(LeyCoreError::Io {
+                path: lock_path,
+                source,
+            }),
+        }
+    }
+
+    fn acquire_approved_source_authority_lock(&self) -> Result<File, LeyCoreError> {
+        let lock_path = self.approved_source_authority_lock_path();
+        let parent = lock_path.parent().ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "approved-source authority lock has no parent directory".to_owned(),
+            )
+        })?;
+        ensure_private_directory(parent)?;
+        validate_private_lock_path_if_present(&lock_path, "approved-source authority lock")?;
+
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options
+            .open(&lock_path)
+            .map_err(|source| LeyCoreError::Io {
+                path: lock_path.clone(),
+                source,
+            })?;
+        validate_private_lock_metadata(
+            &lock_path,
+            &lock.metadata().map_err(|source| LeyCoreError::Io {
+                path: lock_path.clone(),
+                source,
+            })?,
+            "approved-source authority lock",
+        )?;
+        lock.lock().map_err(|source| LeyCoreError::Io {
+            path: lock_path,
+            source,
+        })?;
+        Ok(lock)
+    }
+
+    fn approved_source_authority_lock_path(&self) -> PathBuf {
+        self.path
+            .with_file_name(CONTINUITY_APPROVED_SOURCE_AUTHORITY_LOCK_FILE)
+    }
+
+    pub(crate) fn with_artifact_authority_lock<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        let lock_path = self.artifact_authority_lock_path();
+        let lock = self.acquire_artifact_authority_lock()?;
+        let result = operation();
+        let unlock_result = File::unlock(&lock);
+        match (result, unlock_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(source)) => Err(LeyCoreError::Io {
+                path: lock_path,
+                source,
+            }),
+        }
+    }
+
+    fn acquire_artifact_authority_lock(&self) -> Result<File, LeyCoreError> {
+        let lock_path = self.artifact_authority_lock_path();
+        let parent = lock_path.parent().ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "artifact authority lock has no parent directory".to_owned(),
+            )
+        })?;
+        ensure_private_directory(parent)?;
+        validate_private_lock_path_if_present(&lock_path, "artifact authority lock")?;
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let lock = options
+            .open(&lock_path)
+            .map_err(|source| LeyCoreError::Io {
+                path: lock_path.clone(),
+                source,
+            })?;
+        validate_private_lock_metadata(
+            &lock_path,
+            &lock.metadata().map_err(|source| LeyCoreError::Io {
+                path: lock_path.clone(),
+                source,
+            })?,
+            "artifact authority lock",
+        )?;
+        lock.lock().map_err(|source| LeyCoreError::Io {
+            path: lock_path,
+            source,
+        })?;
+        Ok(lock)
+    }
+
+    fn artifact_authority_lock_path(&self) -> PathBuf {
+        self.path
+            .with_file_name(CONTINUITY_ARTIFACT_AUTHORITY_LOCK_FILE)
+    }
+
+    fn artifact_content_root(&self) -> Result<PathBuf, LeyCoreError> {
+        let parent = self.path.parent().ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "continuity database has no parent directory".to_owned(),
+            )
+        })?;
+        Ok(parent.join(CONTINUITY_ARTIFACT_CONTENT_DIRECTORY))
+    }
+
+    fn artifact_project_content_dir(&self, project_id: &str) -> Result<PathBuf, LeyCoreError> {
+        validate_project_id(project_id)?;
+        Ok(self.artifact_content_root()?.join(project_id))
+    }
+
+    pub(crate) fn install_artifact_blob(
+        &self,
+        project_id: &str,
+        content_hash: &str,
+        expected_bytes: u64,
+        bytes: &[u8],
+    ) -> Result<(), LeyCoreError> {
+        validate_project_id(project_id)?;
+        let digest = artifact_digest(content_hash)?;
+        if bytes.len() as u64 != expected_bytes
+            || format!("sha256:{:x}", Sha256::digest(bytes)) != content_hash
+        {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "native artifact blob failed integrity verification for {content_hash}"
+            )));
+        }
+        let root = self.artifact_content_root()?;
+        ensure_private_directory(&root)?;
+        let project_dir = self.artifact_project_content_dir(project_id)?;
+        ensure_private_directory(&project_dir)?;
+        let destination = project_dir.join(digest);
+        write_immutable_private_blob(&project_dir, &destination, bytes)?;
+        Ok(())
+    }
+
+    pub(crate) fn read_native_portable_artifact_snapshots(
+        &self,
+        project_id: &str,
+        citations: &[PortableArtifactCitation],
+    ) -> Result<Option<Vec<PortableArtifactSnapshot>>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        if citations.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        let connection = self.open_connection()?;
+        let mut grouped = BTreeMap::<String, Vec<&PortableArtifactCitation>>::new();
+        for citation in citations {
+            grouped
+                .entry(citation.artifact_snapshot_id.clone())
+                .or_default()
+                .push(citation);
+        }
+        let project_dir = self.artifact_project_content_dir(project_id)?;
+        let mut snapshots = Vec::with_capacity(grouped.len());
+        for (snapshot_id, mut citations) in grouped {
+            let snapshot_exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM artifact_snapshots
+                        WHERE project_id = ?1 AND snapshot_id = ?2
+                     )",
+                    params![project_id, snapshot_id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| self.database_error(error))?;
+            if !snapshot_exists {
+                return Ok(None);
+            }
+            citations.sort_by(|left, right| left.artifact_path.cmp(&right.artifact_path));
+            let mut artifacts = Vec::with_capacity(citations.len());
+            let mut blobs = BTreeMap::<String, PortableArtifactBlob>::new();
+            for citation in citations {
+                let row: Option<(String, String, i64, i64)> = connection
+                    .query_row(
+                        "SELECT kind, content_hash, content_captured, stored_bytes
+                         FROM artifact_files
+                         WHERE project_id = ?1 AND snapshot_id = ?2 AND artifact_path = ?3",
+                        params![project_id, snapshot_id, citation.artifact_path],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .optional()
+                    .map_err(|error| self.database_error(error))?;
+                let Some((kind, content_hash, content_captured, stored_bytes)) = row else {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "durably cited artifact {} is missing from native snapshot {snapshot_id}",
+                        citation.artifact_path
+                    )));
+                };
+                if content_hash != citation.content_hash {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "durably cited artifact {} has a conflicting native content hash",
+                        citation.artifact_path
+                    )));
+                }
+                match content_captured {
+                    0 => return Ok(None),
+                    1 => {}
+                    value => {
+                        return Err(LeyCoreError::InvalidContinuityStore(format!(
+                            "artifact content_captured flag is invalid: {value}"
+                        )))
+                    }
+                }
+                let stored_bytes = artifact_i64_to_u64(stored_bytes, "artifact stored_bytes")?;
+                let digest = artifact_digest(&content_hash)?;
+                let path = project_dir.join(digest);
+                let bytes = read_private_blob(&path, stored_bytes)?;
+                if format!("sha256:{:x}", Sha256::digest(&bytes)) != content_hash {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "native artifact blob failed hash verification: {content_hash}"
+                    )));
+                }
+                let extension = if kind == "image" { "bin" } else { "txt" };
+                let file_name = format!("{digest}.{extension}");
+                artifacts.push(PortableArtifactReference {
+                    artifact_path: citation.artifact_path.clone(),
+                    content_hash: content_hash.clone(),
+                    file_name: file_name.clone(),
+                    bytes: stored_bytes,
+                });
+                match blobs.get(&content_hash) {
+                    Some(existing)
+                        if existing.file_name != file_name || existing.bytes != bytes =>
+                    {
+                        return Err(LeyCoreError::InvalidContinuityStore(format!(
+                            "native artifact content collision for {content_hash}"
+                        )));
+                    }
+                    Some(_) => {}
+                    None => {
+                        blobs.insert(
+                            content_hash.clone(),
+                            PortableArtifactBlob {
+                                content_hash,
+                                file_name,
+                                bytes,
+                            },
+                        );
+                    }
+                }
+            }
+            snapshots.push(PortableArtifactSnapshot {
+                snapshot_id,
+                artifacts,
+                blobs: blobs.into_values().collect(),
+            });
+        }
+        Ok(Some(snapshots))
+    }
+
+    pub(crate) fn current_artifact_snapshot(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ContinuityCurrentArtifactSnapshot>, LeyCoreError> {
+        self.with_artifact_authority_lock(|| self.current_artifact_snapshot_under_lock(project_id))
+    }
+
+    pub(crate) fn current_artifact_authority_snapshot(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ContinuityArtifactAuthoritySnapshot>, LeyCoreError> {
+        self.with_artifact_authority_lock(|| {
+            validate_project_id(project_id)?;
+            let connection = self.open_connection()?;
+            let state: Option<(String, i64, String, Option<String>)> = connection
+                .query_row(
+                    "SELECT s.snapshot_id, st.captured_at_unix_ms,
+                            st.legacy_graph_snapshot_id, st.captured_git_json
+                     FROM project_artifact_state st
+                     JOIN artifact_snapshots s
+                       ON s.project_id = st.project_id
+                      AND s.snapshot_id = st.current_snapshot_id
+                     WHERE st.project_id = ?1
+                       AND st.legacy_graph_snapshot_id IS NOT NULL",
+                    [project_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()
+                .map_err(|error| self.database_error(error))?;
+            let Some((
+                snapshot_id,
+                generated_at_unix_ms,
+                legacy_graph_snapshot_id,
+                captured_git_json,
+            )) = state
+            else {
+                return Ok(None);
+            };
+            let captured_git = captured_git_json
+                .map(|json| {
+                    serde_json::from_str(&json).map_err(|error| {
+                        LeyCoreError::InvalidContinuityStore(format!(
+                            "captured Git state is invalid: {error}"
+                        ))
+                    })
+                })
+                .transpose()?;
+            let mut statement = connection
+                .prepare(
+                    "SELECT artifact_path, media_type, line_count, content_hash
+                     FROM artifact_files
+                     WHERE project_id = ?1 AND snapshot_id = ?2
+                     ORDER BY artifact_path",
+                )
+                .map_err(|error| self.database_error(error))?;
+            let rows = statement
+                .query_map(params![project_id, snapshot_id], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })
+                .map_err(|error| self.database_error(error))?;
+            let mut files = Vec::new();
+            for row in rows {
+                let (artifact_path, media_type, line_count, content_hash) =
+                    row.map_err(|error| self.database_error(error))?;
+                files.push(ContinuityArtifactAuthorityFile {
+                    artifact_path,
+                    media_type,
+                    line_count: artifact_i64_to_u64(line_count, "artifact line count")?,
+                    content_hash,
+                });
+            }
+            Ok(Some(ContinuityArtifactAuthoritySnapshot {
+                project_id: project_id.to_owned(),
+                snapshot_id,
+                generated_at_unix_ms: artifact_i64_to_u64(
+                    generated_at_unix_ms,
+                    "artifact generated-at timestamp",
+                )?,
+                legacy_graph_snapshot_id,
+                captured_git,
+                files,
+            }))
+        })
+    }
+
+    pub(crate) fn current_artifact_hashes(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<BTreeMap<String, String>>, LeyCoreError> {
+        self.with_artifact_authority_lock(|| {
+            validate_project_id(project_id)?;
+            let connection = self.open_connection()?;
+            let snapshot_id: Option<String> = connection
+                .query_row(
+                    "SELECT current_snapshot_id
+                     FROM project_artifact_state
+                     WHERE project_id = ?1",
+                    [project_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|error| self.database_error(error))?;
+            let Some(snapshot_id) = snapshot_id else {
+                return Ok(None);
+            };
+            let mut statement = connection
+                .prepare(
+                    "SELECT artifact_path, content_hash
+                     FROM artifact_files
+                     WHERE project_id = ?1 AND snapshot_id = ?2
+                     ORDER BY artifact_path",
+                )
+                .map_err(|error| self.database_error(error))?;
+            let rows = statement
+                .query_map(params![project_id, snapshot_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| self.database_error(error))?;
+            let mut hashes = BTreeMap::new();
+            for row in rows {
+                let (path, hash) = row.map_err(|error| self.database_error(error))?;
+                hashes.insert(path, hash);
+            }
+            Ok(Some(hashes))
+        })
+    }
+
+    pub(crate) fn artifact_read_authority_ready(
+        &self,
+        project_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        connection
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1
+                    FROM project_artifact_state st
+                    JOIN artifact_snapshots s
+                      ON s.project_id = st.project_id
+                     AND s.snapshot_id = st.current_snapshot_id
+                    WHERE st.project_id = ?1
+                      AND st.legacy_graph_snapshot_id IS NOT NULL
+                 )",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))
+    }
+
+    pub(crate) fn artifact_write_authority_ready(
+        &self,
+        project_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        let marker: Option<(String, String, String, i64)> = connection
+            .query_row(
+                "SELECT origin, initial_snapshot_id, initial_capture_fingerprint, initial_file_count
+                 FROM artifact_write_authority
+                 WHERE project_id = ?1",
+                [project_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        let Some((origin, initial_snapshot_id, capture_fingerprint, file_count)) = marker else {
+            return Ok(false);
+        };
+        ArtifactWriteAuthorityOrigin::parse(&origin)?;
+        if !valid_artifact_snapshot_id(&initial_snapshot_id)
+            || capture_fingerprint.len() != 71
+            || !capture_fingerprint.starts_with("sha256:")
+            || !capture_fingerprint[7..]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || file_count < 0
+        {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native artifact write-authority record is invalid".to_owned(),
+            ));
+        }
+        let current_ready: bool = connection
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1
+                    FROM project_artifact_state st
+                    JOIN artifact_snapshots s
+                     ON s.project_id = st.project_id
+                     AND s.snapshot_id = st.current_snapshot_id
+                    WHERE st.project_id = ?1
+                 )",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        if !current_ready {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native artifact write-authority record has no current artifact authority"
+                    .to_owned(),
+            ));
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn artifact_write_authority_origin(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ArtifactWriteAuthorityOrigin>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        let origin: Option<String> = connection
+            .query_row(
+                "SELECT origin FROM artifact_write_authority WHERE project_id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        origin
+            .map(|value| ArtifactWriteAuthorityOrigin::parse(&value))
+            .transpose()
+    }
+
+    pub(crate) fn mark_artifact_write_authority_under_lock(
+        &self,
+        manifest: &ArtifactManifest,
+        origin: ArtifactWriteAuthorityOrigin,
+    ) -> Result<(), LeyCoreError> {
+        validate_project_id(&manifest.project_id)?;
+        crate::ingestion::validate_manifest(manifest, &manifest.project_id)?;
+        let recorded_at_unix_ms: i64 = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(
+                    "system clock is before the Unix epoch".to_owned(),
+                )
+            })?
+            .as_millis()
+            .try_into()
+            .map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(
+                    "artifact cutover timestamp exceeds SQLite range".to_owned(),
+                )
+            })?;
+        let file_count = sqlite_u64(manifest.files.len() as u64, "artifact file count")?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let current: Option<String> = transaction
+            .query_row(
+                "SELECT current_snapshot_id
+                 FROM project_artifact_state
+                 WHERE project_id = ?1",
+                [&manifest.project_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        if current.as_deref() != Some(manifest.snapshot_id.as_str()) {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "artifact write-authority snapshot is not the current artifact authority"
+                    .to_owned(),
+            ));
+        }
+        let existing: Option<(String, String, String, i64)> = transaction
+            .query_row(
+                "SELECT origin, initial_snapshot_id, initial_capture_fingerprint, initial_file_count
+                 FROM artifact_write_authority
+                 WHERE project_id = ?1",
+                [&manifest.project_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        if let Some(existing) = existing {
+            if existing
+                != (
+                    origin.as_str().to_owned(),
+                    manifest.snapshot_id.clone(),
+                    manifest.capture_fingerprint.clone(),
+                    file_count,
+                )
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(
+                    "native artifact write-authority record conflicts with the established authority origin"
+                        .to_owned(),
+                ));
+            }
+        } else {
+            transaction
+                .execute(
+                    "INSERT INTO artifact_write_authority(
+                        project_id, origin, initial_snapshot_id, initial_capture_fingerprint,
+                        initial_file_count, recorded_at_unix_ms
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        manifest.project_id,
+                        origin.as_str(),
+                        manifest.snapshot_id,
+                        manifest.capture_fingerprint,
+                        file_count,
+                        recorded_at_unix_ms
+                    ],
+                )
+                .map_err(|error| self.database_error(error))?;
+        }
+        transaction
+            .execute(
+                "UPDATE project_observations
+                 SET continuity_origin = ?2
+                 WHERE project_id = ?1",
+                params![manifest.project_id, origin.project_origin().as_str()],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))
+    }
+
+    pub(crate) fn artifact_write_baseline_under_lock(
+        &self,
+        project_id: &str,
+    ) -> Result<ContinuityArtifactWriteBaseline, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        let state: Option<(String, Option<String>)> = connection
+            .query_row(
+                "SELECT current_snapshot_id, legacy_graph_snapshot_id
+                 FROM project_artifact_state
+                 WHERE project_id = ?1",
+                [project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        let (current_snapshot_id, legacy_graph_snapshot_id) = match state {
+            Some((snapshot_id, graph_snapshot_id)) => (Some(snapshot_id), graph_snapshot_id),
+            None => (None, None),
+        };
+        let mut content_hashes = BTreeMap::new();
+        if let Some(snapshot_id) = &current_snapshot_id {
+            let mut statement = connection
+                .prepare(
+                    "SELECT artifact_path, content_hash
+                     FROM artifact_files
+                     WHERE project_id = ?1 AND snapshot_id = ?2
+                     ORDER BY artifact_path",
+                )
+                .map_err(|error| self.database_error(error))?;
+            let rows = statement
+                .query_map(params![project_id, snapshot_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|error| self.database_error(error))?;
+            for row in rows {
+                let (path, hash) = row.map_err(|error| self.database_error(error))?;
+                content_hashes.insert(path, hash);
+            }
+        }
+        Ok(ContinuityArtifactWriteBaseline {
+            current_snapshot_id,
+            legacy_graph_snapshot_id,
+            content_hashes,
+        })
+    }
+
+    fn current_artifact_snapshot_under_lock(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ContinuityCurrentArtifactSnapshot>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        let state: Option<(
+            String,
+            String,
+            String,
+            String,
+            i64,
+            Option<String>,
+            Option<String>,
+        )> = connection
+            .query_row(
+                "SELECT s.snapshot_id, s.project_name, s.capture_mode, s.skipped_json,
+                        st.captured_at_unix_ms, st.legacy_graph_snapshot_id,
+                        st.captured_git_json
+                 FROM project_artifact_state st
+                 JOIN artifact_snapshots s
+                   ON s.project_id = st.project_id
+                  AND s.snapshot_id = st.current_snapshot_id
+                 WHERE st.project_id = ?1",
+                [project_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        let Some((
+            snapshot_id,
+            project_name,
+            capture_mode,
+            skipped_json,
+            generated_at_unix_ms,
+            legacy_graph_snapshot_id,
+            captured_git_json,
+        )) = state
+        else {
+            return Ok(None);
+        };
+        let capture_mode = crate::CaptureMode::parse(&capture_mode).map_err(|_| {
+            LeyCoreError::InvalidContinuityStore(
+                "native artifact snapshot has an invalid capture mode".to_owned(),
+            )
+        })?;
+        let skipped = serde_json::from_str::<Vec<crate::SkippedArtifact>>(&skipped_json).map_err(
+            |error| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "native artifact snapshot has invalid skipped metadata: {error}"
+                ))
+            },
+        )?;
+        let skipped_files = skipped.len();
+        let captured_git = captured_git_json
+            .map(|json| {
+                serde_json::from_str(&json).map_err(|error| {
+                    LeyCoreError::InvalidContinuityStore(format!(
+                        "captured Git state is invalid: {error}"
+                    ))
+                })
+            })
+            .transpose()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT artifact_path, kind, language, media_type, source_bytes, stored_bytes,
+                        line_count, content_hash, content_captured, redactions_json
+                 FROM artifact_files
+                 WHERE project_id = ?1 AND snapshot_id = ?2
+                 ORDER BY artifact_path",
+            )
+            .map_err(|error| self.database_error(error))?;
+        let rows = statement
+            .query_map(params![project_id, snapshot_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            })
+            .map_err(|error| self.database_error(error))?;
+        let project_dir = self.artifact_project_content_dir(project_id)?;
+        let mut files = Vec::new();
+        for row in rows {
+            let (
+                artifact_path,
+                kind,
+                language,
+                media_type,
+                source_bytes,
+                stored_bytes,
+                line_count,
+                content_hash,
+                content_captured,
+                redactions_json,
+            ) = row.map_err(|error| self.database_error(error))?;
+            let kind = parse_artifact_kind_label(&kind)?;
+            let redactions = serde_json::from_str::<Vec<crate::RedactionFinding>>(&redactions_json)
+                .map_err(|error| {
+                    LeyCoreError::InvalidContinuityStore(format!(
+                        "native artifact redaction metadata is invalid for {artifact_path}: {error}"
+                    ))
+                })?;
+            let text = match content_captured {
+                0 => None,
+                1 if media_type.is_some() => None,
+                1 => {
+                    let bytes = read_private_blob(
+                        &project_dir.join(artifact_digest(&content_hash)?),
+                        artifact_i64_to_u64(stored_bytes, "artifact stored_bytes")?,
+                    )?;
+                    if format!("sha256:{:x}", Sha256::digest(&bytes)) != content_hash {
+                        return Err(LeyCoreError::InvalidContinuityStore(format!(
+                            "native artifact blob failed hash verification: {content_hash}"
+                        )));
+                    }
+                    Some(String::from_utf8(bytes).map_err(|_| {
+                        LeyCoreError::InvalidContinuityStore(format!(
+                            "native text artifact is not UTF-8: {artifact_path}"
+                        ))
+                    })?)
+                }
+                value => {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "artifact content_captured flag is invalid: {value}"
+                    )))
+                }
+            };
+            files.push(ContinuityCurrentArtifactFile {
+                artifact_path,
+                kind,
+                language,
+                media_type,
+                source_bytes: artifact_i64_to_u64(source_bytes, "artifact source_bytes")?,
+                stored_bytes: artifact_i64_to_u64(stored_bytes, "artifact stored_bytes")?,
+                line_count: artifact_i64_to_u64(line_count, "artifact line count")?,
+                content_hash,
+                content_captured: content_captured == 1,
+                redactions,
+                text,
+            });
+        }
+        Ok(Some(ContinuityCurrentArtifactSnapshot {
+            project_id: project_id.to_owned(),
+            project_name,
+            capture_mode,
+            snapshot_id,
+            generated_at_unix_ms: artifact_i64_to_u64(
+                generated_at_unix_ms,
+                "artifact generated-at timestamp",
+            )?,
+            skipped_files,
+            skipped,
+            legacy_graph_snapshot_id,
+            captured_git,
+            files,
+        }))
+    }
+
+    pub(crate) fn read_native_artifact_content(
+        &self,
+        project_id: &str,
+        snapshot_id: &str,
+        artifact_path: &str,
+        content_hash: &str,
+        max_bytes: Option<usize>,
+    ) -> Result<Option<ContinuityArtifactContent>, LeyCoreError> {
+        self.with_artifact_authority_lock(|| {
+            validate_project_id(project_id)?;
+            if !valid_artifact_snapshot_id(snapshot_id) {
+                return Err(LeyCoreError::InvalidRetrievalRequest(
+                    "artifactSnapshotId is invalid".to_owned(),
+                ));
+            }
+            crate::ingestion::validate_relative_artifact_path(artifact_path)?;
+            artifact_digest(content_hash)?;
+            let connection = self.open_connection()?;
+            let snapshot_exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM artifact_snapshots
+                        WHERE project_id = ?1 AND snapshot_id = ?2
+                     )",
+                    params![project_id, snapshot_id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| self.database_error(error))?;
+            if !snapshot_exists {
+                return Ok(None);
+            }
+            let row: Option<(String, Option<String>, String, i64, i64, i64)> = connection
+                .query_row(
+                    "SELECT kind, media_type, content_hash, content_captured, source_bytes, stored_bytes
+                     FROM artifact_files
+                     WHERE project_id = ?1 AND snapshot_id = ?2 AND artifact_path = ?3",
+                    params![project_id, snapshot_id, artifact_path],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                            row.get(5)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|error| self.database_error(error))?;
+            let Some((kind, media_type, stored_hash, content_captured, source_bytes, stored_bytes)) =
+                row
+            else {
+                return Err(LeyCoreError::InvalidRetrievalRequest(format!(
+                    "artifact is not in the cited snapshot: {artifact_path}"
+                )));
+            };
+            if stored_hash != content_hash {
+                return Err(LeyCoreError::InvalidArtifactStore(
+                    "citation content hash does not match its captured artifact".to_owned(),
+                ));
+            }
+            match content_captured {
+                0 => {
+                    return Err(LeyCoreError::ProjectMemoryUnavailable(format!(
+                        "source bytes are not retained for {artifact_path} in Minimal capture mode"
+                    )))
+                }
+                1 => {}
+                value => {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "artifact content_captured flag is invalid: {value}"
+                    )))
+                }
+            }
+            if kind == "image" && media_type.is_none() {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "native image artifact is missing media type: {artifact_path}"
+                )));
+            }
+            if kind != "image" && media_type.is_some() {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "native text artifact unexpectedly carries media type: {artifact_path}"
+                )));
+            }
+            let source_bytes = artifact_i64_to_u64(source_bytes, "artifact source_bytes")?;
+            let stored_bytes = artifact_i64_to_u64(stored_bytes, "artifact stored_bytes")?;
+            if max_bytes.is_some_and(|limit| stored_bytes > limit as u64) {
+                return Err(LeyCoreError::InvalidRetrievalRequest(format!(
+                    "captured artifact is {stored_bytes} bytes and exceeds the {}-byte delivery limit",
+                    max_bytes.expect("checked as present")
+                )));
+            }
+            let digest = artifact_digest(content_hash)?;
+            let path = self.artifact_project_content_dir(project_id)?.join(digest);
+            let bytes = read_private_blob(&path, stored_bytes)?;
+            if format!("sha256:{:x}", Sha256::digest(&bytes)) != content_hash {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "native artifact blob failed hash verification: {content_hash}"
+                )));
+            }
+            Ok(Some(ContinuityArtifactContent {
+                artifact_path: artifact_path.to_owned(),
+                content_hash: content_hash.to_owned(),
+                media_type,
+                source_bytes,
+                stored_bytes,
+                bytes,
+            }))
+        })
+    }
+
+    pub(crate) fn garbage_collect_artifact_state_under_lock(
+        &self,
+        project_id: &str,
+    ) -> Result<(), LeyCoreError> {
+        validate_project_id(project_id)?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let project_exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE project_id = ?1)",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        if !project_exists {
+            transaction
+                .commit()
+                .map_err(|error| self.database_error(error))?;
+            self.remove_native_artifact_project_dir(project_id)?;
+            return Ok(());
+        }
+
+        let current_snapshot: Option<String> = transaction
+            .query_row(
+                "SELECT current_snapshot_id FROM project_artifact_state WHERE project_id = ?1",
+                [project_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        let events = project_events_on(&transaction, project_id, &self.path)?;
+        let citations = crate::ingestion::collect_artifact_citations(&events)?;
+        let mut statement = transaction
+            .prepare(
+                "SELECT snapshot_id FROM artifact_snapshots
+                 WHERE project_id = ?1 ORDER BY snapshot_id",
+            )
+            .map_err(|error| self.database_error(error))?;
+        let snapshot_rows = statement
+            .query_map([project_id], |row| row.get::<_, String>(0))
+            .map_err(|error| self.database_error(error))?;
+        let all_snapshots = snapshot_rows
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|error| self.database_error(error))?;
+        drop(statement);
+
+        let mut retained_snapshots = BTreeSet::new();
+        let mut required_blobs = BTreeMap::<String, u64>::new();
+        if let Some(snapshot_id) = &current_snapshot {
+            retained_snapshots.insert(snapshot_id.clone());
+            let mut statement = transaction
+                .prepare(
+                    "SELECT content_hash, stored_bytes
+                     FROM artifact_files
+                     WHERE project_id = ?1 AND snapshot_id = ?2 AND content_captured = 1
+                     ORDER BY artifact_path",
+                )
+                .map_err(|error| self.database_error(error))?;
+            let rows = statement
+                .query_map(params![project_id, snapshot_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .map_err(|error| self.database_error(error))?;
+            for row in rows {
+                let (content_hash, stored_bytes) =
+                    row.map_err(|error| self.database_error(error))?;
+                record_required_artifact_blob(
+                    &mut required_blobs,
+                    &content_hash,
+                    artifact_i64_to_u64(stored_bytes, "artifact stored_bytes")?,
+                )?;
+            }
+        }
+
+        for citation in citations {
+            if !all_snapshots.contains(&citation.artifact_snapshot_id) {
+                continue;
+            }
+            retained_snapshots.insert(citation.artifact_snapshot_id.clone());
+            let row: Option<(String, i64, i64)> = transaction
+                .query_row(
+                    "SELECT content_hash, content_captured, stored_bytes
+                     FROM artifact_files
+                     WHERE project_id = ?1 AND snapshot_id = ?2 AND artifact_path = ?3",
+                    params![
+                        project_id,
+                        citation.artifact_snapshot_id,
+                        citation.artifact_path
+                    ],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(|error| self.database_error(error))?;
+            let Some((content_hash, content_captured, stored_bytes)) = row else {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "durably cited artifact {} is missing from native snapshot {}",
+                    citation.artifact_path, citation.artifact_snapshot_id
+                )));
+            };
+            if content_hash != citation.content_hash {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "durably cited artifact {} has a conflicting native content hash",
+                    citation.artifact_path
+                )));
+            }
+            match content_captured {
+                0 => {}
+                1 => record_required_artifact_blob(
+                    &mut required_blobs,
+                    &content_hash,
+                    artifact_i64_to_u64(stored_bytes, "artifact stored_bytes")?,
+                )?,
+                value => {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "artifact content_captured flag is invalid: {value}"
+                    )))
+                }
+            }
+        }
+
+        for snapshot_id in all_snapshots {
+            if !retained_snapshots.contains(&snapshot_id) {
+                transaction
+                    .execute(
+                        "DELETE FROM artifact_snapshots
+                         WHERE project_id = ?1 AND snapshot_id = ?2",
+                        params![project_id, snapshot_id],
+                    )
+                    .map_err(|error| self.database_error(error))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        self.reconcile_native_artifact_project_dir(project_id, &required_blobs)
+    }
+
+    fn reconcile_native_artifact_project_dir(
+        &self,
+        project_id: &str,
+        required_blobs: &BTreeMap<String, u64>,
+    ) -> Result<(), LeyCoreError> {
+        let root = self.artifact_content_root()?;
+        match fs::symlink_metadata(&root) {
+            Ok(metadata) => validate_private_directory_metadata(&root, &metadata)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if required_blobs.is_empty() {
+                    return Ok(());
+                }
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "native artifact content root is missing for project {project_id}"
+                )));
+            }
+            Err(source) => return Err(LeyCoreError::Io { path: root, source }),
+        }
+        let project_dir = self.artifact_project_content_dir(project_id)?;
+        match fs::symlink_metadata(&project_dir) {
+            Ok(metadata) => validate_private_directory_metadata(&project_dir, &metadata)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if required_blobs.is_empty() {
+                    return Ok(());
+                }
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "native artifact content is missing for project {project_id}"
+                )));
+            }
+            Err(source) => {
+                return Err(LeyCoreError::Io {
+                    path: project_dir,
+                    source,
+                })
+            }
+        }
+
+        let required_by_digest = required_blobs
+            .iter()
+            .map(|(hash, bytes)| Ok((artifact_digest(hash)?.to_owned(), (hash, *bytes))))
+            .collect::<Result<BTreeMap<_, _>, LeyCoreError>>()?;
+        let mut seen = BTreeSet::new();
+        let entries = fs::read_dir(&project_dir).map_err(|source| LeyCoreError::Io {
+            path: project_dir.clone(),
+            source,
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| LeyCoreError::Io {
+                path: project_dir.clone(),
+                source,
+            })?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path).map_err(|source| LeyCoreError::Io {
+                path: path.clone(),
+                source,
+            })?;
+            if name.starts_with(".tmp-artifact-") {
+                validate_native_artifact_blob_metadata(&path, &metadata)?;
+                fs::remove_file(&path).map_err(|source| LeyCoreError::Io { path, source })?;
+                continue;
+            }
+            if name.len() != 64
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "unexpected entry in native artifact content directory: {name}"
+                )));
+            }
+            validate_native_artifact_blob_metadata(&path, &metadata)?;
+            if let Some((content_hash, expected_bytes)) = required_by_digest.get(&name) {
+                let bytes = read_private_blob(&path, *expected_bytes)?;
+                if format!("sha256:{:x}", Sha256::digest(&bytes)) != **content_hash {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "native artifact blob failed hash verification: {content_hash}"
+                    )));
+                }
+                seen.insert(name);
+            } else {
+                fs::remove_file(&path).map_err(|source| LeyCoreError::Io { path, source })?;
+            }
+        }
+        for digest in required_by_digest.keys() {
+            if !seen.contains(digest) {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "required native artifact blob is missing: {digest}"
+                )));
+            }
+        }
+        #[cfg(unix)]
+        File::open(&project_dir)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|source| LeyCoreError::Io {
+                path: project_dir.clone(),
+                source,
+            })?;
+        if required_blobs.is_empty() {
+            fs::remove_dir(&project_dir).map_err(|source| LeyCoreError::Io {
+                path: project_dir.clone(),
+                source,
+            })?;
+            #[cfg(unix)]
+            File::open(&root)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|source| LeyCoreError::Io { path: root, source })?;
+        }
+        Ok(())
+    }
+
+    fn remove_native_artifact_project_dir(&self, project_id: &str) -> Result<(), LeyCoreError> {
+        let root = self.artifact_content_root()?;
+        let project_dir = self.artifact_project_content_dir(project_id)?;
+        match fs::symlink_metadata(&project_dir) {
+            Ok(metadata) => {
+                validate_private_directory_metadata(&project_dir, &metadata)?;
+                fs::remove_dir_all(&project_dir).map_err(|source| LeyCoreError::Io {
+                    path: project_dir,
+                    source,
+                })?;
+                #[cfg(unix)]
+                if root.exists() {
+                    File::open(&root)
+                        .and_then(|directory| directory.sync_all())
+                        .map_err(|source| LeyCoreError::Io { path: root, source })?;
+                }
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(source) => Err(LeyCoreError::Io {
+                path: project_dir,
+                source,
+            }),
+        }
+    }
+
+    pub(crate) fn migrated_project_egress_policies_unlocked(
+        &self,
+    ) -> Result<BTreeMap<String, crate::AgentEgressPolicy>, LeyCoreError> {
+        let connection = self.open_connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT project_id, agent_egress_policy
+                 FROM projects
+                 WHERE agent_egress_policy_migrated = 1
+                 ORDER BY project_id",
+            )
+            .map_err(|error| self.database_error(error))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| self.database_error(error))?;
+        let mut policies = BTreeMap::new();
+        for row in rows {
+            let (project_id, policy) = row.map_err(|error| self.database_error(error))?;
+            validate_project_id(&project_id)?;
+            policies.insert(project_id, continuity_egress_policy(&policy)?);
+        }
+        Ok(policies)
+    }
+
+    pub(crate) fn project_observations(
+        &self,
+    ) -> Result<Vec<ContinuityProjectObservation>, LeyCoreError> {
+        let connection = self.open_connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT project_id, root_path, last_opened_at_unix_ms, continuity_origin
+                 FROM project_observations
+                 ORDER BY last_opened_at_unix_ms DESC, project_id",
+            )
+            .map_err(|error| self.database_error(error))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|error| self.database_error(error))?;
+        rows.map(|row| {
+            let (project_id, root_path, last_opened_at_unix_ms, continuity_origin) =
+                row.map_err(|error| self.database_error(error))?;
+            Ok(ContinuityProjectObservation {
+                project_id,
+                root_path: PathBuf::from(root_path),
+                last_opened_at_unix_ms: i64_to_u64_sql(
+                    last_opened_at_unix_ms,
+                    "project last_opened_at_unix_ms",
+                )
+                .map_err(|error| self.database_error(error))?,
+                continuity_origin: ContinuityProjectOrigin::parse(&continuity_origin)?,
+            })
+        })
+        .collect()
+    }
+
+    pub(crate) fn project_catalog_migration_complete(&self) -> Result<bool, LeyCoreError> {
+        let connection = self.open_connection()?;
+        let migrated: i64 = connection
+            .query_row(
+                "SELECT project_catalog_migrated FROM local_migration_state WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        match migrated {
+            0 => Ok(false),
+            1 => Ok(true),
+            value => Err(LeyCoreError::InvalidContinuityStore(format!(
+                "project catalog has invalid migration marker {value}"
+            ))),
+        }
+    }
+
+    pub(crate) fn import_legacy_project_observations_once(
+        &self,
+        observations: &[ContinuityProjectObservation],
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_observation_set(observations)?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let migrated: i64 = transaction
+            .query_row(
+                "SELECT project_catalog_migrated FROM local_migration_state WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        match migrated {
+            1 => return Ok(false),
+            0 => {}
+            value => {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "project catalog has invalid migration marker {value}"
+                )))
+            }
+        }
+        replace_project_observations_on(&transaction, observations, &self.path)?;
+        transaction
+            .execute(
+                "UPDATE local_migration_state SET project_catalog_migrated = 1 WHERE singleton = 1",
+                [],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(true)
+    }
+
+    pub(crate) fn upsert_project_observation(
+        &self,
+        observation: &ContinuityProjectObservation,
+    ) -> Result<(), LeyCoreError> {
+        validate_project_observation(observation)?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let root = observation
+            .root_path
+            .to_str()
+            .expect("validated UTF-8 project root");
+        transaction
+            .execute(
+                "DELETE FROM project_observations WHERE root_path = ?1 AND project_id <> ?2",
+                params![root, observation.project_id],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .execute(
+                "INSERT INTO project_observations(
+                    project_id, root_path, last_opened_at_unix_ms, continuity_origin
+                 ) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(project_id) DO UPDATE SET
+                    root_path = excluded.root_path,
+                    last_opened_at_unix_ms = excluded.last_opened_at_unix_ms,
+                    continuity_origin = excluded.continuity_origin",
+                params![
+                    observation.project_id,
+                    root,
+                    u64_to_i64(
+                        observation.last_opened_at_unix_ms,
+                        "project last_opened_at_unix_ms"
+                    )?,
+                    observation.continuity_origin.as_str()
+                ],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))
+    }
+
+    pub(crate) fn forget_project_observation(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ContinuityProjectObservation>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let existing = transaction
+            .query_row(
+                "SELECT root_path, last_opened_at_unix_ms, continuity_origin
+                 FROM project_observations WHERE project_id = ?1",
+                [project_id],
+                |row| {
+                    let opened: i64 = row.get(1)?;
+                    Ok((row.get::<_, String>(0)?, opened, row.get::<_, String>(2)?))
+                },
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .execute(
+                "DELETE FROM project_observations WHERE project_id = ?1",
+                [project_id],
+            )
+            .map_err(|error| self.database_error(error))?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        existing
+            .map(|(root_path, opened, origin)| {
+                Ok(ContinuityProjectObservation {
+                    project_id: project_id.to_owned(),
+                    root_path: PathBuf::from(root_path),
+                    last_opened_at_unix_ms: i64_to_u64_sql(
+                        opened,
+                        "project last_opened_at_unix_ms",
+                    )
+                    .map_err(|error| self.database_error(error))?,
+                    continuity_origin: ContinuityProjectOrigin::parse(&origin)?,
+                })
+            })
+            .transpose()
+    }
+
+    pub(crate) fn mark_project_native_born(
+        &self,
+        observation: &ContinuityProjectObservation,
+    ) -> Result<(), LeyCoreError> {
+        validate_project_observation(observation)?;
+        let mut native = observation.clone();
+        native.continuity_origin = ContinuityProjectOrigin::NativeBorn;
+        self.upsert_project_observation(&native)
+    }
+
+    pub(crate) fn project_continuity_origin(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ContinuityProjectOrigin>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        Ok(self
+            .project_observations()?
+            .into_iter()
+            .find(|observation| observation.project_id == project_id)
+            .map(|observation| observation.continuity_origin))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sync_legacy_project_observations(
+        &self,
+        observations: &[ContinuityProjectObservation],
+    ) -> Result<(), LeyCoreError> {
+        validate_project_observation_set(observations)?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        replace_project_observations_on(&transaction, observations, &self.path)?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))
+    }
+
     pub fn append_event(
         &self,
         input: &ContinuityEventInput,
     ) -> Result<ContinuityWrite<ContinuityEvent>, LeyCoreError> {
         let connection = self.open_connection()?;
         append_event_on(&connection, input, &self.path)
+    }
+
+    pub(crate) fn append_project_event_if_count(
+        &self,
+        input: &ContinuityEventInput,
+        expected_project_events: usize,
+    ) -> Result<ContinuityWrite<ContinuityEvent>, LeyCoreError> {
+        validate_event_input(input)?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let actual: i64 = transaction
+            .query_row(
+                "SELECT count(*) FROM events WHERE project_id = ?1",
+                [&input.project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        let actual = usize::try_from(actual).map_err(|_| {
+            LeyCoreError::InvalidContinuityStore(
+                "project event count exceeds process addressable range".to_owned(),
+            )
+        })?;
+        if actual != expected_project_events {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "native-born authority expected {expected_project_events} project events, found {actual}"
+            )));
+        }
+        let write = append_event_on(&transaction, input, &self.path)?;
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(write)
     }
 
     pub fn import_project_events(
@@ -290,7 +3174,14 @@ impl ContinuityStore {
         let existing_legacy_ids = {
             let mut statement = transaction
                 .prepare(
-                    "SELECT event_id FROM events WHERE project_id = ?1 AND kind LIKE 'legacy-%' ORDER BY event_id",
+                    "SELECT event_id FROM events
+                     WHERE project_id = ?1
+                       AND kind LIKE 'legacy-%'
+                       AND kind NOT IN (
+                           'legacy-session-snapshot-imported',
+                           'legacy-learning-snapshot-imported'
+                       )
+                     ORDER BY event_id",
                 )
                 .map_err(|error| self.database_error(error))?;
             let rows = statement
@@ -301,6 +3192,263 @@ impl ContinuityStore {
         };
         let mut events_removed = 0;
         for event_id in existing_legacy_ids {
+            if !desired_ids.contains(&event_id) {
+                events_removed += transaction
+                    .execute(
+                        "DELETE FROM events WHERE project_id = ?1 AND event_id = ?2",
+                        params![identity.project_id, event_id],
+                    )
+                    .map_err(|error| self.database_error(error))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(ContinuityImportSummary {
+            project_created: project.created,
+            events_created,
+            events_replayed,
+            events_removed,
+        })
+    }
+
+    // Reconciles the final legacy session snapshot used by the one-way native authority cutover.
+    pub(crate) fn sync_legacy_session_events(
+        &self,
+        identity: &ProjectIdentity,
+        events: &[ContinuityEventInput],
+        manifest: &ContinuityEventInput,
+    ) -> Result<ContinuityImportSummary, LeyCoreError> {
+        validate_identity(identity)?;
+        let mut desired_ids = BTreeSet::new();
+        for event in events {
+            validate_event_input(event)?;
+            if event.project_id != identity.project_id {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "session event {} belongs to project {}, not {}",
+                    event.event_id, event.project_id, identity.project_id
+                )));
+            }
+            if event.session_id.is_none()
+                || event.session_sequence.is_none()
+                || event.request_id.is_none()
+                || event.request_fingerprint.is_none()
+                || !event.kind.starts_with("legacy-")
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "legacy session snapshot contains invalid session event {}",
+                    event.event_id
+                )));
+            }
+            if !desired_ids.insert(event.event_id.clone()) {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "legacy session snapshot repeats event {}",
+                    event.event_id
+                )));
+            }
+        }
+        validate_event_input(manifest)?;
+        if manifest.project_id != identity.project_id
+            || manifest.kind != "legacy-session-snapshot-imported"
+            || manifest.session_id.is_some()
+            || manifest.session_sequence.is_some()
+            || manifest.request_id.is_some()
+            || manifest.request_fingerprint.is_some()
+        {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "legacy session snapshot manifest is invalid".to_owned(),
+            ));
+        }
+        if !desired_ids.insert(manifest.event_id.clone()) {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "legacy session snapshot manifest collides with a session event".to_owned(),
+            ));
+        }
+
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let project = register_project_on(&transaction, identity, &self.path)?;
+        let mut events_created = 0;
+        let mut events_replayed = 0;
+        for event in events.iter().chain(std::iter::once(manifest)) {
+            if append_event_on(&transaction, event, &self.path)?.created {
+                events_created += 1;
+            } else {
+                events_replayed += 1;
+            }
+        }
+        let existing_legacy_session_ids = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT event_id FROM events
+                     WHERE project_id = ?1
+                       AND (
+                           (session_id IS NOT NULL AND kind LIKE 'legacy-%')
+                           OR kind = 'legacy-session-snapshot-imported'
+                       )
+                     ORDER BY event_id",
+                )
+                .map_err(|error| self.database_error(error))?;
+            let rows = statement
+                .query_map([&identity.project_id], |row| row.get::<_, String>(0))
+                .map_err(|error| self.database_error(error))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|error| self.database_error(error))?
+        };
+        let mut events_removed = 0;
+        for event_id in existing_legacy_session_ids {
+            if !desired_ids.contains(&event_id) {
+                events_removed += transaction
+                    .execute(
+                        "DELETE FROM events WHERE project_id = ?1 AND event_id = ?2",
+                        params![identity.project_id, event_id],
+                    )
+                    .map_err(|error| self.database_error(error))?;
+            }
+        }
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok(ContinuityImportSummary {
+            project_created: project.created,
+            events_created,
+            events_replayed,
+            events_removed,
+        })
+    }
+
+    pub(crate) fn sync_legacy_learning_events(
+        &self,
+        identity: &ProjectIdentity,
+        events: &[ContinuityEventInput],
+        links: &[ContinuityEventLinkInput],
+        manifest: &ContinuityEventInput,
+    ) -> Result<ContinuityImportSummary, LeyCoreError> {
+        validate_identity(identity)?;
+        let mut desired_ids = BTreeSet::new();
+        for event in events {
+            validate_event_input(event)?;
+            if event.project_id != identity.project_id
+                || event.subject_id.is_none()
+                || event.session_id.is_some()
+                || event.session_sequence.is_some()
+                || !event.kind.starts_with("legacy-learning-")
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "legacy learning snapshot contains invalid event {}",
+                    event.event_id
+                )));
+            }
+            if !desired_ids.insert(event.event_id.clone()) {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "legacy learning snapshot repeats event {}",
+                    event.event_id
+                )));
+            }
+        }
+        validate_event_input(manifest)?;
+        if manifest.project_id != identity.project_id
+            || manifest.kind != "legacy-learning-snapshot-imported"
+            || manifest.subject_id.is_some()
+            || manifest.session_id.is_some()
+            || manifest.session_sequence.is_some()
+            || manifest.request_id.is_some()
+            || manifest.request_fingerprint.is_some()
+        {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "legacy learning snapshot manifest is invalid".to_owned(),
+            ));
+        }
+        if !desired_ids.insert(manifest.event_id.clone()) {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "legacy learning snapshot manifest collides with a learning event".to_owned(),
+            ));
+        }
+        for link in links {
+            validate_identifier(&link.from_event_id, "source event ID")?;
+            validate_identifier(&link.to_event_id, "target event ID")?;
+            validate_kind(&link.relation, "event relation")?;
+            if !desired_ids.contains(&link.from_event_id)
+                || !matches!(link.relation.as_str(), "depends-on-session" | "supersedes")
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(
+                    "legacy learning snapshot contains an invalid event link".to_owned(),
+                ));
+            }
+        }
+
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let cutover_count: i64 = transaction
+            .query_row(
+                "SELECT count(*) FROM events
+                 WHERE project_id = ?1 AND kind = 'learning-authority-cutover'",
+                [&identity.project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        if cutover_count > 0 {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "legacy learning reconciliation is forbidden after native learning authority cutover"
+                    .to_owned(),
+            ));
+        }
+        let project = register_project_on(&transaction, identity, &self.path)?;
+        let mut events_created = 0;
+        let mut events_replayed = 0;
+        for event in events.iter().chain(std::iter::once(manifest)) {
+            if append_event_on(&transaction, event, &self.path)?.created {
+                events_created += 1;
+            } else {
+                events_replayed += 1;
+            }
+        }
+        transaction
+            .execute(
+                "DELETE FROM event_links
+                 WHERE project_id = ?1
+                   AND relation IN ('depends-on-session', 'supersedes')
+                   AND from_event_id IN (
+                       SELECT event_id FROM events
+                       WHERE project_id = ?1 AND kind LIKE 'legacy-learning-%'
+                   )",
+                [&identity.project_id],
+            )
+            .map_err(|error| self.database_error(error))?;
+        for link in links {
+            link_events_on(
+                &transaction,
+                &identity.project_id,
+                &link.from_event_id,
+                &link.to_event_id,
+                &link.relation,
+                &self.path,
+            )?;
+        }
+        let existing_ids = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT event_id FROM events
+                     WHERE project_id = ?1
+                       AND (
+                           kind LIKE 'legacy-learning-%'
+                           OR kind = 'legacy-learning-snapshot-imported'
+                       )
+                     ORDER BY event_id",
+                )
+                .map_err(|error| self.database_error(error))?;
+            let rows = statement
+                .query_map([&identity.project_id], |row| row.get::<_, String>(0))
+                .map_err(|error| self.database_error(error))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|error| self.database_error(error))?
+        };
+        let mut events_removed = 0;
+        for event_id in existing_ids {
             if !desired_ids.contains(&event_id) {
                 events_removed += transaction
                     .execute(
@@ -356,13 +3504,180 @@ impl ContinuityStore {
         validate_project_id(project_id)?;
         validate_identifier(session_id, "session ID")?;
         let connection = self.open_connection()?;
+        session_events_on(&connection, project_id, session_id, &self.path)
+    }
+
+    pub(crate) fn events_for_subject(
+        &self,
+        project_id: &str,
+        subject_id: &str,
+    ) -> Result<Vec<ContinuityEvent>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        validate_identifier(subject_id, "subject ID")?;
+        let connection = self.open_connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json FROM events WHERE project_id = ?1 AND session_id = ?2 ORDER BY session_sequence IS NULL, session_sequence, recorded_at_unix_ms, event_id",
+                "SELECT project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json
+                 FROM events
+                 WHERE project_id = ?1 AND subject_id = ?2
+                 ORDER BY recorded_at_unix_ms, event_id",
             )
             .map_err(|error| self.database_error(error))?;
         let rows = statement
-            .query_map(params![project_id, session_id], row_to_event)
+            .query_map(params![project_id, subject_id], row_to_event)
+            .map_err(|error| self.database_error(error))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| self.database_error(error))
+    }
+
+    pub(crate) fn learning_events(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ContinuityEvent>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        learning_events_on(&connection, project_id, &self.path)
+    }
+
+    pub(crate) fn append_learning_event_transactional(
+        &self,
+        project_id: &str,
+        build: impl FnOnce(
+            &[ContinuityEvent],
+        ) -> Result<
+            (ContinuityEventInput, Vec<ContinuityEventLinkInput>),
+            LeyCoreError,
+        >,
+    ) -> Result<(ContinuityWrite<ContinuityEvent>, Vec<ContinuityEvent>), LeyCoreError> {
+        validate_project_id(project_id)?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let mut events = learning_events_on(&transaction, project_id, &self.path)?;
+        let (input, links) = build(&events)?;
+        if input.project_id != project_id
+            || input.subject_id.is_none()
+            || input.session_id.is_some()
+            || input.session_sequence.is_some()
+            || input.request_id.is_some()
+            || input.request_fingerprint.is_some()
+            || input.payload_version != 1
+            || !matches!(
+                input.kind.as_str(),
+                "learning-proposed" | "learning-corrected" | "learning-reviewed"
+            )
+        {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "transactional learning event has an invalid native continuity envelope".to_owned(),
+            ));
+        }
+        let write = append_event_on(&transaction, &input, &self.path)?;
+        for link in links {
+            link_events_on(
+                &transaction,
+                project_id,
+                &link.from_event_id,
+                &link.to_event_id,
+                &link.relation,
+                &self.path,
+            )?;
+        }
+        if write.created {
+            events.push(write.record.clone());
+            events.sort_by(|left, right| {
+                left.recorded_at_unix_ms
+                    .cmp(&right.recorded_at_unix_ms)
+                    .then_with(|| left.event_id.cmp(&right.event_id))
+            });
+        } else if !events.iter().any(|event| event == &write.record) {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "replayed learning event {} was absent from the transaction snapshot",
+                write.record.event_id
+            )));
+        }
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok((write, events))
+    }
+
+    /// Serializes one native session append against the exact session snapshot in the same
+    /// SQLite write transaction.
+    pub(crate) fn append_session_event_transactional(
+        &self,
+        project_id: &str,
+        session_id: &str,
+        build: impl FnOnce(&[ContinuityEvent]) -> Result<ContinuityEventInput, LeyCoreError>,
+    ) -> Result<(ContinuityWrite<ContinuityEvent>, Vec<ContinuityEvent>), LeyCoreError> {
+        validate_project_id(project_id)?;
+        validate_identifier(session_id, "session ID")?;
+        let mut connection = self.open_connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| self.database_error(error))?;
+        let mut events = session_events_on(&transaction, project_id, session_id, &self.path)?;
+        let input = build(&events)?;
+        if input.project_id != project_id || input.session_id.as_deref() != Some(session_id) {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "transactional session event belongs to a different project or session".to_owned(),
+            ));
+        }
+        if input.session_sequence.is_none() {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "transactional session event requires a session sequence".to_owned(),
+            ));
+        }
+        let write = append_event_on(&transaction, &input, &self.path)?;
+        if write.created {
+            events.push(write.record.clone());
+            events.sort_by(|left, right| {
+                left.session_sequence
+                    .cmp(&right.session_sequence)
+                    .then_with(|| left.recorded_at_unix_ms.cmp(&right.recorded_at_unix_ms))
+                    .then_with(|| left.event_id.cmp(&right.event_id))
+            });
+        } else if !events.iter().any(|event| event == &write.record) {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "replayed session event {} was absent from the transaction snapshot",
+                write.record.event_id
+            )));
+        }
+        transaction
+            .commit()
+            .map_err(|error| self.database_error(error))?;
+        Ok((write, events))
+    }
+
+    pub(crate) fn has_legacy_snapshot_import(
+        &self,
+        project_id: &str,
+    ) -> Result<bool, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        let count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM events
+                 WHERE project_id = ?1 AND kind = 'legacy-snapshot-imported'",
+                [project_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| self.database_error(error))?;
+        Ok(count > 0)
+    }
+
+    pub(crate) fn session_ids(&self, project_id: &str) -> Result<Vec<String>, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let connection = self.open_connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT DISTINCT session_id FROM events
+                 WHERE project_id = ?1 AND session_id IS NOT NULL
+                 ORDER BY session_id",
+            )
+            .map_err(|error| self.database_error(error))?;
+        let rows = statement
+            .query_map([project_id], |row| row.get::<_, String>(0))
             .map_err(|error| self.database_error(error))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| self.database_error(error))
@@ -484,17 +3799,20 @@ impl ContinuityStore {
 
     pub fn erase_project(&self, project_id: &str) -> Result<(), LeyCoreError> {
         validate_project_id(project_id)?;
-        let mut connection = self.open_connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| self.database_error(error))?;
-        transaction
-            .execute("DELETE FROM projects WHERE project_id = ?1", [project_id])
-            .map_err(|error| self.database_error(error))?;
-        transaction
-            .commit()
-            .map_err(|error| self.database_error(error))?;
-        truncate_wal_after_erasure(&connection, &self.path)
+        self.with_artifact_authority_lock(|| {
+            self.remove_native_artifact_project_dir(project_id)?;
+            let mut connection = self.open_connection()?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|error| self.database_error(error))?;
+            transaction
+                .execute("DELETE FROM projects WHERE project_id = ?1", [project_id])
+                .map_err(|error| self.database_error(error))?;
+            transaction
+                .commit()
+                .map_err(|error| self.database_error(error))?;
+            truncate_wal_after_erasure(&connection, &self.path)
+        })
     }
 
     pub(crate) fn export_project_database(
@@ -580,6 +3898,28 @@ impl ContinuityStore {
 
         let transaction = exported
             .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| database_error(destination, error))?;
+        transaction
+            .execute("DELETE FROM project_observations", [])
+            .map_err(|error| database_error(destination, error))?;
+        // Current artifact capture is rebuildable machine-local state. Portable bundles preserve
+        // exact durably cited evidence through their dedicated evidence root; exporting the current
+        // snapshot or its local write-authority marker would falsely imply that the restored machine
+        // already has a complete current artifact capture.
+        transaction
+            .execute("DELETE FROM artifact_write_authority", [])
+            .map_err(|error| database_error(destination, error))?;
+        transaction
+            .execute("DELETE FROM project_artifact_state", [])
+            .map_err(|error| database_error(destination, error))?;
+        transaction
+            .execute("DELETE FROM artifact_snapshots", [])
+            .map_err(|error| database_error(destination, error))?;
+        transaction
+            .execute(
+                "UPDATE local_migration_state SET project_catalog_migrated = 0 WHERE singleton = 1",
+                [],
+            )
             .map_err(|error| database_error(destination, error))?;
         transaction
             .execute("DELETE FROM projects WHERE project_id <> ?1", [project_id])
@@ -824,9 +4164,9 @@ fn validate_exported_project_database(
     let schema_version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(|error| database_error(path, error))?;
-    if schema_version != CONTINUITY_SCHEMA_VERSION {
+    if !(PORTABLE_DATABASE_SCHEMA_FLOOR..=CONTINUITY_SCHEMA_VERSION).contains(&schema_version) {
         return Err(LeyCoreError::InvalidContinuityStore(format!(
-            "portable continuity database schema {schema_version} does not match supported schema {CONTINUITY_SCHEMA_VERSION}"
+            "portable continuity database schema {schema_version} is outside supported range {PORTABLE_DATABASE_SCHEMA_FLOOR}..={CONTINUITY_SCHEMA_VERSION}"
         )));
     }
     let project_count: i64 = connection
@@ -843,6 +4183,172 @@ fn validate_exported_project_database(
         return Err(LeyCoreError::InvalidContinuityStore(
             "portable continuity database must contain exactly the selected project".to_owned(),
         ));
+    }
+    if schema_version >= 6 {
+        validate_portable_approved_sources(connection, path, project_id)?;
+    }
+    if schema_version >= 8 {
+        for table in [
+            "artifact_snapshots",
+            "artifact_files",
+            "project_artifact_state",
+        ] {
+            let rows: i64 = connection
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .map_err(|error| database_error(path, error))?;
+            if rows != 0 {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "portable continuity database must not contain rebuildable current artifact state in {table}"
+                )));
+            }
+        }
+    }
+    if schema_version >= 10 {
+        let authorities: i64 = connection
+            .query_row("SELECT count(*) FROM artifact_write_authority", [], |row| {
+                row.get(0)
+            })
+            .map_err(|error| database_error(path, error))?;
+        if authorities != 0 {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "portable continuity database must not contain machine-local artifact write authority"
+                    .to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_portable_approved_sources(
+    connection: &Connection,
+    path: &Path,
+    project_id: &str,
+) -> Result<(), LeyCoreError> {
+    let marker: i64 = connection
+        .query_row(
+            "SELECT approved_source_authority_migrated
+             FROM projects WHERE project_id = ?1",
+            [project_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| database_error(path, error))?;
+    if !matches!(marker, 0 | 1) {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "portable project {project_id} has invalid approved-source migration marker {marker}"
+        )));
+    }
+
+    let mut statement = connection
+        .prepare(
+            "SELECT source_id, source_kind, display_name, project_relative_path,
+                    content_hash, snapshot_blob_hash, approved_at_unix_ms
+             FROM approved_sources WHERE project_id = ?1 ORDER BY source_id",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let rows = statement
+        .query_map([project_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, i64>(6)?,
+            ))
+        })
+        .map_err(|error| database_error(path, error))?;
+    for row in rows {
+        let (source_id, source_kind, display_name, relative_path, content_hash, snapshot_hash, at) =
+            row.map_err(|error| database_error(path, error))?;
+        validate_approved_source_identity(
+            &source_id,
+            &display_name,
+            &content_hash,
+            u64::try_from(at).map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "portable approved source {source_id} has invalid approval time {at}"
+                ))
+            })?,
+        )?;
+        match source_kind.as_str() {
+            "project-file" => {
+                let relative_path = relative_path.ok_or_else(|| {
+                    LeyCoreError::InvalidContinuityStore(format!(
+                        "portable project-file approved source {source_id} has no path"
+                    ))
+                })?;
+                let normalized =
+                    crate::approved_source::validate_and_normalize_project_relative_path(
+                        &relative_path,
+                    )
+                    .map_err(|error| {
+                        LeyCoreError::InvalidContinuityStore(format!(
+                            "portable project-file approved source {source_id} has invalid path: {error}"
+                        ))
+                    })?;
+                if normalized != relative_path || snapshot_hash.is_some() {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "portable project-file approved source {source_id} has invalid path/blob state"
+                    )));
+                }
+            }
+            "imported-snapshot" => {
+                if relative_path.is_some() || snapshot_hash.as_deref() != Some(&content_hash) {
+                    return Err(LeyCoreError::InvalidContinuityStore(format!(
+                        "portable imported approved source {source_id} has invalid path/blob state"
+                    )));
+                }
+            }
+            other => {
+                return Err(LeyCoreError::InvalidContinuityStore(format!(
+                    "portable approved source {source_id} has unsupported kind {other:?}"
+                )))
+            }
+        }
+    }
+
+    let mut blobs = connection
+        .prepare(
+            "SELECT content_hash, content_bytes
+             FROM approved_source_blobs WHERE project_id = ?1 ORDER BY content_hash",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let blob_rows = blobs
+        .query_map([project_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })
+        .map_err(|error| database_error(path, error))?;
+    for row in blob_rows {
+        let (content_hash, bytes) = row.map_err(|error| database_error(path, error))?;
+        if bytes.len() > CONTINUITY_APPROVED_SOURCE_LIMIT_BYTES
+            || std::str::from_utf8(&bytes).is_err()
+            || format!("sha256:{:x}", Sha256::digest(&bytes)) != content_hash
+        {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "portable approved-source blob {content_hash} failed content validation"
+            )));
+        }
+    }
+    let orphan_blobs: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM approved_source_blobs b
+             WHERE b.project_id = ?1
+               AND NOT EXISTS(
+                   SELECT 1 FROM approved_sources s
+                   WHERE s.project_id = b.project_id
+                     AND s.snapshot_blob_hash = b.content_hash
+               )",
+            [project_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| database_error(path, error))?;
+    if orphan_blobs != 0 {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "portable project {project_id} contains {orphan_blobs} orphan approved-source blobs"
+        )));
     }
     Ok(())
 }
@@ -903,6 +4409,193 @@ fn is_sha256_digest(value: &str) -> bool {
     value.len() == 71
         && value.starts_with("sha256:")
         && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn validate_approved_source_import_inventory(
+    snapshots: &[ContinuityApprovedSourceSnapshotInput],
+    issues: &[ContinuityApprovedSourceIssueInput],
+) -> Result<(), LeyCoreError> {
+    let mut source_ids = BTreeSet::new();
+    for snapshot in snapshots {
+        validate_approved_source_identity(
+            &snapshot.source_id,
+            &snapshot.display_name,
+            &snapshot.content_hash,
+            snapshot.approved_at_unix_ms,
+        )?;
+        if snapshot.content_bytes.len() > CONTINUITY_APPROVED_SOURCE_LIMIT_BYTES {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "approved source {} exceeds {} bytes",
+                snapshot.source_id, CONTINUITY_APPROVED_SOURCE_LIMIT_BYTES
+            )));
+        }
+        if std::str::from_utf8(&snapshot.content_bytes).is_err() {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "approved source {} is not UTF-8 text",
+                snapshot.source_id
+            )));
+        }
+        let actual_hash = format!("sha256:{:x}", Sha256::digest(&snapshot.content_bytes));
+        if actual_hash != snapshot.content_hash {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "approved source {} content does not match its approved hash",
+                snapshot.source_id
+            )));
+        }
+        if !source_ids.insert(snapshot.source_id.as_str()) {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "approved-source migration repeats source {}",
+                snapshot.source_id
+            )));
+        }
+    }
+    for issue in issues {
+        validate_approved_source_identity(
+            &issue.source_id,
+            &issue.display_name,
+            &issue.approved_content_hash,
+            issue.approved_at_unix_ms,
+        )?;
+        if !source_ids.insert(issue.source_id.as_str()) {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "approved-source migration repeats source {}",
+                issue.source_id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_approved_source_identity(
+    source_id: &str,
+    display_name: &str,
+    content_hash: &str,
+    approved_at_unix_ms: u64,
+) -> Result<(), LeyCoreError> {
+    if source_id.is_empty()
+        || source_id.len() > 128
+        || source_id.chars().any(|character| {
+            character.is_control() || character.is_whitespace() || !character.is_ascii()
+        })
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "approved source ID must contain 1 to 128 non-whitespace ASCII characters".to_owned(),
+        ));
+    }
+    if display_name.trim().is_empty()
+        || display_name.chars().count() > 1_024
+        || display_name.chars().any(char::is_control)
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "approved source {source_id} has an invalid display name"
+        )));
+    }
+    if !is_sha256_digest(content_hash) {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "approved source {source_id} has an invalid content hash"
+        )));
+    }
+    if approved_at_unix_ms == 0 || i64::try_from(approved_at_unix_ms).is_err() {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "approved source {source_id} has an invalid approval time"
+        )));
+    }
+    Ok(())
+}
+
+fn continuity_egress_policy(value: &str) -> Result<crate::AgentEgressPolicy, LeyCoreError> {
+    crate::AgentEgressPolicy::parse(value).map_err(|_| {
+        LeyCoreError::InvalidContinuityStore(format!(
+            "continuity database contains unsupported agent egress policy {value:?}"
+        ))
+    })
+}
+
+fn validate_project_observation(
+    observation: &ContinuityProjectObservation,
+) -> Result<(), LeyCoreError> {
+    validate_project_id(&observation.project_id)?;
+    let root = observation
+        .root_path
+        .to_str()
+        .ok_or_else(|| LeyCoreError::NonUtf8Path(observation.root_path.clone()))?;
+    if root.is_empty() || !observation.root_path.is_absolute() {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "project observation root for {} must be an absolute UTF-8 path",
+            observation.project_id
+        )));
+    }
+    if observation.root_path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        )
+    }) {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "project observation root for {} must be normalized",
+            observation.project_id
+        )));
+    }
+    Ok(())
+}
+
+fn validate_project_observation_set(
+    observations: &[ContinuityProjectObservation],
+) -> Result<(), LeyCoreError> {
+    let mut project_ids = BTreeSet::new();
+    let mut root_paths = BTreeSet::new();
+    for observation in observations {
+        validate_project_observation(observation)?;
+        if !project_ids.insert(observation.project_id.clone()) {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "legacy project catalog repeats project {}",
+                observation.project_id
+            )));
+        }
+        let root = observation
+            .root_path
+            .to_str()
+            .expect("validated UTF-8 project root")
+            .to_owned();
+        if !root_paths.insert(root.clone()) {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "legacy project catalog repeats root path {root:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn replace_project_observations_on(
+    transaction: &rusqlite::Transaction<'_>,
+    observations: &[ContinuityProjectObservation],
+    path: &Path,
+) -> Result<(), LeyCoreError> {
+    transaction
+        .execute("DELETE FROM project_observations", [])
+        .map_err(|error| database_error(path, error))?;
+    for observation in observations {
+        transaction
+            .execute(
+                "INSERT INTO project_observations(
+                    project_id, root_path, last_opened_at_unix_ms, continuity_origin
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    observation.project_id,
+                    observation
+                        .root_path
+                        .to_str()
+                        .expect("validated UTF-8 project root"),
+                    u64_to_i64(
+                        observation.last_opened_at_unix_ms,
+                        "project last_opened_at_unix_ms"
+                    )?,
+                    observation.continuity_origin.as_str()
+                ],
+            )
+            .map_err(|error| database_error(path, error))?;
+    }
+    Ok(())
 }
 
 fn register_project_on(
@@ -1220,6 +4913,265 @@ fn migrate(connection: &mut Connection, path: &Path) -> Result<(), LeyCoreError>
                 "#,
             )
             .map_err(|error| database_error(path, error))?;
+        current_version = 2;
+    }
+    if current_version == 2 {
+        transaction
+            .execute_batch(
+                r#"
+                ALTER TABLE projects
+                    ADD COLUMN agent_egress_policy TEXT NOT NULL DEFAULT 'agent-ok'
+                    CHECK(agent_egress_policy IN ('agent-ok', 'confirm-per-use', 'local-model-only', 'never-send'));
+                PRAGMA user_version = 3;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 3;
+    }
+    if current_version == 3 {
+        transaction
+            .execute_batch(
+                r#"
+                CREATE TABLE project_observations (
+                    project_id TEXT PRIMARY KEY NOT NULL,
+                    root_path TEXT NOT NULL UNIQUE CHECK(length(root_path) > 0),
+                    last_opened_at_unix_ms INTEGER NOT NULL CHECK(last_opened_at_unix_ms >= 0)
+                ) STRICT;
+                PRAGMA user_version = 4;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 4;
+    }
+    if current_version == 4 {
+        transaction
+            .execute_batch(
+                r#"
+                ALTER TABLE projects
+                    ADD COLUMN agent_egress_policy_migrated INTEGER NOT NULL DEFAULT 0
+                    CHECK(agent_egress_policy_migrated IN (0, 1));
+                PRAGMA user_version = 5;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 5;
+    }
+    if current_version == 5 {
+        transaction
+            .execute_batch(
+                r#"
+                ALTER TABLE projects
+                    ADD COLUMN approved_source_authority_migrated INTEGER NOT NULL DEFAULT 0
+                    CHECK(approved_source_authority_migrated IN (0, 1));
+
+                CREATE TABLE approved_source_blobs (
+                    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+                    content_hash TEXT NOT NULL
+                        CHECK(length(content_hash) = 71 AND substr(content_hash, 1, 7) = 'sha256:'),
+                    content_bytes BLOB NOT NULL CHECK(length(content_bytes) <= 1048576),
+                    PRIMARY KEY(project_id, content_hash)
+                ) STRICT;
+
+                CREATE TABLE approved_sources (
+                    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+                    source_id TEXT NOT NULL CHECK(length(source_id) > 0),
+                    source_kind TEXT NOT NULL
+                        CHECK(source_kind IN ('project-file', 'imported-snapshot')),
+                    display_name TEXT NOT NULL CHECK(length(display_name) BETWEEN 1 AND 1024),
+                    project_relative_path TEXT,
+                    content_hash TEXT NOT NULL
+                        CHECK(length(content_hash) = 71 AND substr(content_hash, 1, 7) = 'sha256:'),
+                    snapshot_blob_hash TEXT,
+                    approved_at_unix_ms INTEGER NOT NULL CHECK(approved_at_unix_ms > 0),
+                    PRIMARY KEY(project_id, source_id),
+                    FOREIGN KEY(project_id, snapshot_blob_hash)
+                        REFERENCES approved_source_blobs(project_id, content_hash) ON DELETE RESTRICT,
+                    CHECK(
+                        (source_kind = 'project-file'
+                            AND project_relative_path IS NOT NULL
+                            AND length(project_relative_path) > 0
+                            AND snapshot_blob_hash IS NULL)
+                        OR
+                        (source_kind = 'imported-snapshot'
+                            AND project_relative_path IS NULL
+                            AND snapshot_blob_hash = content_hash)
+                    )
+                ) STRICT;
+                CREATE UNIQUE INDEX approved_sources_project_file_unique
+                    ON approved_sources(project_id, project_relative_path)
+                    WHERE source_kind = 'project-file';
+
+                CREATE TABLE legacy_approved_source_issues (
+                    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+                    source_id TEXT NOT NULL CHECK(length(source_id) > 0),
+                    display_name TEXT NOT NULL CHECK(length(display_name) BETWEEN 1 AND 1024),
+                    approved_content_hash TEXT NOT NULL
+                        CHECK(length(approved_content_hash) = 71 AND substr(approved_content_hash, 1, 7) = 'sha256:'),
+                    approved_at_unix_ms INTEGER NOT NULL CHECK(approved_at_unix_ms > 0),
+                    reason TEXT NOT NULL CHECK(reason IN ('changed', 'missing', 'invalid')),
+                    PRIMARY KEY(project_id, source_id)
+                ) STRICT;
+                PRAGMA user_version = 6;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 6;
+    }
+    if current_version == 6 {
+        transaction
+            .execute_batch(
+                r#"
+                CREATE TABLE local_migration_state (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                    project_catalog_migrated INTEGER NOT NULL DEFAULT 0
+                        CHECK(project_catalog_migrated IN (0, 1))
+                ) STRICT;
+                INSERT INTO local_migration_state(singleton, project_catalog_migrated)
+                    VALUES (1, 0);
+                PRAGMA user_version = 7;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 7;
+    }
+    if current_version == 7 {
+        transaction
+            .execute_batch(
+                r#"
+                CREATE TABLE artifact_snapshots (
+                    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+                    snapshot_id TEXT NOT NULL
+                        CHECK(length(snapshot_id) = 68 AND substr(snapshot_id, 1, 4) = 'snp_'),
+                    project_name TEXT NOT NULL CHECK(length(project_name) BETWEEN 1 AND 128),
+                    generated_at_unix_ms INTEGER NOT NULL CHECK(generated_at_unix_ms > 0),
+                    capture_mode TEXT NOT NULL
+                        CHECK(capture_mode IN ('minimal', 'structured', 'full-evidence')),
+                    capture_fingerprint TEXT NOT NULL
+                        CHECK(length(capture_fingerprint) = 71 AND substr(capture_fingerprint, 1, 7) = 'sha256:'),
+                    capture_policy_json TEXT NOT NULL CHECK(json_valid(capture_policy_json)),
+                    skipped_json TEXT NOT NULL CHECK(json_valid(skipped_json)),
+                    PRIMARY KEY(project_id, snapshot_id)
+                ) STRICT;
+
+                CREATE TABLE artifact_files (
+                    project_id TEXT NOT NULL,
+                    snapshot_id TEXT NOT NULL,
+                    artifact_path TEXT NOT NULL CHECK(length(artifact_path) > 0),
+                    kind TEXT NOT NULL
+                        CHECK(kind IN ('source', 'documentation', 'manifest', 'configuration', 'text', 'image')),
+                    language TEXT,
+                    media_type TEXT CHECK(media_type IS NULL OR media_type IN ('png', 'jpeg', 'webp')),
+                    source_bytes INTEGER NOT NULL CHECK(source_bytes >= 0),
+                    stored_bytes INTEGER NOT NULL CHECK(stored_bytes >= 0),
+                    line_count INTEGER NOT NULL CHECK(line_count >= 0),
+                    content_hash TEXT NOT NULL
+                        CHECK(length(content_hash) = 71 AND substr(content_hash, 1, 7) = 'sha256:'),
+                    content_captured INTEGER NOT NULL CHECK(content_captured IN (0, 1)),
+                    redactions_json TEXT NOT NULL CHECK(json_valid(redactions_json)),
+                    PRIMARY KEY(project_id, snapshot_id, artifact_path),
+                    FOREIGN KEY(project_id, snapshot_id)
+                        REFERENCES artifact_snapshots(project_id, snapshot_id) ON DELETE CASCADE
+                ) STRICT;
+                CREATE INDEX artifact_files_content_hash
+                    ON artifact_files(project_id, content_hash, snapshot_id, artifact_path);
+
+                CREATE TABLE project_artifact_state (
+                    project_id TEXT PRIMARY KEY NOT NULL
+                        REFERENCES projects(project_id) ON DELETE CASCADE,
+                    current_snapshot_id TEXT NOT NULL,
+                    legacy_graph_snapshot_id TEXT
+                        CHECK(
+                            legacy_graph_snapshot_id IS NULL
+                            OR (length(legacy_graph_snapshot_id) = 68
+                                AND substr(legacy_graph_snapshot_id, 1, 4) = 'grf_')
+                        ),
+                    captured_git_json TEXT
+                        CHECK(captured_git_json IS NULL OR json_valid(captured_git_json)),
+                    FOREIGN KEY(project_id, current_snapshot_id)
+                        REFERENCES artifact_snapshots(project_id, snapshot_id) ON DELETE RESTRICT
+                ) STRICT;
+
+                PRAGMA user_version = 8;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 8;
+    }
+    if current_version == 8 {
+        transaction
+            .execute_batch(
+                r#"
+                ALTER TABLE project_artifact_state
+                    ADD COLUMN captured_at_unix_ms INTEGER NOT NULL DEFAULT 0
+                    CHECK(captured_at_unix_ms >= 0);
+                UPDATE project_artifact_state
+                   SET captured_at_unix_ms = (
+                       SELECT generated_at_unix_ms
+                       FROM artifact_snapshots s
+                       WHERE s.project_id = project_artifact_state.project_id
+                         AND s.snapshot_id = project_artifact_state.current_snapshot_id
+                   );
+
+                CREATE TABLE artifact_authority_cutovers (
+                    project_id TEXT PRIMARY KEY NOT NULL
+                        REFERENCES projects(project_id) ON DELETE CASCADE,
+                    legacy_snapshot_id TEXT NOT NULL
+                        CHECK(length(legacy_snapshot_id) = 68 AND substr(legacy_snapshot_id, 1, 4) = 'snp_'),
+                    legacy_capture_fingerprint TEXT NOT NULL
+                        CHECK(length(legacy_capture_fingerprint) = 71 AND substr(legacy_capture_fingerprint, 1, 7) = 'sha256:'),
+                    legacy_file_count INTEGER NOT NULL CHECK(legacy_file_count >= 0),
+                    recorded_at_unix_ms INTEGER NOT NULL CHECK(recorded_at_unix_ms > 0)
+                ) STRICT;
+
+                PRAGMA user_version = 9;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 9;
+    }
+    if current_version == 9 {
+        transaction
+            .execute_batch(
+                r#"
+                CREATE TABLE artifact_write_authority (
+                    project_id TEXT PRIMARY KEY NOT NULL
+                        REFERENCES projects(project_id) ON DELETE CASCADE,
+                    origin TEXT NOT NULL
+                        CHECK(origin IN ('legacy-cutover', 'native-born')),
+                    initial_snapshot_id TEXT NOT NULL
+                        CHECK(length(initial_snapshot_id) = 68 AND substr(initial_snapshot_id, 1, 4) = 'snp_'),
+                    initial_capture_fingerprint TEXT NOT NULL
+                        CHECK(length(initial_capture_fingerprint) = 71 AND substr(initial_capture_fingerprint, 1, 7) = 'sha256:'),
+                    initial_file_count INTEGER NOT NULL CHECK(initial_file_count >= 0),
+                    recorded_at_unix_ms INTEGER NOT NULL CHECK(recorded_at_unix_ms > 0)
+                ) STRICT;
+
+                INSERT INTO artifact_write_authority(
+                    project_id, origin, initial_snapshot_id, initial_capture_fingerprint,
+                    initial_file_count, recorded_at_unix_ms
+                )
+                SELECT project_id, 'legacy-cutover', legacy_snapshot_id,
+                       legacy_capture_fingerprint, legacy_file_count, recorded_at_unix_ms
+                FROM artifact_authority_cutovers;
+
+                DROP TABLE artifact_authority_cutovers;
+                PRAGMA user_version = 10;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
+        current_version = 10;
+    }
+    if current_version == 10 {
+        transaction
+            .execute_batch(
+                r#"
+                ALTER TABLE project_observations
+                    ADD COLUMN continuity_origin TEXT NOT NULL DEFAULT 'legacy-unknown'
+                    CHECK(continuity_origin IN ('legacy-unknown', 'native-born'));
+                PRAGMA user_version = 11;
+                "#,
+            )
+            .map_err(|error| database_error(path, error))?;
     }
     transaction
         .commit()
@@ -1347,6 +5299,41 @@ fn validate_private_database_metadata(
     Ok(())
 }
 
+fn validate_private_lock_path_if_present(path: &Path, label: &str) -> Result<(), LeyCoreError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => validate_private_lock_metadata(path, &metadata, label),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(LeyCoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn validate_private_lock_metadata(
+    path: &Path,
+    metadata: &fs::Metadata,
+    label: &str,
+) -> Result<(), LeyCoreError> {
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "{label} is not a regular file: {}",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "{label} must use mode 600: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn read_project(
     connection: &Connection,
     project_id: &str,
@@ -1385,6 +5372,500 @@ fn read_event(
         .map_err(|error| database_error(path, error))
 }
 
+fn project_events_on(
+    connection: &Connection,
+    project_id: &str,
+    path: &Path,
+) -> Result<Vec<ContinuityEvent>, LeyCoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json
+             FROM events
+             WHERE project_id = ?1
+             ORDER BY recorded_at_unix_ms, event_id",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let rows = statement
+        .query_map([project_id], row_to_event)
+        .map_err(|error| database_error(path, error))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| database_error(path, error))
+}
+
+fn session_events_on(
+    connection: &Connection,
+    project_id: &str,
+    session_id: &str,
+    path: &Path,
+) -> Result<Vec<ContinuityEvent>, LeyCoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json FROM events WHERE project_id = ?1 AND session_id = ?2 ORDER BY session_sequence IS NULL, session_sequence, recorded_at_unix_ms, event_id",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let rows = statement
+        .query_map(params![project_id, session_id], row_to_event)
+        .map_err(|error| database_error(path, error))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| database_error(path, error))
+}
+
+fn learning_events_on(
+    connection: &Connection,
+    project_id: &str,
+    path: &Path,
+) -> Result<Vec<ContinuityEvent>, LeyCoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT project_id, event_id, subject_id, session_id, session_sequence, request_id, request_fingerprint, kind, payload_version, recorded_at_unix_ms, revision_head, revision_branch, payload_json
+             FROM events
+             WHERE project_id = ?1
+               AND kind IN (
+                   'legacy-learning-proposed',
+                   'legacy-learning-corrected',
+                   'legacy-learning-reviewed',
+                   'learning-proposed',
+                   'learning-corrected',
+                   'learning-reviewed'
+               )
+             ORDER BY recorded_at_unix_ms, event_id",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let rows = statement
+        .query_map([project_id], row_to_event)
+        .map_err(|error| database_error(path, error))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| database_error(path, error))
+}
+
+fn continuity_artifact_files(
+    manifest: &ArtifactManifest,
+) -> Result<Vec<ContinuityArtifactFileMetadata>, LeyCoreError> {
+    let mut files = manifest
+        .files
+        .iter()
+        .map(|artifact| {
+            let redactions_json = serde_json::to_string(&artifact.redactions).map_err(|error| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "artifact redaction metadata could not be serialized: {error}"
+                ))
+            })?;
+            Ok(ContinuityArtifactFileMetadata {
+                artifact_path: artifact.path.clone(),
+                kind: artifact_kind_label(artifact.kind).to_owned(),
+                language: artifact.language.clone(),
+                media_type: artifact
+                    .media_type
+                    .map(artifact_media_type_label)
+                    .map(str::to_owned),
+                source_bytes: artifact.source_bytes,
+                stored_bytes: artifact.stored_bytes,
+                line_count: artifact.line_count,
+                content_hash: artifact.content_hash.clone(),
+                content_captured: artifact.content_blob.is_some(),
+                redactions_json,
+            })
+        })
+        .collect::<Result<Vec<_>, LeyCoreError>>()?;
+    files.sort_by(|left, right| left.artifact_path.cmp(&right.artifact_path));
+    Ok(files)
+}
+
+fn validate_artifact_snapshot_matches(
+    connection: &Connection,
+    path: &Path,
+    identity: &ProjectIdentity,
+    manifest: &ArtifactManifest,
+    capture_policy_json: &str,
+    skipped_json: &str,
+    expected_files: &[ContinuityArtifactFileMetadata],
+) -> Result<(), LeyCoreError> {
+    let stored = connection
+        .query_row(
+            "SELECT project_name, capture_mode, capture_fingerprint,
+                    capture_policy_json, skipped_json
+             FROM artifact_snapshots
+             WHERE project_id = ?1 AND snapshot_id = ?2",
+            params![identity.project_id, manifest.snapshot_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .map_err(|error| database_error(path, error))?;
+    let expected = (
+        manifest.project_name.clone(),
+        manifest.capture_mode.to_string(),
+        manifest.capture_fingerprint.clone(),
+        capture_policy_json.to_owned(),
+        skipped_json.to_owned(),
+    );
+    if stored != expected {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "artifact snapshot {} conflicts with immutable metadata already stored",
+            manifest.snapshot_id
+        )));
+    }
+    let stored_files = read_artifact_files_on(
+        connection,
+        &identity.project_id,
+        &manifest.snapshot_id,
+        path,
+    )?;
+    if stored_files != expected_files {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "artifact snapshot {} conflicts with immutable file metadata already stored",
+            manifest.snapshot_id
+        )));
+    }
+    Ok(())
+}
+
+fn read_artifact_files_on(
+    connection: &Connection,
+    project_id: &str,
+    snapshot_id: &str,
+    path: &Path,
+) -> Result<Vec<ContinuityArtifactFileMetadata>, LeyCoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT artifact_path, kind, language, media_type, source_bytes, stored_bytes,
+                    line_count, content_hash, content_captured, redactions_json
+             FROM artifact_files
+             WHERE project_id = ?1 AND snapshot_id = ?2
+             ORDER BY artifact_path",
+        )
+        .map_err(|error| database_error(path, error))?;
+    let rows = statement
+        .query_map(params![project_id, snapshot_id], |row| {
+            let source_bytes: i64 = row.get(4)?;
+            let stored_bytes: i64 = row.get(5)?;
+            let line_count: i64 = row.get(6)?;
+            let retained: i64 = row.get(8)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                source_bytes,
+                stored_bytes,
+                line_count,
+                row.get::<_, String>(7)?,
+                retained,
+                row.get::<_, String>(9)?,
+            ))
+        })
+        .map_err(|error| database_error(path, error))?;
+    rows.map(|row| {
+        let (
+            artifact_path,
+            kind,
+            language,
+            media_type,
+            source_bytes,
+            stored_bytes,
+            line_count,
+            content_hash,
+            retained,
+            redactions_json,
+        ) = row.map_err(|error| database_error(path, error))?;
+        if retained != 0 && retained != 1 {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "artifact content-retained flag is invalid".to_owned(),
+            ));
+        }
+        Ok(ContinuityArtifactFileMetadata {
+            artifact_path,
+            kind,
+            language,
+            media_type,
+            source_bytes: u64::try_from(source_bytes).map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(
+                    "artifact source byte count is invalid".to_owned(),
+                )
+            })?,
+            stored_bytes: u64::try_from(stored_bytes).map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(
+                    "artifact stored byte count is invalid".to_owned(),
+                )
+            })?,
+            line_count: u64::try_from(line_count).map_err(|_| {
+                LeyCoreError::InvalidContinuityStore("artifact line count is invalid".to_owned())
+            })?,
+            content_hash,
+            content_captured: retained == 1,
+            redactions_json,
+        })
+    })
+    .collect()
+}
+
+fn artifact_kind_label(kind: ArtifactKind) -> &'static str {
+    match kind {
+        ArtifactKind::Source => "source",
+        ArtifactKind::Documentation => "documentation",
+        ArtifactKind::Manifest => "manifest",
+        ArtifactKind::Configuration => "configuration",
+        ArtifactKind::Text => "text",
+        ArtifactKind::Image => "image",
+    }
+}
+
+fn parse_artifact_kind_label(value: &str) -> Result<ArtifactKind, LeyCoreError> {
+    match value {
+        "source" => Ok(ArtifactKind::Source),
+        "documentation" => Ok(ArtifactKind::Documentation),
+        "manifest" => Ok(ArtifactKind::Manifest),
+        "configuration" => Ok(ArtifactKind::Configuration),
+        "text" => Ok(ArtifactKind::Text),
+        "image" => Ok(ArtifactKind::Image),
+        _ => Err(LeyCoreError::InvalidContinuityStore(format!(
+            "native artifact kind is invalid: {value:?}"
+        ))),
+    }
+}
+
+fn artifact_media_type_label(media_type: ArtifactMediaType) -> &'static str {
+    match media_type {
+        ArtifactMediaType::Png => "png",
+        ArtifactMediaType::Jpeg => "jpeg",
+        ArtifactMediaType::Webp => "webp",
+    }
+}
+
+fn sqlite_u64(value: u64, label: &str) -> Result<i64, LeyCoreError> {
+    i64::try_from(value).map_err(|_| {
+        LeyCoreError::InvalidContinuityStore(format!(
+            "{label} exceeds SQLite's signed integer range"
+        ))
+    })
+}
+
+fn artifact_i64_to_u64(value: i64, label: &str) -> Result<u64, LeyCoreError> {
+    u64::try_from(value).map_err(|_| {
+        LeyCoreError::InvalidContinuityStore(format!("{label} must be a non-negative integer"))
+    })
+}
+
+fn artifact_digest(content_hash: &str) -> Result<&str, LeyCoreError> {
+    let digest = content_hash.strip_prefix("sha256:").ok_or_else(|| {
+        LeyCoreError::InvalidContinuityStore(
+            "artifact content hash must use the sha256: prefix".to_owned(),
+        )
+    })?;
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "artifact content hash must contain a lowercase SHA-256 digest".to_owned(),
+        ));
+    }
+    Ok(digest)
+}
+
+fn valid_artifact_snapshot_id(value: &str) -> bool {
+    value.len() == 68
+        && value.starts_with("snp_")
+        && value[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_graph_snapshot_id(value: &str) -> bool {
+    value.len() == 68
+        && value.starts_with("grf_")
+        && value[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn record_required_artifact_blob(
+    required: &mut BTreeMap<String, u64>,
+    content_hash: &str,
+    stored_bytes: u64,
+) -> Result<(), LeyCoreError> {
+    artifact_digest(content_hash)?;
+    match required.get(content_hash) {
+        Some(existing) if *existing != stored_bytes => Err(LeyCoreError::InvalidContinuityStore(
+            format!("artifact content hash {content_hash} has conflicting stored byte counts"),
+        )),
+        Some(_) => Ok(()),
+        None => {
+            required.insert(content_hash.to_owned(), stored_bytes);
+            Ok(())
+        }
+    }
+}
+
+fn write_immutable_private_blob(
+    project_dir: &Path,
+    destination: &Path,
+    bytes: &[u8],
+) -> Result<(), LeyCoreError> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) => {
+            validate_native_artifact_blob_metadata(destination, &metadata)?;
+            let existing = read_private_blob(destination, bytes.len() as u64)?;
+            if existing == bytes {
+                return Ok(());
+            }
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "native artifact blob collision at {}",
+                destination.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(LeyCoreError::Io {
+                path: destination.to_path_buf(),
+                source,
+            })
+        }
+    }
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| {
+            LeyCoreError::InvalidContinuityStore(
+                "system clock is before the Unix epoch while staging artifact content".to_owned(),
+            )
+        })?
+        .as_nanos();
+    let temp_path = project_dir.join(format!(".tmp-artifact-{}-{nonce}", std::process::id()));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut temporary = options
+        .open(&temp_path)
+        .map_err(|source| LeyCoreError::Io {
+            path: temp_path.clone(),
+            source,
+        })?;
+    let write_result = (|| {
+        temporary
+            .write_all(bytes)
+            .map_err(|source| LeyCoreError::Io {
+                path: temp_path.clone(),
+                source,
+            })?;
+        temporary.sync_all().map_err(|source| LeyCoreError::Io {
+            path: temp_path.clone(),
+            source,
+        })?;
+        Ok::<(), LeyCoreError>(())
+    })();
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    drop(temporary);
+
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) => {
+            validate_native_artifact_blob_metadata(destination, &metadata)?;
+            let existing = read_private_blob(destination, bytes.len() as u64)?;
+            let _ = fs::remove_file(&temp_path);
+            if existing == bytes {
+                return Ok(());
+            }
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "native artifact blob collision at {}",
+                destination.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            let _ = fs::remove_file(&temp_path);
+            return Err(LeyCoreError::Io {
+                path: destination.to_path_buf(),
+                source,
+            });
+        }
+    }
+
+    fs::rename(&temp_path, destination).map_err(|source| {
+        let _ = fs::remove_file(&temp_path);
+        LeyCoreError::Io {
+            path: destination.to_path_buf(),
+            source,
+        }
+    })?;
+    let metadata = fs::symlink_metadata(destination).map_err(|source| LeyCoreError::Io {
+        path: destination.to_path_buf(),
+        source,
+    })?;
+    validate_native_artifact_blob_metadata(destination, &metadata)?;
+    #[cfg(unix)]
+    {
+        File::open(project_dir)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|source| LeyCoreError::Io {
+                path: project_dir.to_path_buf(),
+                source,
+            })?;
+    }
+    Ok(())
+}
+
+fn read_private_blob(path: &Path, expected_bytes: u64) -> Result<Vec<u8>, LeyCoreError> {
+    let mut file = File::open(path).map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let metadata = file.metadata().map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    validate_native_artifact_blob_metadata(path, &metadata)?;
+    if metadata.len() != expected_bytes {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "native artifact blob length does not match metadata: {}",
+            path.display()
+        )));
+    }
+    let mut bytes = Vec::with_capacity(expected_bytes as usize);
+    file.read_to_end(&mut bytes)
+        .map_err(|source| LeyCoreError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(bytes)
+}
+
+fn validate_native_artifact_blob_metadata(
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), LeyCoreError> {
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(LeyCoreError::InvalidContinuityStore(format!(
+            "native artifact blob is not a regular file: {}",
+            path.display()
+        )));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(LeyCoreError::InvalidContinuityStore(format!(
+                "native artifact blob must use mode 600: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn read_event_by_request(
     connection: &Connection,
     project_id: &str,
@@ -1400,6 +5881,56 @@ fn read_event_by_request(
         )
         .optional()
         .map_err(|error| database_error(path, error))
+}
+
+fn row_to_approved_source(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ContinuityApprovedSourceRecord> {
+    let source_kind: String = row.get(2)?;
+    let source_kind = ContinuityApprovedSourceKind::parse(&source_kind).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            source_kind.len(),
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })?;
+    Ok(ContinuityApprovedSourceRecord {
+        project_id: row.get(0)?,
+        source_id: row.get(1)?,
+        source_kind,
+        display_name: row.get(3)?,
+        project_relative_path: row.get(4)?,
+        content_hash: row.get(5)?,
+        approved_at_unix_ms: i64_to_u64_sql(row.get(6)?, "approved source approval time")?,
+    })
+}
+
+fn require_approved_source_authority_ready_on(
+    connection: &Connection,
+    project_id: &str,
+    path: &Path,
+) -> Result<(), LeyCoreError> {
+    let migrated: Option<i64> = connection
+        .query_row(
+            "SELECT approved_source_authority_migrated
+             FROM projects WHERE project_id = ?1",
+            [project_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| database_error(path, error))?;
+    match migrated {
+        Some(1) => Ok(()),
+        Some(0) => Err(LeyCoreError::ApprovedSourceAuthorityMigrationPending {
+            project_id: project_id.to_owned(),
+        }),
+        Some(value) => Err(LeyCoreError::InvalidContinuityStore(format!(
+            "project {project_id} has invalid approved-source migration marker {value}"
+        ))),
+        None => Err(LeyCoreError::InvalidContinuityStore(format!(
+            "project {project_id} is not present in the continuity database"
+        ))),
+    }
 }
 
 fn row_to_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContinuityEvent> {
@@ -1764,8 +6295,352 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn existing_v1_store_migrates_to_subject_schema() {
+    fn egress_authority_lock_is_private_and_rejects_symlink_replacement() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let (base, store) = private_store();
+        store.initialize().unwrap();
+        let project = project();
+        store.register_project(&project).unwrap();
+        store
+            .set_project_egress_policy(&project.project_id, crate::AgentEgressPolicy::AgentOk)
+            .unwrap();
+
+        let lock_path = store.egress_authority_lock_path();
+        assert_eq!(
+            fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        fs::remove_file(&lock_path).unwrap();
+        let outside = base.path().join("outside-lock");
+        fs::write(&outside, b"do not lock through this path\n").unwrap();
+        symlink(&outside, &lock_path).unwrap();
+        assert!(matches!(
+            store.set_project_egress_policy(
+                &project.project_id,
+                crate::AgentEgressPolicy::NeverSend
+            ),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("egress authority lock is not a regular file")
+        ));
+        assert_eq!(
+            fs::read_to_string(outside).unwrap(),
+            "do not lock through this path\n"
+        );
+    }
+
+    #[test]
+    fn pending_egress_migration_fails_closed_before_protected_operation() {
+        let (_base, store) = private_store();
+        store.initialize().unwrap();
+        let project = project();
+        store.register_project(&project).unwrap();
+
+        assert_eq!(
+            store.project_egress_policy(&project.project_id).unwrap(),
+            crate::AgentEgressPolicy::AgentOk
+        );
+        assert!(matches!(
+            store.with_project_egress_locked(
+                &project.project_id,
+                crate::AgentEgressTarget::Cloud,
+                || Ok(())
+            ),
+            Err(LeyCoreError::AgentEgressPolicyMigrationPending { project_id })
+                if project_id == project.project_id
+        ));
+    }
+
+    #[test]
+    fn approved_source_legacy_import_is_hash_verified_atomic_and_idempotent() {
+        let (_base, store) = private_store();
+        store.initialize().unwrap();
+        let project = project();
+        store.register_project(&project).unwrap();
+
+        assert!(!store
+            .approved_source_authority_ready(&project.project_id)
+            .unwrap());
+        let bytes = b"legacy approved source snapshot".to_vec();
+        let content_hash = format!("sha256:{:x}", Sha256::digest(&bytes));
+        let snapshots = vec![ContinuityApprovedSourceSnapshotInput {
+            source_id: "spec_22222222222222222222222222222222".to_owned(),
+            display_name: "Specs/Legacy.md".to_owned(),
+            content_hash: content_hash.clone(),
+            approved_at_unix_ms: 101,
+            content_bytes: bytes.clone(),
+        }];
+        let issues = vec![ContinuityApprovedSourceIssueInput {
+            source_id: "spec_33333333333333333333333333333333".to_owned(),
+            display_name: "Specs/Stale.md".to_owned(),
+            approved_content_hash: format!("sha256:{}", "c".repeat(64)),
+            approved_at_unix_ms: 102,
+            reason: ContinuityApprovedSourceIssueReason::Changed,
+        }];
+
+        assert!(store
+            .import_legacy_approved_source_authority(&project.project_id, &snapshots, &issues)
+            .unwrap());
+        assert!(store
+            .approved_source_authority_ready(&project.project_id)
+            .unwrap());
+
+        let connection = store.open_connection().unwrap();
+        let stored: (String, String, Vec<u8>) = connection
+            .query_row(
+                "SELECT s.source_kind, s.content_hash, b.content_bytes
+                 FROM approved_sources s
+                 JOIN approved_source_blobs b
+                   ON b.project_id = s.project_id AND b.content_hash = s.snapshot_blob_hash
+                 WHERE s.project_id = ?1 AND s.source_id = ?2",
+                params![project.project_id, "spec_22222222222222222222222222222222"],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(stored.0, "imported-snapshot");
+        assert_eq!(stored.1, content_hash);
+        assert_eq!(stored.2, bytes);
+        let issue_reason: String = connection
+            .query_row(
+                "SELECT reason FROM legacy_approved_source_issues
+                 WHERE project_id = ?1 AND source_id = ?2",
+                params![project.project_id, "spec_33333333333333333333333333333333"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(issue_reason, "changed");
+        drop(connection);
+
+        assert!(!store
+            .import_legacy_approved_source_authority(&project.project_id, &[], &[])
+            .unwrap());
+
+        store.erase_project(&project.project_id).unwrap();
+        let connection = store.open_connection().unwrap();
+        for table in [
+            "approved_sources",
+            "approved_source_blobs",
+            "legacy_approved_source_issues",
+        ] {
+            let remaining: i64 = connection
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(remaining, 0, "{table} should cascade with project erasure");
+        }
+    }
+
+    #[test]
+    fn approved_source_legacy_import_rejects_bad_snapshot_without_partial_state() {
+        let (_base, store) = private_store();
+        store.initialize().unwrap();
+        let project = project();
+        store.register_project(&project).unwrap();
+        let snapshots = vec![ContinuityApprovedSourceSnapshotInput {
+            source_id: "spec_44444444444444444444444444444444".to_owned(),
+            display_name: "Specs/Corrupt.md".to_owned(),
+            content_hash: format!("sha256:{}", "d".repeat(64)),
+            approved_at_unix_ms: 103,
+            content_bytes: b"different bytes".to_vec(),
+        }];
+
+        assert!(matches!(
+            store.import_legacy_approved_source_authority(&project.project_id, &snapshots, &[]),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("does not match its approved hash")
+        ));
+        assert!(!store
+            .approved_source_authority_ready(&project.project_id)
+            .unwrap());
+        let connection = store.open_connection().unwrap();
+        for table in [
+            "approved_sources",
+            "approved_source_blobs",
+            "legacy_approved_source_issues",
+        ] {
+            let remaining: i64 = connection
+                .query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE project_id = ?1"),
+                    [&project.project_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(remaining, 0, "{table} must remain empty on failed import");
+        }
+    }
+
+    #[test]
+    fn portable_validation_rejects_corrupt_snapshot_and_unsafe_project_file_path() {
+        let (_base, store) = private_store();
+        store.initialize().unwrap();
+        let project = project();
+        store.register_project(&project).unwrap();
+        let snapshot_bytes = b"portable approved snapshot\n".to_vec();
+        let snapshot_hash = format!("sha256:{:x}", Sha256::digest(&snapshot_bytes));
+        store
+            .import_legacy_approved_source_authority(
+                &project.project_id,
+                &[ContinuityApprovedSourceSnapshotInput {
+                    source_id: "spec_66666666666666666666666666666666".to_owned(),
+                    display_name: "Legacy/Portable.md".to_owned(),
+                    content_hash: snapshot_hash.clone(),
+                    approved_at_unix_ms: 201,
+                    content_bytes: snapshot_bytes,
+                }],
+                &[],
+            )
+            .unwrap();
+        store
+            .approve_project_file_source(
+                &project.project_id,
+                "spec_77777777777777777777777777777777",
+                "AGENTS.md",
+                "AGENTS.md",
+                &format!("sha256:{}", "a".repeat(64)),
+                202,
+            )
+            .unwrap();
+
+        let corrupt_snapshot = store
+            .path()
+            .parent()
+            .unwrap()
+            .join("portable-corrupt.sqlite3");
+        store
+            .export_project_database(&project.project_id, &corrupt_snapshot)
+            .unwrap();
+        let connection = Connection::open_with_flags(
+            &corrupt_snapshot,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .unwrap();
+        connection
+            .execute(
+                "UPDATE approved_source_blobs SET content_bytes = ?1
+                 WHERE project_id = ?2 AND content_hash = ?3",
+                params![b"tampered".as_slice(), project.project_id, snapshot_hash],
+            )
+            .unwrap();
+        assert!(matches!(
+            validate_exported_project_database(&connection, &corrupt_snapshot, &project.project_id),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("failed content validation")
+        ));
+        drop(connection);
+
+        let unsafe_path = store
+            .path()
+            .parent()
+            .unwrap()
+            .join("portable-unsafe.sqlite3");
+        store
+            .export_project_database(&project.project_id, &unsafe_path)
+            .unwrap();
+        let connection = Connection::open_with_flags(
+            &unsafe_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .unwrap();
+        connection
+            .execute(
+                "UPDATE approved_sources SET project_relative_path = '../escape'
+                 WHERE project_id = ?1 AND source_id = ?2",
+                params![project.project_id, "spec_77777777777777777777777777777777"],
+            )
+            .unwrap();
+        assert!(matches!(
+            validate_exported_project_database(&connection, &unsafe_path, &project.project_id),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("invalid path")
+        ));
+    }
+
+    #[test]
+    fn protected_egress_operation_rejects_same_thread_authority_reentry() {
+        let (_base, store) = private_store();
+        store.initialize().unwrap();
+        let project = project();
+        store.register_project(&project).unwrap();
+        store
+            .set_project_egress_policy(&project.project_id, crate::AgentEgressPolicy::AgentOk)
+            .unwrap();
+
+        assert!(matches!(
+            store.with_project_egress_locked(
+                &project.project_id,
+                crate::AgentEgressTarget::Cloud,
+                || store.set_project_egress_policy(
+                    &project.project_id,
+                    crate::AgentEgressPolicy::NeverSend
+                )
+            ),
+            Err(LeyCoreError::AgentEgressAuthorityReentrant)
+        ));
+        assert_eq!(
+            store.project_egress_policy(&project.project_id).unwrap(),
+            crate::AgentEgressPolicy::AgentOk
+        );
+    }
+
+    #[test]
+    fn approved_source_authority_rejects_same_thread_reentry() {
+        let (_base, store) = private_store();
+        store.initialize().unwrap();
+        let project = project();
+        store.register_project(&project).unwrap();
+        store
+            .import_legacy_approved_source_authority(&project.project_id, &[], &[])
+            .unwrap();
+
+        assert!(matches!(
+            store.with_approved_source_authority_lock(|| {
+                store.revoke_approved_source(&project.project_id, "spec_missing")?;
+                Ok(())
+            }),
+            Err(LeyCoreError::ApprovedSourceAuthorityReentrant)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn approved_source_authority_lock_is_private_and_rejects_symlink_replacement() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+
+        let (base, store) = private_store();
+        store.initialize().unwrap();
+        let project = project();
+        store.register_project(&project).unwrap();
+        store
+            .import_legacy_approved_source_authority(&project.project_id, &[], &[])
+            .unwrap();
+
+        let lock_path = store.approved_source_authority_lock_path();
+        assert_eq!(
+            fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::remove_file(&lock_path).unwrap();
+        let outside = base.path().join("outside-approved-source-lock");
+        fs::write(&outside, b"do not lock through this path\n").unwrap();
+        symlink(&outside, &lock_path).unwrap();
+
+        assert!(matches!(
+            store.revoke_approved_source(&project.project_id, "spec_missing"),
+            Err(LeyCoreError::InvalidContinuityStore(message))
+                if message.contains("approved-source authority lock is not a regular file")
+        ));
+        assert_eq!(
+            fs::read_to_string(outside).unwrap(),
+            "do not lock through this path\n"
+        );
+    }
+
+    #[test]
+    fn existing_v1_store_migrates_to_current_schema() {
         let (_base, store) = private_store();
         store.initialize().unwrap();
         let project = project();
@@ -1795,8 +6670,20 @@ mod tests {
         let connection = store.open_connection().unwrap();
         connection
             .execute_batch(
-                "DROP INDEX events_subject_time;
+                "DROP TABLE artifact_write_authority;
+                 DROP TABLE project_artifact_state;
+                 DROP TABLE artifact_files;
+                 DROP TABLE artifact_snapshots;
+                 DROP TABLE local_migration_state;
+                 DROP TABLE approved_sources;
+                 DROP TABLE legacy_approved_source_issues;
+                 DROP TABLE approved_source_blobs;
+                 ALTER TABLE projects DROP COLUMN approved_source_authority_migrated;
+                 DROP INDEX events_subject_time;
                  ALTER TABLE events DROP COLUMN subject_id;
+                 DROP TABLE project_observations;
+                 ALTER TABLE projects DROP COLUMN agent_egress_policy_migrated;
+                 ALTER TABLE projects DROP COLUMN agent_egress_policy;
                  PRAGMA user_version = 1;",
             )
             .unwrap();
@@ -1812,7 +6699,42 @@ mod tests {
             )
             .unwrap();
         assert_eq!(subject_columns, 1);
+        for table in [
+            "artifact_snapshots",
+            "artifact_files",
+            "project_artifact_state",
+            "artifact_write_authority",
+        ] {
+            let present: i64 = connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(present, 1, "{table} should be created by schema migration");
+        }
+        let captured_at_columns: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('project_artifact_state')
+                 WHERE name = 'captured_at_unix_ms'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(captured_at_columns, 1);
         drop(connection);
+        assert_eq!(
+            store.project_egress_policy(&project.project_id).unwrap(),
+            crate::AgentEgressPolicy::AgentOk
+        );
+        store
+            .set_project_egress_policy(&project.project_id, crate::AgentEgressPolicy::NeverSend)
+            .unwrap();
+        assert_eq!(
+            store.project_egress_policy(&project.project_id).unwrap(),
+            crate::AgentEgressPolicy::NeverSend
+        );
         assert_eq!(
             store
                 .event(&project.project_id, &original.event_id)
@@ -1820,6 +6742,521 @@ mod tests {
                 .unwrap(),
             event_from_input(original)
         );
+    }
+
+    #[test]
+    fn existing_v9_artifact_cutover_migrates_to_write_authority_origin() {
+        let (base, store) = private_store();
+        let project_root = base.path().join("v9-artifact-project");
+        let vault = base.path().join("v9-artifact-vault");
+        fs::create_dir(&project_root).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(project_root.join("README.md"), "# v9 artifact authority\n").unwrap();
+        let initialized = crate::initialize_project(
+            &project_root,
+            Some("v9 artifact authority"),
+            crate::CaptureMode::Structured,
+        )
+        .unwrap();
+        crate::ingest_project_with_continuity_transition(&project_root, &vault, &store).unwrap();
+
+        let connection = store.open_connection().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE artifact_authority_cutovers (
+                    project_id TEXT PRIMARY KEY NOT NULL
+                        REFERENCES projects(project_id) ON DELETE CASCADE,
+                    legacy_snapshot_id TEXT NOT NULL,
+                    legacy_capture_fingerprint TEXT NOT NULL,
+                    legacy_file_count INTEGER NOT NULL,
+                    recorded_at_unix_ms INTEGER NOT NULL
+                 ) STRICT;
+                 INSERT INTO artifact_authority_cutovers(
+                    project_id, legacy_snapshot_id, legacy_capture_fingerprint,
+                    legacy_file_count, recorded_at_unix_ms
+                 )
+                 SELECT project_id, initial_snapshot_id, initial_capture_fingerprint,
+                        initial_file_count, recorded_at_unix_ms
+                 FROM artifact_write_authority;
+                 DROP TABLE artifact_write_authority;
+                 ALTER TABLE project_observations DROP COLUMN continuity_origin;
+                 PRAGMA user_version = 9;",
+            )
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(store.schema_version().unwrap(), CONTINUITY_SCHEMA_VERSION);
+        let connection = store.open_connection().unwrap();
+        let migrated: (String, String) = connection
+            .query_row(
+                "SELECT origin, initial_snapshot_id
+                 FROM artifact_write_authority
+                 WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(migrated.0, "legacy-cutover");
+        let current: String = connection
+            .query_row(
+                "SELECT current_snapshot_id
+                 FROM project_artifact_state
+                 WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(migrated.1, current);
+        let legacy_table: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'artifact_authority_cutovers'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_table, 0);
+    }
+
+    #[test]
+    fn transition_ingest_tracks_immutable_artifact_snapshots_and_erases_with_project() {
+        let (base, store) = private_store();
+        let project_root = base.path().join("artifact-project");
+        let vault = base.path().join("artifact-vault");
+        fs::create_dir(&project_root).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(
+            project_root.join("README.md"),
+            "# Native artifact metadata\nfirst captured body\n",
+        )
+        .unwrap();
+        let initialized = crate::initialize_project(
+            &project_root,
+            Some("Artifact metadata"),
+            crate::CaptureMode::Structured,
+        )
+        .unwrap();
+
+        let first = crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
+            .unwrap();
+        let connection = store.open_connection().unwrap();
+        let current: String = connection
+            .query_row(
+                "SELECT current_snapshot_id FROM project_artifact_state WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(current, first.snapshot_id);
+        let snapshot_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM artifact_snapshots WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(snapshot_count, 1);
+        let retained_files: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM artifact_files
+                 WHERE project_id = ?1 AND snapshot_id = ?2 AND content_captured = 1",
+                params![initialized.identity.project_id, first.snapshot_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(retained_files >= 1);
+        let first_readme_hash: String = connection
+            .query_row(
+                "SELECT content_hash FROM artifact_files
+                 WHERE project_id = ?1 AND snapshot_id = ?2 AND artifact_path = 'README.md'",
+                params![initialized.identity.project_id, first.snapshot_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        let native_project_dir = store
+            .artifact_project_content_dir(&initialized.identity.project_id)
+            .unwrap();
+        let first_blob = native_project_dir.join(artifact_digest(&first_readme_hash).unwrap());
+        let first_blob_bytes = fs::read(&first_blob).unwrap();
+        assert_eq!(
+            format!("sha256:{:x}", Sha256::digest(&first_blob_bytes)),
+            first_readme_hash
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&native_project_dir)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(&first_blob).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+
+        let first_captured_at: i64 = store
+            .open_connection()
+            .unwrap()
+            .query_row(
+                "SELECT captured_at_unix_ms
+                 FROM project_artifact_state
+                 WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+
+        let unchanged =
+            crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
+                .unwrap();
+        assert_eq!(unchanged.snapshot_id, first.snapshot_id);
+        let refreshed_captured_at: i64 = store
+            .open_connection()
+            .unwrap()
+            .query_row(
+                "SELECT captured_at_unix_ms
+                 FROM project_artifact_state
+                 WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(refreshed_captured_at > first_captured_at);
+        assert!(store
+            .artifact_write_authority_ready(&initialized.identity.project_id)
+            .unwrap());
+        assert!(crate::ingest_project(&project_root, &vault).is_err());
+        let connection = store.open_connection().unwrap();
+        let snapshot_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM artifact_snapshots WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(snapshot_count, 1);
+        drop(connection);
+
+        fs::write(
+            project_root.join("README.md"),
+            "# Native artifact metadata\nsecond captured body\n",
+        )
+        .unwrap();
+        fs::remove_dir_all(&vault).unwrap();
+        let changed =
+            crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
+                .unwrap();
+        assert_ne!(changed.snapshot_id, first.snapshot_id);
+        assert!(changed.manifest_path.is_none());
+        assert!(changed.graph_path.is_none());
+        let connection = store.open_connection().unwrap();
+        let current: String = connection
+            .query_row(
+                "SELECT current_snapshot_id FROM project_artifact_state WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(current, changed.snapshot_id);
+        let snapshot_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM artifact_snapshots WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(snapshot_count, 1);
+        let historical_files: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM artifact_files
+                 WHERE project_id = ?1 AND snapshot_id = ?2",
+                params![initialized.identity.project_id, first.snapshot_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(historical_files, 0);
+        let changed_readme_hash: String = connection
+            .query_row(
+                "SELECT content_hash FROM artifact_files
+                 WHERE project_id = ?1 AND snapshot_id = ?2 AND artifact_path = 'README.md'",
+                params![initialized.identity.project_id, changed.snapshot_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        assert_ne!(changed_readme_hash, first_readme_hash);
+        assert!(!first_blob.exists());
+        assert!(native_project_dir
+            .join(artifact_digest(&changed_readme_hash).unwrap())
+            .is_file());
+
+        let portable_db = store
+            .path()
+            .parent()
+            .unwrap()
+            .join("artifact-metadata-portable.sqlite3");
+        store
+            .export_project_database(&initialized.identity.project_id, &portable_db)
+            .unwrap();
+        let portable = Connection::open_with_flags(
+            &portable_db,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )
+        .unwrap();
+        for table in [
+            "artifact_snapshots",
+            "artifact_files",
+            "project_artifact_state",
+            "artifact_write_authority",
+        ] {
+            let exported_rows: i64 = portable
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(
+                exported_rows, 0,
+                "{table} is rebuildable machine-local artifact authority and must stay out of portable continuity"
+            );
+        }
+        drop(portable);
+
+        store
+            .erase_project(&initialized.identity.project_id)
+            .unwrap();
+        assert!(!native_project_dir.exists());
+        let connection = store.open_connection().unwrap();
+        for table in [
+            "artifact_snapshots",
+            "artifact_files",
+            "project_artifact_state",
+        ] {
+            let remaining: i64 = connection
+                .query_row(
+                    &format!("SELECT count(*) FROM {table} WHERE project_id = ?1"),
+                    [&initialized.identity.project_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(remaining, 0, "{table} must cascade with project erasure");
+        }
+    }
+
+    #[test]
+    fn durable_citation_retains_only_cited_historical_artifact_bytes() {
+        let (base, store) = private_store();
+        let project_root = base.path().join("cited-artifact-project");
+        let vault = base.path().join("cited-artifact-vault");
+        fs::create_dir(&project_root).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(project_root.join("README.md"), "old cited body\n").unwrap();
+        fs::write(project_root.join("stale.txt"), "old uncited body\n").unwrap();
+        let initialized = crate::initialize_project(
+            &project_root,
+            Some("Cited artifact retention"),
+            crate::CaptureMode::Structured,
+        )
+        .unwrap();
+        let first = crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
+            .unwrap();
+        let connection = store.open_connection().unwrap();
+        let cited_hash: String = connection
+            .query_row(
+                "SELECT content_hash FROM artifact_files
+                 WHERE project_id = ?1 AND snapshot_id = ?2 AND artifact_path = 'README.md'",
+                params![initialized.identity.project_id, first.snapshot_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let uncited_hash: String = connection
+            .query_row(
+                "SELECT content_hash FROM artifact_files
+                 WHERE project_id = ?1 AND snapshot_id = ?2 AND artifact_path = 'stale.txt'",
+                params![initialized.identity.project_id, first.snapshot_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+
+        let session_id = format!("ses_{}", "9".repeat(32));
+        store
+            .append_event(&event(
+                &initialized.identity.project_id,
+                &format!("evt_{}", "9".repeat(64)),
+                &session_id,
+                1,
+                "checkpoint-recorded",
+                json!({
+                    "evidence": {
+                        "artifactSnapshotId": first.snapshot_id,
+                        "artifactPath": "README.md",
+                        "contentHash": cited_hash
+                    }
+                }),
+            ))
+            .unwrap();
+
+        fs::write(project_root.join("README.md"), "new current body\n").unwrap();
+        fs::write(project_root.join("stale.txt"), "new stale body\n").unwrap();
+        let second =
+            crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
+                .unwrap();
+        assert_ne!(second.snapshot_id, first.snapshot_id);
+
+        let connection = store.open_connection().unwrap();
+        let snapshots: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM artifact_snapshots WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(snapshots, 2);
+        drop(connection);
+        let native_dir = store
+            .artifact_project_content_dir(&initialized.identity.project_id)
+            .unwrap();
+        let cited_blob = native_dir.join(artifact_digest(&cited_hash).unwrap());
+        let uncited_blob = native_dir.join(artifact_digest(&uncited_hash).unwrap());
+        assert!(cited_blob.is_file());
+        assert!(!uncited_blob.exists());
+
+        let preview = store
+            .preview_session_erasure(&initialized.identity.project_id, &session_id)
+            .unwrap();
+        store
+            .erase_session(
+                &initialized.identity.project_id,
+                &session_id,
+                &preview.confirmation_digest,
+            )
+            .unwrap();
+        store
+            .with_artifact_authority_lock(|| {
+                store.garbage_collect_artifact_state_under_lock(&initialized.identity.project_id)
+            })
+            .unwrap();
+        let connection = store.open_connection().unwrap();
+        let old_snapshot: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM artifact_snapshots
+                 WHERE project_id = ?1 AND snapshot_id = ?2",
+                params![initialized.identity.project_id, first.snapshot_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_snapshot, 0);
+        assert!(!cited_blob.exists());
+    }
+
+    #[test]
+    fn interrupted_artifact_install_recovers_before_activation() {
+        let (base, store) = private_store();
+        let project_root = base.path().join("interrupted-artifact-project");
+        let vault = base.path().join("interrupted-artifact-vault");
+        fs::create_dir(&project_root).unwrap();
+        fs::create_dir(&vault).unwrap();
+        fs::write(project_root.join("README.md"), "first body\n").unwrap();
+        let initialized = crate::initialize_project(
+            &project_root,
+            Some("Interrupted artifact install"),
+            crate::CaptureMode::Structured,
+        )
+        .unwrap();
+        let first = crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
+            .unwrap();
+
+        fs::write(project_root.join("README.md"), "second body\n").unwrap();
+        let diagnostic = crate::diagnose_project(&project_root).unwrap();
+        let second_snapshot_id = store
+            .with_artifact_authority_lock(|| {
+                let prepared = crate::ingestion::prepare_artifact_capture(
+                    &diagnostic,
+                    None,
+                    |_name, content_hash, bytes| {
+                        store.install_artifact_blob(
+                            &initialized.identity.project_id,
+                            content_hash,
+                            bytes.len() as u64,
+                            bytes,
+                        )
+                    },
+                )?;
+                assert_ne!(prepared.manifest.snapshot_id, first.snapshot_id);
+                store
+                    .stage_artifact_snapshot_metadata(&initialized.identity, &prepared.manifest)?;
+                let project_dir =
+                    store.artifact_project_content_dir(&initialized.identity.project_id)?;
+                let stale_temp = project_dir.join(".tmp-artifact-interrupted-test");
+                let mut options = OpenOptions::new();
+                options.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(0o600);
+                }
+                options
+                    .open(&stale_temp)
+                    .map_err(|source| LeyCoreError::Io {
+                        path: stale_temp,
+                        source,
+                    })?
+                    .sync_all()
+                    .map_err(|source| LeyCoreError::Io {
+                        path: project_dir,
+                        source,
+                    })?;
+                Ok(prepared.manifest.snapshot_id)
+            })
+            .unwrap();
+        let connection = store.open_connection().unwrap();
+        let current: String = connection
+            .query_row(
+                "SELECT current_snapshot_id FROM project_artifact_state WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(current, first.snapshot_id);
+        drop(connection);
+
+        let recovered =
+            crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
+                .unwrap();
+        assert_eq!(recovered.snapshot_id, second_snapshot_id);
+        let connection = store.open_connection().unwrap();
+        let current: String = connection
+            .query_row(
+                "SELECT current_snapshot_id FROM project_artifact_state WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(current, second_snapshot_id);
+        let snapshots: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM artifact_snapshots WHERE project_id = ?1",
+                [&initialized.identity.project_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(snapshots, 1);
+        drop(connection);
+        let project_dir = store
+            .artifact_project_content_dir(&initialized.identity.project_id)
+            .unwrap();
+        assert!(fs::read_dir(project_dir).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".tmp-artifact-")));
     }
 
     #[test]
@@ -1882,6 +7319,69 @@ mod tests {
                 .len(),
             17
         );
+    }
+
+    #[test]
+    fn transactional_session_append_allocates_from_one_serialized_snapshot() {
+        let (_base, store) = private_store();
+        let project = project();
+        store.register_project(&project).unwrap();
+        let session_id = format!("ses_{}", "6".repeat(32));
+        let barrier = Arc::new(Barrier::new(3));
+        let mut handles = Vec::new();
+
+        for worker in 0..2_u8 {
+            let store = store.clone();
+            let project_id = project.project_id.clone();
+            let session_id = session_id.clone();
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                store
+                    .append_session_event_transactional(&project_id, &session_id, |existing| {
+                        let sequence = existing.len() as u64 + 1;
+                        Ok(ContinuityEventInput {
+                            event_id: format!("evt_native_{worker}_{}", "7".repeat(48)),
+                            project_id: project_id.clone(),
+                            subject_id: None,
+                            session_id: Some(session_id.clone()),
+                            session_sequence: Some(sequence),
+                            request_id: Some(format!("req_native_{worker}_{}", "8".repeat(20))),
+                            request_fingerprint: Some(format!(
+                                "sha256:{}",
+                                char::from(b'a' + worker as u8).to_string().repeat(64)
+                            )),
+                            kind: "session-test-recorded".to_owned(),
+                            payload_version: 1,
+                            recorded_at_unix_ms: 20_000 + sequence,
+                            revision_head: None,
+                            revision_branch: None,
+                            payload: json!({"worker": worker, "sequence": sequence}),
+                        })
+                    })
+                    .unwrap()
+            }));
+        }
+
+        barrier.wait();
+        let mut snapshot_lengths = handles
+            .into_iter()
+            .map(|handle| {
+                let (write, events) = handle.join().unwrap();
+                assert!(write.created);
+                events.len()
+            })
+            .collect::<Vec<_>>();
+        snapshot_lengths.sort();
+        assert_eq!(snapshot_lengths, vec![1, 2]);
+
+        let events = store
+            .events_for_session(&project.project_id, &session_id)
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].session_sequence, Some(1));
+        assert_eq!(events[1].session_sequence, Some(2));
+        assert_ne!(events[0].event_id, events[1].event_id);
     }
 
     #[test]

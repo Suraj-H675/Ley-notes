@@ -1,10 +1,12 @@
-use crate::session::read_session_for_memory_compiler;
+use crate::session::{
+    read_session_for_memory_compiler, read_session_for_memory_compiler_with_continuity_transition,
+};
 use crate::{
     memory_transition::{
         observed_command_candidate_fingerprint, OBSERVED_COMMAND_CANDIDATE_SUMMARY,
     },
-    AgentSession, LeyCoreError, SessionStatus, SessionToolObservation, SessionTurnEvidence,
-    ToolObservationKind, TurnEvidenceOrigin, TurnEvidenceRetention,
+    AgentSession, ContinuityStore, LeyCoreError, SessionStatus, SessionToolObservation,
+    SessionTurnEvidence, ToolObservationKind, TurnEvidenceOrigin, TurnEvidenceRetention,
 };
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -180,6 +182,30 @@ pub fn compile_session_memory(
     validate_limits(max_results, max_characters)?;
     let (session, latest_checkpoint_sequence) =
         read_session_for_memory_compiler(project_start, vault, session_id)?;
+    Ok(compile_session(
+        session,
+        latest_checkpoint_sequence,
+        max_results,
+        max_characters,
+    ))
+}
+
+pub fn compile_session_memory_with_continuity_transition(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    session_id: &str,
+    max_results: usize,
+    max_characters: usize,
+) -> Result<SessionMemoryCompilationPack, LeyCoreError> {
+    validate_limits(max_results, max_characters)?;
+    let (session, latest_checkpoint_sequence) =
+        read_session_for_memory_compiler_with_continuity_transition(
+            project_start,
+            legacy_vault,
+            store,
+            session_id,
+        )?;
     Ok(compile_session(
         session,
         latest_checkpoint_sequence,
@@ -665,6 +691,48 @@ mod tests {
             unresolved: Vec::new(),
         }
     }
+
+    #[test]
+    fn transition_compiler_replays_imported_session_after_legacy_vault_disappears() {
+        let (base, project, vault, session_id) = fixture(CaptureMode::Structured);
+        record_prompt(
+            &project,
+            &vault,
+            &session_id,
+            &format!("req_{}", "2".repeat(32)),
+            "transition-prompt",
+            "Preserve the transition evidence.",
+        );
+        let store = ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let imported = compile_session_memory_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            DEFAULT_MEMORY_COMPILE_RESULTS,
+            DEFAULT_MEMORY_COMPILE_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(imported.total_unconsolidated_evidence, 1);
+
+        std::fs::remove_dir_all(&vault).unwrap();
+        let native = compile_session_memory_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &session_id,
+            DEFAULT_MEMORY_COMPILE_RESULTS,
+            DEFAULT_MEMORY_COMPILE_CHARACTERS,
+        )
+        .unwrap();
+        assert_eq!(native.session_event_count, imported.session_event_count);
+        assert_eq!(native.total_unconsolidated_evidence, 1);
+        assert_eq!(
+            native.evidence[0].text.as_deref(),
+            Some("Preserve the transition evidence.")
+        );
+    }
+
     fn record_prompt(
         project: &Path,
         vault: &Path,
