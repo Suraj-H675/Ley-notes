@@ -74,7 +74,11 @@ def main() -> int:
         raise RuntimeError(f"Ley CLI not found at {binary}; build the ordinary CLI first")
 
     with tempfile.TemporaryDirectory(prefix="ley-production-private-") as raw_base:
-        base = Path(raw_base)
+        # macOS exposes its temporary directory through `/var`, a symlink to
+        # `/private/var`. Ley deliberately opens private SQLite state with
+        # NOFOLLOW, so exercise the real canonical directory rather than the
+        # platform alias used by tempfile.
+        base = Path(raw_base).resolve(strict=True)
         home = base / "home"
         project = base / "project"
         vault = base / "vault"
