@@ -772,6 +772,59 @@ oracle that was not run because an earlier gate failed is recorded as `skipped`,
 Do not add this assertion to deterministic CI or reinterpret one failed simpler arm / passed Ley arm as
 causal proof.
 
+## SessionStart content vs guidance-only study
+
+`eval/run_startup_context_eval.py` is the opt-in C4 evaluator for the remaining startup-continuity question:
+should an initialized host session automatically receive bounded prior-session/trusted-learning bodies, or only
+session identity + capture/checkpoint/retrieval guidance?
+
+The evaluator is deliberately separate from the static agent-context benchmark because **both arms receive live
+access to Ley's canonical four MCP tools** (`ley_brief`, `ley_search`, `ley_evidence`, `ley_checkpoint`). Ley's
+private continuity project/config stay outside the writable model workspace behind a benchmark-local TCP↔stdio
+relay; relay telemetry records MCP method/tool names only, never tool arguments. The isolated Codex home contains
+only the operator-provided auth mount plus the benchmark-generated Ley MCP config/bridge. The guidance-only arm
+is benchmark-only and does not add a product mode.
+
+Both arms use the same HostHook session-ID algorithm, current prompt capture, repository snapshot, runner,
+canonical tool inventory, and hidden oracle. The contentful arm uses the shipped revision-safe `SessionStart`;
+the guidance-only arm supplies the same session identity/retrieval/checkpoint guidance without prior-session or
+learning bodies. For interrupted-current-session fixtures both arms retain the same body-free recovery signal.
+The guidance-only arm is **not forced** to call Brief/Search: whether the agent recognizes that continuity matters
+and retrieves it is part of the measured product behavior.
+
+The checked-in six-fixture slice covers ambiguous continuation, a known failed approach, stale same-lineage
+history, divergent history, a reviewed/trusted learning, and interrupted-current-session recovery. `--validate`
+makes no model calls; it validates hidden/reference-oracle fixtures and deterministically renders both startup
+arms, including explicit per-arm marker/leak expectations. The stale same-lineage fixture intentionally records
+the two old goal/summary strings that shipped contentful Resume auto-injects; divergent and interrupted-body
+markers must remain absent.
+
+Validate without model calls:
+
+```text
+PYTHONPATH=eval python eval/run_startup_context_eval.py --validate
+```
+
+Run a pinned repeated study:
+
+```text
+PYTHONPATH=eval python eval/run_startup_context_eval.py \
+  --all-tasks \
+  --repetitions 2 \
+  --first-variant contentful \
+  --runner-label codex-0.159.3-gpt-6-luna-xhigh \
+  --runner-ro-bind "$HOME/.codex/auth.json=/home/runner/.codex/auth.json" \
+  --runner-command 'codex exec --ignore-rules --ephemeral -s workspace-write -m gpt-6-luna -c model_reasoning_effort="xhigh" -' \
+  --output /tmp/ley-c4-startup-context.json
+```
+
+Reports compare task/hidden-oracle success, startup context size, required/forbidden marker exposure, runner
+time, live Ley retrieval usage (`ley_brief`/Search/Evidence), and checkpoint usage overall/per task/per risk
+class. This is model-dependent evidence, never a deterministic CI gate. A one-pair architecture smoke after
+fixing a shared whitespace-oracle fixture produced 2/2 hidden-oracle passes; both arms independently chose
+`ley_brief`, and guidance-only startup used 1,115 vs 1,952 contentful context characters on that fixture. That
+smoke proves the live-MCP evaluation path works; it is not the C4 product decision.
+
 ## P0 capability coverage
 
 A full-corpus run validates the current P0 matrix for:

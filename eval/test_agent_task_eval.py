@@ -79,6 +79,17 @@ class AgentTaskEvalTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "task_family"):
             agent_eval.validate_fixture_schema(fixture, 1)
 
+    def test_label_contract_oracle_uses_real_whitespace_control_characters(self) -> None:
+        fixture = self.fixture("prior-label-normalization-contract")
+        inputs = fixture["oracle_probe"]["inputs"]
+        expected = fixture["oracle_expected"]
+        self.assertIn("\t", inputs[1])
+        self.assertNotIn("\\t", inputs[1])
+        self.assertTrue(inputs[2].startswith("\n"))
+        self.assertTrue(inputs[2].endswith("\n"))
+        self.assertNotIn("\\n", inputs[2])
+        self.assertEqual([value.strip() for value in inputs], expected)
+
     def test_fixture_schema_rejects_invalid_revision_state_or_marker_overlap(self) -> None:
         fixture = copy.deepcopy(self.fixture("prior-label-normalization-contract"))
         fixture["prior_revision_state"] = "future"
