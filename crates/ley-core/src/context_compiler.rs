@@ -3071,6 +3071,7 @@ mod tests {
         };
         learning.learning_origin_summary = Some(origin.clone());
         learning.citation = Some(GraphCitation {
+            project_id: None,
             artifact_path: "docs/runbook.md".to_owned(),
             start_line: 3,
             start_column: 1,

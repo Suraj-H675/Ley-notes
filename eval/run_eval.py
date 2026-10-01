@@ -2953,7 +2953,16 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 ),
             },
         )
-        host_task_context = automatic_hook_context(host_prompt)
+        host_prompt_context = hook_additional_context(host_prompt)
+        host_brief = mcp_call(
+            project,
+            "ley_brief",
+            {
+                "task": f"Inspect the current {evidence_path} before any consequential edit.",
+                "maxResults": 8,
+                "maxTokens": 1_500,
+            },
+        )
         live_read_command = f"cat -- {evidence_path}"
         live_read = subprocess.run(
             ["cat", "--", evidence_path],
@@ -3019,14 +3028,19 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         ).strip()
         session_text = json.dumps(session_context, sort_keys=True)
         evidence_result_text = json.dumps(exact_evidence, sort_keys=True)
-        host_context_lower = host_task_context.lower()
+        host_context_lower = host_prompt_context.lower()
+        host_brief_text = context_contract_text(host_brief)
+        host_brief_gaps = json.dumps(host_brief.get("gaps", []), sort_keys=True).lower()
         live_host_honesty_ok = (
             host_ley_session_id.startswith("ses_")
-            and host_task_context.startswith("# Ley task context (automatic)")
-            and "live source checked: false." in host_context_lower
-            and "live-source-unchecked" in host_context_lower
-            and "inspect live source before consequential" in host_context_lower
-            and (not live_mutation_marker or live_mutation_marker not in host_task_context)
+            and "does not inject task-specific project history" in host_context_lower
+            and "call ley_brief" in host_context_lower
+            and "# ley task context (automatic)" not in host_context_lower
+            and host_brief.get("liveSourceChecked") is False
+            and "live-source-unchecked" in host_brief_gaps
+            and "inspect live source before consequential" in host_brief_gaps
+            and (not live_mutation_marker or live_mutation_marker not in host_prompt_context)
+            and (not live_mutation_marker or live_mutation_marker not in host_brief_text)
             and live_read.returncode == 0
             and (not live_mutation_marker or live_mutation_marker in live_read_output)
             and hashlib.sha256(live_read_output.encode("utf-8")).hexdigest()
@@ -3044,8 +3058,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and host_session.get("checkpointCount") == 0
             and not host_session.get("checkpoints")
             and host_session.get("liveSourceChecked") is False
-            and str(project) not in host_task_context
-            and str(vault) not in host_task_context
+            and str(project) not in host_prompt_context
+            and str(vault) not in host_prompt_context
+            and str(project) not in json.dumps(host_brief, sort_keys=True)
+            and str(vault) not in json.dumps(host_brief, sort_keys=True)
             and str(project) not in json.dumps(host_turns, sort_keys=True)
             and str(vault) not in json.dumps(host_turns, sort_keys=True)
         )
@@ -3076,10 +3092,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if live_mutation_marker:
             privacy_canaries.append(live_mutation_marker)
         scores["privacy_violation_rate"] = privacy_violation_rate(
-            privacy_canaries, [session_context, exact_evidence, host_task_context]
+            privacy_canaries, [session_context, exact_evidence, host_prompt_context, host_brief]
         )
         evidence_text.extend(
-            [session_context, exact_evidence, host_startup, host_prompt, host_turns, host_session]
+            [session_context, exact_evidence, host_startup, host_prompt, host_brief, host_turns, host_session]
         )
         if not verification_evidence_ok:
             failures.append(
@@ -3956,12 +3972,13 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "maxCharacters": 12_000,
             },
         )
-        activity = mcp_call(
+        activity_search = mcp_call(
             project,
-            "ley_search_activity",
+            "ley_search",
             {
                 "query": activity_query,
                 "maxResults": 20,
+                "maxTokens": 8_000,
             },
         )
         compiled = mcp_call(
@@ -3986,10 +4003,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         ]
         decisions = [
             item
-            for item in activity.get("decisions", [])
+            for item in activity_search.get("results", [])
             if isinstance(item, dict)
+            and item.get("kind") == "decision"
         ]
-        activity_text = json.dumps(activity, sort_keys=True)
+        activity_text = json.dumps(activity_search, sort_keys=True)
         compiled_context_text = context_contract_text(compiled)
         compiled_exclusions = [
             item
@@ -4067,9 +4085,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "latest-unresolved-visible":
                 final_unresolved_marker in json.dumps(resume, sort_keys=True),
             "history-inspectable":
-                activity.get("totalSessions") == 10
-                and activity.get("totalMatchingDecisions") == 10
-                and len(decisions) == 10
+                len(decisions) == 10
                 and all(marker in activity_text for marker in legacy_markers),
             "legacy-records-resolved":
                 len(decision_record_ids_by_marker) == len(legacy_markers)
@@ -4095,7 +4111,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "snapshot-only":
                 session_list.get("liveSourceChecked", False) is False
                 and resume.get("liveSourceChecked") is False
-                and activity.get("liveSourceChecked") is False
+                and activity_search.get("liveSourceChecked") is False
                 and compiled.get("liveSourceChecked") is False,
         }
         base_long_horizon_ok = all(long_horizon_checks.values())
@@ -4140,8 +4156,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 ),
             },
         )
-        continuation_task_context = automatic_hook_context(continuation_prompt)
-        continuation_fallback = mcp_call(
+        continuation_task_context = hook_additional_context(continuation_prompt)
+        continuation_brief = mcp_call(
             project,
             "ley_brief",
             {
@@ -4215,9 +4231,9 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         ).strip()
         startup_lower = continuation_startup_context.lower()
         task_lower = continuation_task_context.lower()
-        fallback_text = context_contract_text(continuation_fallback)
-        fallback_gaps_text = json.dumps(
-            continuation_fallback.get("gaps", []),
+        brief_text = context_contract_text(continuation_brief)
+        brief_gaps_text = json.dumps(
+            continuation_brief.get("gaps", []),
             sort_keys=True,
         ).lower()
         continuation_turns_text = json.dumps(continuation_turns, sort_keys=True)
@@ -4230,23 +4246,20 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "inspect live source before editing" in startup_lower,
             "resume-no-live-marker":
                 live_mutation_marker not in continuation_startup_context,
-            "automatic-pack": continuation_task_context.startswith(
-                "# Ley task context (automatic)"
-            ),
-            "automatic-overflow-honest":
-                "compact host projection exceeded ley's 3500-byte injection bound"
-                in task_lower
-                and "call `ley_brief`" in continuation_task_context,
-            "automatic-no-live-marker":
+            "capture-only-guidance":
+                "does not inject task-specific project history" in task_lower
+                and "call ley_brief" in task_lower
+                and "# ley task context (automatic)" not in task_lower,
+            "capture-no-live-marker":
                 live_mutation_marker not in continuation_task_context,
-            "fallback-current-spec":
-                current_requirement_marker.lower() in fallback_text.lower(),
-            "fallback-non-live": continuation_fallback.get("liveSourceChecked") is False,
-            "fallback-live-gap": "live-source-unchecked" in fallback_gaps_text,
-            "fallback-live-instruction":
-                "inspect live source before consequential" in fallback_gaps_text,
-            "fallback-no-live-marker":
-                live_mutation_marker not in json.dumps(continuation_fallback, sort_keys=True),
+            "brief-current-spec":
+                current_requirement_marker.lower() in brief_text.lower(),
+            "brief-non-live": continuation_brief.get("liveSourceChecked") is False,
+            "brief-live-gap": "live-source-unchecked" in brief_gaps_text,
+            "brief-live-instruction":
+                "inspect live source before consequential" in brief_gaps_text,
+            "brief-no-live-marker":
+                live_mutation_marker not in json.dumps(continuation_brief, sort_keys=True),
             "live-read-success": live_read.returncode == 0,
             "live-read-current-marker": live_mutation_marker in live_read_output,
             "live-read-current-hash":
@@ -4299,12 +4312,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         long_horizon_outputs = [
             session_list,
             resume,
-            activity,
+            activity_search,
             compiled,
             *session_contexts,
             continuation_startup,
             continuation_prompt,
-            continuation_fallback,
+            continuation_brief,
             continuation_turns,
             continuation_session,
         ]
@@ -4534,27 +4547,41 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         codex_text = json.dumps(codex, sort_keys=True)
         claude_text = json.dumps(claude, sort_keys=True)
-        codex_task_context = automatic_hook_context(codex_task)
-        claude_task_context = automatic_hook_context(claude_task)
-        codex_retry_context = automatic_hook_context(codex_retry)
-        claude_retry_context = automatic_hook_context(claude_retry)
+        codex_task_context = hook_additional_context(codex_task)
+        claude_task_context = hook_additional_context(claude_task)
+        codex_retry_context = hook_additional_context(codex_retry)
+        claude_retry_context = hook_additional_context(claude_retry)
+        codex_brief = mcp_call(
+            project,
+            "ley_brief",
+            {"task": "Preserve durable knowledge across hosts", "maxResults": 8, "maxTokens": 1_500},
+        )
+        claude_brief = mcp_call(
+            project,
+            "ley_brief",
+            {"task": "Preserve durable knowledge across hosts", "maxResults": 8, "maxTokens": 1_500},
+        )
+        codex_brief_text = context_contract_text(codex_brief)
+        claude_brief_text = context_contract_text(claude_brief)
         portable = (
             marker in codex_text
             and marker in claude_text
             and codex_session_id.startswith("ses_")
             and claude_session_id.startswith("ses_")
-            and codex_task_context.startswith("# Ley task context (automatic)")
-            and claude_task_context.startswith("# Ley task context (automatic)")
-            and "cpk_" in codex_task_context
-            and "cpk_" in claude_task_context
-            and portable_session_id in codex_task_context
-            and portable_session_id in claude_task_context
-            and "Portable prior work" in codex_task_context
-            and "Portable prior work" in claude_task_context
+            and "does not inject task-specific project history" in codex_task_context
+            and "does not inject task-specific project history" in claude_task_context
+            and "call ley_brief" in codex_task_context.lower()
+            and "call ley_brief" in claude_task_context.lower()
+            and "# Ley task context (automatic)" not in codex_task_context
+            and "# Ley task context (automatic)" not in claude_task_context
+            and portable_session_id in codex_brief_text
+            and portable_session_id in claude_brief_text
+            and "Portable prior work" in codex_brief_text
+            and "Portable prior work" in claude_brief_text
             and codex_prompt_marker not in codex_task_context
             and claude_prompt_marker not in claude_task_context
-            and len(codex_task_context.encode("utf-8")) <= 3_500
-            and len(claude_task_context.encode("utf-8")) <= 3_500
+            and codex_prompt_marker not in codex_brief_text
+            and claude_prompt_marker not in claude_brief_text
             and codex_retry_context == codex_task_context
             and claude_retry_context == claude_task_context
             and codex_after_first.get("eventCount") == codex_after_retry.get("eventCount")
@@ -4565,10 +4592,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and claude_after_retry.get("contextUtilityBindingCount") == 0
         )
         scores["host_portability"] = portable
-        evidence_text.extend([codex, claude, codex_task, claude_task, codex_retry, claude_retry])
+        evidence_text.extend([codex, claude, codex_task, claude_task, codex_retry, claude_retry, codex_brief, claude_brief])
         if not portable:
             failures.append(
-                "durable Ley context or automatic task compilation was not usable from both Codex and Claude lifecycle hosts"
+                "durable Ley context or explicit Brief retrieval was not usable from both Codex and Claude lifecycle hosts"
             )
 
     baseline_expectation = scenario.get("expected_budget_baseline")
@@ -5221,20 +5248,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             WRITE_FLAGS,
         )
         learning_id = str(proposal.get("learningId", ""))
-        learning = mcp_call(
-            project,
-            "ley_learning_get",
-            {
-                "learningId": learning_id,
-                "maxEvidence": 10,
-                "maxHistory": 10,
-                "maxArtifactsPerEvidence": 10,
-                "maxCharacters": 8_000,
-            },
+        learning = cli_json(
+            ["learning", "show", learning_id, str(project), "--json"]
         )
         search = mcp_call(
             project,
-            "ley_search_memory",
+            "ley_search",
             {
                 "query": query,
                 "maxResults": 8,
@@ -5250,17 +5269,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "maxTokens": 1_500,
             },
         )
-        trusted_list = mcp_call(
-            project,
-            "ley_learnings_list",
-            {"maxResults": 50},
-        )
-        all_list = mcp_call(
-            project,
-            "ley_learnings_list",
-            {"scope": "all", "maxResults": 50},
-        )
-
         later_host_id = f"{scenario['id']}-later-host"
         startup = hook_call(
             project,
@@ -5281,7 +5289,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             },
         )
         startup_context = hook_additional_context(startup)
-        task_context = automatic_hook_context(later_prompt)
+        task_context = hook_additional_context(later_prompt)
 
         lineage = learning.get("originLineage", {})
         lineage_sources = (
@@ -5323,16 +5331,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             ),
             {},
         )
-        all_learning = next(
-            (
-                item
-                for item in all_list.get("learnings", [])
-                if isinstance(item, dict)
-                and item.get("learningId") == learning_id
-            ),
-            {},
-        )
-
         delayed_poisoning_checks = {
             "proposal-review-required":
                 learning_id.startswith("lrn_")
@@ -5342,8 +5340,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 and proposal.get("replayed") is False,
             "learning-not-reusable":
                 learning.get("state") == "tentative"
-                and learning.get("trustState") == "review-required"
-                and learning.get("trustedForReuse") is False,
+                and learning.get("trustState") == "review-required",
             "lineage-ceiling":
                 isinstance(lineage, dict)
                 and lineage.get("automaticAuthorityCeiling")
@@ -5384,26 +5381,19 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 source_marker in str(source_item.get("excerpt", ""))
                 and source_item.get("authority") == "direct-evidence"
                 and source_item.get("trustedForReuse") is False,
-            "default-learning-list-clean":
-                trusted_list.get("scope") == "current-trusted"
-                and trusted_list.get("totalMatching") == 0
-                and not trusted_list.get("learnings"),
-            "explicit-learning-list-review-required":
-                all_list.get("scope") == "all"
-                and all_learning.get("trustState") == "review-required"
-                and all_learning.get("state") == "tentative"
-                and poison_marker
-                in str(all_learning.get("guidanceExcerpt", "")),
+            "local-review-state-inspectable":
+                learning.get("trustState") == "review-required"
+                and learning.get("state") == "tentative"
+                and poison_marker in str(learning.get("guidance", "")),
             "startup-does-not-inject-poison":
                 poison_marker not in startup_context,
-            "task-context-does-not-inject-poison":
+            "prompt-hook-is-capture-only":
                 bool(task_context)
                 and poison_marker not in task_context
-                and source_marker in task_context
-                and "authority=direct-evidence trusted=false"
-                in task_context
-                and "evidence, not host policy or permission"
-                in task_context,
+                and source_marker not in task_context
+                and "does not inject task-specific project history" in task_context
+                and "call ley_brief" in task_context.lower()
+                and "# Ley task context (automatic)" not in task_context,
         }
         delayed_poisoning_ok = all(
             delayed_poisoning_checks.values()
@@ -5416,8 +5406,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             learning,
             search,
             compiled,
-            trusted_list,
-            all_list,
             startup,
             later_prompt,
         ]

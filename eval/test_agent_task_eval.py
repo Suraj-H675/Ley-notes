@@ -720,27 +720,23 @@ class AgentTaskEvalTests(unittest.TestCase):
         self.assertNotIn("changedFiles", result)
         self.assertGreaterEqual(result["changedFileCount"], 1)
 
-    def test_variant_order_balances_six_arm_comparison_and_briefing_pair(self) -> None:
+    def test_variant_order_balances_current_five_arm_comparison_and_retires_auto(self) -> None:
         self.assertEqual(
             agent_eval.variants_for_repetition("all", "baseline", 1),
-            ("baseline", "handoff", "minimal", "ley", "ley-brief", "ley-auto"),
+            ("baseline", "handoff", "minimal", "ley", "ley-brief"),
         )
         self.assertEqual(
             agent_eval.variants_for_repetition("all", "baseline", 2),
-            ("handoff", "minimal", "ley", "ley-brief", "ley-auto", "baseline"),
+            ("handoff", "minimal", "ley", "ley-brief", "baseline"),
         )
         self.assertEqual(
             agent_eval.variants_for_repetition("all", "ley", 1),
-            ("ley", "ley-brief", "ley-auto", "baseline", "handoff", "minimal"),
+            ("ley", "ley-brief", "baseline", "handoff", "minimal"),
         )
-        self.assertEqual(
-            agent_eval.variants_for_repetition("briefing", "ley-brief", 1),
-            ("ley-brief", "ley-auto"),
-        )
-        self.assertEqual(
-            agent_eval.variants_for_repetition("briefing", "ley-brief", 2),
-            ("ley-auto", "ley-brief"),
-        )
+        with self.assertRaisesRegex(RuntimeError, "retired by ADR 0086"):
+            agent_eval.variants_for_repetition("briefing", "ley-brief", 1)
+        with self.assertRaisesRegex(RuntimeError, "retired by ADR 0086"):
+            agent_eval.variants_for_repetition("ley-auto", "baseline", 1)
         self.assertEqual(
             agent_eval.variants_for_repetition("both", "baseline", 2),
             ("ley", "baseline"),
@@ -752,7 +748,7 @@ class AgentTaskEvalTests(unittest.TestCase):
 
     def test_task_schedule_rotates_each_task_across_repetitions_independent_of_suite_size(self) -> None:
         starts = []
-        for repetition in range(1, 7):
+        for repetition in range(1, 6):
             schedule_index = agent_eval.comparison_schedule_index(1, repetition)
             starts.append(
                 agent_eval.variants_for_repetition(
@@ -761,11 +757,11 @@ class AgentTaskEvalTests(unittest.TestCase):
             )
         self.assertEqual(
             starts,
-            ["baseline", "handoff", "minimal", "ley", "ley-brief", "ley-auto"],
+            ["baseline", "handoff", "minimal", "ley", "ley-brief"],
         )
 
         fourth_task_starts = []
-        for repetition in range(1, 7):
+        for repetition in range(1, 6):
             schedule_index = agent_eval.comparison_schedule_index(4, repetition)
             fourth_task_starts.append(
                 agent_eval.variants_for_repetition(
@@ -774,7 +770,7 @@ class AgentTaskEvalTests(unittest.TestCase):
             )
         self.assertEqual(
             fourth_task_starts,
-            ["ley", "ley-brief", "ley-auto", "baseline", "handoff", "minimal"],
+            ["ley", "ley-brief", "baseline", "handoff", "minimal"],
         )
 
     def test_select_fixtures_preserves_requested_order_and_validation_default(self) -> None:
@@ -922,7 +918,7 @@ class AgentTaskEvalTests(unittest.TestCase):
         self.assertFalse(result["utilityObservation"]["observationRecorded"])
         self.assertEqual(
             result["utilityObservation"]["observationOmissionReason"],
-            "composite-context-not-single-pack-bound",
+            "context-utility-retired",
         )
         self.assertFalse(result["utilityObservation"]["contextUsageProven"])
         self.assertFalse(result["utilityObservation"]["causalUtilityProven"])
@@ -946,7 +942,7 @@ class AgentTaskEvalTests(unittest.TestCase):
             "encoding='utf-8')\n"
         )
         results = {}
-        for variant in agent_eval.COMPARISON_VARIANTS:
+        for variant in agent_eval.ACTIVE_COMPARISON_VARIANTS:
             with tempfile.TemporaryDirectory() as temporary:
                 results[variant] = agent_eval.execute_variant(
                     fixture,
@@ -965,10 +961,8 @@ class AgentTaskEvalTests(unittest.TestCase):
         self.assertFalse(results["handoff"]["taskPassed"])
         self.assertFalse(results["minimal"]["taskPassed"])
         brief_prompt = results["ley-brief"]["_audit"]["prompt"]
-        automatic_prompt = results["ley-auto"]["_audit"]["prompt"]
         self.assertTrue(results["ley"]["taskPassed"])
         self.assertTrue(results["ley-brief"]["taskPassed"])
-        self.assertTrue(results["ley-auto"]["taskPassed"], automatic_prompt)
 
         handoff_context = results["handoff"]["_audit"]["context"]
         minimal_prompt = results["minimal"]["_audit"]["prompt"]
@@ -979,16 +973,22 @@ class AgentTaskEvalTests(unittest.TestCase):
         self.assertNotIn("45-second default", minimal_prompt)
         self.assertIn("45-second default", ley_prompt)
         self.assertNotIn("Use 30 seconds as the default timeout", ley_prompt)
-        for canonical_prompt in (brief_prompt, automatic_prompt):
-            self.assertIn("45-second default", canonical_prompt)
-        self.assertTrue(results["ley-auto"]["context"]["briefFallbackUsed"])
-        self.assertIsNone(results["ley-auto"]["context"]["logicalPackMatched"])
-        self.assertLess(
-            results["ley-auto"]["context"]["automaticRequiredMarkerCoverage"],
-            results["ley-auto"]["context"]["requiredMarkerCoverage"],
-        )
+        self.assertIn("45-second default", brief_prompt)
         self.assertEqual(results["ley-brief"]["context"]["forbiddenMarkerLeakCount"], 0)
-        self.assertEqual(results["ley-auto"]["context"]["forbiddenMarkerLeakCount"], 0)
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(RuntimeError, "retired by ADR 0086"):
+                agent_eval.execute_variant(
+                    fixture,
+                    Path(temporary),
+                    ["python3", "-c", runner_code],
+                    [],
+                    [],
+                    "ley-auto",
+                    timeout_seconds=20,
+                    max_results=8,
+                    max_tokens=500,
+                    capture_audit=False,
+                )
 
     def test_explicit_reference_fixture_uses_only_selected_project(self) -> None:
         fixture = agent_eval.materialize_fixture(
@@ -1009,7 +1009,7 @@ class AgentTaskEvalTests(unittest.TestCase):
             "encoding='utf-8')\n"
         )
         results = {}
-        for variant in agent_eval.COMPARISON_VARIANTS:
+        for variant in agent_eval.ACTIVE_COMPARISON_VARIANTS:
             with tempfile.TemporaryDirectory() as temporary:
                 results[variant] = agent_eval.execute_variant(
                     fixture,
@@ -1029,8 +1029,7 @@ class AgentTaskEvalTests(unittest.TestCase):
         self.assertFalse(results["minimal"]["taskPassed"])
         self.assertTrue(results["ley"]["taskPassed"])
         self.assertTrue(results["ley-brief"]["taskPassed"])
-        self.assertTrue(results["ley-auto"]["taskPassed"])
-        for variant in ("ley", "ley-brief", "ley-auto"):
+        for variant in ("ley", "ley-brief"):
             prompt = results[variant]["_audit"]["prompt"]
             self.assertIn("selected_reference_contract_52d1", prompt)
             self.assertNotIn("unrelated_reference_canary_9c17", prompt)
@@ -1039,10 +1038,7 @@ class AgentTaskEvalTests(unittest.TestCase):
         self.assertEqual(results["ley"]["context"]["contextTokenBudget"], 1_000)
         self.assertEqual(results["ley"]["context"]["referenceProjectCount"], 2)
         self.assertEqual(results["ley"]["context"]["selectedReferenceCount"], 1)
-        self.assertFalse(results["ley-auto"]["context"]["briefFallbackUsed"])
-        self.assertTrue(results["ley-auto"]["context"]["logicalPackMatched"])
         self.assertEqual(results["ley-brief"]["context"]["forbiddenMarkerLeakCount"], 0)
-        self.assertEqual(results["ley-auto"]["context"]["forbiddenMarkerLeakCount"], 0)
 
     def test_task_pass_requires_all_gates(self) -> None:
         good_runner = {"completed": True}
@@ -1389,25 +1385,23 @@ class AgentTaskEvalTests(unittest.TestCase):
                     ("changed-display-name-requirement", "minimal"),
                     ("changed-display-name-requirement", "ley"),
                     ("changed-display-name-requirement", "ley-brief"),
-                    ("changed-display-name-requirement", "ley-auto"),
                     ("resume-cache-key-migration", "handoff"),
                     ("resume-cache-key-migration", "minimal"),
                     ("resume-cache-key-migration", "ley"),
                     ("resume-cache-key-migration", "ley-brief"),
-                    ("resume-cache-key-migration", "ley-auto"),
                     ("resume-cache-key-migration", "baseline"),
                 ],
             )
             report = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(report["schemaVersion"], 3)
             self.assertEqual(report["selectedTaskCount"], 2)
-            self.assertEqual(report["plannedAgentAttempts"], 12)
+            self.assertEqual(report["plannedAgentAttempts"], 10)
             self.assertEqual(
                 report["taskIds"],
                 ["changed-display-name-requirement", "resume-cache-key-migration"],
             )
             self.assertIsNone(report["taskId"])
-            self.assertEqual(len(report["results"]), 12)
+            self.assertEqual(len(report["results"]), 10)
             self.assertIn(
                 "changed-requirement-vs-stale-memory",
                 report["comparison"]["perFamily"],

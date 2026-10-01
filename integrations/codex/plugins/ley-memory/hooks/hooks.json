@@ -22,7 +22,7 @@
             "command": "ley hook --host codex",
             "additionalContextLimit": 5000,
             "timeout": 20,
-            "statusMessage": "Loading Ley task context"
+            "statusMessage": "Capturing Ley turn"
           }
         ]
       }

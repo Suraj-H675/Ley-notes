@@ -4931,6 +4931,24 @@ pub(crate) fn visit_session_records_with_continuity_transition(
     Ok(total_sessions)
 }
 
+pub(crate) fn visit_session_records_for_project_id(
+    store: &crate::ContinuityStore,
+    project_id: &str,
+    mut visitor: impl FnMut(AgentSession),
+) -> Result<usize, LeyCoreError> {
+    crate::validate_project_id(project_id)?;
+    let session_ids = store.session_ids(project_id)?;
+    let total_sessions = session_ids.len();
+    for session_id in session_ids {
+        visitor(read_session_from_continuity_snapshot(
+            store,
+            project_id,
+            &session_id,
+        )?);
+    }
+    Ok(total_sessions)
+}
+
 pub(crate) fn continuity_events_for_migration(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,

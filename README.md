@@ -20,8 +20,9 @@ The previous `/app` browser workspace, PWA, browser-folder mode, and browser-loc
 The target agent-facing contract is intentionally small:
 
 - **Brief** — the smallest cited continuity pack useful for the current task.
-- **Search** — explicit bounded historical recall.
-- **Evidence** — exact provenance/source drill-down.
+- **Search** — explicit bounded historical recall from the active project by default or one exact
+  deliberately selected already-observed project; selection is request-scoped, not ambient sharing.
+- **Evidence** — exact provenance/source drill-down from the project-qualified citation returned by Ley.
 - **Checkpoint** — one structured durable write path for meaningful session state.
 
 The target human-facing desktop is a focused control center for project setup/status, integrations, brief preview, recall, session/handoff history, review/correction, evidence, privacy, export, and erasure.

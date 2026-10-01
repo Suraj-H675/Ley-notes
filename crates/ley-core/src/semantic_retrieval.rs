@@ -636,6 +636,7 @@ fn semantic_index_candidates(
                 language: artifact.language.clone(),
                 snippet: None,
                 citation: GraphCitation {
+                    project_id: None,
                     artifact_path: artifact.path.clone(),
                     start_line: 1,
                     start_column: 1,
@@ -1274,6 +1275,7 @@ mod tests {
             language: None,
             snippet: None,
             citation: GraphCitation {
+                project_id: None,
                 artifact_path: format!("{id}.md"),
                 start_line: 1,
                 start_column: 1,
@@ -1379,6 +1381,7 @@ mod tests {
                 path: Some("a.md".to_owned()),
                 language: None,
                 citation: GraphCitation {
+                    project_id: None,
                     artifact_path: "a.md".to_owned(),
                     start_line: 1,
                     start_column: 1,

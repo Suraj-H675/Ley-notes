@@ -105,11 +105,9 @@ Fine-grained restrictions are also a conservative ceiling on historical derivati
 
 ## Retrieval workflow
 
-Installed Codex and Claude Code integrations normally provide bounded automatic task context at prompt time. Treat that block as historical evidence plus approved human intent, not as execution permission or live-source truth. If it is adequate, do not duplicate it with another Ley call.
-
 For an initialized project with complete native authority, the normal agent workflow is deliberately small:
 
-1. Call `ley_brief` when automatic context is absent, reports a fallback, is insufficient, or the task materially changes. Inspect egress, premise, revision, omission, and provenance fields before acting on historical state.
+1. Call `ley_brief` when prior project continuity would materially help the current task. Do not call it reflexively on every turn. Inspect egress, premise, revision, omission, and provenance fields before acting on historical state.
 2. Call `ley_search` only when the brief needs deeper bounded historical recall. Revision compatibility, recency, and retrieval scores help locate evidence; they do not make historical state current or true.
 3. Carry an exact citation returned by Ley into `ley_evidence` when the underlying source matters. The same tool verifies snapshot/path/hash identity for text citations and supported original PNG/JPEG/WebP evidence. Text ranges remain bounded; media citations use the explicit non-text `0/0` range. Ley does not perform OCR or claim an image interpretation.
 4. When the MCP process was started with `--allow-session-writes`, use `ley_checkpoint` only after a meaningful decision, implementation slice, failed attempt, verification result, direction change, or handoff. Use the current hook-provided Ley session ID and record only observed/supportable state. An exact request-ID retry is idempotent.

@@ -27,6 +27,7 @@ const SNAPSHOT_FRESHNESS: &str = "captured-snapshot";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MediaEvidence {
+    pub project_id: String,
     pub artifact_path: String,
     pub artifact_snapshot_id: String,
     pub content_hash: String,
@@ -226,12 +227,34 @@ pub(crate) fn project_captured_git_state_with_continuity_transition(
     project_captured_git_state(project_start, legacy_vault)
 }
 
+pub(crate) fn project_captured_git_state_for_project_id(
+    store: &ContinuityStore,
+    project_id: &str,
+) -> Result<Option<GitState>, LeyCoreError> {
+    crate::validate_project_id(project_id)?;
+    let snapshot = store
+        .current_artifact_snapshot(project_id)?
+        .ok_or_else(|| {
+            LeyCoreError::ProjectMemoryUnavailable(
+                "canonical native artifact continuity is unavailable".to_owned(),
+            )
+        })?;
+    Ok(snapshot.captured_git)
+}
+
 pub fn native_canonical_read_authority_available(
     project_start: impl AsRef<Path>,
     store: &ContinuityStore,
 ) -> Result<bool, LeyCoreError> {
     let diagnostic = crate::diagnose_project(project_start.as_ref())?;
-    let project_id = &diagnostic.identity.project_id;
+    native_canonical_read_authority_available_for_project_id(&diagnostic.identity.project_id, store)
+}
+
+pub fn native_canonical_read_authority_available_for_project_id(
+    project_id: &str,
+    store: &ContinuityStore,
+) -> Result<bool, LeyCoreError> {
+    crate::validate_project_id(project_id)?;
     if !crate::session::session_authority_cutover_is_complete(store, project_id)?
         || !crate::learning::learning_authority_cutover_is_complete(store, project_id)?
         || !store.approved_source_authority_ready(project_id)?
@@ -240,6 +263,124 @@ pub fn native_canonical_read_authority_available(
         return Ok(false);
     }
     Ok(true)
+}
+
+pub fn read_native_project_cited_evidence_for_project_id(
+    project_id: &str,
+    store: &ContinuityStore,
+    citation: &GraphCitation,
+    context_lines: u64,
+    max_characters: usize,
+) -> Result<EvidenceExcerpt, LeyCoreError> {
+    crate::validate_project_id(project_id)?;
+    if citation
+        .project_id
+        .as_deref()
+        .is_some_and(|value| value != project_id)
+    {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "citation projectId does not match the selected project".to_owned(),
+        ));
+    }
+    if citation.media_type.is_some() {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "media citations must be read with the media evidence reader".to_owned(),
+        ));
+    }
+    if context_lines > 20 {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "contextLines must be between 0 and 20".to_owned(),
+        ));
+    }
+    let content = store
+        .read_native_artifact_content(
+            project_id,
+            &citation.artifact_snapshot_id,
+            &citation.artifact_path,
+            &citation.content_hash,
+            None,
+        )?
+        .ok_or_else(|| {
+            LeyCoreError::InvalidRetrievalRequest(
+                "citation is not retained in canonical native continuity".to_owned(),
+            )
+        })?;
+    if content.media_type.is_some() {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "media citations must be read with the media evidence reader".to_owned(),
+        ));
+    }
+    let text = String::from_utf8(content.bytes).map_err(|_| {
+        LeyCoreError::InvalidContinuityStore(format!(
+            "native artifact text is not UTF-8: {}",
+            citation.artifact_path
+        ))
+    })?;
+    let start_line = citation.start_line.saturating_sub(context_lines).max(1);
+    let expanded_end = citation.end_line.saturating_add(context_lines);
+    let maximum_end = start_line.saturating_add(MAX_EVIDENCE_LINES - 1);
+    let end_line = expanded_end.min(maximum_end);
+    validate_evidence_request(
+        &citation.artifact_path,
+        start_line,
+        end_line,
+        max_characters,
+    )?;
+    let mut excerpt = evidence_excerpt_from_text(
+        project_id,
+        &citation.artifact_snapshot_id,
+        &content.artifact_path,
+        &content.content_hash,
+        &text,
+        start_line,
+        end_line,
+        max_characters,
+    )?;
+    excerpt.truncated |= expanded_end > maximum_end;
+    Ok(excerpt)
+}
+
+pub fn read_native_project_cited_media_for_project_id(
+    project_id: &str,
+    store: &ContinuityStore,
+    artifact_path: &str,
+    artifact_snapshot_id: &str,
+    content_hash: &str,
+    max_bytes: usize,
+) -> Result<MediaEvidence, LeyCoreError> {
+    crate::validate_project_id(project_id)?;
+    validate_media_evidence_request(artifact_path, artifact_snapshot_id, content_hash, max_bytes)?;
+    let content = store
+        .read_native_artifact_content(
+            project_id,
+            artifact_snapshot_id,
+            artifact_path,
+            content_hash,
+            Some(max_bytes),
+        )?
+        .ok_or_else(|| {
+            LeyCoreError::InvalidRetrievalRequest(
+                "citation is not retained in canonical native continuity".to_owned(),
+            )
+        })?;
+    let media_type = parse_native_media_type(content.media_type.as_deref())?.ok_or_else(|| {
+        LeyCoreError::InvalidRetrievalRequest(
+            "cited artifact is not captured image evidence".to_owned(),
+        )
+    })?;
+    Ok(MediaEvidence {
+        project_id: project_id.to_owned(),
+        artifact_path: content.artifact_path,
+        artifact_snapshot_id: artifact_snapshot_id.to_owned(),
+        content_hash: content.content_hash,
+        media_type,
+        source_bytes: content.source_bytes,
+        data: content.bytes,
+        evidence_role: "original-media",
+        source_boundary: SOURCE_BOUNDARY,
+        live_source_checked: false,
+        derived_description_included: false,
+    })
 }
 
 /// Validate the bound captured manifest/graph store and immutable snapshot bindings without
@@ -335,6 +476,51 @@ pub fn find_project_hybrid_context_with_continuity_transition(
     let Some(snapshot) = store.current_artifact_snapshot(&diagnostic.identity.project_id)? else {
         return find_project_hybrid_context(project_start, legacy_vault, query, limits);
     };
+    let graph_snapshot_id = snapshot.legacy_graph_snapshot_id.clone().ok_or_else(|| {
+        LeyCoreError::InvalidContinuityStore(
+            "native artifact snapshot is missing its captured graph provenance; recapture the project before using canonical search"
+                .to_owned(),
+        )
+    })?;
+    let candidates = collect_native_lexical_candidates(&snapshot, query)?;
+    Ok(HybridContextPack {
+        context: context_pack_from_native_snapshot(
+            &snapshot,
+            &graph_snapshot_id,
+            query,
+            limits,
+            candidates,
+        ),
+        retrieval: HybridRetrievalMetadata {
+            mode: RetrievalMode::Lexical,
+            semantic_index: SemanticIndexState::Unavailable,
+            fallback_reason: Some(
+                "native artifact continuity intentionally does not depend on the legacy semantic index"
+                    .to_owned(),
+            ),
+            conflict_projection: HybridConflictProjection::NotParticipating,
+            conflict_projection_note:
+                "No structured conflict projection participated in artifact retrieval.",
+        },
+    })
+}
+
+pub(crate) fn find_native_project_hybrid_context_for_project_id(
+    store: &ContinuityStore,
+    project_id: &str,
+    query: &str,
+    limits: RetrievalLimits,
+) -> Result<HybridContextPack, LeyCoreError> {
+    validate_query(query)?;
+    validate_limits(limits)?;
+    crate::validate_project_id(project_id)?;
+    let snapshot = store
+        .current_artifact_snapshot(project_id)?
+        .ok_or_else(|| {
+            LeyCoreError::ProjectMemoryUnavailable(
+                "canonical native artifact continuity is unavailable".to_owned(),
+            )
+        })?;
     let graph_snapshot_id = snapshot.legacy_graph_snapshot_id.clone().ok_or_else(|| {
         LeyCoreError::InvalidContinuityStore(
             "native artifact snapshot is missing its captured graph provenance; recapture the project before using canonical search"
@@ -606,6 +792,7 @@ pub fn read_project_cited_media(
         ))
     })?;
     Ok(MediaEvidence {
+        project_id: memory.manifest.project_id.clone(),
         artifact_path: artifact.path.clone(),
         artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
         content_hash: artifact.content_hash.clone(),
@@ -645,6 +832,7 @@ pub fn read_project_cited_media_with_continuity_transition(
                 )
             })?;
         return Ok(MediaEvidence {
+            project_id: project_id.clone(),
             artifact_path: content.artifact_path,
             artifact_snapshot_id: artifact_snapshot_id.to_owned(),
             content_hash: content.content_hash,
@@ -871,6 +1059,7 @@ fn collect_lexical_candidates(
             language: artifact.language.clone(),
             snippet,
             citation: GraphCitation {
+                project_id: None,
                 artifact_path: artifact.path.clone(),
                 start_line,
                 start_column,
@@ -943,6 +1132,7 @@ fn collect_native_lexical_candidates(
             language: artifact.language.clone(),
             snippet,
             citation: GraphCitation {
+                project_id: None,
                 artifact_path: artifact.artifact_path.clone(),
                 start_line,
                 start_column,
@@ -1203,6 +1393,7 @@ fn evidence_excerpt_from_text(
         artifact_path: artifact_path.to_owned(),
         text,
         citation: GraphCitation {
+            project_id: Some(project_id.to_owned()),
             artifact_path: artifact_path.to_owned(),
             start_line,
             start_column: 1,

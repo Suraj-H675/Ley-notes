@@ -905,6 +905,34 @@ pub fn list_learnings_with_continuity_transition(
     list_learnings_from_continuity_snapshot(project_start, legacy_vault, store)
 }
 
+pub(crate) fn list_learnings_for_project_id(
+    store: &ContinuityStore,
+    project_id: &str,
+) -> Result<Vec<LearningSummary>, LeyCoreError> {
+    crate::validate_project_id(project_id)?;
+    let events = store
+        .learning_events(project_id)?
+        .into_iter()
+        .map(learning_event_from_continuity)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut records = replay_all(&events, project_id)?;
+    let hashes = store.current_artifact_hashes(project_id)?.ok_or_else(|| {
+        LeyCoreError::ProjectMemoryUnavailable(
+            "canonical native artifact continuity is unavailable".to_owned(),
+        )
+    })?;
+    for learning in &mut records {
+        refresh_freshness_from_hashes(learning, &hashes);
+    }
+    records.sort_by(|left, right| {
+        right
+            .updated_at_unix_ms
+            .cmp(&left.updated_at_unix_ms)
+            .then_with(|| left.learning_id.cmp(&right.learning_id))
+    });
+    Ok(records.iter().map(LearningSummary::from).collect())
+}
+
 fn sync_legacy_continuity_for_learning_read(
     project_start: &Path,
     legacy_vault: &Path,

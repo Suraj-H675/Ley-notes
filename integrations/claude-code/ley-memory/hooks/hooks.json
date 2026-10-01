@@ -32,7 +32,7 @@
               "${CLAUDE_PROJECT_DIR}"
             ],
             "timeout": 20,
-            "statusMessage": "Loading Ley task context"
+            "statusMessage": "Capturing Ley turn"
           }
         ]
       }

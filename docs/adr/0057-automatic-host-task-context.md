@@ -1,6 +1,6 @@
 # ADR 0057: Automatic bounded host task context
 
-Status: accepted
+Status: superseded for initialized projects by [ADR 0086](0086-explicit-task-retrieval-after-turn-capture.md); Bootstrap Specification behavior remains governed separately by ADR 0058
 
 ## Context
 

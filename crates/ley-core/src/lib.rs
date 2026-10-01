@@ -298,7 +298,8 @@ pub use project_catalog::{
     MAX_PROJECT_CATALOG_RESULTS, PROJECT_CATALOG_FILE, PROJECT_CATALOG_SCHEMA_VERSION,
 };
 pub use project_memory_search::{
-    search_project_memory, search_project_memory_with_continuity_transition, ProjectMemoryConflict,
+    search_native_project_memory_for_expected_project, search_project_memory,
+    search_project_memory_with_continuity_transition, ProjectMemoryConflict,
     ProjectMemoryConflictKind, ProjectMemoryRankingSignals, ProjectMemoryResultKind,
     ProjectMemorySearch, ProjectMemorySearchCoverage, ProjectMemorySearchLimits,
     ProjectMemorySearchResult, ProjectMemorySearchRetrieval, ProjectMemoryTrustSignal,
@@ -316,11 +317,14 @@ pub use resume_context::{
 };
 pub use retrieval::{
     find_project_context, find_project_hybrid_context, native_canonical_read_authority_available,
-    project_memory_overview, project_memory_overview_with_continuity_transition,
-    read_project_cited_evidence, read_project_cited_evidence_with_continuity_transition,
-    read_project_cited_media, read_project_cited_media_with_continuity_transition,
-    read_project_evidence, read_verification_media_evidence, validate_project_memory, ContextItem,
-    ContextItemKind, ContextPack, EvidenceExcerpt, HybridConflictProjection, HybridContextPack,
+    native_canonical_read_authority_available_for_project_id, project_memory_overview,
+    project_memory_overview_with_continuity_transition,
+    read_native_project_cited_evidence_for_project_id,
+    read_native_project_cited_media_for_project_id, read_project_cited_evidence,
+    read_project_cited_evidence_with_continuity_transition, read_project_cited_media,
+    read_project_cited_media_with_continuity_transition, read_project_evidence,
+    read_verification_media_evidence, validate_project_memory, ContextItem, ContextItemKind,
+    ContextPack, EvidenceExcerpt, HybridConflictProjection, HybridContextPack,
     HybridRetrievalMetadata, MediaEvidence, MemoryOverview, RetrievalLimits, RetrievalMode,
     DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS, MAX_CONTEXT_RESULTS, MAX_CONTEXT_TOKENS,
     MAX_MEDIA_EVIDENCE_BYTES,

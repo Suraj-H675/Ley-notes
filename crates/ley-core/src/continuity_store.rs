@@ -438,6 +438,27 @@ impl ContinuityStore {
         &self.path
     }
 
+    /// Return a path that is guaranteed not to exist and can stand in for a retired legacy
+    /// vault when canonical native continuity is already authoritative.
+    pub fn native_legacy_placeholder_path(
+        &self,
+        project_id: &str,
+    ) -> Result<PathBuf, LeyCoreError> {
+        validate_project_id(project_id)?;
+        let parent = self.path.parent().ok_or_else(|| {
+            LeyCoreError::InvalidContinuityStore(
+                "continuity database has no parent directory for native continuity access"
+                    .to_owned(),
+            )
+        })?;
+        let path = parent.join("native-no-legacy-vault").join(project_id);
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path),
+            Err(source) => Err(LeyCoreError::Io { path, source }),
+            Ok(_) => Err(LeyCoreError::UnsafeProjectLayout(path)),
+        }
+    }
+
     pub fn initialize(&self) -> Result<(), LeyCoreError> {
         let _ = self.open_connection()?;
         Ok(())

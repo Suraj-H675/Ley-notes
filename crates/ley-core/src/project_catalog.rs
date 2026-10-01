@@ -124,7 +124,8 @@ impl ProjectCatalog {
         }
     }
 
-    pub(crate) fn native_at(path: impl Into<PathBuf>, store: ContinuityStore) -> Self {
+    #[doc(hidden)]
+    pub fn native_at(path: impl Into<PathBuf>, store: ContinuityStore) -> Self {
         Self {
             path: path.into(),
             backend: ProjectCatalogBackend::Native(store),
@@ -162,6 +163,18 @@ impl ProjectCatalog {
                 root_path: PathBuf::from(&observation.root_path),
                 last_opened_at_unix_ms: observation.last_opened_at_unix_ms,
             }))
+    }
+
+    /// Resolve one exact previously observed project only while its recorded root still claims
+    /// the same Ley identity. This never discovers or enumerates unrelated projects.
+    pub fn resolve_current(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ObservedProject>, LeyCoreError> {
+        let Some(observation) = self.get(project_id)? else {
+            return Ok(None);
+        };
+        Ok(path_still_claims_project(&observation.root_path, project_id).then_some(observation))
     }
 
     pub fn list(&self, max_results: usize) -> Result<ObservedProjectList, LeyCoreError> {

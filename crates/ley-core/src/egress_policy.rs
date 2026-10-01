@@ -782,6 +782,28 @@ impl EgressPolicyRegistry {
         })
     }
 
+    /// Transitional project-level authority for a caller that already resolved and revalidated
+    /// one exact Ley project identity. This avoids re-deriving authorization scope from a path.
+    pub fn with_transition_project_id_egress_locked<T>(
+        &self,
+        project_id: &str,
+        store: &ContinuityStore,
+        target: AgentEgressTarget,
+        operation: impl FnOnce() -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        validate_project_id(project_id)?;
+        self.with_transition_snapshot_locked(store, |snapshot| {
+            let decision = evaluate_agent_egress(snapshot.project_policy(project_id), target);
+            if !decision.allowed {
+                return Err(LeyCoreError::AgentEgressDenied {
+                    policy: decision.policy.to_string(),
+                    target: target.to_string(),
+                });
+            }
+            operation()
+        })
+    }
+
     fn mutate<T>(
         &self,
         operation: impl FnOnce(&mut EgressPolicyRegistryDocument) -> Result<T, LeyCoreError>,

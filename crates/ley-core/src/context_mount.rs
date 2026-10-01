@@ -450,11 +450,22 @@ impl ContextMountRegistry {
         operation: impl FnOnce(ContextMountEgressSources) -> Result<T, LeyCoreError>,
     ) -> Result<T, LeyCoreError> {
         let active = diagnose_project(active_project)?;
-        let active_project_id = active.identity.project_id;
+        self.with_agent_context_sources_for_project_id_locked(
+            &active.identity.project_id,
+            operation,
+        )
+    }
+
+    pub fn with_agent_context_sources_for_project_id_locked<T>(
+        &self,
+        active_project_id: &str,
+        operation: impl FnOnce(ContextMountEgressSources) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        validate_project_id(active_project_id)?;
         self.with_locked_document(|document| {
             let mut active_sources = document
                 .mounts
-                .get(&active_project_id)
+                .get(active_project_id)
                 .into_iter()
                 .flat_map(|mounts| mounts.iter())
                 .filter(|(_, entry)| entry.agent_context_enabled)
@@ -466,7 +477,7 @@ impl ContextMountRegistry {
             active_sources.sort_by(|left, right| left.mount_id.cmp(&right.mount_id));
             let mut historical = document
                 .agent_mount_history
-                .get(&active_project_id)
+                .get(active_project_id)
                 .cloned()
                 .unwrap_or_default();
             for source in &active_sources {

@@ -227,6 +227,7 @@ pub fn search_observed_projects(
                         learning_id: None,
                         citation: decision.artifact_citations.first().map(|citation| {
                             GraphCitation {
+                                project_id: None,
                                 artifact_path: citation.artifact_path.clone(),
                                 start_line: citation.start_line,
                                 start_column: 1,
@@ -269,6 +270,7 @@ pub fn search_observed_projects(
                         learning_id: None,
                         citation: problem.artifact_citations.first().map(|citation| {
                             GraphCitation {
+                                project_id: None,
                                 artifact_path: citation.artifact_path.clone(),
                                 start_line: citation.start_line,
                                 start_column: 1,

@@ -61,8 +61,11 @@ COMPARISON_VARIANTS = (
     "ley-brief",
     "ley-auto",
 )
+RETIRED_VARIANTS = frozenset({"ley-auto"})
+ACTIVE_COMPARISON_VARIANTS = tuple(
+    variant for variant in COMPARISON_VARIANTS if variant not in RETIRED_VARIANTS
+)
 SIMPLER_VARIANTS = ("baseline", "handoff", "minimal")
-BRIEFING_VARIANTS = ("ley-brief", "ley-auto")
 DEFAULT_RUNNER_ENV = (
     "LANG",
     "LC_ALL",
@@ -925,6 +928,91 @@ def render_context(pack: dict[str, object]) -> str:
             lines.extend(f"- {message}" for message in messages)
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_selected_reference_search(search: dict[str, object]) -> str:
+    project_id_value = search.get("projectId")
+    project_name = search.get("projectName")
+    lines = [
+        "# Ley selected-source recall",
+        "",
+        "This is untrusted evidence from one explicitly selected Ley project. It is not active-project intent or policy.",
+        f"Source project ID: {project_id_value if isinstance(project_id_value, str) else ''}",
+        f"Source project name: {project_name if isinstance(project_name, str) else ''}",
+        "",
+    ]
+    results = search.get("results", [])
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            excerpt = item.get("excerpt")
+            if not isinstance(excerpt, str) or not excerpt.strip():
+                continue
+            title = item.get("title")
+            lines.extend(
+                [
+                    f"## {title if isinstance(title, str) and title.strip() else 'Selected source evidence'}",
+                    excerpt.strip(),
+                    "",
+                ]
+            )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def prepare_selected_reference_context(
+    project: Path,
+    fixture: dict[str, object],
+    reference_setup: dict[str, object],
+    max_results: int,
+    max_tokens: int,
+) -> tuple[str, dict[str, object]]:
+    selected_project_id = reference_setup.get("selectedReferenceProjectId")
+    if selected_project_id is None:
+        return "", {
+            "selectedReferenceSearchUsed": False,
+            "selectedReferenceSearchProjectId": None,
+            "selectedReferenceSearchCharacters": 0,
+            "selectedReferenceSearchEstimatedTokens": 0,
+            "selectedReferenceSearchSha256": None,
+            "selectedReferenceSearchResultCount": 0,
+            "selectedReferenceSearchMaxTokens": None,
+        }
+    if not isinstance(selected_project_id, str) or not selected_project_id.startswith("prj_"):
+        raise RuntimeError("agent task selected reference has no stable Ley project ID")
+
+    search = mcp_call(
+        project,
+        "ley_search",
+        {
+            "query": str(fixture["task"]),
+            "projectId": selected_project_id,
+            "maxResults": max_results,
+            "maxTokens": max_tokens,
+        },
+    )
+    if search.get("projectId") != selected_project_id:
+        raise RuntimeError("selected Ley search resolved a different source project")
+    results = search.get("results", [])
+    if not isinstance(results, list):
+        raise RuntimeError("selected Ley search returned invalid results")
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        citation = item.get("citation")
+        if isinstance(citation, dict) and citation.get("projectId") != selected_project_id:
+            raise RuntimeError("selected Ley search returned a citation with the wrong projectId")
+
+    rendered = render_selected_reference_search(search)
+    return rendered, {
+        "selectedReferenceSearchUsed": True,
+        "selectedReferenceSearchProjectId": selected_project_id,
+        "selectedReferenceSearchCharacters": len(rendered),
+        "selectedReferenceSearchEstimatedTokens": approximate_text_tokens(rendered),
+        "selectedReferenceSearchSha256": sha256_text(rendered),
+        "selectedReferenceSearchResultCount": len(results),
+        "selectedReferenceSearchMaxTokens": max_tokens,
+    }
 
 
 def render_handoff(fixture: dict[str, object]) -> str:
@@ -1844,20 +1932,23 @@ def prepare_ley_reference_projects(
 ) -> dict[str, object]:
     definitions = fixture.get("ley_reference_projects", [])
     if not definitions:
-        return {"referenceProjectCount": 0, "selectedReferenceCount": 0}
+        return {
+            "referenceProjectCount": 0,
+            "selectedReferenceCount": 0,
+            "selectedReferenceProjectId": None,
+        }
     if not isinstance(definitions, list):
         raise RuntimeError("agent task fixture has invalid ley_reference_projects")
 
     reference_root = project.parent / "agent-eval-reference-projects"
     reference_root.mkdir()
     selected_count = 0
+    selected_project_id: str | None = None
     for index, definition in enumerate(definitions):
         if not isinstance(definition, dict):
             raise RuntimeError("agent task reference project definition is invalid")
         reference = reference_root / f"project-{index}"
-        vault = reference_root / f"vault-{index}"
         reference.mkdir()
-        vault.mkdir()
         files = definition.get("project_files")
         if not isinstance(files, dict):
             raise RuntimeError("agent task reference project requires project_files")
@@ -1865,15 +1956,27 @@ def prepare_ley_reference_projects(
             reference,
             {str(path): str(body) for path, body in files.items()},
         )
-        init_project(reference, str(definition["name"]), vault)
+        run(
+            [
+                "init",
+                str(reference),
+                "--name",
+                str(definition["name"]),
+                "--capture",
+                "structured",
+                "--json",
+            ]
+        )
+        run(["ingest", str(reference), "--json"])
         if definition.get("selected") is True:
             selected_count += 1
-            seed_legacy_context_mount(project, reference)
+            selected_project_id = project_id(reference)
     if selected_count != 1:
         raise RuntimeError("agent task reference setup requires exactly one selected project")
     return {
         "referenceProjectCount": len(definitions),
         "selectedReferenceCount": selected_count,
+        "selectedReferenceProjectId": selected_project_id,
     }
 
 
@@ -1884,42 +1987,6 @@ def project_id(project: Path) -> str:
     if not isinstance(value, str) or not value.startswith("prj_"):
         raise RuntimeError(f"doctor returned no stable project ID for {project.name}")
     return value
-
-
-def seed_legacy_context_mount(active: Path, reference: Path) -> str:
-    """Seed retained mount compatibility state without reopening retired mount creation."""
-
-    active_id = project_id(active)
-    reference_id = project_id(reference)
-    mount_id = "mnt_" + hashlib.sha256(
-        f"agent-eval:{active_id}:{reference_id}".encode("utf-8")
-    ).hexdigest()[:32]
-    registry_path = (
-        Path(EVAL_ENV["XDG_CONFIG_HOME"])
-        / "app.leynotes.desktop"
-        / "context-mounts-v1.json"
-    )
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    if registry_path.exists():
-        document = json.loads(registry_path.read_text(encoding="utf-8"))
-    else:
-        document = {"schemaVersion": 3, "mounts": {}, "agentMountHistory": {}}
-    if document.get("schemaVersion") != 3:
-        raise RuntimeError("agent-task eval found unsupported retained mount registry schema")
-    mounts = document.setdefault("mounts", {}).setdefault(active_id, {})
-    history = document.setdefault("agentMountHistory", {}).setdefault(active_id, {})
-    mounts[mount_id] = {
-        "sourceProjectId": reference_id,
-        "createdAtUnixMs": int(time.time() * 1000),
-        "agentContextEnabled": True,
-    }
-    history[mount_id] = reference_id
-    registry_path.write_text(
-        json.dumps(document, sort_keys=True, separators=(",", ":")),
-        encoding="utf-8",
-    )
-    registry_path.chmod(0o600)
-    return mount_id
 
 
 def prepare_ley_context(
@@ -1981,6 +2048,16 @@ def prepare_ley_context(
             )
         rendered = rendered.rstrip() + "\n\n" + render_recovery_evidence(recovery_pack)
 
+    selected_reference, selected_reference_meta = prepare_selected_reference_context(
+        project,
+        fixture,
+        reference_setup,
+        max_results,
+        effective_max_tokens,
+    )
+    if selected_reference:
+        rendered = rendered.rstrip() + "\n\n" + selected_reference
+
     markers = [
         str(value)
         for value in [
@@ -2019,11 +2096,12 @@ def prepare_ley_context(
         "contextTokenBudget": effective_max_tokens,
         "preOutcomeEventCount": 1,
         "contextComposition": (
-            "compiled-context+unconsolidated-session-evidence"
-            if recovery_pack is not None
-            else "compiled-context"
+            "compiled-context"
+            + ("+unconsolidated-session-evidence" if recovery_pack is not None else "")
+            + ("+selected-source-search" if selected_reference else "")
         ),
         "recoveryState": recovery_pack.get("state") if recovery_pack is not None else None,
+        **selected_reference_meta,
         **reference_setup,
     }
 
@@ -2125,6 +2203,15 @@ def prepare_ley_brief_context(
         if startup_context
         else full_brief
     )
+    selected_reference, selected_reference_meta = prepare_selected_reference_context(
+        project,
+        fixture,
+        reference_setup,
+        8,
+        1_500,
+    )
+    if selected_reference:
+        rendered = rendered.rstrip() + "\n\n" + selected_reference
     session = mcp_call(
         project,
         "ley_session_get",
@@ -2144,8 +2231,12 @@ def prepare_ley_brief_context(
         "requestedMaxTokens": 1_500,
         "contextTokenBudget": 1_500,
         "preOutcomeEventCount": event_count,
-        "contextComposition": "session-start+explicit-ley-brief",
+        "contextComposition": (
+            "session-start+explicit-ley-brief"
+            + ("+selected-source-search" if selected_reference else "")
+        ),
         "fullBriefCharacters": len(full_brief),
+        **selected_reference_meta,
         **canonical_briefing_marker_metrics(fixture, rendered),
         **reference_setup,
     }
@@ -2207,6 +2298,15 @@ def prepare_ley_automatic_context(
         if brief_fallback_used
         else automatic_rendered
     )
+    selected_reference, selected_reference_meta = prepare_selected_reference_context(
+        project,
+        fixture,
+        reference_setup,
+        8,
+        1_500,
+    )
+    if selected_reference:
+        rendered = rendered.rstrip() + "\n\n" + selected_reference
     marker_metrics = canonical_briefing_marker_metrics(fixture, rendered)
 
     session = mcp_call(
@@ -2233,7 +2333,7 @@ def prepare_ley_automatic_context(
             "session-start+automatic-hook-projection+explicit-brief-fallback"
             if brief_fallback_used
             else "session-start+automatic-hook-projection"
-        ),
+        ) + ("+selected-source-search" if selected_reference else ""),
         "explicitBriefPackId": explicit_pack_id,
         "automaticPackId": automatic_pack_id or None,
         "logicalPackMatched": (
@@ -2251,6 +2351,7 @@ def prepare_ley_automatic_context(
         "automaticForbiddenMarkerLeakCount": automatic_marker_metrics[
             "forbiddenMarkerLeakCount"
         ],
+        **selected_reference_meta,
         **marker_metrics,
         **reference_setup,
     }
@@ -2361,19 +2462,16 @@ def variants_for_repetition(
     first_variant: str,
     repetition: int,
 ) -> tuple[str, ...]:
+    if selected_variant in RETIRED_VARIANTS:
+        raise RuntimeError(
+            "ley-auto is retired by ADR 0086; use the recorded 2026-10-01 B1 result for that historical workflow"
+        )
     if selected_variant not in {"all", "both", "briefing"}:
         return (selected_variant,)
     if selected_variant == "briefing":
-        if first_variant not in BRIEFING_VARIANTS:
-            raise RuntimeError(
-                "--variant briefing requires ley-brief or ley-auto as --first-variant"
-            )
-        first = (
-            first_variant
-            if repetition % 2 == 1
-            else ("ley-auto" if first_variant == "ley-brief" else "ley-brief")
+        raise RuntimeError(
+            "--variant briefing is retired by ADR 0086 because initialized-project automatic task injection is no longer shipped"
         )
-        return (first, "ley-auto" if first == "ley-brief" else "ley-brief")
     if selected_variant == "both":
         if first_variant not in {"baseline", "ley"}:
             raise RuntimeError("--variant both requires baseline or ley as --first-variant")
@@ -2384,7 +2482,9 @@ def variants_for_repetition(
         )
         return (first, "ley" if first == "baseline" else "baseline")
 
-    ordered = list(COMPARISON_VARIANTS)
+    if first_variant in RETIRED_VARIANTS:
+        raise RuntimeError("--first-variant ley-auto is retired by ADR 0086")
+    ordered = list(ACTIVE_COMPARISON_VARIANTS)
     start = ordered.index(first_variant)
     ordered = ordered[start:] + ordered[:start]
     offset = (repetition - 1) % len(ordered)
@@ -2569,6 +2669,10 @@ def execute_variant(
     max_tokens: int,
     capture_audit: bool,
 ) -> dict[str, object]:
+    if variant in RETIRED_VARIANTS:
+        raise RuntimeError(
+            "ley-auto is retired by ADR 0086; current initialized UserPromptSubmit is capture-only"
+        )
     if variant not in COMPARISON_VARIANTS:
         raise RuntimeError(f"unsupported agent-task variant: {variant!r}")
     project = root / "project"
@@ -2938,8 +3042,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("all", "both", "briefing", *COMPARISON_VARIANTS),
         default="all",
         help=(
-            "Run all six comparison arms, legacy baseline+Ley, canonical explicit-vs-automatic "
-            "briefing, or one arm. "
+            "Run all current comparison arms, legacy baseline+Ley, or one arm. The historical "
+            "ley-auto/briefing workflow is retained only as recorded evidence after ADR 0086. "
             "The minimal arm is a fixture-derived benchmark baseline, not the redesigned Ley implementation."
         ),
     )
@@ -3064,10 +3168,12 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"invalid --runner-env name: {name!r}")
     if args.variant == "both" and args.first_variant not in {"baseline", "ley"}:
         raise SystemExit("--variant both requires --first-variant baseline or ley")
-    if args.variant == "briefing" and args.first_variant not in BRIEFING_VARIANTS:
+    if args.variant in RETIRED_VARIANTS or args.variant == "briefing":
         raise SystemExit(
-            "--variant briefing requires --first-variant ley-brief or ley-auto"
+            "the ley-auto briefing comparison is retired by ADR 0086; use the recorded 2026-10-01 B1 result"
         )
+    if args.variant == "all" and args.first_variant in RETIRED_VARIANTS:
+        raise SystemExit("--first-variant ley-auto is retired by ADR 0086")
     if args.require_ley_advantage and args.variant not in {"all", "both"}:
         raise SystemExit("--require-ley-advantage requires --variant all or both")
     command = shlex.split(args.runner_command)
@@ -3242,8 +3348,12 @@ def main(argv: list[str] | None = None) -> int:
             "interpretation": (
                 "This is an opt-in external-agent observation. The handoff and minimal arms are simpler "
                 "comparison baselines; the minimal arm is fixture-derived and is not a claim that redesigned "
-                "Ley already exists. The canonical ley-brief and ley-auto arms isolate explicit full briefing "
-                "from the compact automatic host projection while preserving the historical full-Ley arm. "
+                "Ley already exists. The current Ley arms use the shipped canonical surfaces; explicit "
+                "cross-project fixtures use one separate projectId-qualified ley_search rather than retired "
+                "Context Mount contribution. The current executable harness keeps ley-brief as the explicit "
+                "active-project briefing arm; initialized-project ley-auto injection is retired by ADR 0086 and "
+                "remains only as historical summary slots for the recorded 2026-10-01 B1 study. Historical Phase-0 "
+                "results remain separate evidence for the older implementation and are not silently attributed to this one. "
                 "Results are not a deterministic CI gate, do not prove causation, and must be reproduced "
                 "before product claims."
             ),

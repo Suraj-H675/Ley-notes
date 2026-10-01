@@ -531,11 +531,20 @@ impl KnowledgeScopeRegistry {
         operation: impl FnOnce(KnowledgeScopeEgressSources) -> Result<T, LeyCoreError>,
     ) -> Result<T, LeyCoreError> {
         let active_project_id = diagnose_project(active_project)?.identity.project_id;
+        self.with_agent_context_sources_for_project_id_locked(&active_project_id, operation)
+    }
+
+    pub fn with_agent_context_sources_for_project_id_locked<T>(
+        &self,
+        active_project_id: &str,
+        operation: impl FnOnce(KnowledgeScopeEgressSources) -> Result<T, LeyCoreError>,
+    ) -> Result<T, LeyCoreError> {
+        validate_project_id(active_project_id)?;
         self.with_locked_document(|document| {
             let mut active = Vec::new();
             for scope_id in document
                 .attachments
-                .get(&active_project_id)
+                .get(active_project_id)
                 .into_iter()
                 .flat_map(|items| items.keys())
             {
@@ -553,7 +562,7 @@ impl KnowledgeScopeRegistry {
             }
             let mut historical = document
                 .attachment_history
-                .get(&active_project_id)
+                .get(active_project_id)
                 .into_iter()
                 .flat_map(|items| items.iter())
                 .flat_map(|(scope_id, source_ids)| {

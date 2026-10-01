@@ -1351,7 +1351,7 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
                 println!("{{}}");
                 return Ok(());
             }
-            native_cli_legacy_placeholder(&project_id, &continuity_store)?
+            continuity_store.native_legacy_placeholder_path(&project_id)?
         }
         Err(LeyCoreError::BoundVaultUnavailable { path, .. }) if vault.is_none() => {
             if !ley_core::native_canonical_read_authority_available(&project, &continuity_store)? {
@@ -2245,7 +2245,7 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
         Err(LeyCoreError::VaultNotBound(project_id)) if parsed.vault.is_none() => {
             let store = ContinuityStore::system_default()?;
             if ley_core::native_canonical_read_authority_available(&parsed.project, &store)? {
-                native_cli_legacy_placeholder(&project_id, &store)?
+                store.native_legacy_placeholder_path(&project_id)?
             } else {
                 return run_unavailable_stdio(
                     "Ley is initialized but canonical continuity is not ready. Run a deliberate 'ley ingest' for native projects, or reconnect/migrate the legacy vault for older projects.",
@@ -3067,23 +3067,6 @@ struct CliContinuityAccess {
     native_born_registered: bool,
 }
 
-fn native_cli_legacy_placeholder(
-    project_id: &str,
-    store: &ContinuityStore,
-) -> Result<PathBuf, LeyCoreError> {
-    let parent = store.path().parent().ok_or_else(|| {
-        LeyCoreError::InvalidContinuityStore(
-            "continuity database has no parent directory for native CLI access".to_owned(),
-        )
-    })?;
-    let path = parent.join("native-no-legacy-vault").join(project_id);
-    match std::fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path),
-        Err(source) => Err(LeyCoreError::Io { path, source }),
-        Ok(_) => Err(LeyCoreError::UnsafeProjectLayout(path)),
-    }
-}
-
 fn with_cli_continuity_access<T>(
     project: &Path,
     vault_override: Option<&Path>,
@@ -3108,7 +3091,7 @@ fn with_cli_continuity_access<T>(
                 return Err(LeyCoreError::VaultNotBound(project_id).into());
             }
             let access = CliContinuityAccess {
-                legacy_vault_path: native_cli_legacy_placeholder(&project_id, &store)?,
+                legacy_vault_path: store.native_legacy_placeholder_path(&project_id)?,
                 binding: None,
                 native_born_registered,
             };

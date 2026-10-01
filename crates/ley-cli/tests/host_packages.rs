@@ -69,7 +69,7 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
     }
     assert_eq!(
         hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["statusMessage"],
-        "Loading Ley task context"
+        "Capturing Ley turn"
     );
     assert_eq!(hooks["hooks"]["PostToolUse"][0]["matcher"], "Bash");
     assert_eq!(hooks["hooks"]["PostToolUseFailure"][0]["matcher"], "Bash");
@@ -89,7 +89,7 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
 }
 
 #[test]
-fn codex_prompt_hook_keeps_automatic_context_inside_an_explicit_host_bound() {
+fn codex_prompt_hook_is_bounded_capture_only() {
     let root = repository_root();
     let plugin = root.join("integrations/codex/plugins/ley-memory");
     let mcp = json(plugin.join(".mcp.json"));
@@ -102,7 +102,7 @@ fn codex_prompt_hook_keeps_automatic_context_inside_an_explicit_host_bound() {
 
     assert_eq!(handler["command"], "ley hook --host codex");
     assert_eq!(handler["additionalContextLimit"], 5_000);
-    assert_eq!(handler["statusMessage"], "Loading Ley task context");
+    assert_eq!(handler["statusMessage"], "Capturing Ley turn");
     let post_tool = &hooks["hooks"]["PostToolUse"][0];
     assert_eq!(post_tool["matcher"], "Bash");
     assert_eq!(post_tool["hooks"][0]["command"], "ley hook --host codex");
@@ -114,7 +114,7 @@ fn codex_prompt_hook_keeps_automatic_context_inside_an_explicit_host_bound() {
 }
 
 #[test]
-fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
+fn packaged_skills_teach_explicit_task_retrieval_without_weak_memory_padding() {
     let root = repository_root();
     for path in [
         root.join("integrations/claude-code/ley-memory/skills/ley-memory/SKILL.md"),
@@ -130,7 +130,7 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             );
         }
         assert!(
-            skill.contains("# Ley task context (automatic)"),
+            !skill.contains("Read the `# Ley task context (automatic)` block"),
             "{}",
             path.display()
         );
@@ -174,7 +174,18 @@ fn packaged_skills_prefer_compiled_task_context_without_weak_memory_padding() {
             path.display()
         );
         assert!(
-            normalized_skill.contains("Do not duplicate an adequate automatic pack"),
+            normalized_skill.contains("does not inject task-specific project history"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill
+                .contains("Call `ley_brief` when prior continuity would materially help"),
+            "{}",
+            path.display()
+        );
+        assert!(
+            normalized_skill.contains("Do not call it reflexively on every turn"),
             "{}",
             path.display()
         );

@@ -55,6 +55,8 @@ pub enum FactProvenance {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GraphCitation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub artifact_path: String,
     pub start_line: u64,
     pub start_column: u64,
@@ -1183,6 +1185,7 @@ fn citation(
     range: tree_sitter::Range,
 ) -> GraphCitation {
     GraphCitation {
+        project_id: None,
         artifact_path: source.artifact.path.clone(),
         start_line: range.start_point.row as u64 + 1,
         start_column: range.start_point.column as u64 + 1,
@@ -1211,6 +1214,7 @@ fn full_file_citation(source: &GraphSource, artifact_snapshot_id: &str) -> Graph
         )
     };
     GraphCitation {
+        project_id: None,
         artifact_path: source.artifact.path.clone(),
         start_line,
         start_column,
@@ -1512,6 +1516,7 @@ fn line_citation(source: &GraphSource, snapshot: &str, needle: &str) -> GraphCit
         .map(|index| index as u64 + 1)
         .unwrap_or(1);
     GraphCitation {
+        project_id: None,
         artifact_path: source.artifact.path.clone(),
         start_line: line,
         start_column: 1,
@@ -1994,6 +1999,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&citation).unwrap(), legacy);
 
         let media = GraphCitation {
+            project_id: None,
             artifact_path: "verification.png".to_owned(),
             start_line: 0,
             start_column: 0,
