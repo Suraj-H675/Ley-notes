@@ -609,10 +609,6 @@ pub(crate) struct ApprovedSourceAuthoritySnapshot<'a> {
 }
 
 impl ApprovedSourceAuthoritySnapshot<'_> {
-    pub(crate) fn store(&self) -> &ContinuityStore {
-        self.store
-    }
-
     pub(crate) fn read_approved_source(
         &self,
         project_start: impl AsRef<Path>,

@@ -450,13 +450,8 @@ fn admission_basis_label(basis: ContextAdmissionBasis) -> &'static str {
 mod tests {
     use super::*;
     use crate::{
-        compile_project_context_for_agent_with_registries, compile_project_context_with_registries,
-        ingest_project, initialize_project, AgentContextAuthorities, AgentEgressTarget,
-        ApprovedSourceRegistry, BindingRegistry, CaptureMode, ContextCompileLimits,
-        ContextMountRegistry, ContinuityStore, EgressPolicyRegistry, KnowledgeScopeKind,
-        KnowledgeScopeRegistry, PolicyBundleRegistry, PolicyBundleSourceInput,
-        SpecificationRegistry, BINDING_REGISTRY_FILE, CONTEXT_MOUNT_REGISTRY_FILE,
-        KNOWLEDGE_SCOPE_REGISTRY_FILE,
+        compile_project_context_with_registries, ingest_project, initialize_project, CaptureMode,
+        ContextCompileLimits, ContextMountRegistry, SpecificationRegistry,
     };
     use std::fs;
     use tempfile::tempdir;

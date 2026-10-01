@@ -84,11 +84,9 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 
 - retrieval recall/precision and strict token-budget enforcement;
 - selective abstention when no useful memory exists;
-- crash recovery, transition binding, session/learning mutation idempotency, and origin-lineage preservation;
+- read-only crash/interruption recovery, session/learning mutation idempotency, and origin-lineage preservation;
 - meaningful-boundary local consolidation review, direct turn-evidence lineage, and terminal-session non-mutation;
-- human-intent Specification admission plus revision-bound structured Acceptance criteria and Verification methods, Context Mount isolation, premise resistance, and revision applicability;
-- explicit external GitHub connector scope/egress, read-only MCP exposure, stable remove/re-add identity, and non-laundering;
-- reusable team/organization Knowledge Scope authority, bounded multi-source retrieval, source-egress inheritance, detach ancestry, and non-laundering;
+- human-intent Specification admission using exact approved Markdown, premise resistance, and revision applicability;
 - parallel-session separation and cross-host durability;
 - secret/cross-project/model-egress privacy violation rate;
 - deletion fidelity and forgetting-residue rate across Ley-managed raw/derived retrieval surfaces;
@@ -146,24 +144,27 @@ the Context Compiler must report `conflicting-state` and withhold both historica
 task-supporting context rather than choosing a winner by host or recency.
 
 That pre-review conflicting pack is also one of the deterministic explainable-failure diagnostic
-representatives. `ley_context_pack_inspect` must reproduce the exact compiled `contextPackId`, preserve
-both stable Decision IDs as admission-stage `conflicting-memory` exclusions, and expose a conflict row
-that names those same two IDs while the premise remains `conflicting-state`. The Inspector coverage
-must report `searchTruncated: false`, so the conflict condition is not conflated with bounded retrieval
-loss. `conflict_failure_attribution` therefore proves an explicit historical-memory conflict diagnostic;
-it does not claim that conflict was the causal reason for an arbitrary downstream model failure.
+representatives. The canonical Brief itself must preserve the conflicting premise state and withhold
+both stable Decision IDs as `conflicting-memory` exclusions without retrieval-truncation ambiguity. This
+proves an explicit historical-memory conflict boundary; it does not claim that conflict was the causal
+reason for an arbitrary downstream model failure.
 
-The evaluator then proposes one new project-level learning that cites the two exact session/checkpoint
-pairs, explicitly reviews it as the local user, and re-reads every surface. The learning must be
+The evaluator then proposes one new project-level learning through the local CLI that cites the two exact
+session/checkpoint pairs, explicitly reviews it as the local user, and re-reads the current surfaces. The learning must be
 verified/trusted/current, corroborated by both sessions, retain a review-required automatic authority
-ceiling plus `causalCompletenessProven: false`, appear in current-trusted Memory Search, and enter
+ceiling plus `causalCompletenessProven: false`, appear in canonical Search, and enter
 compiled task context as `trusted-current`. Both original session checkpoint/Decision projections must
 remain byte-for-byte equivalent to their pre-review JSON projection, and the compiler must continue to
 withhold both Decision IDs as `conflicting-memory` while preserving the historical conflict disclosure.
 Review therefore adds a trusted current synthesis without rewriting, merging, or falsely claiming to
 supersede either agent's episodic history.
 
-ADR 0068 extends the existing Specification representatives rather than adding a weaker standalone score. `specification-authority-context` requires one exact revision-bound `acr_` row with raw criterion text, source line range, `statusInterpreted: false`, and `persisted: false`; the empty-workspace bootstrap representative requires the same shared projection before target initialization. ADR 0071 extends those same representatives with exact revision-bound `vmd_` Verification-method rows and requires `criterionBindingProven: false`, `observedResultBindingProven: false`, `statusInterpreted: false`, and `persisted: false`. Acceptance criteria retain budget priority over methods. The egress canary places separate private markers inside both an Acceptance criterion and Verification method so a blocked Specification must withhold the whole source and both derived fields. Core regressions prove parser/container false-positive resistance, atomic limits, compiler/Policy-Bundle parity, and that methods use only budget left after existing context plus Acceptance criteria. MCP regressions prove the 256 KiB transport guard drops methods before criteria and preserves the parent before falling back to the existing oversized-result error. ADR 0070 adds the exact criterion-to-historical-Verification review; ADR 0072 extends that same review in-place with optional exact `verificationMethodId`. The real `specification-authority-context` scenario now supplies the projected `acr_`, projected `vmd_`, and real session `ver_` together, requires the method-aware link fingerprint/boundary and exact handles, and still requires method execution/outcome, criterion satisfaction, semantic coverage, current implementation, persistence, automatic-write, and live-source proof to remain false.
+Current Specification representatives use the exact approved Markdown revision as the human-intent source.
+Acceptance-criteria and Verification-method headings remain ordinary source prose; the retired `acr_`/`vmd_`
+derived product objects are not release claims. The egress canary places private markers inside requirement/
+method prose so a blocked Specification must withhold the whole source. Historical Verification remains a
+separate evidence channel and never automatically proves requirement satisfaction, method execution, semantic
+coverage, current implementation, or live-source truth.
 
 ## Downstream task contract and baseline
 
@@ -188,7 +189,6 @@ surface:
 
 - Context Compiler;
 - Specifications;
-- Context Mounts;
 - origin-preserving derivation lineage;
 - premise/state adjudication;
 - revision awareness; and
@@ -197,33 +197,21 @@ surface:
 Their downstream matrix cell must reference `downstream_task_contract`; the evaluator rejects a P0
 configuration that aliases those cells back to the capability's adversarial/regression metric.
 Representative contracts prove, for example, that a current replacement learning reaches task
-context while its superseded guidance does not; an explicitly mounted reference contributes the
-requested marker while an unmounted project does not; divergent branch state is withheld before merge
-and becomes usable only after Git proves it merged; relevant Specification criteria/method content is
-present while an unrelated Specification is absent; and egress-gated private context is usable for the
-allowed local target while absent from blocked targets. Origin lineage uses a deliberately different
-form of the same contract: after explicit user review, the exact learning guidance and mechanically
-resolved lineage must remain available through `ley_learning_get`, while an `uncited` learning keeps
-`trustedForReuse: false` and must not be auto-injected by the Context Compiler merely because the
-review action marked it trusted.
+context while its superseded guidance does not; divergent branch state is withheld before merge and becomes
+usable only after Git proves it merged; relevant exact approved Specification source is present while an
+unrelated Specification is absent; and egress-gated private context is usable for the allowed local target
+while absent from blocked targets. Origin lineage uses a deliberately different form of the same contract:
+after explicit user review, local learning inspection preserves the exact mechanically resolved origins,
+canonical Search reports the trusted-current learning, and Brief admits it without auto-injecting uncited or
+untrusted history.
 
 The same rule is applied selectively to P1 surfaces that actually produce reusable task-facing
 knowledge rather than merely diagnostics. The current P1 downstream cell is Bootstrap Specifications.
 Its contract proves independently usable output rather than reusing the feature's overall pass bit:
 approved intent must remain exact while prompt/live-target canaries stay withheld.
 
-P2 applies the same rule only where the expansion itself feeds reusable agent context:
-
-- external reference connectors;
-- team/organization Knowledge Scopes;
-- team/organization Policy Bundles; and
-- explicit historical host import.
-
-External-reference contracts require the relevant historical context to be usable for the allowed
-local target while absent from a blocked cloud target. Knowledge Scope contracts require all explicitly
-attached shared markers while excluding unrelated scope material. Policy Bundle contracts require the
-allowed bundled policy plus active-project human intent while excluding unrelated/conflicting private
-policy text. Historical-import contracts require the explicitly selected host turns to remain
+P2 applies the same independent downstream rule only to **explicit historical host import**, because that
+capability itself feeds progressively readable/discoverable historical context. Its contract requires the explicitly selected host turns to remain
 progressively readable/discoverable while unrelated-session and secret markers stay absent.
 
 Multimodal evidence and local consolidation remain on their native provenance/review metrics: their
@@ -295,7 +283,7 @@ content. It requires the exact retry to return the same event/learning identity 
 The same contract is then exercised through explicit user review: one confirm review is recorded,
 an exact retry replays the same review event, and a same-request/different-note retry is rejected. The
 final learning must remain exactly two durable events (proposal + review), with verified/trusted state.
-This is idempotency evidence only. Historical Context Utility / Procedure-application experiments are no longer active deterministic release scenarios after the canonical MCP contraction; their durable event semantics remain covered by focused core/session tests until compatibility cleanup is complete.
+This is idempotency evidence only. Historical Context Utility / Procedure-application experiments are no longer active deterministic release scenarios after the canonical MCP contraction; their durable event semantics remain covered by focused core/session compatibility tests without re-entering the release matrix.
 
 ## Immediate and delayed memory-poisoning resistance
 

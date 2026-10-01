@@ -253,22 +253,6 @@ impl ContextMountRegistryDocument {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedProjectContextMount {
-    pub mount_id: String,
-    pub source_project_id: String,
-    pub source_project_name: String,
-    pub project_root: PathBuf,
-    pub vault_path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ResolvedProjectContextMounts {
-    pub active_project_id: String,
-    pub ready: Vec<ResolvedProjectContextMount>,
-    pub unavailable: Vec<ContextMount>,
-}
-
-#[derive(Debug, Clone)]
 pub struct ContextMountRegistry {
     path: PathBuf,
     project_catalog: ProjectCatalog,
@@ -499,90 +483,6 @@ impl ContextMountRegistry {
                         source_project_id,
                     })
                     .collect(),
-            })
-        })
-    }
-
-    pub(crate) fn with_resolved_project_mounts_locked<T>(
-        &self,
-        active_project: impl AsRef<Path>,
-        operation: impl FnOnce(ResolvedProjectContextMounts) -> Result<T, LeyCoreError>,
-    ) -> Result<T, LeyCoreError> {
-        let active = diagnose_project(active_project)?;
-        let active_project_id = active.identity.project_id;
-        self.with_locked_document(|document| {
-            let entries = document
-                .mounts
-                .get(&active_project_id)
-                .cloned()
-                .unwrap_or_default();
-            let mut historical = document
-                .agent_mount_history
-                .get(&active_project_id)
-                .cloned()
-                .unwrap_or_default();
-            for (mount_id, entry) in entries
-                .iter()
-                .filter(|(_, entry)| entry.agent_context_enabled)
-            {
-                historical
-                    .entry(mount_id.clone())
-                    .or_insert_with(|| entry.source_project_id.clone());
-            }
-            let mut ready = Vec::new();
-            let mut unavailable = Vec::new();
-            for (mount_id, entry) in entries {
-                if !entry.agent_context_enabled {
-                    continue;
-                }
-                let mut public_mount =
-                    self.resolve_mount(&active_project_id, mount_id.clone(), entry.clone())?;
-                if public_mount.status != ContextMountStatus::Ready {
-                    unavailable.push(public_mount);
-                    continue;
-                }
-                let Some(observed) = self.project_catalog.get(&entry.source_project_id)? else {
-                    public_mount.status = ContextMountStatus::SourceProjectUnavailable;
-                    unavailable.push(public_mount);
-                    continue;
-                };
-                let diagnostic = match diagnose_project(&observed.root_path) {
-                    Ok(diagnostic) if diagnostic.identity.project_id == entry.source_project_id => {
-                        diagnostic
-                    }
-                    Ok(_) => {
-                        public_mount.status = ContextMountStatus::SourceIdentityChanged;
-                        unavailable.push(public_mount);
-                        continue;
-                    }
-                    Err(_) => {
-                        public_mount.status = ContextMountStatus::SourceProjectUnavailable;
-                        unavailable.push(public_mount);
-                        continue;
-                    }
-                };
-                let binding = match self.binding_registry.resolve_observed(&diagnostic) {
-                    Ok(binding) => binding,
-                    Err(_) => {
-                        public_mount.status = ContextMountStatus::SourceVaultUnavailable;
-                        unavailable.push(public_mount);
-                        continue;
-                    }
-                };
-                ready.push(ResolvedProjectContextMount {
-                    mount_id,
-                    source_project_id: entry.source_project_id,
-                    source_project_name: diagnostic.identity.name,
-                    project_root: diagnostic.root,
-                    vault_path: binding.vault_path,
-                });
-            }
-            ready.sort_by(|left, right| left.mount_id.cmp(&right.mount_id));
-            unavailable.sort_by(|left, right| left.mount_id.cmp(&right.mount_id));
-            operation(ResolvedProjectContextMounts {
-                active_project_id: active_project_id.clone(),
-                ready,
-                unavailable,
             })
         })
     }
@@ -1118,8 +1018,8 @@ mod tests {
         let reader_active = fixture.active.clone();
         let reader = std::thread::spawn(move || {
             reader_registry
-                .with_resolved_project_mounts_locked(reader_active, |resolved| {
-                    assert_eq!(resolved.ready.len(), 1);
+                .with_agent_context_sources_locked(reader_active, |sources| {
+                    assert_eq!(sources.active.len(), 1);
                     entered_tx.send(()).unwrap();
                     release_rx.recv().unwrap();
                     Ok(())
@@ -1147,6 +1047,17 @@ mod tests {
             .unwrap()
             .mounts
             .is_empty());
+        fixture
+            .registry
+            .with_agent_context_sources_locked(&fixture.active, |sources| {
+                assert!(sources.active.is_empty());
+                assert!(sources.historical.iter().any(|source| {
+                    source.mount_id == mounted.mount.mount_id
+                        && source.source_project_id == mounted.mount.source_project_id
+                }));
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -1244,9 +1155,9 @@ mod tests {
         assert_eq!(before.agent_context_enabled, 0);
         fixture
             .registry
-            .with_resolved_project_mounts_locked(&fixture.active, |resolved| {
-                assert!(resolved.ready.is_empty());
-                assert!(resolved.unavailable.is_empty());
+            .with_agent_context_sources_locked(&fixture.active, |sources| {
+                assert!(sources.active.is_empty());
+                assert!(sources.historical.is_empty());
                 Ok(())
             })
             .unwrap();
@@ -1274,6 +1185,16 @@ mod tests {
             persisted["agentMountHistory"][&active_id][&mount_id],
             source_id
         );
+        fixture
+            .registry
+            .with_agent_context_sources_locked(&fixture.active, |sources| {
+                assert_eq!(sources.active.len(), 1);
+                assert_eq!(sources.historical.len(), 1);
+                assert_eq!(sources.active[0].mount_id, mount_id);
+                assert_eq!(sources.active[0].source_project_id, source_id);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

@@ -48,7 +48,6 @@ METRIC_NAMES = (
     "selective_abstention",
     "parallel_session_separation",
     "parallel_session_reconciliation",
-    "conflict_failure_attribution",
     "cross_surface_staleness",
     "long_horizon_continuity",
     "weeks_later_continuation",
@@ -61,7 +60,6 @@ METRIC_NAMES = (
     "budget_full_history_efficiency",
     "retrieval_robustness",
     "privacy_violation_rate",
-    "failure_attribution",
     "verification_evidence_links",
     "live_source_honesty",
     "branch_worktree_controls",
@@ -3388,91 +3386,36 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             before_checkpoint_a = json.dumps(checkpoint_a, sort_keys=True)
             before_checkpoint_b = json.dumps(checkpoint_b, sort_keys=True)
 
-            conflict_pack_id = str(compiled.get("contextPackId", ""))
-            conflict_inspection = mcp_call(
-                project,
-                "ley_context_pack_inspect",
-                {
-                    "task": title,
-                    "maxResults": 8,
-                    "maxTokens": 1_500,
-                    "expectedContextPackId": conflict_pack_id,
-                },
+            proposed = cli_json(
+                [
+                    "learning",
+                    "propose",
+                    str(project),
+                    "--request-id",
+                    request_id(f"{scenario['id']}:parallel:reconcile:proposal"),
+                    "--actor",
+                    "agent",
+                    "--provenance",
+                    "inferred",
+                    "--kind",
+                    "fact",
+                    "--title",
+                    title_reconciled,
+                    "--guidance",
+                    guidance_reconciled,
+                    "--confidence",
+                    "95",
+                    "--evidence",
+                    f"{session_a}:{checkpoint_id_a}",
+                    "--evidence",
+                    f"{session_b}:{checkpoint_id_b}",
+                    "--json",
+                ]
             )
-            conflict_exclusions = [
-                item
-                for item in conflict_inspection.get("activeProjectExclusions", [])
-                if isinstance(item, dict)
-            ]
-            inspected_conflicts = [
-                item
-                for item in conflict_inspection.get("conflicts", [])
-                if isinstance(item, dict)
-            ]
-            conflict_premise = conflict_inspection.get("premiseAdjudication", {})
-            conflict_coverage = conflict_inspection.get("coverage", {})
-            conflict_failure_attribution_ok = (
-                decision_id_a.startswith("dec_")
-                and decision_id_b.startswith("dec_")
-                and decision_id_a != decision_id_b
-                and conflict_pack_id.startswith("cpk_")
-                and conflict_inspection.get("contextPackId") == conflict_pack_id
-                and conflict_inspection.get("expectedContextPackId") == conflict_pack_id
-                and conflict_inspection.get("matchesExpectedContextPack") is True
-                and all(
-                    any(
-                        item.get("entityId") == decision_id
-                        and item.get("stage") == "admission"
-                        and item.get("reason") == "conflicting-memory"
-                        for item in conflict_exclusions
-                    )
-                    for decision_id in (decision_id_a, decision_id_b)
-                )
-                and any(
-                    decision_id_a in item.get("entityIds", [])
-                    and decision_id_b in item.get("entityIds", [])
-                    for item in inspected_conflicts
-                )
-                and isinstance(conflict_premise, dict)
-                and conflict_premise.get("state") == "conflicting-state"
-                and isinstance(conflict_coverage, dict)
-                and conflict_coverage.get("searchTruncated") is False
-                and conflict_inspection.get("liveSourceChecked") is False
+            proposed_learning = (
+                proposed.get("learning", {}) if isinstance(proposed, dict) else {}
             )
-            scores["conflict_failure_attribution"] = conflict_failure_attribution_ok
-            scores["failure_attribution"] = conflict_failure_attribution_ok
-            evidence_text.append(conflict_inspection)
-            if not conflict_failure_attribution_ok:
-                failures.append(
-                    "parallel conflict diagnostics did not preserve both stable Decision IDs as admission-stage conflicting-memory exclusions plus one non-truncated conflict row"
-                )
-
-            proposed = mcp_call(
-                project,
-                "ley_learning_propose",
-                {
-                    "requestId": request_id(f"{scenario['id']}:parallel:reconcile:proposal"),
-                    "kind": "fact",
-                    "title": title_reconciled,
-                    "guidance": guidance_reconciled,
-                    "confidencePercent": 95,
-                    "provenance": "inferred",
-                    "evidence": [
-                        {
-                            "sessionId": session_a,
-                            "recordId": checkpoint_id_a,
-                            "note": "Reviewed parallel workstream A evidence.",
-                        },
-                        {
-                            "sessionId": session_b,
-                            "recordId": checkpoint_id_b,
-                            "note": "Reviewed parallel workstream B evidence.",
-                        },
-                    ],
-                },
-                WRITE_FLAGS,
-            )
-            learning_id = str(proposed.get("learningId", ""))
+            learning_id = str(proposed_learning.get("learningId", ""))
             reviewed = cli_json(
                 [
                     "learning",

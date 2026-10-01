@@ -131,30 +131,6 @@ pub struct KnowledgeScopeEgressSources {
     pub historical: Vec<KnowledgeScopeEgressSource>,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ResolvedKnowledgeScopeSource {
-    pub source_project_id: String,
-    pub source_project_name: String,
-    pub project_root: PathBuf,
-    pub vault_path: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ResolvedKnowledgeScope {
-    pub scope_id: String,
-    pub kind: KnowledgeScopeKind,
-    pub name: String,
-    pub ready: Vec<ResolvedKnowledgeScopeSource>,
-    pub unavailable: Vec<KnowledgeScopeSource>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ResolvedKnowledgeScopes {
-    pub active_project_id: String,
-    pub scopes: Vec<ResolvedKnowledgeScope>,
-    pub historical_sources: Vec<KnowledgeScopeEgressSource>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct KnowledgeScopeEntry {
@@ -604,73 +580,6 @@ impl KnowledgeScopeRegistry {
         })
     }
 
-    pub(crate) fn with_resolved_scopes_locked<T>(
-        &self,
-        active_project: impl AsRef<Path>,
-        operation: impl FnOnce(ResolvedKnowledgeScopes) -> Result<T, LeyCoreError>,
-    ) -> Result<T, LeyCoreError> {
-        let active_project_id = diagnose_project(active_project)?.identity.project_id;
-        self.with_locked_document(|document| {
-            let mut scopes = Vec::new();
-            for scope_id in document
-                .attachments
-                .get(&active_project_id)
-                .into_iter()
-                .flat_map(|items| items.keys())
-            {
-                let entry = document.scopes.get(scope_id).ok_or_else(|| {
-                    LeyCoreError::InvalidKnowledgeScopeRegistry(format!(
-                        "attachment references missing scope {scope_id}"
-                    ))
-                })?;
-                let mut ready = Vec::new();
-                let mut unavailable = Vec::new();
-                for source_project_id in &entry.source_project_ids {
-                    match self.resolve_source_for_agent(source_project_id)? {
-                        ResolvedSource::Ready(source) => ready.push(source),
-                        ResolvedSource::Unavailable(source) => unavailable.push(source),
-                    }
-                }
-                ready.sort_by(|left, right| left.source_project_id.cmp(&right.source_project_id));
-                unavailable
-                    .sort_by(|left, right| left.source_project_id.cmp(&right.source_project_id));
-                scopes.push(ResolvedKnowledgeScope {
-                    scope_id: scope_id.clone(),
-                    kind: entry.kind,
-                    name: entry.name.clone(),
-                    ready,
-                    unavailable,
-                });
-            }
-            scopes.sort_by(|left, right| left.scope_id.cmp(&right.scope_id));
-            let mut historical_sources = document
-                .attachment_history
-                .get(&active_project_id)
-                .into_iter()
-                .flat_map(|items| items.iter())
-                .flat_map(|(scope_id, source_ids)| {
-                    source_ids
-                        .iter()
-                        .map(|source_project_id| KnowledgeScopeEgressSource {
-                            scope_id: scope_id.clone(),
-                            source_project_id: source_project_id.clone(),
-                        })
-                })
-                .collect::<Vec<_>>();
-            historical_sources.sort_by(|left, right| {
-                left.scope_id
-                    .cmp(&right.scope_id)
-                    .then_with(|| left.source_project_id.cmp(&right.source_project_id))
-            });
-            historical_sources.dedup();
-            operation(ResolvedKnowledgeScopes {
-                active_project_id,
-                scopes,
-                historical_sources,
-            })
-        })
-    }
-
     fn resolve_scope(
         &self,
         scope_id: String,
@@ -697,9 +606,9 @@ impl KnowledgeScopeRegistry {
         source_project_id: &str,
     ) -> Result<KnowledgeScopeSource, LeyCoreError> {
         match self.resolve_source_for_agent(source_project_id)? {
-            ResolvedSource::Ready(source) => Ok(KnowledgeScopeSource {
-                source_project_id: source.source_project_id,
-                source_project_name: Some(source.source_project_name),
+            ResolvedSource::Ready(source_project_name) => Ok(KnowledgeScopeSource {
+                source_project_id: source_project_id.to_owned(),
+                source_project_name: Some(source_project_name),
                 status: KnowledgeScopeSourceStatus::Ready,
             }),
             ResolvedSource::Unavailable(source) => Ok(source),
@@ -734,8 +643,8 @@ impl KnowledgeScopeRegistry {
                 }))
             }
         };
-        let binding = match self.binding_registry.resolve_observed(&diagnostic) {
-            Ok(binding) => binding,
+        match self.binding_registry.resolve_observed(&diagnostic) {
+            Ok(_) => {}
             Err(_) => {
                 return Ok(ResolvedSource::Unavailable(KnowledgeScopeSource {
                     source_project_id: source_project_id.to_owned(),
@@ -743,13 +652,8 @@ impl KnowledgeScopeRegistry {
                     status: KnowledgeScopeSourceStatus::SourceVaultUnavailable,
                 }))
             }
-        };
-        Ok(ResolvedSource::Ready(ResolvedKnowledgeScopeSource {
-            source_project_id: source_project_id.to_owned(),
-            source_project_name: diagnostic.identity.name,
-            project_root: diagnostic.root,
-            vault_path: binding.vault_path,
-        }))
+        }
+        Ok(ResolvedSource::Ready(diagnostic.identity.name))
     }
 
     fn with_locked_document<T>(
@@ -928,7 +832,7 @@ impl KnowledgeScopeRegistry {
 }
 
 enum ResolvedSource {
-    Ready(ResolvedKnowledgeScopeSource),
+    Ready(String),
     Unavailable(KnowledgeScopeSource),
 }
 
@@ -1263,9 +1167,8 @@ mod tests {
         let reader_active = fixture.active.clone();
         let reader = std::thread::spawn(move || {
             reader_registry
-                .with_resolved_scopes_locked(reader_active, |resolved| {
-                    assert_eq!(resolved.scopes.len(), 1);
-                    assert_eq!(resolved.scopes[0].ready.len(), 1);
+                .with_agent_context_sources_locked(reader_active, |sources| {
+                    assert_eq!(sources.active.len(), 1);
                     entered_tx.send(()).unwrap();
                     release_rx.recv().unwrap();
                     Ok(())

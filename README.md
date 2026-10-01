@@ -107,7 +107,7 @@ Work being retained or adapted includes:
 - six-lane Linux/macOS/Windows x64/ARM64 portability evidence;
 - host compatibility probes.
 
-Machine-managed state is planned to move from many custom JSON registries toward transactional SQLite, while large immutable evidence may remain content-addressed files. The old browser IndexedDB stores are currently left inert rather than destructively dropped; their final import/export handling belongs to that migration.
+Canonical artifact/session/learning/approved-source continuity now lives in transactional SQLite. A smaller set of legacy JSON registries remains only where it still carries migration, cleanup, or privacy/egress ancestry; those records no longer expand the canonical agent context surface. Large immutable evidence may remain content-addressed files. The old browser IndexedDB stores are left inert rather than destructively dropped until an explicit historical import/export/erasure decision is made.
 
 ## Evaluation before feature growth
 

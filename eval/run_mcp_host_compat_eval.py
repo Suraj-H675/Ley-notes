@@ -24,6 +24,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LEY_BIN = REPO_ROOT / "target" / "debug" / "ley"
+EXPECTED_CANONICAL_TOOL_COUNT = 4
 
 
 def run(
@@ -68,7 +69,7 @@ def proxy_main() -> int:
                 handle.flush()
 
     child = subprocess.Popen(
-        [ley_bin, "mcp", project],
+        [ley_bin, "mcp", project, "--allow-session-writes"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -215,11 +216,9 @@ def parse_traffic(path: Path) -> dict[str, Any]:
 
 def create_probe_project(base: Path, ley_bin: Path) -> tuple[Path, dict[str, str]]:
     project = base / "project"
-    vault = base / "vault"
     config = base / "ley-xdg-config"
     cache = base / "ley-xdg-cache"
     project.mkdir()
-    vault.mkdir()
     config.mkdir()
     cache.mkdir()
     (project / "README.md").write_text(
@@ -240,10 +239,6 @@ def create_probe_project(base: Path, ley_bin: Path) -> tuple[Path, dict[str, str
             "structured",
             "--json",
         ],
-        env=env,
-    )
-    run(
-        [str(ley_bin), "bind", str(project), "--vault", str(vault), "--json"],
         env=env,
     )
     run([str(ley_bin), "ingest", str(project), "--json"], env=env)
@@ -316,12 +311,14 @@ def probe_claude(
         and isinstance(traffic["serverProtocolVersion"], str)
         and bool(traffic["serverProtocolVersion"])
         and traffic["toolsListSucceeded"]
-        and int(traffic["toolCount"] or 0) > 0
+        and int(traffic["toolCount"] or 0) == EXPECTED_CANONICAL_TOOL_COUNT
     )
     return {
         "available": True,
         "version": version,
         "connected": connected,
+        "canonicalSurface": int(traffic["toolCount"] or 0)
+        == EXPECTED_CANONICAL_TOOL_COUNT,
         "healthCheckReturnCode": health.returncode,
         "traffic": traffic,
     }
@@ -456,14 +453,17 @@ def probe_codex(
         and isinstance(traffic["serverProtocolVersion"], str)
         and bool(traffic["serverProtocolVersion"])
         and traffic["toolsListSucceeded"]
-        and int(traffic["toolCount"] or 0) > 0
+        and int(traffic["toolCount"] or 0) == EXPECTED_CANONICAL_TOOL_COUNT
         and isinstance(tools, dict)
-        and len(tools) > 0
+        and len(tools) == EXPECTED_CANONICAL_TOOL_COUNT
+        and traffic["resourceCount"] == 0
+        and traffic["resourceTemplateCount"] == 0
     )
     return {
         "available": True,
         "version": version,
         "connected": connected,
+        "canonicalSurface": len(tools) == EXPECTED_CANONICAL_TOOL_COUNT,
         "appServerInitialized": app_server_initialized,
         "statusNotificationsObserved": len(
             [
@@ -483,7 +483,9 @@ def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(
         description=(
             "Probe installed Codex/Claude MCP negotiation with a disposable Ley project without "
-            "starting an LLM/model turn."
+            "starting an LLM/model turn. The disposable project is native-born and the proxy mirrors "
+            "the packaged write-enabled MCP configuration, so a healthy probe exposes exactly the "
+            "canonical four-tool surface."
         )
     )
     result.add_argument("--ley-bin", default=str(DEFAULT_LEY_BIN))
@@ -493,7 +495,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument(
         "--require-all",
         action="store_true",
-        help="Exit non-zero unless both installed host probes connect and inventory Ley.",
+        help="Exit non-zero unless both installed hosts connect to Ley's canonical four-tool surface.",
     )
     return result
 
@@ -515,6 +517,7 @@ def main() -> int:
             "schemaVersion": 1,
             "modelInvocationAttempted": False,
             "temporaryConfigurationOnly": True,
+            "expectedCanonicalToolCount": EXPECTED_CANONICAL_TOOL_COUNT,
             "leyBinary": str(ley_bin),
             "codex": (
                 probe_codex(
