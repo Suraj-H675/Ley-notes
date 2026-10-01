@@ -24,6 +24,8 @@ Normal resume context does not include:
 
 - complete transcripts or every historical checkpoint;
 - explicitly imported historical-host sessions;
+- recent session bodies whose latest captured checkpoint is positively classified as Git `divergent`
+  from the current checkout;
 - tentative, contested, rejected, superseded, or stale lessons;
 - previously trusted lessons whose cited source changed;
 - user-confirmed lessons with no artifact citation;
@@ -37,7 +39,17 @@ resume selection. This prevents an old host history snapshot imported today from
 as recent work. Imported sessions remain available through explicit session list/show/turn
 inspection and project-memory search.
 
-`liveSourceChecked: false` means the pack describes the latest approved ingestion, not necessarily the current working tree. Inspect live files through the current workspace before editing, and rerun `ley ingest` when the durable snapshot should advance.
+`withheldDivergentSessions` reports how many sessions inside the bounded `maxSessions` candidate
+window were withheld because their latest captured checkpoint is on Git history that is positively
+`divergent` from the current checkout. Ley does not scan arbitrarily deep history to backfill those
+slots. The session remains available through deliberate Search/session inspection, where revision
+applicability stays visible instead of being silently promoted into startup continuity.
+
+`liveSourceChecked: false` means the pack does not inspect current file contents and still describes the
+latest approved ingestion. Resume may inspect bounded local Git metadata to prevent positively divergent
+session history from being auto-injected; that is revision applicability evidence, not a live-source check.
+Inspect live files through the current workspace before editing, and rerun `ley ingest` when the durable
+snapshot should advance.
 
 ## Trust behavior
 

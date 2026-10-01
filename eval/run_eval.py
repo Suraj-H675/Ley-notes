@@ -1731,6 +1731,22 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": 1_500},
         )
+        divergent_host_start = hook_call(
+            project,
+            "codex",
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": f"{scenario['id']}-divergent-host",
+            },
+        )
+        divergent_host_context = hook_additional_context(divergent_host_start)
+        divergent_host_revision_safe = (
+            query.lower() not in divergent_host_context.lower()
+            and "revision safety: withheld" in divergent_host_context.lower()
+            and "divergent from the current checkout" in divergent_host_context.lower()
+            and str(project) not in divergent_host_context
+            and str(vault) not in divergent_host_context
+        )
         divergent_adjudication = divergent.get("premiseAdjudication", {})
         divergent_warning = (
             any(
@@ -1764,6 +1780,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and divergent_exclusion
             and divergent_decision_withheld
             and divergent_gap
+            and divergent_host_revision_safe
             and divergent.get("liveSourceChecked") is False
         )
 
@@ -1974,9 +1991,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "branch/worktree controls did not filter exact revision applicability or refresh session compatibility across merge"
                 )
         scores["privacy_violation_rate"] = privacy_violation_rate(
-            [str(project), str(vault)], [divergent, merged, *branch_controls_evidence]
+            [str(project), str(vault)],
+            [divergent, divergent_host_start, merged, *branch_controls_evidence],
         )
-        evidence_text.extend([divergent, merged, *branch_controls_evidence])
+        evidence_text.extend(
+            [divergent, divergent_host_start, merged, *branch_controls_evidence]
+        )
         if not revision_ok:
             failures.append(
                 "revision adjudication did not withhold divergent state and re-admit proven merged history"

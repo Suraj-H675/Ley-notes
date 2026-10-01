@@ -188,10 +188,18 @@ pub fn project_memory_overview(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
 ) -> Result<MemoryOverview, LeyCoreError> {
+    Ok(project_memory_overview_with_revision_resolver(project_start, vault)?.0)
+}
+
+pub(crate) fn project_memory_overview_with_revision_resolver(
+    project_start: impl AsRef<Path>,
+    vault: impl AsRef<Path>,
+) -> Result<(MemoryOverview, RevisionResolver), LeyCoreError> {
     let project_start = project_start.as_ref();
     let memory = load_project_memory(project_start, vault)?;
     let resolver = RevisionResolver::new(project_start, memory.graph.git.as_ref())?;
-    Ok(overview(&memory, resolver.freshness().clone()))
+    let memory_overview = overview(&memory, resolver.freshness().clone());
+    Ok((memory_overview, resolver))
 }
 
 pub fn project_memory_overview_with_continuity_transition(
@@ -199,13 +207,29 @@ pub fn project_memory_overview_with_continuity_transition(
     legacy_vault: impl AsRef<Path>,
     store: &ContinuityStore,
 ) -> Result<MemoryOverview, LeyCoreError> {
+    Ok(
+        project_memory_overview_with_continuity_transition_revision_resolver(
+            project_start,
+            legacy_vault,
+            store,
+        )?
+        .0,
+    )
+}
+
+pub(crate) fn project_memory_overview_with_continuity_transition_revision_resolver(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+) -> Result<(MemoryOverview, RevisionResolver), LeyCoreError> {
     let project_start = project_start.as_ref();
     let diagnostic = crate::diagnose_project(project_start)?;
     if let Some(snapshot) = store.current_artifact_snapshot(&diagnostic.identity.project_id)? {
         let resolver = RevisionResolver::new(project_start, snapshot.captured_git.as_ref())?;
-        return Ok(native_overview(&snapshot, resolver.freshness().clone()));
+        let memory_overview = native_overview(&snapshot, resolver.freshness().clone());
+        return Ok((memory_overview, resolver));
     }
-    project_memory_overview(project_start, legacy_vault)
+    project_memory_overview_with_revision_resolver(project_start, legacy_vault)
 }
 
 pub(crate) fn project_captured_git_state(

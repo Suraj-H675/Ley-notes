@@ -898,8 +898,21 @@ fn format_resume_context(
             );
         }
     }
+    if resume.withheld_divergent_sessions > 0 {
+        let _ = writeln!(
+            context,
+            "\nRevision safety: withheld {} recent Ley session(s) because their latest captured checkpoint is on Git history that is divergent from the current checkout. Use deliberate Ley search/evidence only when that historical branch context is actually needed.",
+            resume.withheld_divergent_sessions,
+        );
+    }
     if resume.sessions.is_empty() {
-        context.push_str("\nNo earlier Ley sessions are available.\n");
+        if resume.withheld_divergent_sessions > 0 {
+            context.push_str(
+                "\nNo non-divergent recent Ley session bodies were included in this startup context.\n",
+            );
+        } else {
+            context.push_str("\nNo earlier Ley sessions are available.\n");
+        }
     } else {
         context.push_str("\n## Recent work\n");
         for session in &resume.sessions {

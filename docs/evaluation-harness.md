@@ -608,7 +608,17 @@ history injection after the 2026-10-01 B1 study. The report schema still keeps `
 older B1 JSON remains readable, but current `--all` schedules exclude it and explicit `ley-auto` / `briefing`
 runs fail rather than silently relabel capture-only hooks as automatic briefing. When a fixture declares an
 explicit selected source, current Ley arms still receive the separate project-qualified `ley_search` and keep
-Ley/private state outside the downstream runner. Forbidden-marker leakage remains a hard evaluator error.
+Ley/private state outside the downstream runner. Forbidden-marker leakage remains a hard evaluator error for
+normal Ley arms.
+
+The opt-in `compiler-ablation` mode is different by design. It compares `ley-brief` with an experimental
+benchmark-only `ley-search` arm that supplies the same host startup/session state and the same explicit
+selected-source Search, but replaces active-project Brief with canonical active-project `ley_search`. The Search
+arm preserves Search's own trust, revision-applicability, conflict, freshness, provenance, instruction, and
+privacy metadata; it adds no compiler premise adjudication, admission exclusions, or follow-ups. In this arm,
+forbidden benchmark markers are **counted instead of rejected before the model runs**, because stale/conflicting
+history exposure is one of the outcomes the ablation is intended to measure. `ley-search` is not a shipped host
+workflow, is excluded from normal `--all` schedules, and must not be cited as a product surface.
 
 Runner stdout/stderr are captured through anonymous temporary file descriptors and discarded after
 their byte counts/hashes are computed. Normal reports retain no raw model output, no full context body,
@@ -638,6 +648,7 @@ report unless a calibrated product need for utility feedback is independently re
 Repeated all-arm runs rotate the five current executable arms across **task × repetition** so a particular
 task family is not systematically coupled to the same first arm. The former dedicated `briefing` mode is
 retired with `ley-auto`; use the recorded 2026-10-01 B1 result when discussing that historical comparison.
+The separate `compiler-ablation` mode alternates only `ley-brief` and the benchmark-only `ley-search` arm.
 A suite report aggregates the current attempts overall,
 per-task, and per-family; it also records any task IDs/families where Ley's pass rate is below at least
 one simpler arm. Aggregate improvement must therefore never be used to hide stale-memory harm in a
@@ -690,6 +701,38 @@ python eval/run_agent_task_eval.py \
   --runner-command '<runner command>'
 ```
 
+Run the opt-in compiler-vs-retrieval ablation on a fixed task set:
+
+```text
+python eval/run_agent_task_eval.py \
+  --task divergent-feature-flag-contract \
+  --task verified-timeout-contract \
+  --task explicit-reference-cache-contract \
+  --variant compiler-ablation \
+  --first-variant ley-brief \
+  --repetitions 2 \
+  --runner-label pinned-runner-model \
+  --runner-command '<runner command>'
+```
+
+Use fixtures where Brief and Search can be compared under the same durable-memory inputs. A crash fixture may
+also be included deliberately, but canonical Brief and Search both omit unconsolidated recovery bodies unless a
+separate recovery surface is supplied, so interpret that family as a shared-capability limitation rather than a
+clean compiler ablation. Reports expose Brief/Search task and hidden-oracle rates, mean supplied context size,
+Search required-marker coverage, and Search forbidden-marker leakage. The mode is model-dependent evidence and
+is never a deterministic CI gate.
+
+The first completed compiler-ablation study ran on 2026-10-01 with Codex `0.159.3`, `gpt-6-luna`, `xhigh`,
+two repetitions, and three task families: divergent revision, verified-vs-claimed, and explicit selected-source
+context (12 attempts total). `ley-brief` passed 6/6 tasks and 6/6 hidden oracles. The benchmark-only Search arm
+passed 4/6 tasks; all four hidden oracles it reached passed, while both explicit selected-source Search runs
+failed an earlier file-change constraint and skipped the oracle. Search kept full required-marker coverage but
+exposed eight forbidden divergent-history markers across the two divergent runs; Brief exposed none. Mean
+supplied context was 2,257.7 characters for Brief versus 3,418.0 for Search (~51.4% more for Search). This earns
+the compiler/admission layer over raw retrieval on this slice, not every individual heuristic. The detailed
+reproducibility note is
+[`research/compiler-vs-search-ablation-2026-10-01.md`](research/compiler-vs-search-ablation-2026-10-01.md).
+
 The first repaired post-R3 briefing study ran on 2026-10-01 with Codex `0.159.3`,
 `gpt-6-luna`, `xhigh`, three representative task families (`verified-vs-claimed`,
 `crash-missing-checkpoint`, and `explicit-cross-project-reference`), and two repetitions per arm
@@ -722,7 +765,8 @@ must not regress on any reported task or task family; in legacy `both` mode it c
 under the same no-regression rule. Normal schema-v3 reports expose overall/per-task/per-family variant
 summaries, hidden-oracle attempted/passed/failed/skipped counts, mean runner time, mean supplied context
 characters, canonical explicit/automatic briefing pass rates and context-size summaries, regression
-lists, selected task IDs/families, and planned attempt count while retaining the older baseline/Ley
+lists, selected task IDs/families, planned attempt count, and opt-in Brief/Search compiler-ablation summaries
+while retaining the older baseline/Ley
 summary fields and single-task `taskId`/`taskFamily` fields for compatibility. A hidden
 oracle that was not run because an earlier gate failed is recorded as `skipped`, never as `failed`.
 Do not add this assertion to deterministic CI or reinterpret one failed simpler arm / passed Ley arm as
@@ -823,15 +867,17 @@ python eval/run_semantic_eval.py
 That command never installs/downloads a model and is intentionally outside the deterministic P0/P1/P2
 coverage matrices.
 
-Run the complete corpus only when the machine can tolerate it:
+Run the complete retained corpus only when investigating historical/compatibility fixtures:
 
 ```text
 python eval/run_eval.py
 ```
 
-The harness is sequential rather than concurrent, but individual scenarios can still compile/start real
-Ley processes. For constrained development machines, prefer focused runs while iterating and reserve the
-full corpus for a final gate.
+The retained corpus includes scenarios for product/API shapes that have since been retired, so the no-flag
+command is **not** the focused product release gate and is not expected to remain all-green after deliberate
+surface contraction. The current deterministic release gates are `--p0-coverage`, `--p1-coverage`, and
+`--p2-coverage`, plus any focused regression scenario changed by the current work. The harness is sequential
+rather than concurrent, but individual scenarios can still compile/start real Ley processes.
 
 ## Interpretation rules
 
