@@ -44,4 +44,16 @@ The Artifact surface can also open retained original image evidence. Browsing th
 
 Ley never uploads captured data independently. A cloud agent such as Claude or Codex may receive bounded context only when the user or host asks that agent to retrieve it. Capture mode controls local retention; it does not override the connected provider's handling of deliberately retrieved context.
 
+## Export portable continuity
+
+The Desktop **Capture & privacy** panel can export this project's Ley-owned continuity into a user-selected local
+parent folder. Ley creates a new child directory containing the project-scoped portable SQLite bundle, including
+any immutable imported approved-source snapshots stored in that database, plus only artifact-evidence blobs
+referenced by durable citations. The chosen parent must be outside the project tree, so an export cannot silently
+become project source, enter Git, or be captured again as ordinary evidence. Export is local only and does not
+upload or automatically reveal the bundle, but the destination may itself be cloud-synced/shared by other software;
+choose it as sensitive continuity data. Human-authored Markdown remains in the project and is edited with external
+tools; current approved `.md`/`.mdx` project files can be opened from **Approved Sources** after Ley revalidates
+their exact approved revision. See [ADR 0096](../adr/0096-desktop-portability-and-external-markdown.md).
+
 See [ADR 0020](../adr/0020-reviewed-project-memory-erasure.md) and [ADR 0024](../adr/0024-reviewed-session-memory-erasure.md) for the erasure boundaries and concurrency contracts.

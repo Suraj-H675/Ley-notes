@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  ExternalLink,
   FileCheck2,
   RefreshCw,
   ShieldCheck,
@@ -11,6 +12,7 @@ import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/lib/classnames";
 import {
   approveAgentProjectFileSource,
+  openAgentProjectMarkdownSource,
   readAgentProjectApprovedSources,
   reapproveAgentProjectFileSource,
   revokeAgentProjectApprovedSource,
@@ -76,6 +78,18 @@ export function SpecificationsPanel({ projectPath }: { projectPath: string }) {
     setError(null);
     try {
       setAuthority(await revokeAgentProjectApprovedSource(projectPath, sourceId));
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openSource(sourceId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await openAgentProjectMarkdownSource(projectPath, sourceId);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -195,6 +209,20 @@ export function SpecificationsPanel({ projectPath }: { projectPath: string }) {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {projectFile && item.state === "current" &&
+                    /\.(?:md|mdx)$/i.test(
+                      item.approval.projectRelativePath ?? "",
+                    ) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => void openSource(item.approval.sourceId)}
+                      >
+                        <ExternalLink size={13} aria-hidden="true" />
+                        Open externally
+                      </Button>
+                    )}
                   {projectFile && item.state !== "missing" && (
                     <Button
                       size="sm"

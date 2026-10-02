@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Check,
   Database,
+  Download,
   EyeOff,
   FileSearch,
   HardDrive,
@@ -15,11 +16,14 @@ import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/lib/classnames";
 import {
   eraseAgentProjectMemory,
+  chooseAgentContinuityExportParent,
+  exportAgentProjectContinuity,
   readAgentCaptureSettings,
   updateAgentCaptureMode,
 } from "./api";
 import type {
   AgentCaptureSettings,
+  AgentContinuityExport,
   AgentMemoryDashboard,
   AgentProjectInspection,
   CaptureMode,
@@ -87,6 +91,9 @@ export function CapturePrivacyPanel({
   const [eraseConfirmation, setEraseConfirmation] = useState("");
   const [erasing, setErasing] = useState(false);
   const [eraseError, setEraseError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exported, setExported] = useState<AgentContinuityExport | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -147,6 +154,22 @@ export function CapturePrivacyPanel({
     }
   }
 
+  async function exportContinuity() {
+    if (exporting) return;
+    setExportError(null);
+    const parent = await chooseAgentContinuityExportParent();
+    if (!parent) return;
+    setExporting(true);
+    try {
+      setExported(await exportAgentProjectContinuity(projectPath, parent));
+    } catch (cause) {
+      setExported(null);
+      setExportError(errorMessage(cause));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (loading && !settings) {
     return (
       <div
@@ -201,6 +224,10 @@ export function CapturePrivacyPanel({
       erasing={erasing}
       eraseError={eraseError}
       eraseMemory={eraseMemory}
+      exporting={exporting}
+      exported={exported}
+      exportError={exportError}
+      exportContinuity={exportContinuity}
     />
   );
 }
@@ -224,6 +251,10 @@ function CapturePrivacyContent({
   erasing,
   eraseError,
   eraseMemory,
+  exporting,
+  exported,
+  exportError,
+  exportContinuity,
 }: {
   settings: AgentCaptureSettings;
   dashboard: AgentMemoryDashboard;
@@ -243,6 +274,10 @@ function CapturePrivacyContent({
   erasing: boolean;
   eraseError: string | null;
   eraseMemory: () => Promise<void>;
+  exporting: boolean;
+  exported: AgentContinuityExport | null;
+  exportError: string | null;
+  exportContinuity: () => Promise<void>;
 }) {
   return (
     <div className="space-y-7">
@@ -496,6 +531,15 @@ function CapturePrivacyContent({
         </div>
       </section>
 
+      <ContinuityExportSection
+        saving={saving}
+        erasing={erasing}
+        exporting={exporting}
+        exported={exported}
+        exportError={exportError}
+        exportContinuity={exportContinuity}
+      />
+
       <section aria-labelledby="erase-memory-title">
         <div className="overflow-hidden rounded-sm border border-destructive/25 bg-surface-1 shadow-panel">
           <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
@@ -595,6 +639,84 @@ function CapturePrivacyContent({
         </div>
       </section>
     </div>
+  );
+}
+
+function ContinuityExportSection({
+  saving,
+  erasing,
+  exporting,
+  exported,
+  exportError,
+  exportContinuity,
+}: {
+  saving: boolean;
+  erasing: boolean;
+  exporting: boolean;
+  exported: AgentContinuityExport | null;
+  exportError: string | null;
+  exportContinuity: () => Promise<void>;
+}) {
+  return (
+    <section className="overflow-hidden rounded-sm border border-border bg-surface-1 shadow-panel">
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+        <div className="max-w-2xl">
+          <p className="text-micro font-semibold uppercase tracking-[0.14em] text-primary">
+            Portability
+          </p>
+          <h3 className="mt-1 text-lg font-semibold tracking-tight">
+            Export continuity bundle
+          </h3>
+          <p className="mt-1 text-meta leading-5 text-muted-foreground">
+            Creates a local portable bundle containing this project’s
+            continuity database, any immutable imported approved-source snapshots
+            stored there, and only the artifact evidence required by durable
+            citations. Choose a folder outside the project; Ley creates a new
+            export directory inside it. The destination may be synced or shared
+            by other software, so choose it accordingly.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          disabled={saving || exporting || erasing}
+          onClick={() => void exportContinuity()}
+        >
+          {exporting ? (
+            <RefreshCw
+              size={14}
+              className="animate-spin motion-reduce:animate-none"
+            />
+          ) : (
+            <Download size={14} aria-hidden="true" />
+          )}
+          {exporting ? "Exporting" : "Export bundle…"}
+        </Button>
+      </div>
+      {(exported || exportError) && (
+        <div className="border-t border-border px-5 py-4 sm:px-6">
+          {exported ? (
+            <div className="text-meta">
+              <p className="font-semibold">Export complete</p>
+              <p
+                className="mt-1 break-all font-mono text-micro text-muted-foreground"
+                title={exported.destination}
+              >
+                {exported.destination}
+              </p>
+              <p className="mt-2 text-micro text-muted-foreground">
+                {exported.eventCount.toLocaleString()} events ·{" "}
+                {exported.artifactSnapshots.toLocaleString()} cited snapshots ·{" "}
+                {exported.evidenceBlobs.toLocaleString()} evidence blobs
+              </p>
+            </div>
+          ) : (
+            <p role="alert" className="text-meta text-destructive">
+              {exportError}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

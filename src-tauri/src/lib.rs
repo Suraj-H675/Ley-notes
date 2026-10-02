@@ -8,7 +8,8 @@ use ley_core::{
     correct_learning_with_continuity_transition, diagnose_project,
     erase_project_memory_with_continuity_transition, erase_project_memory_with_native_authority,
     erase_session_memory_with_continuity_transition, establish_native_born_project_authorities,
-    generate_learning_request_id, generate_request_id, ingest_project_with_continuity_transition,
+    export_portable_continuity, generate_learning_request_id, generate_request_id,
+    ingest_project_with_continuity_transition,
     ingest_project_with_expected_capture_plan_and_continuity_transition,
     ingest_project_with_expected_capture_plan_and_native_authority,
     ingest_project_with_native_authority, initialize_project_retiring_bootstrap,
@@ -27,7 +28,7 @@ use ley_core::{
     read_session_turns_context_with_continuity_transition,
     rename_session_with_continuity_transition, review_learning_with_continuity_transition,
     search_observed_projects, search_project_memory_with_continuity_transition,
-    update_capture_mode, validate_project_memory, ApprovedSourceAuthorityList,
+    update_capture_mode, validate_project_memory, ApprovedSourceAuthorityList, ApprovedSourceKind,
     ApprovedSourceRegistry, ArtifactMediaType, BindingRegistry, BindingSource, CaptureFile,
     CaptureMode, CapturePolicy, ContinuityStore, CorrectLearningInput, CrossProjectSearch,
     EraseSessionMemoryInput, EvidenceExcerpt, GraphCitation, IngestionResult, LearningActor,
@@ -51,11 +52,9 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::ErrorKind,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
-
-#[cfg(test)]
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -160,6 +159,16 @@ struct AgentMemoryDashboard {
 struct AgentSessionErasure {
     dashboard: AgentMemoryDashboard,
     erasure: SessionMemoryErasure,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentContinuityExport {
+    project_id: String,
+    destination: PathBuf,
+    event_count: usize,
+    artifact_snapshots: usize,
+    evidence_blobs: usize,
 }
 
 const INITIAL_CAPTURE_PREVIEW_PATHS: usize = 8;
@@ -1227,11 +1236,172 @@ fn read_project_approved_sources(
         .map_err(|error| error.to_string())
 }
 
+fn approved_markdown_path_for_external_editor(
+    project_path: &Path,
+    source_id: &str,
+    registry: &ApprovedSourceRegistry,
+) -> Result<PathBuf, LeyCoreError> {
+    let content = registry.read(project_path, source_id)?;
+    if content.approval.source_kind != ApprovedSourceKind::ProjectFile {
+        return Err(LeyCoreError::InvalidApprovedSourceRequest(
+            "only current project-file approved sources can be opened externally".to_owned(),
+        ));
+    }
+    let relative_path = content
+        .approval
+        .project_relative_path
+        .as_deref()
+        .ok_or_else(|| {
+            LeyCoreError::InvalidApprovedSourceRequest(
+                "approved project-file source has no project-relative path".to_owned(),
+            )
+        })?;
+    let markdown = Path::new(relative_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("mdx")
+        });
+    if !markdown {
+        return Err(LeyCoreError::InvalidApprovedSourceRequest(
+            "open-in-editor is limited to approved Markdown project files".to_owned(),
+        ));
+    }
+    let diagnostic = diagnose_project(project_path)?;
+    if content.approval.project_id != diagnostic.identity.project_id {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "approved source project identity changed before external open".to_owned(),
+        ));
+    }
+    revalidate_regular_project_path_no_symlinks(&diagnostic.root, relative_path)
+}
+
+fn revalidate_regular_project_path_no_symlinks(
+    project_root: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, LeyCoreError> {
+    let mut current = project_root.to_path_buf();
+    let mut components = Path::new(relative_path).components().peekable();
+    while let Some(component) = components.next() {
+        let Component::Normal(segment) = component else {
+            return Err(LeyCoreError::InvalidApprovedSourceRequest(
+                "approved source path is not a safe project-relative path".to_owned(),
+            ));
+        };
+        current.push(segment);
+        let metadata = fs::symlink_metadata(&current).map_err(|source| LeyCoreError::Io {
+            path: current.clone(),
+            source,
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(LeyCoreError::UnsafeProjectLayout(current));
+        }
+        if components.peek().is_some() {
+            if !metadata.is_dir() {
+                return Err(LeyCoreError::UnsafeProjectLayout(current));
+            }
+        } else if !metadata.is_file() {
+            return Err(LeyCoreError::UnsafeProjectLayout(current));
+        }
+    }
+    if current == project_root {
+        return Err(LeyCoreError::InvalidApprovedSourceRequest(
+            "approved source path must name a project file".to_owned(),
+        ));
+    }
+    Ok(current)
+}
+
+fn canonical_export_parent(path: &Path) -> Result<PathBuf, LeyCoreError> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(LeyCoreError::UnsafeProjectLayout(path.to_path_buf()));
+    }
+    path.canonicalize().map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn export_agent_project_continuity_with_access(
+    project_path: &Path,
+    destination_parent: &Path,
+    access: &AgentContinuityAccess,
+    store: &ContinuityStore,
+) -> Result<AgentContinuityExport, LeyCoreError> {
+    let diagnostic = diagnose_project(project_path)?;
+    if diagnostic.identity.project_id != access.project_id {
+        return Err(LeyCoreError::InvalidProjectIdentity(
+            "project identity changed before continuity export".to_owned(),
+        ));
+    }
+    let destination_parent = canonical_export_parent(destination_parent)?;
+    if destination_parent.starts_with(&diagnostic.root) {
+        return Err(LeyCoreError::InvalidPortableContinuityBundle(
+            "export destination must be outside the project so private continuity is not recaptured or committed with source".to_owned(),
+        ));
+    }
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let destination = destination_parent.join(format!(
+        "ley-continuity-{}-{}-{unique}",
+        access.project_id,
+        std::process::id()
+    ));
+    let manifest = export_portable_continuity(
+        store,
+        &access.legacy_vault_path,
+        &access.project_id,
+        &destination,
+    )?;
+    Ok(AgentContinuityExport {
+        project_id: access.project_id.clone(),
+        destination,
+        event_count: manifest.event_count,
+        artifact_snapshots: manifest.artifact_snapshots.len(),
+        evidence_blobs: manifest.evidence_blobs.len(),
+    })
+}
+
 #[tauri::command]
 fn read_agent_project_approved_sources(
     project_path: String,
 ) -> Result<ApprovedSourceAuthorityList, String> {
     read_project_approved_sources(Path::new(&project_path))
+}
+
+#[tauri::command]
+fn open_agent_project_markdown_source(
+    project_path: String,
+    source_id: String,
+) -> Result<(), String> {
+    let project_path = Path::new(&project_path);
+    let registry = native_approved_source_registry(project_path)?;
+    let path = approved_markdown_path_for_external_editor(project_path, &source_id, &registry)
+        .map_err(|error| error.to_string())?;
+    open::that_detached(&path)
+        .map_err(|error| format!("could not open approved Markdown source externally: {error}"))
+}
+
+#[tauri::command]
+fn export_agent_project_continuity(
+    project_path: String,
+    destination_parent: String,
+) -> Result<AgentContinuityExport, String> {
+    with_transition_agent_access(Path::new(&project_path), None, |access, store| {
+        export_agent_project_continuity_with_access(
+            Path::new(&project_path),
+            Path::new(&destination_parent),
+            access,
+            store,
+        )
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1850,6 +2020,8 @@ pub fn run() {
             search_agent_project_memory,
             inspect_agent_project,
             read_agent_project_approved_sources,
+            open_agent_project_markdown_source,
+            export_agent_project_continuity,
             approve_agent_project_file_source,
             reapprove_agent_project_file_source,
             revoke_agent_project_approved_source,
@@ -2308,13 +2480,28 @@ mod tests {
         legacy
             .approve(&project, &vault, &legacy_id, "Specs/Product.md")
             .unwrap();
-        let registry = ApprovedSourceRegistry::at(ley_core::ContinuityStore::at(
-            root.join("private/continuity.sqlite3"),
-        ));
+        let store = ley_core::ContinuityStore::at(root.join("private/continuity.sqlite3"));
+        let registry = ApprovedSourceRegistry::at(store.clone());
         let migrated = registry
             .migrate_legacy_specifications(&project, &vault, &legacy)
             .unwrap();
         assert!(migrated.authority_migrated);
+        let export_parent = root.join("legacy-exports");
+        fs::create_dir_all(&export_parent).unwrap();
+        let legacy_access = AgentContinuityAccess::from_legacy_binding(ProjectVaultBinding {
+            project_id: diagnose_project(&project).unwrap().identity.project_id,
+            vault_path: vault.clone(),
+            source: BindingSource::Persisted,
+        });
+        let legacy_export = export_agent_project_continuity_with_access(
+            &project,
+            &export_parent,
+            &legacy_access,
+            &store,
+        )
+        .unwrap();
+        assert!(legacy_export.destination.is_dir());
+        assert_eq!(legacy_export.project_id, legacy_access.project_id);
         let authority = registry.authority(&project).unwrap();
         assert_eq!(authority.current, 1);
         assert_eq!(authority.sources[0].approval.source_id, legacy_id);
@@ -2342,6 +2529,34 @@ mod tests {
         let authority = registry.authority(&project).unwrap();
         assert_eq!(authority.current, 2);
         assert_eq!(authority.changed, 0);
+        assert_eq!(
+            approved_markdown_path_for_external_editor(
+                &project,
+                &project_file.source_id,
+                &registry,
+            )
+            .unwrap(),
+            project.join("docs/requirements.md")
+        );
+        assert!(matches!(
+            approved_markdown_path_for_external_editor(&project, &legacy_id, &registry),
+            Err(LeyCoreError::InvalidApprovedSourceRequest(message))
+                if message.contains("project-file")
+        ));
+        fs::write(project.join("docs/plain.txt"), "plain intent\n").unwrap();
+        let non_markdown = registry
+            .approve_project_file(&project, "docs/plain.txt")
+            .unwrap();
+        assert!(matches!(
+            approved_markdown_path_for_external_editor(
+                &project,
+                &non_markdown.source_id,
+                &registry,
+            ),
+            Err(LeyCoreError::InvalidApprovedSourceRequest(message))
+                if message.contains("Markdown")
+        ));
+        assert!(registry.revoke(&project, &non_markdown.source_id).unwrap());
 
         fs::write(
             project.join("docs/requirements.md"),
@@ -2351,6 +2566,14 @@ mod tests {
         let changed = registry.authority(&project).unwrap();
         assert_eq!(changed.current, 1);
         assert_eq!(changed.changed, 1);
+        assert!(matches!(
+            approved_markdown_path_for_external_editor(
+                &project,
+                &project_file.source_id,
+                &registry,
+            ),
+            Err(LeyCoreError::ApprovedSourceStale { .. })
+        ));
 
         let reapproved = registry
             .reapprove_project_file(&project, &project_file.source_id)
@@ -2358,6 +2581,14 @@ mod tests {
         assert_eq!(reapproved.source_id, project_file.source_id);
         assert_eq!(registry.authority(&project).unwrap().current, 2);
         assert!(registry.revoke(&project, &project_file.source_id).unwrap());
+        assert!(matches!(
+            approved_markdown_path_for_external_editor(
+                &project,
+                &project_file.source_id,
+                &registry,
+            ),
+            Err(LeyCoreError::ApprovedSourceNotFound(_))
+        ));
         assert!(registry.revoke(&project, &legacy_id).unwrap());
         assert!(registry.authority(&project).unwrap().sources.is_empty());
 
@@ -2469,6 +2700,30 @@ mod tests {
         let diagnostic = diagnose_project(&project).unwrap();
         assert_eq!(project_id, diagnostic.identity.project_id);
         assert!(ley_core::native_canonical_read_authority_available(&project, &store).unwrap());
+        let export_parent = root.join("exports");
+        fs::create_dir_all(&export_parent).unwrap();
+        let native_access = AgentContinuityAccess::native(project_id.clone(), &store).unwrap();
+        let exported = export_agent_project_continuity_with_access(
+            &project,
+            &export_parent,
+            &native_access,
+            &store,
+        )
+        .unwrap();
+        assert_eq!(exported.project_id, project_id);
+        assert!(exported.destination.starts_with(&export_parent));
+        assert!(exported.destination.is_dir());
+        assert!(!exported.destination.starts_with(&project));
+        assert!(matches!(
+            export_agent_project_continuity_with_access(
+                &project,
+                &project,
+                &native_access,
+                &store,
+            ),
+            Err(LeyCoreError::InvalidPortableContinuityBundle(message))
+                if message.contains("outside the project")
+        ));
         let registry = BindingRegistry::at(config.join(ley_core::BINDING_REGISTRY_FILE));
         assert!(matches!(
             registry.resolve_observed(&diagnostic),

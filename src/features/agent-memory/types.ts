@@ -433,6 +433,14 @@ export interface AgentMemoryDashboard {
   allLearnings: LearningList;
 }
 
+export interface AgentContinuityExport {
+  projectId: string;
+  destination: string;
+  eventCount: number;
+  artifactSnapshots: number;
+  evidenceBlobs: number;
+}
+
 export interface SessionMemoryErasure {
   projectId: string;
   sessionId: string;

@@ -5,6 +5,7 @@ import type { ApprovedSourceAuthorityList } from "./types";
 
 const api = vi.hoisted(() => ({
   approve: vi.fn(),
+  openSource: vi.fn(),
   read: vi.fn(),
   reapprove: vi.fn(),
   revoke: vi.fn(),
@@ -12,6 +13,7 @@ const api = vi.hoisted(() => ({
 
 vi.mock("./api", () => ({
   approveAgentProjectFileSource: api.approve,
+  openAgentProjectMarkdownSource: api.openSource,
   readAgentProjectApprovedSources: api.read,
   reapproveAgentProjectFileSource: api.reapprove,
   revokeAgentProjectApprovedSource: api.revoke,
@@ -72,6 +74,13 @@ describe("SpecificationsPanel", () => {
       1,
     );
     expect(screen.getByText("project file")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open externally" }));
+    await waitFor(() => {
+      expect(api.openSource).toHaveBeenCalledWith(
+        "/projects/ley",
+        "spec_12345678123441238123123456789abc",
+      );
+    });
   });
 
   it("reapproves and revokes a changed project-file authority", async () => {
@@ -116,6 +125,9 @@ describe("SpecificationsPanel", () => {
     expect((await screen.findAllByText("changed")).length).toBeGreaterThanOrEqual(
       1,
     );
+    expect(
+      screen.queryByRole("button", { name: "Open externally" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Reapprove revision" }));
     await waitFor(() => {
       expect(api.reapprove).toHaveBeenCalledWith(

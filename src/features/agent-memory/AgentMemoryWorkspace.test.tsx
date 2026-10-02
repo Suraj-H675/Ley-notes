@@ -4,6 +4,7 @@ import { AgentMemoryWorkspace } from "./AgentMemoryWorkspace";
 import type { AgentMemoryDashboard } from "./types";
 
 const api = vi.hoisted(() => ({
+  chooseAgentContinuityExportParent: vi.fn(),
   chooseAgentProject: vi.fn(),
   chooseLegacyAgentVault: vi.fn(),
   connectAgentProject: vi.fn(),
@@ -11,10 +12,12 @@ const api = vi.hoisted(() => ({
   eraseAgentProjectMemory: vi.fn(),
   eraseAgentSession: vi.fn(),
   forgetAgentProject: vi.fn(),
+  exportAgentProjectContinuity: vi.fn(),
   initializeAgentProject: vi.fn(),
   inspectAgentProject: vi.fn(),
   listAgentProjects: vi.fn(),
   readAgentProjectActivity: vi.fn(),
+  openAgentProjectMarkdownSource: vi.fn(),
   readAgentArtifacts: vi.fn(),
   readAgentMediaEvidence: vi.fn(),
   readAgentCaptureSettings: vi.fn(),
@@ -28,6 +31,7 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock("./api", () => ({
+  chooseAgentContinuityExportParent: api.chooseAgentContinuityExportParent,
   chooseAgentProject: api.chooseAgentProject,
   chooseLegacyAgentVault: api.chooseLegacyAgentVault,
   connectAgentProject: api.connectAgentProject,
@@ -35,10 +39,12 @@ vi.mock("./api", () => ({
   eraseAgentProjectMemory: api.eraseAgentProjectMemory,
   eraseAgentSession: api.eraseAgentSession,
   forgetAgentProject: api.forgetAgentProject,
+  exportAgentProjectContinuity: api.exportAgentProjectContinuity,
   initializeAgentProject: api.initializeAgentProject,
   inspectAgentProject: api.inspectAgentProject,
   listAgentProjects: api.listAgentProjects,
   readAgentProjectActivity: api.readAgentProjectActivity,
+  openAgentProjectMarkdownSource: api.openAgentProjectMarkdownSource,
   readAgentArtifacts: api.readAgentArtifacts,
   readAgentMediaEvidence: api.readAgentMediaEvidence,
   readAgentCaptureSettings: api.readAgentCaptureSettings,

@@ -178,6 +178,18 @@ older versions remain user-owned files; retiring the integration does not make t
 does not justify deleting them. ADR 0021 documents the retired note-link design as historical context; ADR 0022
 still describes checkpoint revision citations.
 
+The focused Desktop now exposes those two boundaries directly. **Approved Sources** can hand a current approved
+project-file `.md`/`.mdx` source to the operating system's default external application after revalidating the exact
+approved bytes and immediately rechecking the project-relative path for symlink substitution; the final OS handoff
+is still a point-in-time pathname handoff, not an atomic retained-byte handle. Imported snapshots and stale/missing
+sources are never opened as editable files. Once an external editor saves new bytes, the old approval becomes stale
+until explicitly reviewed/reapproved. That editor's own backup, sync, extension, and cloud behavior is outside Ley's
+privacy boundary. **Capture &
+privacy → Export continuity bundle** asks for a local parent folder and writes a new portable continuity
+bundle outside the project tree using the same validated exporter used by core migration tests. The export contains
+Ley-owned continuity plus only cited immutable evidence required by that continuity; it is not a project-source or
+Markdown export. See ADR 0096.
+
 ## Recover a missed checkpoint after an interruption
 
 Bounded prompt/response observations and supported host-tool observations are source evidence, not structured memory. If a host crashes or an agent stops before checkpointing, Ley can retain that post-checkpoint evidence and later report a bounded recovery signal without injecting the retained bodies into ordinary startup context.

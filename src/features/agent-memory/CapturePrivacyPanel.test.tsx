@@ -8,13 +8,17 @@ import type {
 } from "./types";
 
 const api = vi.hoisted(() => ({
+  chooseExportParent: vi.fn(),
   erase: vi.fn(),
+  exportContinuity: vi.fn(),
   readSettings: vi.fn(),
   updateMode: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
+  chooseAgentContinuityExportParent: api.chooseExportParent,
   eraseAgentProjectMemory: api.erase,
+  exportAgentProjectContinuity: api.exportContinuity,
   readAgentCaptureSettings: api.readSettings,
   updateAgentCaptureMode: api.updateMode,
 }));
@@ -64,6 +68,7 @@ const erasedInspection: AgentProjectInspection = {
 describe("CapturePrivacyPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    api.chooseExportParent.mockResolvedValue(null);
     api.readSettings.mockResolvedValue(settings);
     api.erase.mockResolvedValue(erasedInspection);
   });
@@ -149,5 +154,51 @@ describe("CapturePrivacyPanel", () => {
       );
       expect(onUpdated).toHaveBeenCalledWith(dashboard);
     });
+  });
+
+  it("exports a portable continuity bundle only after choosing a destination", async () => {
+    api.chooseExportParent.mockResolvedValue("/exports");
+    api.exportContinuity.mockResolvedValue({
+      projectId: "prj_test",
+      destination: "/exports/ley-continuity-prj_test-1-2",
+      eventCount: 7,
+      artifactSnapshots: 2,
+      evidenceBlobs: 3,
+    });
+
+    render(
+      <CapturePrivacyPanel
+        projectPath="/projects/ley"
+        dashboard={dashboard}
+        onUpdated={vi.fn()}
+        onErased={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export bundle…" }));
+    await waitFor(() => {
+      expect(api.exportContinuity).toHaveBeenCalledWith("/projects/ley", "/exports");
+    });
+    expect(await screen.findByText("Export complete")).toBeVisible();
+    expect(screen.getByText(/7 events/)).toBeVisible();
+    expect(screen.getByText(/2 cited snapshots/)).toBeVisible();
+    expect(screen.getByText(/3 evidence blobs/)).toBeVisible();
+  });
+
+  it("does not export when the destination chooser is cancelled", async () => {
+    render(
+      <CapturePrivacyPanel
+        projectPath="/projects/ley"
+        dashboard={dashboard}
+        onUpdated={vi.fn()}
+        onErased={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Export bundle…" }));
+    await waitFor(() => {
+      expect(api.chooseExportParent).toHaveBeenCalledTimes(1);
+    });
+    expect(api.exportContinuity).not.toHaveBeenCalled();
   });
 });

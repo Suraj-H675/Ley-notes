@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AgentCaptureSettings,
+  AgentContinuityExport,
   AgentMediaEvidence,
   AgentMemoryDashboard,
   AgentSessionErasure,
@@ -36,6 +37,15 @@ export async function chooseLegacyAgentVault(): Promise<string | null> {
     directory: true,
     multiple: false,
     title: "Choose the legacy Ley vault to migrate",
+  });
+  return selected ?? null;
+}
+
+export async function chooseAgentContinuityExportParent(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Choose a folder for the Ley continuity export",
   });
   return selected ?? null;
 }
@@ -106,6 +116,23 @@ export function readAgentProjectApprovedSources(
   projectPath: string,
 ): Promise<ApprovedSourceAuthorityList> {
   return invoke("read_agent_project_approved_sources", { projectPath });
+}
+
+export function openAgentProjectMarkdownSource(
+  projectPath: string,
+  sourceId: string,
+): Promise<void> {
+  return invoke("open_agent_project_markdown_source", { projectPath, sourceId });
+}
+
+export function exportAgentProjectContinuity(
+  projectPath: string,
+  destinationParent: string,
+): Promise<AgentContinuityExport> {
+  return invoke("export_agent_project_continuity", {
+    projectPath,
+    destinationParent,
+  });
 }
 
 export function approveAgentProjectFileSource(
