@@ -9,8 +9,8 @@ use ley_core::{
     finish_session_with_continuity_transition, list_learning_contexts_with_continuity_transition,
     native_canonical_read_authority_available,
     native_canonical_read_authority_available_for_project_id, native_session_authority_available,
-    project_memory_overview, project_resume_context_with_continuity_transition,
-    propose_learning_with_continuity_transition, read_learning_context_with_continuity_transition,
+    project_memory_overview, propose_learning_with_continuity_transition,
+    read_learning_context_with_continuity_transition,
     read_native_project_cited_evidence_for_project_id,
     read_native_project_cited_media_for_project_id,
     read_project_cited_evidence_with_continuity_transition,
@@ -34,7 +34,6 @@ use ley_core::{
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_LEARNING_LIST_RESULTS,
     DEFAULT_MEMORY_COMPILE_CHARACTERS, DEFAULT_MEMORY_COMPILE_RESULTS,
     DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
-    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
     DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
     DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS,
     DEFAULT_SPECIFICATION_CONTEXT_CHARACTERS, DEFAULT_SPECIFICATION_CONTEXT_RESULTS,
@@ -96,9 +95,9 @@ current Ley session named by injected lifecycle context; do not create a paralle
 is a local CLI/user workflow and is not exposed through MCP. Retained external connector snapshots are \
 local-user compatibility state only; MCP does \
 not expose them. Connector-specific egress restrictions still conservatively constrain broad historical \
-derivatives when independence cannot be proven. Use \
-`ley_project_resume` for broad continuity when the task itself is not yet specific. Use the \
-lower-level search/evidence tools for inspection and progressive disclosure. Carry exact Ley citations into \
+derivatives when independence cannot be proven. Use `ley_brief` for task-conditioned agent continuity; broad \
+Resume inspection is a local CLI/user workflow and is not exposed through MCP. Use the lower-level \
+search/evidence tools for inspection and progressive disclosure. Carry exact Ley citations into \
 `ley_evidence`; it revalidates snapshot/path/hash identity for bounded text and supported original-image \
 evidence. Original image evidence is returned as untrusted bytes, not OCR or a generated description; any \
 visual conclusion is derived interpretation, and `liveSourceChecked` remains false. `ley_search` may \
@@ -437,23 +436,6 @@ pub struct CompileContextParams {
     #[serde(default)]
     #[schemars(range(min = 500, max = 8_000))]
     pub max_tokens: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProjectResumeParams {
-    /// Maximum active, paused, then recent sessions. Defaults to 3 and cannot exceed 10.
-    #[serde(default)]
-    #[schemars(range(min = 1, max = 10))]
-    pub max_sessions: Option<usize>,
-    /// Maximum current trusted lessons. Defaults to 10 and cannot exceed 20.
-    #[serde(default)]
-    #[schemars(range(min = 1, max = 20))]
-    pub max_learnings: Option<usize>,
-    /// Maximum text characters. Defaults to 16000; range 1000–32000.
-    #[serde(default)]
-    #[schemars(range(min = 1_000, max = 32_000))]
-    pub max_characters: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1812,33 +1794,6 @@ impl LeyMcpServer {
         }))
     }
 
-    /// Resume a project from bounded recent work and only current trusted learnings.
-    #[tool(
-        name = "ley_project_resume",
-        annotations(
-            title = "Resume Ley project context",
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn project_resume(
-        &self,
-        Parameters(params): Parameters<ProjectResumeParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(self.gated_historical_tool_result(|| {
-            project_resume_context_with_continuity_transition(
-                self.project.as_path(),
-                self.vault.as_path(),
-                self.continuity_store.as_ref(),
-                params.max_sessions.unwrap_or(DEFAULT_RESUME_SESSIONS),
-                params.max_learnings.unwrap_or(DEFAULT_RESUME_LEARNINGS),
-                params.max_characters.unwrap_or(DEFAULT_RESUME_CHARACTERS),
-            )
-        }))
-    }
-
     /// Read current user-approved Specification revisions for this fixed project.
     /// Exact approved revisions may additionally expose read-only structured acceptance criteria derived from Markdown; task-list markers are never interpreted as completion state.
     #[tool(
@@ -2908,7 +2863,6 @@ mod tests {
                 "ley_learning_get",
                 "ley_learnings_list",
                 "ley_project_overview",
-                "ley_project_resume",
                 "ley_project_specifications",
                 "ley_search",
                 "ley_session_get",
@@ -3036,7 +2990,6 @@ mod tests {
                 "ley_learning_get",
                 "ley_learnings_list",
                 "ley_project_overview",
-                "ley_project_resume",
                 "ley_project_specifications",
                 "ley_search",
                 "ley_session_checkpoint",
@@ -5151,34 +5104,6 @@ mod tests {
             .iter()
             .any(|item| item["citation"]["artifactPath"].is_string()));
         let serialized = json.to_string();
-        assert!(!serialized.contains(project.to_str().unwrap()));
-        assert!(!serialized.contains(vault.to_str().unwrap()));
-    }
-
-    #[tokio::test]
-    async fn project_resume_is_bounded_and_marks_history_untrusted() {
-        let (_temporary, project, vault, server) = fixture();
-        let result = server
-            .project_resume(Parameters(ProjectResumeParams {
-                max_sessions: Some(1),
-                max_learnings: Some(1),
-                max_characters: Some(1_000),
-            }))
-            .await
-            .unwrap();
-        assert_eq!(result.is_error, Some(false));
-        let context = result.structured_content.unwrap();
-        assert_eq!(context["projectName"], "MCP fixture");
-        assert_eq!(context["sessions"].as_array().unwrap().len(), 1);
-        assert_eq!(context["learnings"].as_array().unwrap().len(), 0);
-        assert_eq!(context["liveSourceChecked"], false);
-        assert_eq!(context["sourceBoundary"], "untrusted-agent-resume-context");
-        assert!(context["instructionWarning"]
-            .as_str()
-            .unwrap()
-            .contains("trustedForReuse"));
-        assert!(context["textCharacters"].as_u64().unwrap() <= 1_000);
-        let serialized = context.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));
     }

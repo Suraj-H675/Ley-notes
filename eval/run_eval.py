@@ -4058,31 +4058,18 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 unresolved=unresolved,
                 host="codex" if index % 2 else "claude-code",
             )
-            mcp_call(
+            cli_session_finish(
                 project,
-                "ley_session_finish",
-                {
-                    "sessionId": long_session_id,
-                    "requestId": request_id(
-                        f"{scenario['id']}:long-horizon:{index}:finish"
-                    ),
-                    "status": "completed",
-                    "summary": result_summary,
-                    "handoff": handoff,
-                    "finalResponse": "",
-                    "unresolved": unresolved,
-                },
-                WRITE_FLAGS,
+                long_session_id,
+                request_id_value=request_id(
+                    f"{scenario['id']}:long-horizon:{index}:finish"
+                ),
+                status="completed",
+                summary=result_summary,
+                handoff=handoff,
+                unresolved=unresolved,
             )
-            context = mcp_call(
-                project,
-                "ley_session_get",
-                {
-                    "sessionId": long_session_id,
-                    "maxCheckpoints": 5,
-                    "maxCharacters": 8_000,
-                },
-            )
+            context = cli_session_show(project, long_session_id)
             session_ids.append(long_session_id)
             session_contexts.append(context)
             for checkpoint in context.get("checkpoints", []):
@@ -4099,19 +4086,12 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                             )
             time.sleep(0.003)
 
-        session_list = mcp_call(
+        session_list = cli_session_list_payload(project)
+        resume = cli_resume_payload(
             project,
-            "ley_sessions_list",
-            {"maxResults": 20},
-        )
-        resume = mcp_call(
-            project,
-            "ley_project_resume",
-            {
-                "maxSessions": 3,
-                "maxLearnings": 1,
-                "maxCharacters": 12_000,
-            },
+            max_sessions=3,
+            max_learnings=1,
+            max_characters=12_000,
         )
         activity_search = mcp_call(
             project,
@@ -4206,7 +4186,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 and len(listed_sessions) == 10
                 and all(
                     item.get("status") == "completed"
-                    and item.get("checkpointCount") == 1
+                    and item.get("checkpoints") == 1
                     and int(item.get("eventCount", 0)) == 3
                     for item in listed_sessions
                 ),
@@ -4341,24 +4321,13 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 },
             },
         )
-        continuation_turns = mcp_call(
+        continuation_turns = cli_session_turns(
             project,
-            "ley_session_turns_get",
-            {
-                "sessionId": continuation_session_id,
-                "maxResults": 20,
-                "maxCharacters": 16_000,
-            },
+            continuation_session_id,
+            max_results=20,
+            max_characters=16_000,
         )
-        continuation_session = mcp_call(
-            project,
-            "ley_session_get",
-            {
-                "sessionId": continuation_session_id,
-                "maxCheckpoints": 5,
-                "maxCharacters": 8_000,
-            },
-        )
+        continuation_session = cli_session_show(project, continuation_session_id)
         matching_live_rows = [
             item
             for item in continuation_turns.get("toolObservations", [])

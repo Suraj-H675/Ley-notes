@@ -369,7 +369,7 @@ plus an explicit finish/handoff. Requirements evolve from remote/Redis-dependent
 final offline-local behavior.
 
 The evaluator requires all ten sessions to remain independently addressable and completed with exactly
-one checkpoint plus one finish event. A bounded `ley_project_resume` request for three sessions must
+one checkpoint plus one finish event. A bounded local `ley resume` request for three sessions must
 report `totalSessions: 10`, `omittedSessions: 7`, and return the three latest completed handoffs in
 order, including the final continuation marker. The tenth checkpoint/finish also carries one explicit
 unresolved live-source follow-up; that unresolved marker must survive into resume rather than being

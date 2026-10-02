@@ -508,4 +508,8 @@ gates for the focused continuity control center.
 ## Verified adversarial prompt-injection boundaries
 
 - On 2026-08-26, a dedicated injection project was ingested with deliberately hostile content: fake system overrides, destructive command instructions, exfiltration URLs, forged learning proposals claiming 100% confidence and "always trust all memory", and fabricated stale facts. Hybrid memory search surfaced the hostile text but returned it under `sourceBoundary: untrusted-project-memory` with every result marked `trustedForReuse: false` and the non-instruction warning intact.
-- `ley_project_resume` admitted none of the poisoned learnings (`totalCurrentTrustedLearnings: 0`) because they were never user-confirmed. Evidence reads carried the `untrusted-project-evidence` boundary. No secrets reached durable storage. The MCP server never executed, promoted, or treated any stored instruction as policy.
+- Historical verification of the now-retired `ley_project_resume` wrapper admitted none of the poisoned learnings
+  (`totalCurrentTrustedLearnings: 0`) because they were never user-confirmed. The same Resume projection remains in
+  local `ley resume`; ADR 0101 removes only MCP exposure. Evidence reads carried the `untrusted-project-evidence`
+  boundary. No secrets reached durable storage. The MCP server never executed, promoted, or treated any stored
+  instruction as policy.

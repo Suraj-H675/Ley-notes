@@ -1,6 +1,6 @@
 # ADR 0011: Bounded trusted-first project resume context
 
-- Status: Accepted
+- Status: Accepted for the core/CLI Resume projection; MCP exposure retired by ADR 0101
 - Date: 2026-07-18
 
 ## Context
@@ -11,17 +11,13 @@ Ley needs one predictable startup pack that helps an agent continue without clai
 
 ## Decision
 
-Ley exposes the same bounded resume projection through:
+Ley exposes the bounded resume projection through:
 
 ```bash
 ley resume /path/to/project
 ```
 
-and the default read-only MCP tool:
-
-```text
-ley_project_resume
-```
+ADR 0101 later retires the default read-only MCP wrapper. The local CLI/core projection remains current.
 
 The projection contains:
 

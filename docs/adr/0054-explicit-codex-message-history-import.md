@@ -115,7 +115,8 @@ An old Codex session imported today must not become “recent work” merely bec
 
 Therefore:
 
-- imported sessions are excluded from automatic `ley resume` / `ley_project_resume` session selection;
+- imported sessions are excluded from local `ley resume` selection; the former MCP Resume wrapper is retired by
+  ADR 0101;
 - Resume reports `excludedImportedSessions` while `totalSessions` still counts the retained session;
 - fixed-project Memory Search uses the newest imported source timestamp as the imported session's temporal signal instead of the Ley import timestamp;
 - Memory Health does not flag an intentionally imported session merely because its raw turn evidence has no structured checkpoint.

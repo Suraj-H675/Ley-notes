@@ -16,7 +16,8 @@ ley resume /path/to/project \
   --json
 ```
 
-The equivalent default MCP tool is `ley_project_resume`. It is read-only and requires no write-capability flag.
+ADR 0101 retires the former `ley_project_resume` MCP wrapper. Use this CLI deliberately for local inspection; agents
+should use task-conditioned `ley_brief` instead of loading broad Resume context through MCP.
 
 Initialized Codex/Claude `SessionStart` no longer consumes this pack automatically. Adapter schema 7 starts a
 host session with identity/retrieval/checkpoint guidance only (plus a body-free interrupted-session recovery
