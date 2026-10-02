@@ -118,9 +118,12 @@ only where the corresponding native authority has not yet been established. A mo
 contain valid captured memory for the same project before Ley accepts it as a reconnect source; reconnect must
 not manufacture a new legacy store and silently treat it as historical continuity.
 
-Old browser-local Dexie stores are not current continuity authority. A minimal schema/opening compatibility
-island remains solely so their existing records are not destructively dropped before Ley has an explicit
-import/export/erasure decision for that historical local state.
+Old browser-local IndexedDB stores are not current continuity authority. ADR 0097 replaces the former dead Dexie
+schema/opening compatibility island with one migration-only same-origin recovery page. The normal website and
+Desktop never open `ley-notes`; explicit recovery reads the historical authority marker plus candidate stores in one
+readonly transaction, can export human-owned Page/Asset/Revision data without promoting it into continuity, and can
+erase the retired database only after exact confirmation. The production `dexie` dependency and notebook schema
+runtime are therefore no longer part of the focused product.
 
 The first migration slice can now snapshot the validated legacy **session and learning event ledgers** into
 SQLite. It deliberately reuses the legacy readers/replay validators instead of reimplementing the

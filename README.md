@@ -27,7 +27,7 @@ The target agent-facing contract is intentionally small:
 
 The target human-facing desktop is a focused control center for project setup/status, integrations, brief preview, recall, session/handoff history, review/correction, evidence, privacy, export, and erasure.
 
-General-purpose note editing, backlinks, Canvas, daily notes, and the retired notebook runtime have been removed from the shipped product tree. A minimal browser-local schema compatibility island remains only so historical local data is not destructively dropped before its explicit import/export/erasure decision.
+General-purpose note editing, backlinks, Canvas, daily notes, and the retired notebook runtime have been removed from the shipped product tree. Historical browser-local notebook data is handled only by an explicit same-origin recovery page that can inspect, export, or erase the retired IndexedDB after user action; the normal website and Desktop do not open it.
 
 ## Important principles
 
@@ -108,7 +108,7 @@ Work being retained or adapted includes:
 - six-lane Linux/macOS/Windows x64/ARM64 portability evidence;
 - host compatibility probes.
 
-Canonical artifact/session/learning/approved-source continuity now lives in transactional SQLite. A smaller set of legacy JSON registries remains only where it still carries migration, cleanup, or privacy/egress ancestry; those records no longer expand the canonical agent context surface. Large immutable evidence may remain content-addressed files. The old browser IndexedDB stores are left inert rather than destructively dropped until an explicit historical import/export/erasure decision is made.
+Canonical artifact/session/learning/approved-source continuity now lives in transactional SQLite. A smaller set of legacy JSON registries remains only where it still carries migration, cleanup, or privacy/egress ancestry; those records no longer expand the canonical agent context surface. Large immutable evidence may remain content-addressed files. Old browser IndexedDB bytes remain in the user's browser profile until the user chooses the migration-only same-origin recovery page to export or erase them; they are no longer part of the product runtime.
 
 ## Evaluation before feature growth
 

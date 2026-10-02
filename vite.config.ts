@@ -22,7 +22,10 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      input: path.resolve(configDir, 'index.html'),
+      input: {
+        main: path.resolve(configDir, 'index.html'),
+        legacyRecovery: path.resolve(configDir, 'legacy-recovery.html'),
+      },
     },
   },
 });

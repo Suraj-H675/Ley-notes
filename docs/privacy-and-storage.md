@@ -7,9 +7,13 @@ Ley is local-first. The public website serves product information and static ass
 | Surface | Local authority | Network boundary |
 | --- | --- | --- |
 | Ley Desktop | User-selected local projects plus Ley's owner-private application state | Context leaves only through configured integrations/explicit network features |
-| Public website | No project or knowledge data | Ordinary static website delivery only |
+| Public website | No project or knowledge data in the normal website runtime | Ordinary static website delivery only |
+| Legacy browser recovery page | Explicit same-origin access to the retired `ley-notes` IndexedDB only after user action | No upload; local inspect/export/erase only |
 
-The former browser workspace/PWA, browser-folder mode, and browser-local IndexedDB vault are retired. Legacy IndexedDB stores remain inert in the migration tree only so old local data is not destructively dropped before the SQLite migration defines explicit handling.
+The former browser workspace/PWA, browser-folder mode, and browser-local IndexedDB vault are retired. ADR 0097
+closes the last browser-data compatibility gap: the normal website never opens that database, while a separate
+`/legacy-recovery.html` migration page can explicitly inspect, export, or erase same-origin historical browser-local
+data without uploading it. The dead Dexie runtime/schema island is no longer needed to preserve those bytes.
 
 ## Current and target storage
 
@@ -20,7 +24,8 @@ During migration, two storage generations coexist:
 - a small repository-local `.ley/` project identity/capture configuration;
 - owner-private OS configuration registries for project bindings/authority;
 - filesystem Agent Memory data associated with the current binding;
-- Dexie projection/cache data used by the legacy desktop note workspace.
+- historical browser IndexedDB data may still exist in old browser profiles until the user exports/erases it through
+  the migration-only recovery page; it is no longer opened by the product runtime.
 
 These stores remain supported only as long as required to preserve existing data and benchmark/migrate the current engine.
 
@@ -30,7 +35,9 @@ Machine-managed continuity metadata moves toward owner-private SQLite, partition
 
 The repo-local `.ley/` directory stays small and portable. It must not contain conversations, generated memory, credentials, embeddings, machine-specific private paths, or raw transcripts.
 
-Portable export/import is a requirement of the migration, but it should be designed for the continuity store rather than inherited from the retired browser notebook ZIP workflow.
+Portable continuity export/import is separate from browser-notebook recovery. Current continuity uses its validated
+SQLite/evidence bundle; the retired browser notebook exports a lossless archival JSON only and is never imported as
+agent memory by default.
 
 ## Agent/model egress
 
@@ -95,4 +102,9 @@ binding change.
 
 ## Website boundary
 
-The website does not need project storage, service workers, PWA installability, directory handles, local agent processes, or IndexedDB knowledge state. Keeping the website intentionally boring from a data-authority perspective is a security and maintenance advantage, not a missing feature.
+The normal website does not need project storage, service workers, PWA installability, directory handles, local
+agent processes, or IndexedDB knowledge state. Keeping that runtime intentionally boring from a data-authority
+perspective is a security and maintenance advantage, not a missing feature. The sole exception is the separately
+built `/legacy-recovery.html` migration utility from ADR 0097: it performs no database access until the user chooses
+Inspect, can access only same-origin browser state, and never participates in ordinary website or Desktop product
+behavior.

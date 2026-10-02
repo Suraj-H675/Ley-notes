@@ -134,7 +134,7 @@ export function LandingPage() {
             <div className="max-w-2xl">
               <p className="flex items-center gap-2 text-sm font-medium text-[#bfbcb4]"><BrainCircuit size={15} /> Native by design</p>
               <h2 className="mt-4 font-serif text-3xl leading-[1.06] tracking-[-0.022em]">One real app. One public website.</h2>
-              <p className="mt-4 leading-7 text-[#b4b1a9]">The desktop app owns local project access, integrations, privacy controls, review, and evidence. This website only explains and showcases Ley; there is no reduced browser edition pretending to provide the same product.</p>
+              <p className="mt-4 leading-7 text-[#b4b1a9]">The desktop app owns local project access, integrations, privacy controls, review, and evidence. The main website only explains and showcases Ley; the separate legacy-recovery page exists solely to recover retired same-origin browser data. There is no reduced browser edition pretending to provide the same product.</p>
             </div>
             <div className="shrink-0 space-y-2 border-l-2 border-[#c2b28f]/70 pl-4 font-mono text-xs text-[#b4b1a9]">
               <p>desktop · local project access</p>
@@ -146,7 +146,13 @@ export function LandingPage() {
       </main>
 
       <footer className="border-t border-white/6 px-5 py-7 text-sm text-[#a5a29a]">
-        <div className="mx-auto flex max-w-5xl items-center justify-between"><span>Ley</span><span>Local-first by design.</span></div>
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3">
+          <span>Ley</span>
+          <div className="flex items-center gap-5">
+            <a href="/legacy-recovery.html" className="hover:text-white">Legacy browser data recovery</a>
+            <span>Local-first by design.</span>
+          </div>
+        </div>
       </footer>
     </div>
   );
