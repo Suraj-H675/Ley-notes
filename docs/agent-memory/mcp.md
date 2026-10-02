@@ -11,7 +11,7 @@ The focused Ley workflow now starts with four canonical tools:
 - `ley_evidence` — expand an exact citation returned by Ley; the request is citation-bound (snapshot/path/hash/line range), not an arbitrary filesystem path;
 - `ley_checkpoint` — append an explicit structured session checkpoint when session writes are enabled.
 
-These delegate to already-proven Ley internals. `ley_brief` is the only normal project MCP entry point for task-context compilation; `ley_compile_context` is reserved for the explicit uninitialized-workspace Bootstrap Context server. `ley_search` and `ley_checkpoint` still share result/idempotency engines with compatibility routes while those routes remain available for migration/recovery. `ley_evidence` is deliberately stricter than `ley_read_evidence`: agents should carry forward the exact citation returned by Ley rather than constructing an uncited path read. The older granular MCP tools remain available during migration for diagnostics, recovery, compatibility, and specialized workflows, but they are no longer the preferred product surface.
+These delegate to already-proven Ley internals. `ley_brief` is the only normal project MCP entry point for task-context compilation; `ley_compile_context` is reserved for the explicit uninitialized-workspace Bootstrap Context server. `ley_checkpoint` still shares its idempotency engine with the retained lifecycle compatibility route. `ley_evidence` is deliberately stricter than `ley_read_evidence`: agents should carry forward the exact citation returned by Ley rather than constructing an uncited path read. The former `ley_search_context`, `ley_search_memory`, and `ley_search_activity` wrappers are retired; canonical `ley_search` owns bounded captured evidence/activity recall. Remaining granular MCP tools may still be available during migration for diagnostics, recovery, compatibility, and specialized workflows, but they are not the preferred product surface.
 
 ## Prepare the project
 
@@ -168,18 +168,6 @@ npx @modelcontextprotocol/inspector --cli \
   --tool-arg query=identifier \
   --tool-arg maxResults=5 \
   --tool-arg maxTokens=1200
-```
-
-Search older structured decisions and problem-solving:
-
-```bash
-npx @modelcontextprotocol/inspector --cli \
-  /absolute/path/to/ley mcp /absolute/path/to/project \
-  --method tools/call \
-  --tool-name ley_search_activity \
-  --tool-arg query="offline queue retry" \
-  --tool-arg problemScope=all \
-  --tool-arg maxResults=5
 ```
 
 List captured sessions:

@@ -60,7 +60,7 @@ Image/multimodal evidence and the current Full Evidence mode remain optional mig
 
 The current implementation can explicitly install a pinned local Model2Vec model from Hugging Face. Model files are public, checksum-verified, and inference stays local; project text and queries are not included in the download request.
 
-The reset treats this bundled model as optional/deferred. The storage/network boundary remains valid while the feature exists, but the model stays in the focused product only if realistic retrieval/task ablation shows material value over the lexical baseline.
+The reset treats this bundled model as optional/deferred. Canonical native Search is currently lexical-only and intentionally does not consult the legacy-vault semantic index, so installing the model is not a claim that current canonical retrieval becomes hybrid. The storage/network boundary remains valid while the installer/compatibility code exists, but vector retrieval returns to the focused product only if a native-state retrieval/task ablation shows material value over the lexical baseline.
 
 ## External network connectors
 

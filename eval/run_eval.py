@@ -1790,7 +1790,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             controls_query = str(branch_controls_expectation.get("query", query))
             divergent_search = mcp_call(
                 project,
-                "ley_search_memory",
+                "ley_search",
                 {
                     "query": controls_query,
                     "revisionCompatibility": "divergent",
@@ -1800,7 +1800,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             current_lineage_search = mcp_call(
                 project,
-                "ley_search_memory",
+                "ley_search",
                 {
                     "query": controls_query,
                     "revisionCompatibility": "current-lineage",
@@ -1927,7 +1927,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             controls_query = str(branch_controls_expectation.get("query", query))
             merged_search = mcp_call(
                 project,
-                "ley_search_memory",
+                "ley_search",
                 {
                     "query": controls_query,
                     "revisionCompatibility": "merged",
@@ -4815,7 +4815,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         for budget in budgets:
             search_payload = mcp_call(
                 project,
-                "ley_search_memory",
+                "ley_search",
                 {
                     "query": query,
                     "maxResults": max_results,
@@ -5466,7 +5466,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         query = str(scenario.get("query_from_alpha", ["cross project"])[0])
         payload = mcp_call(
             project_dirs[0],
-            "ley_search_memory",
+            "ley_search",
             {"query": query, "maxResults": K, "maxTokens": 500},
         )
         other = projects[1]
@@ -5519,7 +5519,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             foreign_checkpoint_id = str(foreign_checkpoints[-1].get("checkpointId", ""))
             foreign_source = mcp_call(
                 foreign_project,
-                "ley_search_context",
+                "ley_search",
                 {"query": "RATE", "maxResults": 20, "maxTokens": 2_000},
             )
             proposed = mcp_call(
@@ -5560,16 +5560,14 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "--json",
                 ]
             )
-            foreign_learning = mcp_call(
-                foreign_project,
-                "ley_learning_get",
-                {
-                    "learningId": foreign_learning_id,
-                    "maxEvidence": 10,
-                    "maxHistory": 10,
-                    "maxArtifactsPerEvidence": 10,
-                    "maxCharacters": 8_000,
-                },
+            foreign_learning = cli_json(
+                [
+                    "learning",
+                    "show",
+                    foreign_learning_id,
+                    str(foreign_project),
+                    "--json",
+                ]
             )
             reviewed_learning = (
                 reviewed.get("learning", {}) if isinstance(reviewed, dict) else {}
@@ -5595,36 +5593,23 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     f"learning={learning_canary_ok}, "
                     f"trusted={learning_trusted_ok}"
                 )
-            mcp_call(
-                foreign_project,
-                "ley_session_finish",
-                {
-                    "sessionId": foreign_session_id,
-                    "requestId": request_id(f"{scenario['id']}:foreign-session:finish"),
-                    "status": "completed",
-                    "summary": f"Completed private Beta work {session_marker}",
-                    "finalResponse": "Private Beta work completed.",
-                    "handoff": f"Continue Beta-only work {session_marker}",
-                    "unresolved": [],
-                },
-                WRITE_FLAGS,
+            cli_json(
+                [
+                    "session",
+                    "finish",
+                    foreign_session_id,
+                    str(foreign_project),
+                    "--summary",
+                    f"Completed private Beta work {session_marker}",
+                    "--json",
+                ]
             )
 
             alpha = project_dirs[0]
             alpha_memory = mcp_call(
                 alpha,
-                "ley_search_memory",
+                "ley_search",
                 {"query": isolation_query, "maxResults": 20, "maxTokens": 2_000},
-            )
-            alpha_context_search = mcp_call(
-                alpha,
-                "ley_search_context",
-                {"query": isolation_query, "maxResults": 20, "maxTokens": 2_000},
-            )
-            alpha_activity = mcp_call(
-                alpha,
-                "ley_search_activity",
-                {"query": isolation_query, "maxResults": 20},
             )
             alpha_compiled = mcp_call(
                 alpha,
@@ -5682,8 +5667,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
             isolated_outputs: list[object] = [
                 alpha_memory,
-                alpha_context_search,
-                alpha_activity,
                 context_contract_text(alpha_compiled),
                 alpha_sessions,
                 alpha_learnings,
@@ -5835,23 +5818,17 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
         memory_search = mcp_call(
             project,
-            "ley_search_memory",
+            "ley_search",
             {"query": query, "maxResults": K, "maxTokens": 1_500},
-        )
-        activity_search = mcp_call(
-            project,
-            "ley_search_activity",
-            {"query": query, "maxResults": K},
         )
         incident_memory_search = mcp_call(
             project,
-            "ley_search_memory",
+            "ley_search",
             {"query": incident_query, "maxResults": K, "maxTokens": 1_500},
         )
         evidence_text.extend(
             [
                 memory_search,
-                activity_search,
                 incident_memory_search,
             ]
         )
@@ -5863,14 +5840,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 if isinstance(result, dict)
                 and result.get("kind") == "problem"
                 and result.get("title") == expected_title
-            ),
-            None,
-        )
-        baseline_activity_problem = next(
-            (
-                problem
-                for problem in activity_search.get("problems", [])
-                if isinstance(problem, dict) and problem.get("title") == expected_title
             ),
             None,
         )
@@ -5946,13 +5915,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         stable_handle_ok = (
             isinstance(baseline_memory_problem, dict)
-            and isinstance(baseline_activity_problem, dict)
             and isinstance(memory_problem, dict)
             and isinstance(session_problem, dict)
-            and baseline_memory_problem.get("entityId")
-            == baseline_activity_problem.get("recordId")
-            and baseline_memory_problem.get("sessionId")
-            == baseline_activity_problem.get("sessionId")
             and session_problem.get("id") == memory_problem.get("entityId")
             and incident_session.get("sessionId") == memory_problem.get("sessionId")
             and memory_problem.get("entityId")
@@ -6054,7 +6018,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             procedure_search = mcp_call(
                 project,
-                "ley_search_memory",
+                "ley_search",
                 {
                     "query": procedure_query,
                     "maxResults": K,
@@ -6063,7 +6027,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             incident_reuse_search = mcp_call(
                 project,
-                "ley_search_memory",
+                "ley_search",
                 {
                     "query": incident_query,
                     "maxResults": K,

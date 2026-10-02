@@ -9,12 +9,11 @@ use ley_core::{
     compile_project_context_for_agent_with_transition_registries,
     compile_session_memory_with_continuity_transition,
     consolidation_inbox_with_continuity_transition, diagnose_project, evaluate_agent_egress,
-    find_project_context, finish_session_with_continuity_transition,
-    list_learning_contexts_with_continuity_transition, native_canonical_read_authority_available,
+    finish_session_with_continuity_transition, list_learning_contexts_with_continuity_transition,
+    native_canonical_read_authority_available,
     native_canonical_read_authority_available_for_project_id, native_session_authority_available,
-    project_activity_view, project_memory_overview,
-    project_resume_context_with_continuity_transition, propose_learning_with_continuity_transition,
-    read_learning_context_with_continuity_transition,
+    project_memory_overview, project_resume_context_with_continuity_transition,
+    propose_learning_with_continuity_transition, read_learning_context_with_continuity_transition,
     read_native_project_cited_evidence_for_project_id,
     read_native_project_cited_media_for_project_id,
     read_project_cited_evidence_with_continuity_transition,
@@ -30,12 +29,11 @@ use ley_core::{
     GraphCitation, KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningKind,
     LearningListScope, LearningProvenance, LearningWriteResult, LeyCoreError, PlanItemInput,
     PlanStatus, PolicyBundleRegistry, ProblemInput, ProjectCatalog, ProjectMemorySearchLimits,
-    ProjectProblemScope, ProposeLearningInput, ResolutionInput, RetrievalLimits,
-    RevisionCompatibility, SessionSource, SessionSourceKind, SessionStatus, SessionWriteResult,
-    SpecificationContextLimits, SpecificationRegistry, StartSessionInput, TaskInput, TaskStatus,
-    VerificationInput, VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
-    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_CONTEXT_COMPILE_RESULTS,
-    DEFAULT_CONTEXT_COMPILE_TOKENS, DEFAULT_CONTEXT_RESULTS, DEFAULT_CONTEXT_TOKENS,
+    ProposeLearningInput, ResolutionInput, RevisionCompatibility, SessionSource, SessionSourceKind,
+    SessionStatus, SessionWriteResult, SpecificationContextLimits, SpecificationRegistry,
+    StartSessionInput, TaskInput, TaskStatus, VerificationInput, VerificationStatus,
+    DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
+    DEFAULT_CONTEXT_COMPILE_RESULTS, DEFAULT_CONTEXT_COMPILE_TOKENS,
     DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
     DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
     DEFAULT_LEARNING_LIST_RESULTS, DEFAULT_MEMORY_COMPILE_CHARACTERS,
@@ -114,7 +112,7 @@ lower-level search/evidence tools for inspection and progressive disclosure. Tex
 `ley_read_evidence`. A citation with `mediaType` is non-text original evidence; inspect it only when \
 needed with `ley_read_media_evidence` using its exact artifact path, snapshot ID, and content hash. \
 The media tool supplies original untrusted image bytes, not OCR or a generated description; any \
-visual conclusion is derived interpretation, and `liveSourceChecked` remains false. `ley_search_memory` may \
+visual conclusion is derived interpretation, and `liveSourceChecked` remains false. `ley_search` may \
 narrow historical candidates with exact `revisionCompatibility` values `current-lineage`, `ancestor`, \
 `merged`, `divergent`, or `unknown`; this is inspection scope only and never increases trust/authority, \
 bypasses egress/compiler admission, or makes divergent history current. Read its `revisionFilter`, \
@@ -163,7 +161,6 @@ const BOOTSTRAP_SERVER_INSTRUCTIONS: &str = "Ley is attached to this uninitializ
 const MAX_TOOL_RESULT_BYTES: usize = 262_144;
 const MAX_MCP_MEDIA_EVIDENCE_BYTES: usize = 180_000;
 const DEFAULT_MEDIA_EVIDENCE_BYTES: usize = MAX_MCP_MEDIA_EVIDENCE_BYTES;
-const DEFAULT_SEARCH_ACTIVITY_RESULTS: usize = 20;
 const CONTINUITY_ONLY_SESSION_TOOLS: &[&str] = &[
     "ley_sessions_list",
     "ley_session_get",
@@ -394,19 +391,6 @@ impl ServerHandler for LeyUnavailableMcpServer {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SearchContextParams {
-    /// Intent, words, identifiers, paths, or phrases to find in the captured project snapshot.
-    pub query: String,
-    /// Maximum returned matches. Defaults to 8 and cannot exceed 20.
-    #[serde(default)]
-    pub max_results: Option<usize>,
-    /// Approximate result token budget. Defaults to 2000 and cannot exceed 8000.
-    #[serde(default)]
-    pub max_tokens: Option<usize>,
-}
-
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum McpRevisionCompatibility {
@@ -477,39 +461,6 @@ pub struct ConsolidationInboxParams {
     #[serde(default)]
     #[schemars(range(min = 1, max = 50))]
     pub max_sessions: Option<usize>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum McpProjectProblemScope {
-    All,
-    Open,
-    Resolved,
-}
-
-impl From<McpProjectProblemScope> for ProjectProblemScope {
-    fn from(value: McpProjectProblemScope) -> Self {
-        match value {
-            McpProjectProblemScope::All => Self::All,
-            McpProjectProblemScope::Open => Self::Open,
-            McpProjectProblemScope::Resolved => Self::Resolved,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SearchActivityParams {
-    /// Exact words, identifiers, or phrases to find in older structured project activity.
-    #[schemars(length(max = 256))]
-    pub query: String,
-    /// Include all problems, only open problems, or only resolved problems. Defaults to all.
-    #[serde(default)]
-    pub problem_scope: Option<McpProjectProblemScope>,
-    /// Maximum returned decisions and problems. Defaults to 20 and cannot exceed 200.
-    #[serde(default)]
-    #[schemars(range(min = 1, max = 200))]
-    pub max_results: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1736,7 +1687,39 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<SearchMemoryParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.search_memory(Parameters(params)).await
+        let limits = ProjectMemorySearchLimits {
+            max_results: params
+                .max_results
+                .unwrap_or(DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS),
+            max_tokens: params
+                .max_tokens
+                .unwrap_or(DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS),
+        };
+        let resolved = match self.resolve_read_project(params.project_id.as_deref()) {
+            Ok(resolved) => resolved,
+            Err(error) => return Ok(tool_result::<serde_json::Value>(Err(error))),
+        };
+        Ok(self.gated_historical_resolved_tool_result(&resolved, || {
+            if resolved.is_active {
+                search_project_memory_with_continuity_transition(
+                    &resolved.root,
+                    &resolved.legacy_vault,
+                    self.continuity_store.as_ref(),
+                    &params.query,
+                    limits,
+                    params.revision_compatibility.map(Into::into),
+                )
+            } else {
+                search_native_project_memory_for_expected_project(
+                    &resolved.root,
+                    self.continuity_store.as_ref(),
+                    &resolved.project_id,
+                    &params.query,
+                    limits,
+                    params.revision_compatibility.map(Into::into),
+                )
+            }
+        }))
     }
 
     /// Read exact citation-bound text evidence. Arbitrary uncited paths are not accepted here.
@@ -1979,116 +1962,6 @@ impl LeyMcpServer {
                 self.egress_target,
             ),
         ))
-    }
-
-    /// Search a bounded captured snapshot for lexical evidence with stable citations.
-    #[tool(
-        name = "ley_search_context",
-        annotations(
-            title = "Search Ley project context",
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn search_context(
-        &self,
-        Parameters(params): Parameters<SearchContextParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let limits = RetrievalLimits {
-            max_results: params.max_results.unwrap_or(DEFAULT_CONTEXT_RESULTS),
-            max_tokens: params.max_tokens.unwrap_or(DEFAULT_CONTEXT_TOKENS),
-        };
-        Ok(self.gated_tool_result(|| {
-            find_project_context(
-                self.project.as_path(),
-                self.vault.as_path(),
-                &params.query,
-                limits,
-            )
-        }))
-    }
-
-    /// Search captured project meaning with explicit local semantic retrieval and lexical fallback.
-    #[tool(
-        name = "ley_search_memory",
-        annotations(
-            title = "Search Ley project memory",
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn search_memory(
-        &self,
-        Parameters(params): Parameters<SearchMemoryParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let limits = ProjectMemorySearchLimits {
-            max_results: params
-                .max_results
-                .unwrap_or(DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS),
-            max_tokens: params
-                .max_tokens
-                .unwrap_or(DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS),
-        };
-        let resolved = match self.resolve_read_project(params.project_id.as_deref()) {
-            Ok(resolved) => resolved,
-            Err(error) => return Ok(tool_result::<serde_json::Value>(Err(error))),
-        };
-        Ok(self.gated_historical_resolved_tool_result(&resolved, || {
-            if resolved.is_active {
-                search_project_memory_with_continuity_transition(
-                    &resolved.root,
-                    &resolved.legacy_vault,
-                    self.continuity_store.as_ref(),
-                    &params.query,
-                    limits,
-                    params.revision_compatibility.map(Into::into),
-                )
-            } else {
-                search_native_project_memory_for_expected_project(
-                    &resolved.root,
-                    self.continuity_store.as_ref(),
-                    &resolved.project_id,
-                    &params.query,
-                    limits,
-                    params.revision_compatibility.map(Into::into),
-                )
-            }
-        }))
-    }
-
-    /// Search older structured project decisions and problems with stable IDs and citations.
-    #[tool(
-        name = "ley_search_activity",
-        annotations(
-            title = "Search Ley project activity",
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn search_activity(
-        &self,
-        Parameters(params): Parameters<SearchActivityParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(self.gated_historical_tool_result(|| {
-            project_activity_view(
-                self.project.as_path(),
-                self.vault.as_path(),
-                &params.query,
-                params
-                    .problem_scope
-                    .unwrap_or(McpProjectProblemScope::All)
-                    .into(),
-                params
-                    .max_results
-                    .unwrap_or(DEFAULT_SEARCH_ACTIVITY_RESULTS),
-            )
-        }))
     }
 
     /// Read a bounded line range from an approved artifact cited by Ley.
@@ -2955,7 +2828,6 @@ mod tests {
         SpecificationRegistry, StartSessionInput, ToolObservationInput, ToolObservationKind,
         TurnEvidenceInput, TurnEvidenceOrigin, BINDING_REGISTRY_FILE,
         BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_FILE,
-        MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS, MAX_PROJECT_ACTIVITY_RESULTS,
         SPECIFICATION_REGISTRY_FILE,
     };
     use rmcp::{
@@ -3200,9 +3072,6 @@ mod tests {
                 "ley_read_evidence",
                 "ley_read_media_evidence",
                 "ley_search",
-                "ley_search_activity",
-                "ley_search_context",
-                "ley_search_memory",
                 "ley_session_get",
                 "ley_session_memory_compile",
                 "ley_session_turns_get",
@@ -3257,36 +3126,16 @@ mod tests {
         ] {
             assert!(!tools.iter().any(|tool| tool.name.as_ref() == forbidden));
         }
-        let activity_schema = serde_json::to_value(
+        let search_schema = serde_json::to_value(
             &tools
                 .iter()
-                .find(|tool| tool.name.as_ref() == "ley_search_activity")
+                .find(|tool| tool.name.as_ref() == "ley_search")
                 .unwrap()
                 .input_schema,
         )
         .unwrap();
-        assert_eq!(
-            activity_schema["properties"]["query"]["maxLength"],
-            serde_json::json!(MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS)
-        );
-        assert_eq!(
-            activity_schema["properties"]["maxResults"]["minimum"],
-            serde_json::json!(1)
-        );
-        assert_eq!(
-            activity_schema["properties"]["maxResults"]["maximum"],
-            serde_json::json!(MAX_PROJECT_ACTIVITY_RESULTS)
-        );
-        let memory_search_schema = serde_json::to_value(
-            &tools
-                .iter()
-                .find(|tool| tool.name.as_ref() == "ley_search_memory")
-                .unwrap()
-                .input_schema,
-        )
-        .unwrap();
-        assert!(memory_search_schema["properties"]["revisionCompatibility"].is_object());
-        let memory_search_schema_text = memory_search_schema.to_string();
+        assert!(search_schema["properties"]["revisionCompatibility"].is_object());
+        let search_schema_text = search_schema.to_string();
         for compatibility in [
             "current-lineage",
             "ancestor",
@@ -3294,7 +3143,7 @@ mod tests {
             "divergent",
             "unknown",
         ] {
-            assert!(memory_search_schema_text.contains(compatibility));
+            assert!(search_schema_text.contains(compatibility));
         }
         let compiler_schema = serde_json::to_value(
             &tools
@@ -3397,9 +3246,6 @@ mod tests {
                 "ley_read_evidence",
                 "ley_read_media_evidence",
                 "ley_search",
-                "ley_search_activity",
-                "ley_search_context",
-                "ley_search_memory",
                 "ley_session_checkpoint",
                 "ley_session_finish",
                 "ley_session_get",
@@ -3441,15 +3287,6 @@ mod tests {
                 .input_schema,
         )
         .unwrap();
-        let legacy_search_schema = serde_json::to_value(
-            &tools
-                .iter()
-                .find(|tool| tool.name.as_ref() == "ley_search_memory")
-                .unwrap()
-                .input_schema,
-        )
-        .unwrap();
-        assert_eq!(canonical_search_schema, legacy_search_schema);
         assert!(canonical_search_schema["properties"]["projectId"].is_object());
         assert!(!canonical_search_schema["required"]
             .as_array()
@@ -4082,8 +3919,10 @@ mod tests {
             .contains("never-send"));
 
         let blocked_search = server
-            .search_context(Parameters(SearchContextParams {
+            .search(Parameters(SearchMemoryParams {
                 query: "stable evidence".to_owned(),
+                project_id: None,
+                revision_compatibility: None,
                 max_results: Some(4),
                 max_tokens: Some(1_000),
             }))
@@ -4239,8 +4078,8 @@ mod tests {
             .contains("private_historical_derivative_marker"));
 
         let direct_evidence = server
-            .search_context(Parameters(SearchContextParams {
-                query: "stable evidence".to_owned(),
+            .brief(Parameters(CompileContextParams {
+                task: "stable evidence".to_owned(),
                 max_results: Some(4),
                 max_tokens: Some(1_000),
             }))
@@ -4523,19 +4362,6 @@ mod tests {
             .unwrap()
             .structured_content
             .unwrap();
-        let legacy_search = server
-            .search_memory(Parameters(SearchMemoryParams {
-                query: "stable evidence".to_owned(),
-                project_id: None,
-                revision_compatibility: None,
-                max_results: Some(8),
-                max_tokens: Some(2_000),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        assert_eq!(canonical_search, legacy_search);
         let citation = canonical_search["results"]
             .as_array()
             .unwrap()
@@ -5631,8 +5457,10 @@ mod tests {
     async fn search_returns_cited_untrusted_snapshot_without_local_paths() {
         let (_temporary, project, vault, server) = fixture();
         let result = server
-            .search_context(Parameters(SearchContextParams {
+            .search(Parameters(SearchMemoryParams {
                 query: "stable evidence".to_owned(),
+                project_id: None,
+                revision_compatibility: None,
                 max_results: None,
                 max_tokens: None,
             }))
@@ -5642,99 +5470,15 @@ mod tests {
         let json = result.structured_content.unwrap();
         assert_eq!(json["freshness"], "captured-snapshot");
         assert_eq!(json["liveSourceChecked"], false);
-        assert_eq!(json["sourceBoundary"], "untrusted-project-evidence");
-        assert!(json["items"][0]["citation"]["artifactPath"].is_string());
+        assert_eq!(json["sourceBoundary"], "untrusted-project-memory");
+        assert!(json["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["citation"]["artifactPath"].is_string()));
         let serialized = json.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));
-    }
-
-    #[tokio::test]
-    async fn search_activity_returns_older_structured_records_with_stable_citations() {
-        let (_temporary, project, vault, server) = fixture();
-        let sessions = server
-            .sessions_list(Parameters(ListSessionsParams { max_results: None }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        let session_id = sessions["sessions"][0]["sessionId"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        let checkpoint = checkpoint_session(
-            &project,
-            &vault,
-            &session_id,
-            CheckpointInput {
-                request_id: format!("req_{}", "2".repeat(32)),
-                summary: "Captured older structured activity".to_owned(),
-                plan: Vec::new(),
-                decisions: vec![DecisionInput {
-                    title: "Older structured decision".to_owned(),
-                    decision: "Use the project activity projection for older memory".to_owned(),
-                    rationale: "The resume pack is intentionally bounded".to_owned(),
-                    alternatives: vec!["Search raw session events".to_owned()],
-                }],
-                tasks: Vec::new(),
-                problems: vec![ProblemInput {
-                    title: "Older structured problem".to_owned(),
-                    symptom: "Older project history was hard to find".to_owned(),
-                    expected: "Search decisions and problems by query".to_owned(),
-                    attempts: vec![AttemptInput {
-                        action: "Inspect the bounded resume pack".to_owned(),
-                        outcome: ley_core::AttemptOutcome::NoEffect,
-                        evidence: "The older session was omitted".to_owned(),
-                    }],
-                    resolution: Some(ResolutionInput {
-                        root_cause: "The resume pack serves recent continuity".to_owned(),
-                        change: "Expose a dedicated activity projection".to_owned(),
-                        verification: "The older records are now searchable".to_owned(),
-                    }),
-                }],
-                touched_artifacts: vec!["lib.rs".to_owned()],
-                commands: Vec::new(),
-                verification: Vec::new(),
-                unresolved: Vec::new(),
-            },
-        )
-        .unwrap();
-        let checkpoint = checkpoint.session.checkpoints.last().unwrap();
-        let decision_id = checkpoint.decisions[0].id.clone();
-        let problem_id = checkpoint.problems[0].id.clone();
-        let attempt_id = checkpoint.problems[0].attempts[0].id.clone();
-        let resolution_id = checkpoint.problems[0]
-            .resolution
-            .as_ref()
-            .unwrap()
-            .id
-            .clone();
-
-        let result = server
-            .search_activity(Parameters(SearchActivityParams {
-                query: "older structured".to_owned(),
-                problem_scope: Some(McpProjectProblemScope::All),
-                max_results: Some(20),
-            }))
-            .await
-            .unwrap();
-        assert_eq!(result.is_error, Some(false));
-        let activity = result.structured_content.unwrap();
-        assert_eq!(activity["liveSourceChecked"], false);
-        assert_eq!(activity["sourceBoundary"], "untrusted-agent-memory");
-        assert!(activity["instructionWarning"]
-            .as_str()
-            .unwrap()
-            .contains("untrusted evidence"));
-        assert_eq!(activity["decisions"][0]["recordId"], decision_id);
-        assert_eq!(activity["decisions"][0]["checkpointId"], checkpoint.id);
-        assert_eq!(activity["problems"][0]["recordId"], problem_id);
-        assert_eq!(activity["problems"][0]["attempts"][0]["id"], attempt_id);
-        assert_eq!(activity["problems"][0]["resolution"]["id"], resolution_id);
-        assert_eq!(
-            activity["problems"][0]["artifactCitations"][0]["artifactPath"],
-            "lib.rs"
-        );
     }
 
     #[tokio::test]

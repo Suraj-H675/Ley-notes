@@ -241,36 +241,13 @@ requires:
 - strictly more retained results at 8,000 tokens than at 500.
 
 The deterministic harness deliberately does **not** download Ley's pinned semantic model and therefore
-does not call this a lexical-vs-hybrid benchmark. True hybrid comparison requires an explicitly staged
-verified model and belongs in a separately reproducible model-enabled run. Core semantic-retrieval
-tests cover corrupt model/index validation; the runtime index path refuses invalid cached indexes and
-rebuilds them only when a valid local model is available.
-
-### Opt-in verified-model semantic evaluation
-
-`python3 eval/run_semantic_eval.py` is the separate model-enabled lane for the two §28.3 cases that
-cannot be honestly exercised by the cache-isolated deterministic corpus. It **never downloads a
-model**: startup requires Ley's exact pinned Model2Vec artifact to already be installed and
-checksum-verified in the caller's normal local cache, otherwise the run exits before creating a
-project.
-
-The fixture uses one captured project/snapshot and the same paraphrased storage-durability query for
-both modes. The runner first points only that search process at an empty temporary cache, forcing
-explicit lexical-only fallback under a three-result budget. The gold storage artifact must be absent.
-It then restores the caller's verified cache and repeats through real `ley_search_memory`; hybrid mode
-must recover the gold artifact inside the same top-three budget with `semanticRank: 1` and a minimum
-semantic-similarity floor. This is a measured retrieval addition, not a claim that hybrid ranking always
-beats lexical ranking.
-
-The same run then exercises the derived-index failure lifecycle against the real private project memory
-namespace. After hybrid search creates the snapshot-bound index, the fixture corrupts only that derived
-JSON file and temporarily removes write permission from its already-private directory. The next real
-MCP search must remain available but report `artifactContextMode: lexical` with the explicit
-`snapshot-bound semantic index could not be built` fallback reason. Restoring write permission and
-searching again must repair the index and return to hybrid mode. Finally, the fixture changes and
-re-ingests the gold source: the new snapshot must use a new semantic-index binding/file, the gold
-citation's artifact snapshot ID must change, and the old derived index must not be reused as current.
-All returned agent/search outputs are checked for project/vault/index-path leakage.
+does not call its current canonical Search lane a lexical-vs-hybrid benchmark. Canonical native artifact
+continuity is intentionally lexical-only today; it does not consult the legacy vault semantic index.
+The former opt-in `run_semantic_eval.py` lane depended on that legacy-vault search path and was retired
+with ADR 0093 instead of being relabeled as evidence for canonical Search. Core semantic-index binding and
+corruption tests remain compatibility/research evidence. Any future vector retrieval on canonical native
+state needs a new task/retrieval ablation against the current lexical baseline before it becomes a release
+lane.
 
 ## Learning mutation idempotency
 
@@ -352,10 +329,9 @@ tentative memory, whereas high-consequence learning trust remains a version-guar
 for a previously solved failure rather than passing on nearby keywords alone. The fixture records one
 structured watcher-startup Problem with an exact dead-end restart attempt, a successful event-loop
 initialization attempt, explicit root cause/change/verification fields, and a snapshot-bound citation to
-`src/watcher.py`. An exact-title lookup first cross-checks `ley_search_memory` against
-`ley_search_activity` for the same stable Problem/session handles. The actual reuse contract then uses a
-separate incident description that is not the stored Problem title. That paraphrased Memory Search must
-recover the same durable Problem/session IDs; following the returned `sessionId` through
+`src/watcher.py`. An exact-title canonical Search establishes the durable Problem/session handles. The actual
+reuse contract then uses a separate incident description that is not the stored Problem title. That
+paraphrased Search must recover the same durable Problem/session IDs; following the returned `sessionId` through
 `ley_session_get` must expose the same Problem ID, both ordered attempts and typed outcomes, the verified
 Resolution, and the immutable captured-source citation.
 
@@ -879,16 +855,6 @@ coverage matrix:
 ```text
 python eval/run_eval.py --p1-coverage
 ```
-
-When Ley's exact pinned local semantic model is already installed and checksum-verified, run the
-separate model-enabled retrieval/index lane:
-
-```text
-python eval/run_semantic_eval.py
-```
-
-That command never installs/downloads a model and is intentionally outside the deterministic P0/P1/P2
-coverage matrices.
 
 Run the complete retained corpus only when investigating historical/compatibility fixtures:
 
