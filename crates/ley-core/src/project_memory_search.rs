@@ -20,8 +20,9 @@ use crate::{
     diagnose_project, find_project_hybrid_context, list_learnings,
     list_learnings_with_continuity_transition, ContextItemKind, ContinuityStore, GraphCitation,
     LearningFreshness, LearningKind, LearningOriginSummary, LearningState, LearningSummary,
-    LearningTrustState, LeyCoreError, ProjectRevisionFreshness, RetrievalLimits, RetrievalMode,
-    RevisionApplicability, RevisionCompatibility, SessionArtifactCitation, SessionSourceKind,
+    LearningTrustState, LeyCoreError, ProblemRecord, ProjectRevisionFreshness, RetrievalLimits,
+    RetrievalMode, RevisionApplicability, RevisionCompatibility, SessionArtifactCitation,
+    SessionSourceKind,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -37,6 +38,7 @@ pub const MAX_PROJECT_MEMORY_SEARCH_CANDIDATES: usize = MAX_SEMANTIC_RANK_TEXTS;
 pub const MAX_PROJECT_MEMORY_SEARCH_TITLE_CHARACTERS: usize = 256;
 pub const MAX_PROJECT_MEMORY_SEARCH_EXCERPT_CHARACTERS: usize = 720;
 pub const MAX_PROJECT_MEMORY_SEARCH_CONFLICTS: usize = 16;
+const MAX_PROJECT_MEMORY_PROBLEM_EXCERPT_PART_CHARACTERS: usize = 220;
 
 const SOURCE_BOUNDARY: &str = "untrusted-project-memory";
 const CAPTURED_FRESHNESS: &str = "captured-snapshot";
@@ -830,12 +832,7 @@ fn collect_session_candidates(
         }
 
         for problem in &checkpoint.problems {
-            let excerpt = problem
-                .resolution
-                .as_ref()
-                .map(|resolution| resolution.change.as_str())
-                .unwrap_or(problem.symptom.as_str())
-                .to_owned();
+            let (excerpt, excerpt_truncated) = problem_search_excerpt(problem, query, terms);
             let attempt_fields = problem
                 .attempts
                 .iter()
@@ -874,6 +871,7 @@ fn collect_session_candidates(
                 query,
                 terms,
             );
+            candidate.content_truncated |= excerpt_truncated;
             candidate.revision_applicability = revision_applicability.clone();
             collector.push(candidate);
         }
@@ -925,6 +923,197 @@ fn verification_status_label(status: crate::VerificationStatus) -> &'static str 
         crate::VerificationStatus::Skipped => "skipped",
         crate::VerificationStatus::Unknown => "unknown",
     }
+}
+
+fn attempt_outcome_label(outcome: crate::AttemptOutcome) -> &'static str {
+    match outcome {
+        crate::AttemptOutcome::Helped => "helped",
+        crate::AttemptOutcome::NoEffect => "no-effect",
+        crate::AttemptOutcome::Worsened => "worsened",
+        crate::AttemptOutcome::Unknown => "unknown",
+    }
+}
+
+fn problem_search_excerpt(
+    problem: &ProblemRecord,
+    query: &str,
+    terms: &[String],
+) -> (String, bool) {
+    #[derive(Debug)]
+    struct ExcerptPart {
+        exact_match: bool,
+        lexical_score: u32,
+        fallback_order: usize,
+        text: String,
+        truncated: bool,
+    }
+
+    let mut parts = Vec::new();
+    let mut push_part = |fallback_order: usize, searchable: String, label: &str, value: String| {
+        if searchable.trim().is_empty() || value.trim().is_empty() {
+            return;
+        }
+        let (lexical_score, exact_match) = lexical_score(&searchable, query, terms);
+        let (value, truncated) = bounded_problem_excerpt_value(
+            &value,
+            query,
+            terms,
+            MAX_PROJECT_MEMORY_PROBLEM_EXCERPT_PART_CHARACTERS,
+        );
+        parts.push(ExcerptPart {
+            exact_match,
+            lexical_score,
+            fallback_order,
+            text: format!("{label}{value}"),
+            truncated,
+        });
+    };
+
+    let resolved = problem.resolution.is_some();
+    if let Some(resolution) = &problem.resolution {
+        push_part(
+            0,
+            resolution.root_cause.clone(),
+            "Root cause: ",
+            resolution.root_cause.clone(),
+        );
+    } else {
+        push_part(
+            0,
+            problem.symptom.clone(),
+            "Symptom: ",
+            problem.symptom.clone(),
+        );
+    }
+    for (index, attempt) in problem.attempts.iter().enumerate() {
+        let searchable = join_bounded_fields([attempt.action.as_str(), attempt.evidence.as_str()]);
+        let mut value = attempt.action.clone();
+        if !attempt.evidence.is_empty() {
+            value.push_str(" Evidence: ");
+            value.push_str(&attempt.evidence);
+        }
+        let label = format!("Attempt ({}): ", attempt_outcome_label(attempt.outcome));
+        push_part(index.saturating_add(1), searchable, &label, value);
+    }
+    if let Some(resolution) = &problem.resolution {
+        let base = problem.attempts.len().saturating_add(1);
+        push_part(
+            base,
+            resolution.change.clone(),
+            "Change: ",
+            resolution.change.clone(),
+        );
+        push_part(
+            base.saturating_add(1),
+            resolution.verification.clone(),
+            "Verification: ",
+            resolution.verification.clone(),
+        );
+    }
+    let base = problem.attempts.len().saturating_add(3);
+    if resolved {
+        push_part(
+            base,
+            problem.symptom.clone(),
+            "Symptom: ",
+            problem.symptom.clone(),
+        );
+    }
+    push_part(
+        if resolved {
+            base.saturating_add(1)
+        } else {
+            problem.attempts.len().saturating_add(1)
+        },
+        problem.expected.clone(),
+        "Expected: ",
+        problem.expected.clone(),
+    );
+
+    parts.sort_by(|left, right| {
+        right
+            .exact_match
+            .cmp(&left.exact_match)
+            .then_with(|| right.lexical_score.cmp(&left.lexical_score))
+            .then_with(|| left.fallback_order.cmp(&right.fallback_order))
+    });
+
+    let any_part_truncated = parts.iter().any(|part| part.truncated);
+    let mut excerpt = String::new();
+    for part in parts {
+        if !excerpt.is_empty() {
+            excerpt.push('\n');
+        }
+        excerpt.push_str(&part.text);
+    }
+    (excerpt, any_part_truncated)
+}
+
+fn bounded_problem_excerpt_value(
+    value: &str,
+    query: &str,
+    terms: &[String],
+    max_characters: usize,
+) -> (String, bool) {
+    let characters = value.chars().collect::<Vec<_>>();
+    if characters.len() <= max_characters {
+        return (value.to_owned(), false);
+    }
+    if max_characters == 0 {
+        return (String::new(), true);
+    }
+
+    let match_range = normalized_match_range(value, query).or_else(|| {
+        terms
+            .iter()
+            .filter(|term| !term.is_empty())
+            .find_map(|term| normalized_match_range(value, term))
+    });
+    let (mut start, match_end) = match_range.unwrap_or((0, 0));
+    if match_range.is_some() {
+        start = start.saturating_sub(max_characters / 3);
+        if match_end > start.saturating_add(max_characters) {
+            start = match_end.saturating_sub(max_characters);
+        }
+    }
+    start = start.min(characters.len().saturating_sub(1));
+    let end = start.saturating_add(max_characters).min(characters.len());
+    let mut output = characters[start..end].iter().collect::<String>();
+    if start > 0 {
+        output.insert(0, '…');
+    }
+    if end < characters.len() {
+        output.push('…');
+    }
+    (output, true)
+}
+
+fn normalized_match_range(value: &str, needle: &str) -> Option<(usize, usize)> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut normalized = Vec::new();
+    let mut original_indexes = Vec::new();
+    for (original_index, character) in value.chars().enumerate() {
+        for lowered in character.to_lowercase() {
+            normalized.push(lowered);
+            original_indexes.push(original_index);
+        }
+    }
+    let needle = needle.chars().collect::<Vec<_>>();
+    if needle.is_empty() || needle.len() > normalized.len() {
+        return None;
+    }
+    normalized
+        .windows(needle.len())
+        .position(|window| window == needle.as_slice())
+        .map(|start| {
+            let end = start + needle.len() - 1;
+            (
+                original_indexes[start],
+                original_indexes[end].saturating_add(1),
+            )
+        })
 }
 
 fn learning_candidate(
@@ -1643,10 +1832,10 @@ mod tests {
         checkpoint_session, checkpoint_session_with_continuity_transition, ingest_project,
         ingest_project_with_continuity_transition, initialize_project,
         propose_learning_with_continuity_transition, start_session,
-        start_session_with_continuity_transition, ArtifactMediaType, CaptureMode, CheckpointInput,
-        DecisionInput, LearningActor, LearningEvidenceInput, LearningKind, LearningProvenance,
-        ProposeLearningInput, SessionSource, StartSessionInput, VerificationInput,
-        VerificationStatus,
+        start_session_with_continuity_transition, ArtifactMediaType, AttemptInput, AttemptOutcome,
+        CaptureMode, CheckpointInput, DecisionInput, LearningActor, LearningEvidenceInput,
+        LearningKind, LearningProvenance, ProblemInput, ProposeLearningInput, ResolutionInput,
+        SessionSource, StartSessionInput, VerificationInput, VerificationStatus,
     };
     use std::fs;
     use std::process::Command;
@@ -2297,6 +2486,96 @@ mod tests {
         assert!(!verification.trusted_for_reuse);
         assert_eq!(verification.trust_signal, None);
         assert!(!result.live_source_checked);
+    }
+
+    #[test]
+    fn problem_search_excerpt_surfaces_matching_failed_attempt_and_root_cause() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        let vault = root.path().join("vault");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&vault).unwrap();
+        initialize_project(
+            &project,
+            Some("Problem episode search"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: request_id('6'),
+                name: "Retry diagnosis".to_owned(),
+                goal: "Diagnose cache retry behavior".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: request_id('7'),
+                summary: "Resolved retry instability after investigating stale jitter state."
+                    .to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: vec![ProblemInput {
+                    title: "Retry instability".to_owned(),
+                    symptom: "Retries occasionally bunch together after reconnect.".to_owned(),
+                    expected: "Retries remain independently jittered after reconnect.".to_owned(),
+                    attempts: vec![AttemptInput {
+                        action: "Increase the retry delay ceiling to 90 seconds.".to_owned(),
+                        outcome: AttemptOutcome::NoEffect,
+                        evidence: format!(
+                            "{} retry_delay_no_effect_marker remained reproducible.",
+                            "attempt-padding ".repeat(48)
+                        ),
+                    }],
+                    resolution: Some(ResolutionInput {
+                        root_cause: format!(
+                            "{} stale_jitter_seed_marker was reused after reconnect.",
+                            "root-cause-padding ".repeat(48)
+                        ),
+                        change: "Regenerate jitter state when the transport reconnects.".to_owned(),
+                        verification: "Reconnect stress test passed for 500 cycles.".to_owned(),
+                    }),
+                }],
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let result = search_project_memory(
+            &project,
+            &vault,
+            "retry_delay_no_effect_marker stale_jitter_seed_marker",
+            ProjectMemorySearchLimits {
+                max_results: 8,
+                max_tokens: 500,
+            },
+            None,
+        )
+        .unwrap();
+        let problem = result
+            .results
+            .iter()
+            .find(|item| item.kind == ProjectMemoryResultKind::Problem)
+            .expect("matching Problem should be returned");
+        assert!(problem.excerpt.contains("retry_delay_no_effect_marker"));
+        assert!(problem.excerpt.contains("stale_jitter_seed_marker"));
+        assert!(problem.excerpt.contains("no-effect"));
+        assert!(problem.excerpt.chars().count() <= MAX_PROJECT_MEMORY_SEARCH_EXCERPT_CHARACTERS);
+        assert!(problem.truncated);
+        assert!(!problem.trusted_for_reuse);
     }
 
     #[test]

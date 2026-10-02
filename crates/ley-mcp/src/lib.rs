@@ -2949,7 +2949,7 @@ mod tests {
     use ley_core::{
         checkpoint_session, generate_specification_id, ingest_project, initialize_project,
         record_session_prompt, record_session_tool_observation, start_session, AgentEgressPolicy,
-        AttemptInput, BindingRegistry, BootstrapSpecificationRegistry, CaptureMode,
+        AttemptInput, AttemptOutcome, BindingRegistry, BootstrapSpecificationRegistry, CaptureMode,
         CheckpointInput, DecisionInput, LearningActor, LearningEvidenceInput, LearningKind,
         LearningProvenance, ProblemInput, ProposeLearningInput, ResolutionInput, SessionSource,
         SpecificationRegistry, StartSessionInput, ToolObservationInput, ToolObservationKind,
@@ -4819,6 +4819,104 @@ mod tests {
         assert!(!stale_error.contains(active_vault.to_str().unwrap()));
         assert!(!stale_error.contains(selected.to_str().unwrap()));
         assert!(!stale_error.contains(selected_backup.to_str().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn canonical_search_problem_excerpt_exposes_matching_episode_facts() {
+        let (_temporary, project, vault, server) = fixture();
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "1".repeat(32)),
+                name: "Retry diagnosis".to_owned(),
+                goal: "Preserve failed retry diagnosis details".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            CheckpointInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                summary: "Resolved retry instability after investigating stale jitter state."
+                    .to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: vec![ProblemInput {
+                    title: "Retry instability".to_owned(),
+                    symptom: "Retries occasionally bunch together after reconnect.".to_owned(),
+                    expected: "Retries remain independently jittered after reconnect.".to_owned(),
+                    attempts: vec![AttemptInput {
+                        action: "Increase the retry delay ceiling to 90 seconds.".to_owned(),
+                        outcome: AttemptOutcome::NoEffect,
+                        evidence: "retry_delay_no_effect_mcp_marker remained reproducible."
+                            .to_owned(),
+                    }],
+                    resolution: Some(ResolutionInput {
+                        root_cause: "stale_jitter_seed_mcp_marker was reused after reconnect."
+                            .to_owned(),
+                        change: "Regenerate jitter state when the transport reconnects.".to_owned(),
+                        verification: "Reconnect stress test passed for 500 cycles.".to_owned(),
+                    }),
+                }],
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+
+        let root_cause = server
+            .search(Parameters(SearchMemoryParams {
+                query: "stale_jitter_seed_mcp_marker".to_owned(),
+                project_id: None,
+                revision_compatibility: None,
+                max_results: Some(8),
+                max_tokens: Some(500),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(root_cause.is_error, Some(false));
+        let root_cause = root_cause.structured_content.unwrap();
+        let root_problem = root_cause["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["kind"] == "problem" && item["title"] == "Retry instability")
+            .expect("canonical Search returns the matching Problem");
+        assert!(root_problem["excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("stale_jitter_seed_mcp_marker"));
+        assert_eq!(root_problem["trustedForReuse"], false);
+
+        let failed_attempt = server
+            .search(Parameters(SearchMemoryParams {
+                query: "retry_delay_no_effect_mcp_marker".to_owned(),
+                project_id: None,
+                revision_compatibility: None,
+                max_results: Some(8),
+                max_tokens: Some(500),
+            }))
+            .await
+            .unwrap();
+        assert_eq!(failed_attempt.is_error, Some(false));
+        let failed_attempt = failed_attempt.structured_content.unwrap();
+        let failed_problem = failed_attempt["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["kind"] == "problem" && item["title"] == "Retry instability")
+            .expect("canonical Search returns the failed-attempt Problem");
+        let excerpt = failed_problem["excerpt"].as_str().unwrap();
+        assert!(excerpt.contains("retry_delay_no_effect_mcp_marker"));
+        assert!(excerpt.contains("Attempt (no-effect):"));
+        assert_eq!(failed_problem["trustedForReuse"], false);
     }
 
     #[tokio::test]
