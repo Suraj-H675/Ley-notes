@@ -415,25 +415,23 @@ The downstream contract therefore requires the approved current requirement and 
 forbids only the explicitly contradictory Redis marker from task-supporting context, and still requires
 zero project/vault path leakage.
 
-The same fixture now composes that long-horizon resume with the live-source boundary in one fresh-host
+The same fixture now composes that long-horizon Resume with the live-source boundary in one fresh-host
 continuation. After the ten historical sessions are complete, the evaluator mutates `docs/runtime.md`,
-starts a new Codex lifecycle session, and requires SessionStart to recover both the final handoff and the
-explicit unresolved live-inspection marker while still declaring the resume snapshot non-live. Because
-this history is intentionally large, the automatic `UserPromptSubmit` projection is allowed to hit the
-real 3,500-byte host-injection guard; when it does, it must fail closed with Ley's truthful overflow
-notice and instruct the host to call `ley_brief` rather than inject a partial pack. The
-fallback compiler call for the same task must then recover the approved current Specification, remain
-`liveSourceChecked: false`, and expose the `live-source-unchecked` instruction without leaking the new
-live marker.
+starts a new Codex lifecycle session, and requires schema-7 SessionStart to expose only stable session/retrieval
+guidance: neither the final historical handoff nor the explicit unresolved marker may be auto-injected. Their
+durability is already proven through the explicit bounded Resume read earlier in the scenario. The following
+`UserPromptSubmit` must remain capture-only and direct the agent toward `ley_brief`; the explicit Brief for the
+same task must recover the approved current Specification, remain `liveSourceChecked: false`, and expose the
+`live-source-unchecked` instruction without leaking the new live marker.
 
 Finally, the evaluator executes a real project-relative `cat` of the mutated file and forwards that
 exact command/result through Codex `PostToolUse`. The fresh continuation must retain exactly one
 untruncated `observationKind: returned` row with the normalized live result, while creating no checkpoint
 or Verification authority and continuing to report `liveSourceChecked: false`. The
-`weeks_later_continuation` metric therefore proves the deterministic composition of durable handoff,
-unresolved-work recovery, current-authority selection, honest host-overflow fallback, and explicit live
-workspace observation. It remains a deterministic proxy: it does not simulate elapsed wall-clock weeks
-or prove that a model independently chooses the correct edit after reading the live file.
+`weeks_later_continuation` therefore proves the deterministic composition of durable explicit Resume handoff,
+guidance-only host startup, current-authority selection through deliberate Brief, and explicit live workspace
+observation. It remains a deterministic proxy: it does not simulate elapsed wall-clock weeks or prove that a
+model independently chooses the correct edit after reading the live file.
 
 ## Opt-in real-agent downstream evaluation
 
@@ -774,56 +772,27 @@ causal proof.
 
 ## SessionStart content vs guidance-only study
 
-`eval/run_startup_context_eval.py` is the opt-in C4 evaluator for the remaining startup-continuity question:
-should an initialized host session automatically receive bounded prior-session/trusted-learning bodies, or only
-session identity + capture/checkpoint/retrieval guidance?
+The C4 startup study is **complete** and the one-off evaluator has been retired from the current tree after the
+product decision. Its exact runnable harness/fixture state remains reproducible at commit
+`43bcdcfe47c5f2ebd749875c54e5f99d9d1a6cbd`; the durable study record is
+[`research/session-start-content-vs-guidance-2026-10-01.md`](research/session-start-content-vs-guidance-2026-10-01.md)
+and the adopted product contract is ADR 0087.
 
-The evaluator is deliberately separate from the static agent-context benchmark because **both arms receive live
-access to Ley's canonical four MCP tools** (`ley_brief`, `ley_search`, `ley_evidence`, `ley_checkpoint`). Ley's
-private continuity project/config stay outside the writable model workspace behind a benchmark-local TCP↔stdio
-relay; relay telemetry records MCP method/tool names only, never tool arguments. The isolated Codex home contains
-only the operator-provided auth mount plus the benchmark-generated Ley MCP config/bridge. The guidance-only arm
-is benchmark-only and does not add a product mode.
+The controlled study compared shipped revision-safe contentful startup with a benchmark-only guidance-only arm
+while keeping the HostHook session-ID algorithm, current prompt capture, repository snapshot, runner/sandbox,
+hidden oracle, and live canonical four-tool Ley MCP constant. The guidance-only arm was not forced to retrieve;
+whether it called Brief/Search/Evidence was part of the measured behavior.
 
-Both arms use the same HostHook session-ID algorithm, current prompt capture, repository snapshot, runner,
-canonical tool inventory, and hidden oracle. The contentful arm uses the shipped revision-safe `SessionStart`;
-the guidance-only arm supplies the same session identity/retrieval/checkpoint guidance without prior-session or
-learning bodies. For interrupted-current-session fixtures both arms retain the same body-free recovery signal.
-The guidance-only arm is **not forced** to call Brief/Search: whether the agent recognizes that continuity matters
-and retrieves it is part of the measured product behavior.
+Across six continuity-heavy risk classes × two arms × two repetitions (24 isolated Codex `0.159.3`,
+`gpt-6-luna`, `xhigh` attempts), both arms passed 12/12 tasks and 12/12 hidden oracles with zero MCP server
+failures. Guidance-only startup averaged 1,188.7 context characters versus 1,983.8 for contentful startup
+(~40.1% less), mean runner time was effectively tied (85.70s vs 86.13s), and mean retrieval calls were 0.83 vs
+0.75. Guidance-only exposed zero forbidden stale markers; contentful startup exposed four stale same-lineage
+markers across the two stale-history attempts.
 
-The checked-in six-fixture slice covers ambiguous continuation, a known failed approach, stale same-lineage
-history, divergent history, a reviewed/trusted learning, and interrupted-current-session recovery. `--validate`
-makes no model calls; it validates hidden/reference-oracle fixtures and deterministically renders both startup
-arms, including explicit per-arm marker/leak expectations. The stale same-lineage fixture intentionally records
-the two old goal/summary strings that shipped contentful Resume auto-injects; divergent and interrupted-body
-markers must remain absent.
-
-Validate without model calls:
-
-```text
-PYTHONPATH=eval python eval/run_startup_context_eval.py --validate
-```
-
-Run a pinned repeated study:
-
-```text
-PYTHONPATH=eval python eval/run_startup_context_eval.py \
-  --all-tasks \
-  --repetitions 2 \
-  --first-variant contentful \
-  --runner-label codex-0.159.3-gpt-6-luna-xhigh \
-  --runner-ro-bind "$HOME/.codex/auth.json=/home/runner/.codex/auth.json" \
-  --runner-command 'codex exec --ignore-rules --ephemeral -s workspace-write -m gpt-6-luna -c model_reasoning_effort="xhigh" -' \
-  --output /tmp/ley-c4-startup-context.json
-```
-
-Reports compare task/hidden-oracle success, startup context size, required/forbidden marker exposure, runner
-time, live Ley retrieval usage (`ley_brief`/Search/Evidence), and checkpoint usage overall/per task/per risk
-class. This is model-dependent evidence, never a deterministic CI gate. A one-pair architecture smoke after
-fixing a shared whitespace-oracle fixture produced 2/2 hidden-oracle passes; both arms independently chose
-`ley_brief`, and guidance-only startup used 1,115 vs 1,952 contentful context characters on that fixture. That
-smoke proves the live-MCP evaluation path works; it is not the C4 product decision.
+That evidence earned guidance-only initialized `SessionStart` in adapter schema 7. Re-run the historical C4
+harness only from its pinned source commit when investigating the study itself; do not recreate a permanent
+benchmark-only contentful mode on the current product surface.
 
 ## P0 capability coverage
 

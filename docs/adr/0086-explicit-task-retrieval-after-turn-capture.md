@@ -1,6 +1,6 @@
 # ADR 0086: Explicit task retrieval after turn capture
 
-Status: accepted
+Status: accepted; the paragraph below that left initialized SessionStart unchanged is superseded by [ADR 0087](0087-guidance-only-session-start.md)
 
 ## Context
 

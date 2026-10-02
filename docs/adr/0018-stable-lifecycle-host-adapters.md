@@ -1,6 +1,6 @@
 # ADR 0018: Stable lifecycle host adapters
 
-Status: accepted; turn-capture semantics superseded by [ADR 0025](0025-bounded-session-turn-evidence.md); initialized prompt-time context injection from ADR 0057 retired by [ADR 0086](0086-explicit-task-retrieval-after-turn-capture.md)
+Status: accepted; turn-capture semantics superseded by [ADR 0025](0025-bounded-session-turn-evidence.md); initialized prompt-time context injection from ADR 0057 retired by [ADR 0086](0086-explicit-task-retrieval-after-turn-capture.md); contentful initialized SessionStart retired by [ADR 0087](0087-guidance-only-session-start.md)
 
 ## Context
 
@@ -11,8 +11,9 @@ A global integration must also be harmless in repositories where the user has no
 ## Decision
 
 `ley hook --host codex|claude [project]` is the versioned lifecycle
-adapter entry point. Adapter schema version 6 keeps bounded prompt capture but retires initialized-project
-automatic task-history injection per ADR 0086. Version 5 added deterministic host tool evidence; version 4
+adapter entry point. Adapter schema version 7 makes initialized SessionStart guidance-only per ADR 0087 while
+preserving stable session identity and body-free recovery signaling. Version 6 kept bounded prompt capture but
+retired initialized-project automatic task-history injection per ADR 0086. Version 5 added deterministic host tool evidence; version 4
 added the now-retired initialized prompt-time Context Compiler projection from ADR 0057. Version 3 introduced
 the bounded turn-evidence semantics in ADR 0025; version 2 used prompt-free turn preparation and fallback
 checkpoints.
@@ -21,7 +22,7 @@ checkpoints.
 - Uninitialized, unbound, and moved-vault projects return the host-valid empty JSON object and do not create, scan, bind, or ingest anything.
 - The packaged MCP command stays protocol-valid outside Ley projects by serving an inactive, zero-capability connection. It exposes no tools or resources and performs no discovery or writes; its server instructions explain the explicit setup required.
 - A host plus its stable external session ID deterministically maps to one Ley session inside one project. Replayed starts and turn deliveries use deterministic request IDs, so process crashes and hook retries cannot duplicate records.
-- `SessionStart` creates or reopens that session and returns the existing bounded project-resume projection as additional context. Stored text is labeled untrusted historical evidence, the captured snapshot is identified, and `liveSourceChecked` remains false.
+- `SessionStart` creates or reopens that session and returns only the stable Ley session ID plus concise retrieval/checkpoint guidance. Prior session bodies, handoffs, learnings, Specifications, mounts/scopes/bundles, and other historical project bodies are not auto-injected. A same-session interrupted window may still produce the bounded body-free recovery count/state signal from ADR 0028.
 - Codex and Claude `UserPromptSubmit` return the exact current Ley session and append bounded turn evidence according to capture policy. Structured and Full Evidence retain pattern-redacted prompt bodies; Minimal retains only disclosure events. Initialized projects do not compile or inject task-specific history at prompt time; agents call `ley_brief` deliberately when continuity is materially useful. Bootstrap Specification context remains a separate uninitialized-workspace exception.
 - Codex and Claude `Stop` append the paired bounded response as turn evidence, not as a fabricated checkpoint. Tool traffic, hidden reasoning, and transcripts are not automatically retained.
 - Rich decisions, tasks, problem attempts/outcomes, resolutions, citations, commands, verification, unresolved work, and handoffs remain typed MCP/CLI writes guided by the bundled agent skill.
@@ -32,7 +33,7 @@ Codex and Claude Code receive separate installable packages under `integrations/
 
 ## Consequences
 
-- Session two receives only explicit structured checkpoints, outcomes, handoffs, and trusted lessons at startup; turn bodies require deliberate bounded retrieval.
+- A new host session does not receive historical project bodies automatically. Prior checkpoints, outcomes, handoffs, learnings, and deeper evidence require deliberate bounded retrieval.
 - A final assistant message is useful turn evidence, not a complete account of work. The skill and MCP checkpoint tools remain necessary for high-quality structured memory.
 - Host threads remain active until an agent or user explicitly finishes them. This avoids falsely terminating a thread on a per-turn Stop event and permits host-native resume after a crash.
 - Changing an integration's stable-field mapping requires an adapter schema/version change and a real multi-turn compatibility exercise.

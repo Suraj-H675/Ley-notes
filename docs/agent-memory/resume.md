@@ -18,6 +18,11 @@ ley resume /path/to/project \
 
 The equivalent default MCP tool is `ley_project_resume`. It is read-only and requires no write-capability flag.
 
+Initialized Codex/Claude `SessionStart` no longer consumes this pack automatically. Adapter schema 7 starts a
+host session with identity/retrieval/checkpoint guidance only (plus a body-free interrupted-session recovery
+signal when applicable). Use Resume deliberately for local inspection, or `ley_brief` for task-conditioned agent
+continuity.
+
 ## What is deliberately excluded
 
 Normal resume context does not include:
@@ -34,8 +39,8 @@ Normal resume context does not include:
 Use `ley_session_get`, `ley_learning_get`, project search, graph traversal, and cited evidence reads only when the task needs more detail.
 
 `totalSessions` still counts retained imported sessions, while
-`excludedImportedSessions` reports how many were deliberately kept out of the automatic
-resume selection. This prevents an old host history snapshot imported today from masquerading
+`excludedImportedSessions` reports how many were deliberately kept out of the bounded
+Resume selection. This prevents an old host history snapshot imported today from masquerading
 as recent work. Imported sessions remain available through explicit session list/show/turn
 inspection and project-memory search.
 
@@ -47,7 +52,7 @@ applicability stays visible instead of being silently promoted into startup cont
 
 `liveSourceChecked: false` means the pack does not inspect current file contents and still describes the
 latest approved ingestion. Resume may inspect bounded local Git metadata to prevent positively divergent
-session history from being auto-injected; that is revision applicability evidence, not a live-source check.
+session history from being presented as current Resume continuity; that is revision applicability evidence, not a live-source check.
 Inspect live files through the current workspace before editing, and rerun `ley ingest` when the durable
 snapshot should advance.
 

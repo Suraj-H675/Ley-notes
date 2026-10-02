@@ -41,7 +41,7 @@ fn json_stdout(output: Output) -> Value {
 }
 
 #[test]
-fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() {
+fn installed_hook_contract_survives_retry_without_auto_injecting_history_to_another_host() {
     let base = tempdir().unwrap();
     let project = base.path().join("project");
     let other = base.path().join("ordinary-project");
@@ -106,8 +106,9 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
     let context = start["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    assert!(context.contains("CLI integration"));
-    assert!(context.contains("Live source checked: no"));
+    assert!(context.contains("Historical Ley project memory was not auto-injected"));
+    assert!(context.contains("Call ley_brief"));
+    assert!(!context.contains("CLI integration"));
     let session_id = context
         .lines()
         .find_map(|line| line.strip_prefix("Current Ley session: "))
@@ -213,7 +214,9 @@ fn installed_hook_contract_survives_retry_and_carries_context_to_another_host() 
     let next_context = next["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    assert!(next_context.contains("Conflict recovery remains"));
+    assert!(next_context.contains("Historical Ley project memory was not auto-injected"));
+    assert!(next_context.contains("Call ley_brief"));
+    assert!(!next_context.contains("Conflict recovery remains"));
     let claude_session_id = next_context
         .lines()
         .find_map(|line| line.strip_prefix("Current Ley session: "))
@@ -286,7 +289,10 @@ fn installed_hook_uses_native_continuity_without_a_vault_binding() {
     let start_context = start["hookSpecificOutput"]["additionalContext"]
         .as_str()
         .unwrap();
-    assert!(start_context.contains("Native hook project"));
+    assert!(start_context.contains("Historical Ley project memory was not auto-injected"));
+    assert!(start_context.contains("Call ley_brief"));
+    assert!(!start_context.contains("Native hook project"));
+    assert!(!start_context.contains("native_hook_evidence_72c1"));
     assert!(start_context.contains("Current Ley session: ses_"));
 
     let prompt = json_stdout(ley(

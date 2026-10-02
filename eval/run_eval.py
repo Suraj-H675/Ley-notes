@@ -1742,8 +1742,10 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         divergent_host_context = hook_additional_context(divergent_host_start)
         divergent_host_revision_safe = (
             query.lower() not in divergent_host_context.lower()
-            and "revision safety: withheld" in divergent_host_context.lower()
-            and "divergent from the current checkout" in divergent_host_context.lower()
+            and "historical ley project memory was not auto-injected" in divergent_host_context.lower()
+            and "call ley_brief" in divergent_host_context.lower()
+            and "## recent work" not in divergent_host_context.lower()
+            and "## reviewed project learnings" not in divergent_host_context.lower()
             and str(project) not in divergent_host_context
             and str(vault) not in divergent_host_context
         )
@@ -4259,13 +4261,14 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         continuation_turns_text = json.dumps(continuation_turns, sort_keys=True)
         continuation_live_checks = {
             "host-session": continuation_session_id.startswith("ses_"),
-            "resume-handoff": final_handoff_marker in continuation_startup_context,
-            "resume-unresolved": final_unresolved_marker in continuation_startup_context,
-            "resume-non-live": "live source checked: no." in startup_lower,
-            "resume-live-inspection-instruction":
-                "inspect live source before editing" in startup_lower,
-            "resume-no-live-marker":
-                live_mutation_marker not in continuation_startup_context,
+            "startup-guidance-only":
+                "historical ley project memory was not auto-injected" in startup_lower
+                and "call ley_brief" in startup_lower
+                and "## recent work" not in startup_lower
+                and "## reviewed project learnings" not in startup_lower,
+            "startup-no-handoff": final_handoff_marker not in continuation_startup_context,
+            "startup-no-unresolved": final_unresolved_marker not in continuation_startup_context,
+            "startup-no-live-marker": live_mutation_marker not in continuation_startup_context,
             "capture-only-guidance":
                 "does not inject task-specific project history" in task_lower
                 and "call ley_brief" in task_lower
@@ -4567,6 +4570,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         codex_text = json.dumps(codex, sort_keys=True)
         claude_text = json.dumps(claude, sort_keys=True)
+        codex_startup_context = hook_additional_context(codex)
+        claude_startup_context = hook_additional_context(claude)
         codex_task_context = hook_additional_context(codex_task)
         claude_task_context = hook_additional_context(claude_task)
         codex_retry_context = hook_additional_context(codex_retry)
@@ -4584,10 +4589,18 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         codex_brief_text = context_contract_text(codex_brief)
         claude_brief_text = context_contract_text(claude_brief)
         portable = (
-            marker in codex_text
-            and marker in claude_text
-            and codex_session_id.startswith("ses_")
+            codex_session_id.startswith("ses_")
             and claude_session_id.startswith("ses_")
+            and marker not in codex_text
+            and marker not in claude_text
+            and "historical ley project memory was not auto-injected"
+            in codex_startup_context.lower()
+            and "historical ley project memory was not auto-injected"
+            in claude_startup_context.lower()
+            and "call ley_brief" in codex_startup_context.lower()
+            and "call ley_brief" in claude_startup_context.lower()
+            and "## recent work" not in codex_startup_context.lower()
+            and "## recent work" not in claude_startup_context.lower()
             and "does not inject task-specific project history" in codex_task_context
             and "does not inject task-specific project history" in claude_task_context
             and "call ley_brief" in codex_task_context.lower()
