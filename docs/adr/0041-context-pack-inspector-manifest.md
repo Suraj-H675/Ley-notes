@@ -19,6 +19,9 @@ truthful omission accounting may consequently produce a different logical pack I
 binary even when the retained source bodies are unchanged; the Inspector should report that mismatch
 instead of pretending the older pack was reconstructed.
 
+Later extension: Inspector schema v5 follows ADR 0088 and removes copied compiler follow-up handles plus their
+coverage accounting. Canonical citations, premise replacement IDs, and admitted item provenance remain.
+
 ## Context
 
 Ley's third P1 roadmap item is a Context Pack Inspector. The Context Compiler already exposes most of the raw diagnostics needed to understand a pack—authority, admission basis, exclusions, premise warnings, conflicts, retrieval mode, revision freshness, budgets, omissions, mounts, egress exclusions, and follow-up handles—but there is no stable identity for one compiled pack and no compact manifest that answers “why was this supplied?” without copying all supplied text again.

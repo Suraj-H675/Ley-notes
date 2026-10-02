@@ -611,22 +611,6 @@ pub struct ContextGap {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ContextFollowUpKind {
-    ReadEvidence,
-    Session,
-    Learning,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextFollowUp {
-    pub kind: ContextFollowUpKind,
-    pub id: String,
-    pub reason: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextCompileCoverage {
@@ -645,8 +629,6 @@ pub struct ContextCompileCoverage {
     pub omitted_exclusions: usize,
     pub returned_gaps: usize,
     pub omitted_gaps: usize,
-    pub returned_follow_ups: usize,
-    pub omitted_follow_ups: usize,
     pub search_truncated: bool,
     pub source_truncated: bool,
 }
@@ -696,7 +678,6 @@ pub struct CompiledContextPack {
     pub conflicts: Vec<ProjectMemoryConflict>,
     pub exclusions: Vec<ContextExclusion>,
     pub gaps: Vec<ContextGap>,
-    pub follow_ups: Vec<ContextFollowUp>,
     pub coverage: ContextCompileCoverage,
     pub retrieval: ProjectMemorySearchRetrieval,
     pub revision_freshness: ProjectRevisionFreshness,
@@ -722,7 +703,6 @@ struct FittedDiagnostics {
     policy_bundle_exclusions: Vec<PolicyBundleCompileExclusion>,
     exclusions: Vec<ContextExclusion>,
     gaps: Vec<ContextGap>,
-    follow_ups: Vec<ContextFollowUp>,
     estimated_tokens: usize,
 }
 
@@ -733,7 +713,6 @@ struct DiagnosticInputs {
     policy_bundle_exclusions: Vec<PolicyBundleCompileExclusion>,
     exclusions: Vec<ContextExclusion>,
     gaps: Vec<ContextGap>,
-    follow_ups: Vec<ContextFollowUp>,
 }
 
 struct ContextGapInputs<'a> {
@@ -1413,13 +1392,11 @@ fn compile_search_result_with_authorities(
         estimated_tokens: item_tokens,
         max_tokens: limits.max_tokens,
     });
-    let follow_ups = follow_ups(&items, &premise_warnings);
     let raw_premise_warnings = premise_warnings.len();
     let raw_conflicts = search.conflicts.len();
     let raw_specification_exclusions = specification_exclusions.len();
     let raw_exclusions = exclusions.len();
     let raw_gaps = gaps.len();
-    let raw_follow_ups = follow_ups.len();
     let search_truncated = search.truncated;
     let source_truncated = search.coverage.source_truncated;
     let freshness = search.freshness;
@@ -1431,7 +1408,6 @@ fn compile_search_result_with_authorities(
             policy_bundle_exclusions,
             exclusions,
             gaps,
-            follow_ups,
         },
         limits.max_tokens.saturating_sub(item_tokens),
     );
@@ -1454,8 +1430,6 @@ fn compile_search_result_with_authorities(
         omitted_exclusions: raw_exclusions.saturating_sub(diagnostics.exclusions.len()),
         returned_gaps: diagnostics.gaps.len(),
         omitted_gaps: raw_gaps.saturating_sub(diagnostics.gaps.len()),
-        returned_follow_ups: diagnostics.follow_ups.len(),
-        omitted_follow_ups: raw_follow_ups.saturating_sub(diagnostics.follow_ups.len()),
         search_truncated,
         source_truncated,
     };
@@ -1534,7 +1508,6 @@ fn compile_search_result_with_authorities(
         conflicts: diagnostics.conflicts,
         exclusions: diagnostics.exclusions,
         gaps: diagnostics.gaps,
-        follow_ups: diagnostics.follow_ups,
         coverage,
         retrieval: search.retrieval,
         revision_freshness: search.revision_freshness,
@@ -1878,7 +1851,6 @@ fn fit_diagnostics(inputs: DiagnosticInputs, budget: usize) -> FittedDiagnostics
         policy_bundle_exclusions,
         exclusions,
         gaps,
-        follow_ups,
     } = inputs;
     let mut used = 0usize;
     let mut fitted_premise_warnings = Vec::new();
@@ -1887,7 +1859,6 @@ fn fit_diagnostics(inputs: DiagnosticInputs, budget: usize) -> FittedDiagnostics
     let mut fitted_specification_exclusions = Vec::new();
     let mut fitted_policy_bundle_exclusions = Vec::new();
     let mut fitted_exclusions = Vec::new();
-    let mut fitted_follow_ups = Vec::new();
 
     // Premise warnings are the highest-value diagnostic because they tell the caller that the
     // task itself may be based on obsolete or disputed state. Conflicts follow because they
@@ -1960,14 +1931,6 @@ fn fit_diagnostics(inputs: DiagnosticInputs, budget: usize) -> FittedDiagnostics
             fitted_exclusions.push(exclusion);
         }
     }
-    for follow_up in follow_ups {
-        let cost = estimate_follow_up_tokens(&follow_up);
-        if used.saturating_add(cost) <= budget {
-            used = used.saturating_add(cost);
-            fitted_follow_ups.push(follow_up);
-        }
-    }
-
     FittedDiagnostics {
         premise_warnings: fitted_premise_warnings,
         conflicts: fitted_conflicts,
@@ -1975,7 +1938,6 @@ fn fit_diagnostics(inputs: DiagnosticInputs, budget: usize) -> FittedDiagnostics
         policy_bundle_exclusions: fitted_policy_bundle_exclusions,
         exclusions: fitted_exclusions,
         gaps: fitted_gaps,
-        follow_ups: fitted_follow_ups,
         estimated_tokens: used,
     }
 }
@@ -2241,15 +2203,6 @@ fn estimate_exclusion_tokens(exclusion: &ContextExclusion) -> usize {
         .saturating_add(8)
 }
 
-fn estimate_follow_up_tokens(follow_up: &ContextFollowUp) -> usize {
-    let characters = follow_up
-        .id
-        .chars()
-        .count()
-        .saturating_add(follow_up.reason.chars().count());
-    DIAGNOSTIC_ENTRY_OVERHEAD_TOKENS.saturating_add(characters.div_ceil(4))
-}
-
 fn admission_exclusion(
     item: &ProjectMemorySearchResult,
     reason: ContextExclusionReason,
@@ -2474,72 +2427,6 @@ fn context_gaps(inputs: ContextGapInputs<'_>) -> Vec<ContextGap> {
         });
     }
     gaps
-}
-
-fn follow_ups(
-    items: &[CompiledContextItem],
-    premise_warnings: &[ContextPremiseWarning],
-) -> Vec<ContextFollowUp> {
-    let mut seen = BTreeSet::new();
-    let mut output = Vec::new();
-    for warning in premise_warnings {
-        let Some(replacement_learning_id) = &warning.replacement_learning_id else {
-            continue;
-        };
-        let key = format!(
-            "{:?}:{replacement_learning_id}",
-            ContextFollowUpKind::Learning
-        );
-        if seen.insert(key) {
-            output.push(ContextFollowUp {
-                kind: ContextFollowUpKind::Learning,
-                id: replacement_learning_id.clone(),
-                reason: "Inspect the explicitly designated replacement for the superseded task-relevant learning before relying on historical state.".to_owned(),
-            });
-        }
-        if output.len() >= 6 {
-            return output;
-        }
-    }
-    'items: for item in items {
-        let candidates = [
-            item.citation.as_ref().map(|citation| {
-                (
-                    ContextFollowUpKind::ReadEvidence,
-                    citation.artifact_path.clone(),
-                    "Read the cited source range when exact source context is needed.",
-                )
-            }),
-            item.session_id.as_ref().map(|session_id| {
-                (
-                    ContextFollowUpKind::Session,
-                    session_id.clone(),
-                    "Inspect the bounded session context when more historical detail is needed.",
-                )
-            }),
-            item.learning_id.as_ref().map(|learning_id| {
-                (
-                    ContextFollowUpKind::Learning,
-                    learning_id.clone(),
-                    "Inspect the reviewed learning and its evidence before applying it broadly.",
-                )
-            }),
-        ];
-        for (kind, id, reason) in candidates.into_iter().flatten() {
-            let key = format!("{kind:?}:{id}");
-            if seen.insert(key) {
-                output.push(ContextFollowUp {
-                    kind,
-                    id,
-                    reason: reason.to_owned(),
-                });
-            }
-            if output.len() >= 6 {
-                break 'items;
-            }
-        }
-    }
-    output
 }
 
 fn validate_limits(task: &str, limits: ContextCompileLimits) -> Result<(), LeyCoreError> {
@@ -2824,7 +2711,7 @@ mod tests {
     }
 
     #[test]
-    fn superseded_task_relevant_learning_is_an_obsolete_premise_with_replacement_follow_up() {
+    fn superseded_task_relevant_learning_is_an_obsolete_premise_with_replacement_id() {
         let replacement_id = format!("lrn_{}", "2".repeat(32));
         let mut superseded = result(
             ProjectMemoryResultKind::Learning,
@@ -2856,9 +2743,6 @@ mod tests {
             Some(replacement_id.as_str())
         );
         assert!(pack.items.is_empty());
-        assert!(pack.follow_ups.iter().any(|follow_up| {
-            follow_up.kind == ContextFollowUpKind::Learning && follow_up.id == replacement_id
-        }));
     }
 
     #[test]
@@ -3046,7 +2930,7 @@ mod tests {
     }
 
     #[test]
-    fn trusted_learning_keeps_review_signals_and_all_progressive_disclosure_handles() {
+    fn trusted_learning_keeps_review_signals_and_canonical_provenance_fields() {
         let mut learning = result(
             ProjectMemoryResultKind::Learning,
             "learn_reviewed",
@@ -3095,12 +2979,13 @@ mod tests {
             Some(ProjectMemoryTrustSignal::TrustedCurrent)
         );
         assert_eq!(item.learning_origin_summary, Some(origin));
-        assert!(pack.follow_ups.iter().any(|follow_up| {
-            follow_up.kind == ContextFollowUpKind::ReadEvidence && follow_up.id == "docs/runbook.md"
-        }));
-        assert!(pack.follow_ups.iter().any(|follow_up| {
-            follow_up.kind == ContextFollowUpKind::Learning && follow_up.id == "learn_reviewed"
-        }));
+        assert_eq!(item.learning_id.as_deref(), Some("learn_reviewed"));
+        assert_eq!(
+            item.citation
+                .as_ref()
+                .map(|citation| citation.artifact_path.as_str()),
+            Some("docs/runbook.md")
+        );
     }
 
     #[test]
@@ -3663,10 +3548,6 @@ mod tests {
                 && warning.learning_ids == vec![old.learning.learning_id.clone()]
                 && warning.replacement_learning_id.as_deref()
                     == Some(replacement.learning.learning_id.as_str())
-        }));
-        assert!(pack.follow_ups.iter().any(|follow_up| {
-            follow_up.kind == ContextFollowUpKind::Learning
-                && follow_up.id == replacement.learning.learning_id
         }));
         assert!(!pack.items.iter().any(|item| {
             item.learning_id.as_deref() == Some(old.learning.learning_id.as_str())

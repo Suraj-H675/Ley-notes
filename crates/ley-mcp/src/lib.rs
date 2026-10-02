@@ -6604,7 +6604,10 @@ mod tests {
         assert_eq!(inspection["matchesExpectedContextPack"], true);
         assert!(inspection["mismatchWarning"].is_null());
         assert_eq!(inspection["persisted"], false);
-        assert_eq!(inspection["schemaVersion"], 4);
+        assert_eq!(inspection["schemaVersion"], 5);
+        assert!(inspection.get("followUps").is_none());
+        assert!(inspection["coverage"].get("returnedFollowUps").is_none());
+        assert!(inspection["coverage"].get("omittedFollowUps").is_none());
         assert_eq!(
             inspection["inspectionBasis"],
             "current-recompiled-context-pack-manifest"
@@ -6742,7 +6745,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compiler_serializes_obsolete_premise_and_explicit_replacement_handle() {
+    async fn compiler_serializes_obsolete_premise_and_explicit_replacement_id() {
         let (_temporary, project, vault, server) = fixture();
         let started = start_session(
             &project,
@@ -6864,14 +6867,9 @@ mod tests {
                     .is_some_and(|ids| ids.iter().any(|id| id == &obsolete.learning.learning_id))
                 && warning["replacementLearningId"] == replacement.learning.learning_id
         }));
-        assert!(compiled["followUps"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|follow_up| {
-                follow_up["kind"] == "learning"
-                    && follow_up["id"] == replacement.learning.learning_id
-            }));
+        assert!(compiled.get("followUps").is_none());
+        assert!(compiled["coverage"].get("returnedFollowUps").is_none());
+        assert!(compiled["coverage"].get("omittedFollowUps").is_none());
         assert!(compiled["items"].as_array().unwrap().iter().any(|item| {
             item["learningId"] == replacement.learning.learning_id
                 && item["trustSignal"] == "trusted-current"

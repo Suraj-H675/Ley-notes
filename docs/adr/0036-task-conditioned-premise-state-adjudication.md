@@ -1,6 +1,6 @@
 # ADR 0036: Task-conditioned premise/state adjudication
 
-Status: accepted
+Status: accepted; replacement follow-up-handle clauses superseded by [ADR 0088](0088-retire-derived-compiler-follow-up-handles.md)
 
 Later extension: ADR 0074 preserves this premise engine's active-project scope while adding a separate
 Context Mount admission rule: explicitly contradictory mounted historical guidance may be withheld
@@ -29,7 +29,7 @@ Premise relevance uses the same admission relevance rule as normal context: lexi
 
 The compiler does **not** infer supersession from timestamps, normalized titles, last-writer order, or embedding rank. Session decisions currently have no typed supersession field, so this slice does not pretend that a newer decision is automatically authoritative. Explicit learning supersession remains the only replacement relation used here until a later evidence-backed state model introduces additional typed relations.
 
-Warnings preserve stable entity/learning identifiers, a bounded message, and an optional replacement learning ID. A designated replacement receives a normal `Learning` follow-up handle for explicit inspection. The replacement is not automatically promoted merely because it is named by a supersession edge; its own trust/freshness/admission state is evaluated normally.
+Warnings preserve stable entity/learning identifiers, a bounded message, and an optional replacement learning ID. The replacement is not automatically promoted merely because it is named by a supersession edge; its own trust/freshness/admission state is evaluated normally. ADR 0088 later retired the duplicate `Learning` follow-up handle; the warning's `replacementLearningId` remains the canonical replacement identity.
 
 Premise warnings are fitted before ordinary conflict/gap diagnostics so a tight token budget cannot silently erase the reason an otherwise relevant historical state was withheld. Omission counts remain explicit. The compiler continues to report `liveSourceChecked: false`: an adjudicated replacement is durable project memory, not proof that the current working tree implements it.
 
@@ -40,5 +40,5 @@ Mounted reference projects remain lower-precedence reference evidence. This firs
 - Agents can distinguish “no useful memory” from “your task appears to assume an explicitly invalidated state.”
 - Explicit user-reviewed supersession becomes useful at task time without deleting the historical claim.
 - Similarity, recency, and repeated agent restatement still cannot manufacture current-state authority.
-- Replacement follow-ups support progressive disclosure without preloading the replacement body solely because an older claim matched.
+- Replacement identity supports progressive disclosure without preloading the replacement body solely because an older claim matched; ADR 0088 removes the duplicate derived follow-up object.
 - Branch/revision compatibility, live freshness beacons, and additional typed state/supersession relations remain separate roadmap work rather than being guessed by this slice.

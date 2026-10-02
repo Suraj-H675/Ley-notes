@@ -1,22 +1,21 @@
 use crate::{
     AgentEgressTarget, CompiledContextPack, ContextAdmissionBasis, ContextAuthority,
     ContextCompileCoverage, ContextEgressCoverage, ContextEgressExclusion, ContextExclusion,
-    ContextFollowUp, ContextGap, ContextPremiseAdjudication, GraphCitation,
-    MountedReferenceCoverage, MountedReferenceExclusion, MountedReferenceScope,
-    PolicyBundleCompileCoverage, PolicyBundleCompileExclusion, PolicyBundleContext,
-    ProjectMemoryConflict, ProjectMemoryResultKind, ProjectMemorySearchRetrieval,
-    ProjectRevisionFreshness, RevisionApplicability, SharedKnowledgeCoverage,
-    SharedKnowledgeExclusion, SharedKnowledgeScope, SpecificationCompileCoverage,
-    SpecificationCompileExclusion,
+    ContextGap, ContextPremiseAdjudication, GraphCitation, MountedReferenceCoverage,
+    MountedReferenceExclusion, MountedReferenceScope, PolicyBundleCompileCoverage,
+    PolicyBundleCompileExclusion, PolicyBundleContext, ProjectMemoryConflict,
+    ProjectMemoryResultKind, ProjectMemorySearchRetrieval, ProjectRevisionFreshness,
+    RevisionApplicability, SharedKnowledgeCoverage, SharedKnowledgeExclusion, SharedKnowledgeScope,
+    SpecificationCompileCoverage, SpecificationCompileExclusion,
 };
 use serde::Serialize;
 
-pub const CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION: u32 = 4;
+pub const CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION: u32 = 5;
 
 const INSPECTION_BASIS: &str = "current-recompiled-context-pack-manifest";
 const SOURCE_BOUNDARY: &str = "derived-context-pack-inspection";
 const INSTRUCTION_WARNING: &str = "This Inspector manifest explains one compiled Ley context pack. It does not make stored text authoritative, does not prove live source is unchanged, and does not reconstruct an older pack when the expected contextPackId differs.";
-const PRIVACY_NOTICE: &str = "The Inspector manifest omits included active-project, Specification, Policy Bundle, mounted-reference, and shared-scope text/excerpts. It exposes only diagnostic metadata already represented by the compiled pack: stable IDs, project-relative citations/paths, bundle/mount/scope/source identities, authority/admission reasoning, exclusions, conflicts, retrieval/revision signals, budget composition, coverage, and follow-up handles.";
+const PRIVACY_NOTICE: &str = "The Inspector manifest omits included active-project, Specification, Policy Bundle, mounted-reference, and shared-scope text/excerpts. It exposes only diagnostic metadata already represented by the compiled pack: stable IDs, project-relative citations/paths, bundle/mount/scope/source identities, authority/admission reasoning, exclusions, conflicts, retrieval/revision signals, budget composition, and coverage.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -134,7 +133,6 @@ pub struct ContextPackInspection {
     pub mounted_reference_scopes: Vec<MountedReferenceScope>,
     pub policy_bundles: Vec<PolicyBundleContext>,
     pub shared_knowledge_scopes: Vec<SharedKnowledgeScope>,
-    pub follow_ups: Vec<ContextFollowUp>,
     pub live_source_checked: bool,
     pub source_boundary: &'static str,
     pub instruction_warning: &'static str,
@@ -339,7 +337,6 @@ pub fn inspect_context_pack(
         || pack.coverage.omitted_conflicts > 0
         || pack.coverage.omitted_exclusions > 0
         || pack.coverage.omitted_gaps > 0
-        || pack.coverage.omitted_follow_ups > 0
         || pack.specification_coverage.omitted_specifications > 0
         || pack.specification_coverage.omitted_exclusions > 0
         || pack.policy_bundle_coverage.omitted_bundles > 0
@@ -422,7 +419,6 @@ pub fn inspect_context_pack(
         mounted_reference_scopes: pack.mounted_reference_scopes.clone(),
         policy_bundles: pack.policy_bundles.clone(),
         shared_knowledge_scopes: pack.shared_knowledge_scopes.clone(),
-        follow_ups: pack.follow_ups.clone(),
         live_source_checked: pack.live_source_checked,
         source_boundary: SOURCE_BOUNDARY,
         instruction_warning: INSTRUCTION_WARNING,

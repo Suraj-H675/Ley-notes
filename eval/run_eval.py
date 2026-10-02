@@ -1660,12 +1660,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             and warning.get("replacementLearningId") == replacement_id
             for warning in warnings
         )
-        follow_up_ok = any(
-            isinstance(item, dict)
-            and item.get("kind") == "learning"
-            and item.get("id") == replacement_id
-            for item in compiled.get("followUps", [])
-        )
         replacement_admitted = any(
             isinstance(item, dict)
             and item.get("learningId") == replacement_id
@@ -1680,7 +1674,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             isinstance(adjudication, dict)
             and adjudication.get("state") == expected_state
             and warning_ok
-            and follow_up_ok
             and replacement_admitted
             and obsolete_withheld
             and compiled.get("liveSourceChecked") is False

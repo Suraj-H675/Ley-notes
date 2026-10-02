@@ -1,6 +1,6 @@
 # ADR 0027: Task-conditioned context admission
 
-Status: accepted
+Status: accepted; derived follow-up-handle clauses superseded by [ADR 0088](0088-retire-derived-compiler-follow-up-handles.md)
 
 ## Context
 
