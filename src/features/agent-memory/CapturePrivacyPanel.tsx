@@ -64,7 +64,7 @@ const modes: Array<{
     description:
       "Keeps bounded turn evidence and retains supported captured image originals for multimodal evidence.",
     retention:
-      "Highest sensitivity and storage; images are stored as original evidence without OCR or visual redaction, and Ley itself still does not scrape chats.",
+      "Highest sensitivity and storage; images are stored as original evidence without OCR or visual redaction. Ley does not scrape complete chat transcripts. Installed host integrations may still add small Ley session/checkpoint guidance to the agent context; that is separate from this retention setting.",
     tone: "bg-warning/10 text-warning",
   },
 ];

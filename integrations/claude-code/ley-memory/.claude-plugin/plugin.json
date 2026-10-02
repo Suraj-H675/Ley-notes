@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "ley-memory",
   "displayName": "Ley Memory",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Private, local project memory and cited continuity for Claude Code.",
   "author": {
     "name": "Suraj"

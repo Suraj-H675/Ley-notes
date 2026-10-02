@@ -89,6 +89,18 @@ fn claude_plugin_is_portable_discoverable_and_turn_aware() {
 }
 
 #[test]
+fn packaged_agent_plugins_share_one_release_version() {
+    let root = repository_root();
+    let claude = json(
+        root.join("integrations/claude-code/ley-memory/.claude-plugin/plugin.json"),
+    );
+    let codex = json(
+        root.join("integrations/codex/plugins/ley-memory/.codex-plugin/plugin.json"),
+    );
+    assert_eq!(claude["version"], codex["version"]);
+}
+
+#[test]
 fn codex_prompt_hook_is_bounded_capture_only() {
     let root = repository_root();
     let plugin = root.join("integrations/codex/plugins/ley-memory");

@@ -138,6 +138,9 @@ describe("CapturePrivacyPanel", () => {
     expect(
       screen.getByText(/does not authorize raw host transcript collection/i),
     ).toBeVisible();
+    expect(
+      screen.getByText(/host integrations may still add small Ley session\/checkpoint guidance/i),
+    ).toBeVisible();
 
     const apply = screen.getByRole("button", { name: "Apply & recapture" });
     expect(apply).toBeDisabled();
