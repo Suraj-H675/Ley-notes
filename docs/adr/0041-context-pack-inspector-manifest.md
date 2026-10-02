@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted historically; runtime/API retired by [ADR 0089](0089-retire-context-pack-inspector.md).
 
 Extended by ADR 0052: Inspector schema v2 adds reusable team/organization Knowledge Scope attribution without copying shared reference bodies.
 

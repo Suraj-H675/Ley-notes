@@ -14,7 +14,6 @@ mod bootstrap_specification;
 mod consolidation_inbox;
 mod context_compiler;
 mod context_mount;
-mod context_pack_inspector;
 mod continuity_import;
 mod continuity_portable;
 mod continuity_store;
@@ -111,10 +110,6 @@ pub use context_mount::{
     ContextMountPermission, ContextMountRegistry, ContextMountStatus, CONTEXT_MOUNT_REGISTRY_FILE,
     CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION, MAX_CONTEXT_MOUNTS_PER_PROJECT,
     MAX_CONTEXT_MOUNT_HISTORY_PER_PROJECT,
-};
-pub use context_pack_inspector::{
-    inspect_context_pack, ContextPackBudgetBreakdown, ContextPackIncludedRecord,
-    ContextPackInspection, ContextPackRecordSource, CONTEXT_PACK_INSPECTOR_SCHEMA_VERSION,
 };
 pub use continuity_import::{
     import_legacy_approved_sources, import_legacy_continuity, import_legacy_project_catalog,

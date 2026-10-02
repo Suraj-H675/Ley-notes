@@ -174,6 +174,9 @@ Source project/vault paths continue to live only in Ley's private Project Catalo
 
 ## Context Pack Inspector
 
+Historical only: ADR 0089 later removes the standalone Context Pack Inspector runtime/API entirely. The schema-v3
+details below document the original Policy Bundle attribution design, not a current agent surface.
+
 Context Pack Inspector schema version 3 adds Policy Bundle attribution without becoming another policy-content store.
 
 The Inspector exposes:
@@ -190,7 +193,9 @@ An expected context-pack ID mismatch still means the older pack was not reconstr
 
 ## Agent and host contract
 
-MCP and packaged Codex/Claude integrations may consume allowed Policy Bundle context from `ley_compile_context` and diagnostic attribution from `ley_context_pack_inspect`.
+Historically, MCP and packaged Codex/Claude integrations could consume allowed Policy Bundle context from
+`ley_compile_context` and diagnostic attribution from `ley_context_pack_inspect`. ADR 0089 removes the latter
+route; this paragraph remains the record of the original contract.
 
 They must:
 

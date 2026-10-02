@@ -839,9 +839,9 @@ matrices require:
 - Branch/Worktree Controls to recompute retained checkpoint/search applicability across divergent and
   merged Git states without re-ingestion, while keeping `liveSourceChecked: false`.
 
-Context Pack Inspector and Context Utility Feedback are no longer current P1 release entries after the
-canonical MCP contraction. Their historical scenarios/ADRs remain evidence for compatibility cleanup,
-not current agent-surface claims. Retired Topic Dossier, Current Project State, Memory Health, Agent
+Context Pack Inspector is now deleted from the runtime/API after the canonical MCP contraction; Context Utility
+Feedback remains non-canonical compatibility/research machinery. Their historical scenarios/ADRs remain evidence
+for compatibility cleanup, not current agent-surface claims. Retired Topic Dossier, Current Project State, Memory Health, Agent
 Legibility, and dedicated graph query products likewise remain historical evidence only.
 
 ## Running safely
