@@ -66,7 +66,7 @@ Keep the default command when the host needs retrieval only. Add `--allow-sessio
 }
 ```
 
-On a fully canonical native project this flag adds only `ley_checkpoint`, keeping the normal agent contract at four tools. In legacy-compatibility mode it may also enable the ordinary session lifecycle/checkpoint compatibility routes, but the former shape-specific recovery writers and Context Utility mutation routes stay disabled. The flag does not enable deletion, project switching, raw transcript capture, or live-source scanning. Compatibility `ley_session_checkpoint` still shares the checkpoint idempotency/event engine where that legacy surface is present.
+On a fully canonical native project this flag adds only `ley_checkpoint`, keeping the normal agent contract at four tools. In legacy-compatibility mode it may also enable the ordinary session lifecycle/checkpoint compatibility routes, but the former shape-specific recovery verifier/commit MCP wrappers and Context Utility mutation wrappers are deleted from the runtime. The flag does not enable deletion, project switching, raw transcript capture, or live-source scanning. Compatibility `ley_session_checkpoint` still shares the checkpoint idempotency/event engine where that legacy surface is present.
 
 Every write requires a stable `requestId` matching `req_` plus 32 lowercase hexadecimal characters. Keep the same ID until a call succeeds. An exact retry returns `replayed: true`; different content with the same ID fails.
 
@@ -120,7 +120,7 @@ An uninitialized workspace with explicit Bootstrap Specification/reference autho
 
 ### Compatibility and recovery modes
 
-Older projects may temporarily enter legacy-compatibility mode while native authorities are still being established. Lower-level session/search/inspection and learning-proposal compatibility routes may remain available where needed so retained authority is not stranded, but connector MCP reads, Context Utility mutation, and shape-specific recovery verifier/commit routes are retired. These compatibility mechanisms are not the normal host contract, and packaged skills do not teach them as everyday tools.
+Older projects may temporarily enter legacy-compatibility mode while native authorities are still being established. Lower-level session/search/inspection and learning-proposal compatibility routes may remain available where needed so retained authority is not stranded, but connector MCP reads are retired and the Context Utility plus shape-specific recovery mutation/verifier wrappers are deleted. These compatibility mechanisms are not the normal host contract, and packaged skills do not teach them as everyday tools.
 
 If a compatibility-mode lifecycle reports interrupted post-checkpoint evidence, preserve its uncertainty. Prompt/response/tool observations are untrusted historical evidence; a retained tool return does not prove command or test success. Inspect the bounded Memory Compiler/session evidence, verify relevant current state with normal host tools, and use an ordinary checkpoint only when the current Ley session is active and the fact is now supportable. Closed/paused historical sessions must not be rewritten as though they were the current session.
 

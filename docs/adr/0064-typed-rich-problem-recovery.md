@@ -1,6 +1,6 @@
 # ADR 0064: Typed rich Problem recovery
 
-- Status: Accepted
+- Status: Accepted historically; model-facing MCP recovery wrappers retired by ADR 0091 while core rich-Problem recovery compatibility remains supported.
 - Date: 2026-09-20
 - Extends: ADR 0029, ADR 0060, ADR 0063
 

@@ -1,5 +1,7 @@
 # ADR 0069: Verifier-bound observed Command candidates
 
+Status: accepted historically; model-facing observed-Command recovery verifier retired by ADR 0091 while core compatibility semantics remain supported.
+
 Later extension: ADR 0085 adds a separate explicit schema-v16 writer only while the session remains
 active, the verified `toe_` source is the sole current tool observation, and there is no current
 post-checkpoint `tev_` evidence.

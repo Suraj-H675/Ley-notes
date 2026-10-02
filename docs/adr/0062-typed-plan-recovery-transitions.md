@@ -1,6 +1,6 @@
 # ADR 0062: Typed Plan recovery transitions
 
-- Status: Accepted
+- Status: Accepted historically; model-facing MCP recovery wrappers retired by ADR 0091 while core typed Plan recovery compatibility remains supported.
 - Date: 2026-09-20
 - Extends: ADR 0029, ADR 0061
 
