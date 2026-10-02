@@ -1,5 +1,7 @@
+mod common;
+
+use common::seed_legacy_project;
 use serde_json::Value;
-use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -58,19 +60,7 @@ fn cli_consolidation_inbox_is_read_only_and_feeds_review_required_learning() {
     let config = base.path().join("config");
     let project = base.path().join("project");
     let vault = base.path().join("vault");
-    fs::create_dir(&project).unwrap();
-    fs::create_dir(&vault).unwrap();
-    fs::write(project.join("README.md"), "# Consolidation CLI\n").unwrap();
-    ley(
-        &config,
-        &[
-            "init",
-            project.to_str().unwrap(),
-            "--name",
-            "Consolidation CLI",
-            "--json",
-        ],
-    );
+    seed_legacy_project(&project, &vault, "Consolidation CLI");
     ley(
         &config,
         &[

@@ -1,3 +1,6 @@
+mod common;
+
+use common::seed_legacy_project;
 use ley_core::{
     diagnose_project, generate_specification_id, initialize_project, ApprovedSourceRegistry,
     CaptureMode, ContinuityStore, SpecificationRegistry, APP_IDENTIFIER,
@@ -245,16 +248,7 @@ fn cli_bootstrap_specification_is_explicit_read_only_and_retires_on_initializati
     )
     .unwrap();
 
-    ley(
-        &config,
-        &[
-            "init",
-            source.to_str().unwrap(),
-            "--name",
-            "Bootstrap CLI source",
-            "--json",
-        ],
-    );
+    seed_legacy_project(&source, &source_vault, "Bootstrap CLI source");
     ley(
         &config,
         &[
@@ -460,16 +454,7 @@ fn cli_retires_bootstrap_reference_growth_but_preserves_legacy_read_detach_and_i
     fs::create_dir_all(&target).unwrap();
     fs::write(source.join("README.md"), "# Reference source\n").unwrap();
 
-    ley(
-        &config,
-        &[
-            "init",
-            source.to_str().unwrap(),
-            "--name",
-            "Bootstrap reference source",
-            "--json",
-        ],
-    );
+    seed_legacy_project(&source, &source_vault, "Bootstrap reference source");
     ley(
         &config,
         &[
@@ -691,16 +676,7 @@ fn initialized_unbound_project_never_falls_back_to_stale_bootstrap_authority() {
     )
     .unwrap();
 
-    ley(
-        &config,
-        &[
-            "init",
-            source.to_str().unwrap(),
-            "--name",
-            "Stale bootstrap source",
-            "--json",
-        ],
-    );
+    seed_legacy_project(&source, &source_vault, "Stale bootstrap source");
     ley(
         &config,
         &[

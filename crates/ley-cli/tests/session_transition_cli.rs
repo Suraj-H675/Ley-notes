@@ -1,3 +1,6 @@
+mod common;
+
+use common::seed_legacy_project;
 use serde_json::Value;
 use std::fs;
 use std::io::Write;
@@ -50,10 +53,7 @@ fn json_stdout(output: Output) -> Value {
 }
 
 fn initialize_bound_project(config: &Path, project: &Path, vault: &Path, name: &str) {
-    fs::create_dir(project).unwrap();
-    fs::create_dir(vault).unwrap();
-    fs::write(project.join("README.md"), format!("# {name}\n")).unwrap();
-    ley(config, &["init", project.to_str().unwrap(), "--name", name]);
+    seed_legacy_project(project, vault, name);
     ley(
         config,
         &[

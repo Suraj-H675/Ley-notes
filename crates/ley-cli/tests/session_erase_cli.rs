@@ -1,3 +1,6 @@
+mod common;
+
+use common::seed_legacy_project;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -36,14 +39,8 @@ fn local_cli_erases_one_session_and_its_learning_but_preserves_user_files() {
     let project = base.path().join("project");
     let vault = base.path().join("vault");
     let config = base.path().join("config");
-    fs::create_dir(&project).unwrap();
-    fs::create_dir(&vault).unwrap();
+    seed_legacy_project(&project, &vault, "CLI erasure");
     fs::write(project.join("README.md"), "# Keep this project\n").unwrap();
-
-    ley(
-        &config,
-        &["init", project.to_str().unwrap(), "--name", "CLI erasure"],
-    );
     ley(
         &config,
         &[

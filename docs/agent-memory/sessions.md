@@ -1,18 +1,21 @@
 # Capture structured agent sessions
 
-Use `ley session` to preserve goals, decisions, verified work, problems, outcomes, and handoffs in the project's bound filesystem vault. Ley stores structured events, not a complete raw conversation.
+Use `ley session` to preserve goals, decisions, verified work, problems, outcomes, and handoffs in Ley's private local continuity store. Ley stores structured events, not a complete raw conversation.
 
 ## Before you capture a session
 
-Initialize, bind, and ingest the project first:
+Initialize and ingest the project first:
 
 ```bash
 ley init /path/to/project --capture structured
-ley bind /path/to/project --vault /path/to/ley-vault
 ley ingest /path/to/project
 ```
 
-Ingestion establishes the approved artifact snapshot used by session citations. Session commands refuse an uninitialized, unbound, or un-ingested project.
+Ingestion establishes the approved artifact snapshot used by session citations. Fresh projects are native-born and
+need no filesystem-vault binding. Session commands refuse an uninitialized or uncaptured project.
+
+`ley bind /path/to/project --vault /path/to/existing-legacy-vault` is migration-only. It reconnects a pre-cutover
+project to historical memory that already validates for that exact project; it cannot create an empty legacy vault.
 
 ## Start and finish a session
 
@@ -161,13 +164,13 @@ ley session show ses_01234567890123456789012345678901 \
   /path/to/project --json
 ```
 
-The vault also contains `session.md` for review and a derived JSON projection for local tools. V1-only ledgers use `session-v1.json`; deliberate turn evidence advances the projection to v2, provenance-bound unresolved recovery checkpoints to v3, text verification-evidence checkpoints to v4, context-utility bind/observe events to v5, checkpoints with multimodal artifact citations to v6, explicitly imported host turns to v7, provenance-bound typed minimal Decision/Problem recovery checkpoints to v8, verifier-bound typed Task recovery checkpoints to v9, verifier-bound typed Plan recovery checkpoints to v10, atomic multi-claim recovery checkpoints with record-specific evidence bindings to v11, verifier-bound rich Problem recovery checkpoints with per-Problem/Attempt/Resolution evidence bindings to v12, atomic rich-Problem composite recovery checkpoints to v13, deterministic supported host-tool observations to v14, claim-bearing Procedure application observations to v15, and isolated verifier-bound observed-Command recovery checkpoints to v16. Older immutable events remain readable without rewrite and older projections may remain beside the newest projection. Preserve the immutable event files when repairing or migrating memory.
+Retained **legacy** session stores may still contain `session.md` plus derived JSON projections. V1-only ledgers use `session-v1.json`; deliberate turn evidence advances the projection to v2, provenance-bound unresolved recovery checkpoints to v3, text verification-evidence checkpoints to v4, context-utility bind/observe events to v5, checkpoints with multimodal artifact citations to v6, explicitly imported host turns to v7, provenance-bound typed minimal Decision/Problem recovery checkpoints to v8, verifier-bound typed Task recovery checkpoints to v9, verifier-bound typed Plan recovery checkpoints to v10, atomic multi-claim recovery checkpoints with record-specific evidence bindings to v11, verifier-bound rich Problem recovery checkpoints with per-Problem/Attempt/Resolution evidence bindings to v12, atomic rich-Problem composite recovery checkpoints to v13, deterministic supported host-tool observations to v14, claim-bearing Procedure application observations to v15, and isolated verifier-bound observed-Command recovery checkpoints to v16. Native continuity preserves and replays those historical event schemas in SQLite without treating the old Markdown projection as current authority. Preserve an old vault's immutable event files while migration is still required.
 
 Unresolved checkpoint entries remain durable strings for compatibility. Read-side session context additionally derives one deterministic `unr_...` record ID per returned unresolved item, aligned by index in `unresolvedRecordIds`. That ID is a citation handle only: it does not alter the stored checkpoint shape or grant trust/authority. For schema-v11 recovery, citing such a child preserves the child's exact recovery-evidence subset instead of attributing the full atomic batch evidence union.
 
 Ley Desktop exposes the same event history in **Agent Memory → Sessions**. Opening a session uses the bounded shared context projection rather than trusting a mutable Markdown summary. It shows turn counts without loading bodies; **Captured turns** performs a separate bounded local read only when expanded and labels prompts/responses plus supported host-tool observations as untrusted history. Tool observations stay separate from checkpoint Commands and do not claim verification success. The inspector also shows recent checkpoints, decisions, tasks, problem attempts and outcomes, structured resolution root causes and verification, commands, handoff, unresolved work, snapshot-pinned artifact citations, captured project revisions, and naming history. Text citations open bounded captured excerpts. Media citations route to the Artifact surface and open the exact cited original snapshot/hash, explicitly labeled as original media with no OCR/vision description or live-source check. Captured Git/revision metadata remains provenance; the retired Project Graph view is no longer a Desktop navigation target. Older records and truncated text are disclosed instead of being presented as complete history.
 
-The desktop **Projects** search also indexes those checkpoint revisions. Paste a full or partial captured Git SHA, a branch name, a graph snapshot ID, or an artifact snapshot ID to recover the owning session across explicitly observed and currently bound projects. Opening a revision result enters that session first so its checkpoint context remains visible.
+The desktop **Projects** search also indexes those checkpoint revisions. Paste a full or partial captured Git SHA, a branch name, a graph snapshot ID, or an artifact snapshot ID to recover the owning session across explicitly observed projects with available continuity. Opening a revision result enters that session first so its checkpoint context remains visible.
 
 ### External Markdown and historical note exports
 

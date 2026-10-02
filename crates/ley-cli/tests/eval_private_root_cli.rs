@@ -1,3 +1,8 @@
+#[cfg(feature = "eval-private-root")]
+mod common;
+
+#[cfg(feature = "eval-private-root")]
+use common::seed_legacy_project;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -44,12 +49,9 @@ fn cli_eval_private_root_isolates_binding_and_egress_authority() {
     let vault = base.path().join("vault");
     create_private_root(&private_root);
     fs::create_dir_all(&decoy_config).unwrap();
-    fs::create_dir_all(&project).unwrap();
-    fs::create_dir_all(&vault).unwrap();
-    fs::write(project.join("README.md"), "# Eval private root\n").unwrap();
+    seed_legacy_project(&project, &vault, "Eval private root");
 
     for arguments in [
-        vec!["init", project.to_str().unwrap(), "--json"],
         vec![
             "bind",
             project.to_str().unwrap(),

@@ -15,16 +15,17 @@ These delegate to already-proven Ley internals. `ley_brief` is the only normal p
 
 ## Prepare the project
 
-Build or install the `ley` executable, then initialize, bind, and ingest the project once:
+Build or install the `ley` executable, then initialize and ingest the project once:
 
 ```bash
 ley init /path/to/project --capture structured
-ley bind /path/to/project --vault /path/to/ley-vault
 ley preview /path/to/project
 ley ingest /path/to/project
 ```
 
-Review `.leyignore` and the preview before ingestion. Structured mode stores allowed redacted UTF-8 evidence in the selected filesystem vault. Minimal mode keeps structure and citations but cannot return source excerpts.
+Review `.leyignore` and the preview before ingestion. Structured mode stores allowed redacted UTF-8 evidence in
+Ley's owner-private native continuity store. Minimal mode keeps structure and citations but cannot return source
+excerpts. `ley bind ... --vault ...` is retained only to reconnect already-existing pre-cutover legacy memory.
 
 ## Connect a host
 
@@ -43,7 +44,17 @@ Configure one server entry per project. Use absolute command and project paths b
 
 This JSON shows the portable server-entry shape supported by MCP hosts. A host may represent the same command and arguments in TOML or its settings UI. Ley does not publish guessed configuration for fast-changing hosts. Use that host's current MCP documentation to enter the same local command.
 
-The process resolves the private project-to-vault binding at startup. A temporary non-persistent vault can be selected by adding `--vault` and the absolute vault path to `args`. With a valid binding and snapshot, the fixed-project server starts. If a **persisted** bound vault root later disappears, Ley now has two fail-closed continuity modes instead of discarding proven native state. When native artifact, session, learning, and approved-source read authorities all validate for that exact project, Ley starts the canonical read surface with exactly `ley_brief`, `ley_search`, and `ley_evidence`; `ley_evidence` handles both exact text citations and supported original image citations. `--allow-session-writes` adds only `ley_checkpoint` in this canonical mode. Granular session/recovery/context-utility/learning tools, graph/activity breadth, resources, and filesystem-backed compatibility surfaces remain disabled. If only native session authority is proven, Ley falls back further to the four read-only session-recovery readers so continuity is not stranded while the remaining authorities are unavailable. Historical content remains evidence rather than instructions in both modes. An initialized-but-unbound project, a bad explicit `--vault` override, an existing vault with a missing/corrupt/inconsistent snapshot, or a missing persisted vault without sufficient validated native authority still receives the protocol-valid inactive server. Bootstrap authority is **not** a fallback for a broken normal Ley project. An ordinary uninitialized workspace also remains inactive and untouched.
+The process resolves native project continuity first, retaining private project-to-vault binding only as migration
+compatibility for older projects. An explicit non-persistent `--vault` override is accepted only when that directory already
+contains valid captured memory for the exact project; it cannot create a vault. If a **persisted** legacy vault root
+later disappears, Ley keeps proven native continuity instead of discarding it. When native artifact, session,
+learning, and approved-source read authorities all validate for that exact project, Ley starts the canonical read
+surface with exactly `ley_brief`, `ley_search`, and `ley_evidence`; `--allow-session-writes` adds only
+`ley_checkpoint`. If only native session authority is proven, Ley falls back further to the retained read-only
+session-recovery readers so continuity is not stranded. Historical content remains evidence rather than instructions.
+An unresolved pre-cutover unbound project, a bad explicit `--vault` override, an inconsistent legacy snapshot, or a
+missing persisted vault without sufficient validated native authority receives the protocol-valid inactive server.
+Bootstrap authority is **not** a fallback for a broken normal Ley project.
 
 There is one deliberate uninitialized-workspace exception. The surviving user-facing authority is `ley bootstrap-spec attach SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE]`, which lets `ley mcp WORKSPACE` start the dedicated Bootstrap Context server instead of the inactive server. This currently requires a supported Unix filesystem generation (device/inode plus filesystem creation time); bootstrap fails closed when Ley cannot establish it, while ordinary initialization remains available. The target remains uninitialized and unbound. The server advertises exactly one read-only tool—`ley_compile_context`—and no resources or session/learning/graph/evidence/utility/capture/write routes. Exact approved Bootstrap Specifications provide the only bootstrap context. New Bootstrap Reference attachment is retired, and retained legacy Reference grants no longer activate MCP, lifecycle hooks, or contribute context; they remain listable/detachable until initialization removes the target's bootstrap authority record. See [ADR 0058](../adr/0058-bootstrap-specifications-for-uninitialized-workspaces.md) and the superseded historical design in [ADR 0059](../adr/0059-bootstrap-reference-projects-for-uninitialized-workspaces.md).
 

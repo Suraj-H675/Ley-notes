@@ -879,9 +879,22 @@ pub fn prepare_legacy_project_binding(
 ) -> Result<(), LeyCoreError> {
     let diagnostic = diagnose_project(project_start)?;
     let project_id = &diagnostic.identity.project_id;
-    if store.artifact_write_authority_origin(project_id)?.is_some() {
+    if matches!(
+        store.project_continuity_origin(project_id)?,
+        Some(continuity_store::ContinuityProjectOrigin::NativeBorn)
+    ) {
         return Err(LeyCoreError::InvalidContinuityStore(
-            "cannot bind a legacy vault after native artifact authority is established".to_owned(),
+            "cannot bind a legacy vault to a project already registered for native continuity"
+                .to_owned(),
+        ));
+    }
+    if matches!(
+        store.artifact_write_authority_origin(project_id)?,
+        Some(continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn)
+    ) {
+        return Err(LeyCoreError::InvalidContinuityStore(
+            "cannot bind a legacy vault after native-born artifact authority is established"
+                .to_owned(),
         ));
     }
     Ok(())

@@ -1,6 +1,6 @@
 # ADR 0003: Private vault binding registry
 
-- Status: Accepted
+- Status: Superseded for new bindings by ADR 0098; retained as historical migration design
 - Date: 2026-07-17
 
 ## Context
@@ -44,7 +44,10 @@ The registry contains only:
 
 It never stores a project root, project name, note, captured content, transcript, credential, agent identity, or provider data. Entries are serialized in project-ID order for deterministic inspection.
 
-`ley bind [project] --vault <vault>` creates or explicitly replaces one binding. `ley binding [project]` resolves it. `ley unbind [project]` explicitly removes it. `ley binding [project] --vault <vault>` validates and returns a temporary override without changing the registry. Future commands that consume a vault will use the same resolver.
+Historical behavior allowed `ley bind [project] --vault <vault>` to create or explicitly replace a binding. ADR 0098
+retires that growth path: current `bind` is reconnect-only and accepts only existing validated legacy memory for the
+exact project. Temporary `--vault` overrides likewise require existing valid legacy memory. The registry/locking
+details below remain relevant to retained pre-cutover bindings.
 
 Both project and vault must already be directories. The project is discovered through its validated `.ley/` identity. Vault paths are canonicalized before storage. Moving a project preserves its binding because the stable project ID is the key. Moving a vault makes resolution fail with a rebind instruction rather than guessing a replacement.
 

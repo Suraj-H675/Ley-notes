@@ -329,9 +329,6 @@ export function AgentMemoryWorkspace({
         dashboard = await connectAgentProject(
           projectPath,
           legacyVaultPath,
-          inspection?.status === "unbound"
-            ? inspection.preview.approvalFingerprint
-            : undefined,
         );
       } else {
         dashboard = await refreshAgentProject(projectPath);
@@ -3133,8 +3130,8 @@ function onboardingCopy(
       };
     case "unbound":
       return {
-        title: "Review legacy migration",
-        body: `“${inspection.projectName}” is an older initialized project without migrated native continuity. Review its current capture boundary, then choose its legacy Ley vault explicitly for one-time migration.`,
+        title: "Reconnect historical Ley data",
+        body: `“${inspection.projectName}” is a pre-cutover initialized project without a private vault binding. Choose the existing legacy Ley vault that already contains captured memory for this exact project. Ley will not create a new legacy vault.`,
       };
     case "vault-unavailable":
       return {
@@ -3284,15 +3281,10 @@ function ProjectOnboarding({
               {projectPath}
             </p>
           )}
-          {(inspection?.status === "uninitialized" ||
-            inspection?.status === "unbound") && (
+          {inspection?.status === "uninitialized" && (
             <InitialCapturePreviewCard
               preview={inspection.preview}
-              storageLabel={
-                inspection.status === "uninitialized"
-                  ? "Ley’s private local app storage"
-                  : "the legacy vault you explicitly choose for migration"
-              }
+              storageLabel="Ley’s private local app storage"
             />
           )}
           {error && (
@@ -3369,9 +3361,9 @@ function onboardingPrimaryAction(
     case "uninitialized":
       return { onClick: onInitialize, label: "Approve, initialize & capture" };
     case "unbound":
-      return { onClick: onConnect, label: "Approve, connect & capture" };
+      return { onClick: onConnect, label: "Reconnect & migrate" };
     case "vault-unavailable":
-      return { onClick: onConnect, label: "Reconnect & capture" };
+      return { onClick: onConnect, label: "Reconnect & migrate" };
     default:
       return { onClick: onCapture, label: "Capture project" };
   }

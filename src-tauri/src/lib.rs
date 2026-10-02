@@ -10,7 +10,6 @@ use ley_core::{
     erase_session_memory_with_continuity_transition, establish_native_born_project_authorities,
     export_portable_continuity, generate_learning_request_id, generate_request_id,
     ingest_project_with_continuity_transition,
-    ingest_project_with_expected_capture_plan_and_continuity_transition,
     ingest_project_with_expected_capture_plan_and_native_authority,
     ingest_project_with_native_authority, initialize_project_retiring_bootstrap,
     list_learning_contexts, list_learning_contexts_with_continuity_transition, list_sessions,
@@ -25,7 +24,7 @@ use ley_core::{
     read_project_cited_evidence_with_continuity_transition,
     read_project_cited_media_with_continuity_transition,
     read_session_context_with_continuity_transition,
-    read_session_turns_context_with_continuity_transition,
+    read_session_turns_context_with_continuity_transition, register_native_born_project,
     rename_session_with_continuity_transition, review_learning_with_continuity_transition,
     search_observed_projects, search_project_memory_with_continuity_transition,
     update_capture_mode, validate_project_memory, ApprovedSourceAuthorityList, ApprovedSourceKind,
@@ -215,7 +214,6 @@ enum AgentProjectInspection {
         project_id: String,
         project_name: String,
         capture_mode: CaptureMode,
-        preview: AgentInitialCapturePreview,
     },
     VaultUnavailable {
         project_id: String,
@@ -1027,13 +1025,10 @@ fn inspect_initialized_agent_project_with_registry_and_store(
                     });
                 }
             }
-            let preview =
-                agent_existing_capture_preview(&diagnostic).map_err(|error| error.to_string())?;
             return Ok(AgentProjectInspection::Unbound {
                 project_id: diagnostic.identity.project_id,
                 project_name: diagnostic.identity.name,
                 capture_mode: diagnostic.capture.mode,
-                preview,
             });
         }
         Err(LeyCoreError::BoundVaultUnavailable { project_id, path }) => {
@@ -1108,25 +1103,6 @@ fn agent_initial_capture_preview(
         preview.skipped_total_limit,
         preview.skipped_symlinks,
         "This preview inspects capture paths and file metadata only. It creates no .ley metadata or Agent Memory until you approve initialization.",
-    )
-}
-
-fn agent_existing_capture_preview(
-    diagnostic: &ProjectDiagnostic,
-) -> Result<AgentInitialCapturePreview, LeyCoreError> {
-    let preview = ley_core::preview_capture(&diagnostic.root)?;
-    agent_capture_preview_summary(
-        &diagnostic.root,
-        &diagnostic.capture,
-        preview.mode,
-        preview.capture_fingerprint,
-        preview.plan_fingerprint,
-        preview.files,
-        preview.included_bytes,
-        preview.skipped_oversized,
-        preview.skipped_total_limit,
-        preview.skipped_symlinks,
-        "This preview reads capture paths and file metadata only. The project is initialized, but Ley will not bind or create Agent Memory in the selected vault until you approve this capture plan.",
     )
 }
 
@@ -1480,12 +1456,13 @@ fn initialize_agent_project_with_store_and_catalog(
     if !initialization.created {
         return Err(LeyCoreError::CapturePreviewChanged);
     }
+    catalog.observe(&initialization.root)?;
+    register_native_born_project(&initialization.root, store)?;
     ingest_project_with_expected_capture_plan_and_native_authority(
         &initialization.root,
         &reviewed.plan_fingerprint,
         store,
     )?;
-    catalog.observe(&initialization.root)?;
     establish_native_born_project_authorities(&initialization.root, store)?;
     load_native_agent_memory_dashboard(&initialization.root, store)
 }
@@ -1494,14 +1471,12 @@ fn initialize_agent_project_with_store_and_catalog(
 fn connect_agent_project(
     project_path: String,
     vault_path: String,
-    expected_approval_fingerprint: Option<String>,
 ) -> Result<AgentMemoryDashboard, String> {
     let registry = BindingRegistry::system_default().map_err(|error| error.to_string())?;
     let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
     let binding = connect_agent_project_binding_with_registry(
         Path::new(&project_path),
         Path::new(&vault_path),
-        expected_approval_fingerprint.as_deref(),
         &registry,
         &store,
     )
@@ -1514,7 +1489,6 @@ fn connect_agent_project(
 fn connect_agent_project_with_registry(
     project_path: &Path,
     vault_path: &Path,
-    expected_approval_fingerprint: Option<&str>,
     registry: &BindingRegistry,
 ) -> Result<AgentMemoryDashboard, LeyCoreError> {
     let continuity_dir = registry
@@ -1541,20 +1515,14 @@ fn connect_agent_project_with_registry(
         )?;
     }
     let store = ContinuityStore::at(continuity_dir.join("continuity.sqlite3"));
-    let binding = connect_agent_project_binding_with_registry(
-        project_path,
-        vault_path,
-        expected_approval_fingerprint,
-        registry,
-        &store,
-    )?;
+    let binding =
+        connect_agent_project_binding_with_registry(project_path, vault_path, registry, &store)?;
     load_agent_memory_dashboard(project_path, binding)
 }
 
 fn connect_agent_project_binding_with_registry(
     project_path: &Path,
     vault_path: &Path,
-    expected_approval_fingerprint: Option<&str>,
     registry: &BindingRegistry,
     store: &ContinuityStore,
 ) -> Result<ProjectVaultBinding, LeyCoreError> {
@@ -1562,16 +1530,13 @@ fn connect_agent_project_binding_with_registry(
     match registry.resolve_observed(&diagnostic) {
         Err(LeyCoreError::VaultNotBound(_)) => {
             prepare_legacy_project_binding(&diagnostic.root, store)?;
-            let reviewed = agent_existing_capture_preview(&diagnostic)?;
-            if expected_approval_fingerprint != Some(reviewed.approval_fingerprint.as_str()) {
-                return Err(LeyCoreError::CapturePreviewChanged);
-            }
-            ingest_project_with_expected_capture_plan_and_continuity_transition(
-                &diagnostic.root,
-                vault_path,
-                &reviewed.plan_fingerprint,
-                store,
-            )?;
+            validate_project_memory(&diagnostic.root, vault_path).map_err(|_| {
+                LeyCoreError::InvalidContinuityStore(
+                    "selected legacy vault cannot be verified for this project; choose the original or moved Ley vault containing this project's captured memory"
+                        .to_owned(),
+                )
+            })?;
+            ingest_project_with_continuity_transition(&diagnostic.root, vault_path, store)?;
         }
         Err(LeyCoreError::BoundVaultUnavailable { .. }) => {
             validate_project_memory(&diagnostic.root, vault_path).map_err(|_| {
@@ -2216,6 +2181,8 @@ mod tests {
             CaptureMode::Structured,
         )
         .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        ingest_project(&pending_project, &pending_vault).unwrap();
 
         let registry = BindingRegistry::at(config.join("bindings.json"));
         registry.bind(&project, &vault).unwrap();
@@ -2731,17 +2698,12 @@ mod tests {
         ));
         let late_vault = root.join("late-legacy-vault");
         fs::create_dir_all(&late_vault).unwrap();
-        let late_connect = connect_agent_project_binding_with_registry(
-            &project,
-            &late_vault,
-            None,
-            &registry,
-            &store,
-        );
+        let late_connect =
+            connect_agent_project_binding_with_registry(&project, &late_vault, &registry, &store);
         assert!(matches!(
             late_connect,
             Err(LeyCoreError::InvalidContinuityStore(message))
-                if message.contains("cannot bind a legacy vault after native artifact authority is established")
+                if message.contains("cannot bind a legacy vault to a project already registered for native continuity")
         ));
         assert!(matches!(
             registry.resolve_observed(&diagnostic),
@@ -2842,7 +2804,7 @@ mod tests {
     }
 
     #[test]
-    fn unbound_connect_requires_fresh_project_bound_capture_approval() {
+    fn unbound_connect_requires_existing_matching_legacy_memory() {
         let root = std::env::temp_dir().join(format!(
             "ley-unbound-review-test-{}-{}",
             std::process::id(),
@@ -2861,37 +2823,24 @@ mod tests {
         fs::write(project.join("README.md"), "# Reviewed\n").unwrap();
         initialize_project(&project, Some("Unbound review"), CaptureMode::Structured).unwrap();
         let diagnostic = diagnose_project(&project).unwrap();
-        let reviewed = agent_existing_capture_preview(&diagnostic).unwrap();
         let registry = BindingRegistry::at(config.join("bindings.json"));
-        fs::write(
-            project.join("new-after-review.ts"),
-            "export const changed = true;\n",
-        )
-        .unwrap();
 
-        assert!(matches!(
-            connect_agent_project_with_registry(
-                &project,
-                &vault,
-                Some(&reviewed.approval_fingerprint),
-                &registry,
-            ),
-            Err(LeyCoreError::CapturePreviewChanged)
-        ));
+        let error = match connect_agent_project_with_registry(&project, &vault, &registry) {
+            Ok(_) => panic!("empty legacy vault unexpectedly reconnected the project"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, LeyCoreError::InvalidContinuityStore(_)));
+        assert!(error
+            .to_string()
+            .contains("selected legacy vault cannot be verified for this project"));
         assert!(matches!(
             registry.resolve_observed(&diagnostic),
             Err(LeyCoreError::VaultNotBound(_))
         ));
         assert!(fs::read_dir(&vault).unwrap().next().is_none());
 
-        let refreshed = agent_existing_capture_preview(&diagnostic).unwrap();
-        let dashboard = connect_agent_project_with_registry(
-            &project,
-            &vault,
-            Some(&refreshed.approval_fingerprint),
-            &registry,
-        )
-        .unwrap();
+        ingest_project(&project, &vault).unwrap();
+        let dashboard = connect_agent_project_with_registry(&project, &vault, &registry).unwrap();
         let AgentMemoryStorage::LegacyVault { project_id, .. } = dashboard.storage else {
             panic!("legacy unbound migration should still report legacy-vault storage");
         };
@@ -2944,11 +2893,10 @@ mod tests {
                 if path == &original_binding.vault_path
         ));
 
-        let error =
-            match connect_agent_project_with_registry(&project, &wrong_vault, None, &registry) {
-                Ok(_) => panic!("wrong legacy vault unexpectedly reconnected the project"),
-                Err(error) => error,
-            };
+        let error = match connect_agent_project_with_registry(&project, &wrong_vault, &registry) {
+            Ok(_) => panic!("wrong legacy vault unexpectedly reconnected the project"),
+            Err(error) => error,
+        };
         assert!(matches!(error, LeyCoreError::InvalidContinuityStore(_)));
         assert!(error
             .to_string()
@@ -2961,7 +2909,7 @@ mod tests {
         ));
 
         let dashboard =
-            connect_agent_project_with_registry(&project, &moved_vault, None, &registry).unwrap();
+            connect_agent_project_with_registry(&project, &moved_vault, &registry).unwrap();
         assert!(matches!(
             dashboard.storage,
             AgentMemoryStorage::LegacyVault { ref project_id, .. }

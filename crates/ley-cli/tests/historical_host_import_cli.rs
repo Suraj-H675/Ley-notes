@@ -1,3 +1,6 @@
+mod common;
+
+use common::seed_legacy_project;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -37,19 +40,7 @@ fn cli_imports_one_explicit_codex_message_history_snapshot_without_fabricating_t
     let project = base.path().join("project");
     let vault = base.path().join("vault");
     let history = base.path().join("history.jsonl");
-    fs::create_dir(&project).unwrap();
-    fs::create_dir(&vault).unwrap();
-    fs::write(project.join("README.md"), "# Historical import CLI\n").unwrap();
-    ley(
-        &config,
-        &[
-            "init",
-            project.to_str().unwrap(),
-            "--name",
-            "Historical import CLI",
-            "--json",
-        ],
-    );
+    seed_legacy_project(&project, &vault, "Historical import CLI");
     ley(
         &config,
         &[

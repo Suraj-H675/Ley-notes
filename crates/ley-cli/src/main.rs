@@ -18,21 +18,22 @@ use ley_core::{
     record_session_response_with_continuity_transition, register_native_born_project,
     remove_external_connector_with_registry, rename_session_with_continuity_transition,
     review_learning_with_continuity_transition, search_project_memory_with_continuity_transition,
-    start_session_with_continuity_transition, AgentEgressPolicy, AgentEgressTarget, AgentHost,
-    ApprovedSourceRegistry, BindingRegistry, BindingSource, BootstrapSpecificationRegistry,
-    CaptureMode, CheckpointInput, CommandInput, ConsolidationInboxLimits, ContextMountRegistry,
-    ContinuityStore, CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput,
-    ExternalConnectorRegistry, FinishSessionInput, HostAgentContextRegistries,
-    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningFeedbackAction,
-    LearningKind, LearningProvenance, LearningState, LearningTrustState, LeyCoreError,
-    PolicyBundleRegistry, ProjectCatalog, ProjectMemorySearchLimits, ProjectVaultBinding,
-    ProposeLearningInput, RenameSessionInput, ReviewLearningInput, RevisionCompatibility,
-    SessionSource, SessionSourceKind, SessionStatus, SessionWriteResult, SpecificationRegistry,
-    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
-    VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
-    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
-    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    start_session_with_continuity_transition, validate_project_memory, AgentEgressPolicy,
+    AgentEgressTarget, AgentHost, ApprovedSourceRegistry, BindingRegistry, BindingSource,
+    BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, CommandInput,
+    ConsolidationInboxLimits, ContextMountRegistry, ContinuityStore, CorrectLearningInput,
+    EgressPolicyRegistry, EraseSessionMemoryInput, ExternalConnectorRegistry, FinishSessionInput,
+    HostAgentContextRegistries, KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput,
+    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
+    LeyCoreError, PolicyBundleRegistry, ProjectCatalog, ProjectMemorySearchLimits,
+    ProjectVaultBinding, ProposeLearningInput, RenameSessionInput, ReviewLearningInput,
+    RevisionCompatibility, SessionSource, SessionSourceKind, SessionStatus, SessionWriteResult,
+    SpecificationRegistry, StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin,
+    VerificationInput, VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
+    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
+    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
+    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_mcp::{
     run_bootstrap_stdio_with_egress_target, run_stdio_with_egress_target, run_unavailable_stdio,
@@ -369,6 +370,7 @@ fn connector(arguments: &[String]) -> Result<(), CliError> {
             let project =
                 project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
             let binding = BindingRegistry::system_default()?.resolve(&project, vault.as_deref())?;
+            validate_explicit_legacy_override(&project, &binding)?;
             let snapshot = read_external_connector_snapshot_with_registry(
                 &project,
                 &binding.vault_path,
@@ -414,6 +416,7 @@ fn connector(arguments: &[String]) -> Result<(), CliError> {
             let project =
                 project.unwrap_or(env::current_dir().map_err(CliError::CurrentDirectory)?);
             let binding = BindingRegistry::system_default()?.resolve(&project, vault.as_deref())?;
+            validate_explicit_legacy_override(&project, &binding)?;
             let removed = remove_external_connector_with_registry(
                 &project,
                 &binding.vault_path,
@@ -1243,7 +1246,13 @@ fn hook(arguments: &[String]) -> Result<(), CliError> {
     let specification_registry = SpecificationRegistry::system_default()?;
     let registry = BindingRegistry::system_default()?;
     let legacy_vault_path = match registry.resolve(&project, vault.as_deref()) {
-        Ok(binding) => binding.vault_path,
+        Ok(binding) => {
+            if validate_explicit_legacy_override(&project, &binding).is_err() {
+                println!("{{}}");
+                return Ok(());
+            }
+            binding.vault_path
+        }
         Err(LeyCoreError::VaultNotBound(project_id)) if vault.is_none() => {
             if !ley_core::native_canonical_read_authority_available(&project, &continuity_store)? {
                 println!("{{}}");
@@ -2138,7 +2147,15 @@ fn mcp(arguments: &[String]) -> Result<(), CliError> {
     }
     let registry = BindingRegistry::system_default()?;
     let vault_path = match registry.resolve(&parsed.project, parsed.vault.as_deref()) {
-        Ok(binding) => binding.vault_path,
+        Ok(binding) => {
+            if validate_explicit_legacy_override(&parsed.project, &binding).is_err() {
+                return run_unavailable_stdio(
+                    "Ley rejected the explicit legacy vault override because it is not existing captured memory for this exact project.",
+                )
+                .map_err(CliError::Mcp);
+            }
+            binding.vault_path
+        }
         Err(LeyCoreError::BoundVaultUnavailable { path, .. }) => path,
         Err(LeyCoreError::VaultNotBound(project_id)) if parsed.vault.is_none() => {
             let store = ContinuityStore::system_default()?;
@@ -2974,6 +2991,7 @@ fn with_cli_continuity_access<T>(
     let store = ContinuityStore::system_default()?;
     match registry.resolve(project, vault_override) {
         Ok(binding) => {
+            validate_explicit_legacy_override(project, &binding)?;
             let access = CliContinuityAccess {
                 legacy_vault_path: binding.vault_path.clone(),
                 binding: Some(binding),
@@ -3025,6 +3043,22 @@ fn with_cli_continuity_access<T>(
         }
         Err(error) => Err(error.into()),
     }
+}
+
+fn validate_explicit_legacy_override(
+    project: &Path,
+    binding: &ProjectVaultBinding,
+) -> Result<(), LeyCoreError> {
+    if binding.source != BindingSource::Override {
+        return Ok(());
+    }
+    validate_project_memory(project, &binding.vault_path).map_err(|_| {
+        LeyCoreError::InvalidBindingRequest(
+            "explicit legacy vault overrides are compatibility-only: the selected vault must already contain valid captured memory for this exact project"
+                .to_owned(),
+        )
+    })?;
+    Ok(())
 }
 
 fn with_transition_session_operation<T>(
@@ -3205,10 +3239,30 @@ fn bind(arguments: &[String]) -> Result<(), CliError> {
     let parsed = binding_arguments(arguments, true)?;
     let registry = BindingRegistry::system_default()?;
     let store = ContinuityStore::system_default()?;
-    prepare_legacy_project_binding(&parsed.project, &store)?;
     let vault = parsed
         .vault
         .expect("binding argument validation requires a vault");
+    let diagnostic = diagnose_project(&parsed.project)?;
+    match registry.resolve_observed(&diagnostic) {
+        Err(LeyCoreError::VaultNotBound(_)) => {
+            prepare_legacy_project_binding(&diagnostic.root, &store)?;
+        }
+        Err(LeyCoreError::BoundVaultUnavailable { .. }) => {}
+        Ok(_) => {
+            return Err(LeyCoreError::InvalidBindingRequest(
+                "project is already bound to an available legacy vault; no reconnect is needed"
+                    .to_owned(),
+            )
+            .into())
+        }
+        Err(error) => return Err(error.into()),
+    }
+    validate_project_memory(&parsed.project, &vault).map_err(|_| {
+        LeyCoreError::InvalidBindingRequest(
+            "legacy binding is reconnect-only: the selected vault must already contain valid captured memory for this exact project"
+                .to_owned(),
+        )
+    })?;
     let result = registry.bind(parsed.project, vault)?;
     if parsed.json {
         println!(
@@ -3216,8 +3270,8 @@ fn bind(arguments: &[String]) -> Result<(), CliError> {
             serde_json::to_string_pretty(&result).expect("CLI result is serializable")
         );
     } else {
-        println!("Bound project: {}", result.project_id);
-        println!("Vault: {}", result.vault_path.display());
+        println!("Reconnected legacy project: {}", result.project_id);
+        println!("Legacy vault: {}", result.vault_path.display());
         println!("Private registry: {}", registry.path().display());
     }
     Ok(())
@@ -3226,7 +3280,8 @@ fn bind(arguments: &[String]) -> Result<(), CliError> {
 fn binding(arguments: &[String]) -> Result<(), CliError> {
     let parsed = binding_arguments(arguments, false)?;
     let registry = BindingRegistry::system_default()?;
-    let result = registry.resolve(parsed.project, parsed.vault.as_deref())?;
+    let result = registry.resolve(&parsed.project, parsed.vault.as_deref())?;
+    validate_explicit_legacy_override(&parsed.project, &result)?;
     if parsed.json {
         println!(
             "{}",
@@ -3459,14 +3514,14 @@ fn print_help() {
     println!();
     println!("Usage:");
     println!("  ley init [path] [--name NAME] [--capture minimal|structured|full] [--json]");
-    println!("  ley bind [path] --vault VAULT [--json]");
-    println!("  ley binding [path] [--vault TEMPORARY_VAULT] [--json]");
+    println!("  ley bind [path] --vault EXISTING_LEGACY_VAULT [--json]  # reconnect only");
+    println!("  ley binding [path] [--vault EXISTING_LEGACY_VAULT] [--json]");
     println!("  ley unbind [path] [--json]");
-    println!("  ley ingest [path] [--vault TEMPORARY_VAULT] [--json]");
+    println!("  ley ingest [path] [--vault EXISTING_LEGACY_VAULT] [--json]");
     println!(
-        "  ley hook [path] --host codex|claude [--vault TEMPORARY_VAULT] [--egress-target cloud|local]"
+        "  ley hook [path] --host codex|claude [--vault EXISTING_LEGACY_VAULT] [--egress-target cloud|local]"
     );
-    println!("  ley mcp [path] [--vault TEMPORARY_VAULT] [--allow-session-writes]");
+    println!("  ley mcp [path] [--vault EXISTING_LEGACY_VAULT] [--allow-session-writes]");
     println!("      [--allow-learning-proposals] [--egress-target cloud|local]");
     println!("  ley egress list [PROJECT] [--json]");
     println!("  ley egress project POLICY [PROJECT] [--json]");
@@ -3476,8 +3531,12 @@ fn print_help() {
         "  ley egress connector CONNECTOR_ID agent-ok [PROJECT] [--json]  # clear legacy override"
     );
     println!("  ley connector list [PROJECT] [--json]");
-    println!("  ley connector show CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
-    println!("  ley connector remove CONNECTOR_ID [PROJECT] [--vault TEMPORARY_VAULT] [--json]");
+    println!(
+        "  ley connector show CONNECTOR_ID [PROJECT] [--vault EXISTING_LEGACY_VAULT] [--json]"
+    );
+    println!(
+        "  ley connector remove CONNECTOR_ID [PROJECT] [--vault EXISTING_LEGACY_VAULT] [--json]"
+    );
     println!("  ley bootstrap-spec attach SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE] [--json]");
     println!("  ley bootstrap-spec list [WORKSPACE] [--json]");
     println!("  ley bootstrap-spec detach GRANT_ID [WORKSPACE] [--json]");
@@ -3494,7 +3553,7 @@ fn print_help() {
     println!("  ley policy-bundle detach BUNDLE_ID [ACTIVE_PROJECT] [--json]");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
     println!(
-        "  ley session import codex-history [path] --source FILE --host-session SESSION_UUID [--vault TEMPORARY_VAULT] [--json]"
+        "  ley session import codex-history [path] --source FILE --host-session SESSION_UUID [--vault EXISTING_LEGACY_VAULT] [--json]"
     );
     println!("  ley session prompt SESSION [path] --stdin [--request-id REQUEST] [--json]");
     println!("  ley session response SESSION [path] --stdin [--request-id REQUEST] [--json]");
@@ -3507,7 +3566,7 @@ fn print_help() {
     println!("  ley session show SESSION [path] [--json]");
     println!("  ley session turns SESSION [path] [--max-results N] [--max-characters N] [--json]");
     println!(
-        "  ley consolidation inbox [path] [--max-items N] [--max-sessions N] [--vault TEMPORARY_VAULT] [--json]"
+        "  ley consolidation inbox [path] [--max-items N] [--max-sessions N] [--vault EXISTING_LEGACY_VAULT] [--json]"
     );
     println!("  ley resume [path] [--max-sessions N] [--max-learnings N] [--json]");
     println!("  ley search QUERY [path] [--revision COMPATIBILITY] [--max-results N] [--max-tokens N] [--json]");

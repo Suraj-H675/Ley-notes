@@ -1,3 +1,6 @@
+mod common;
+
+use common::seed_legacy_project;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Write;
@@ -49,7 +52,6 @@ fn installed_hook_contract_survives_retry_without_auto_injecting_history_to_anot
     let config = base.path().join("config");
     fs::create_dir(&project).unwrap();
     fs::create_dir(&other).unwrap();
-    fs::create_dir(&vault).unwrap();
     fs::write(project.join("README.md"), "# Actual project\n").unwrap();
 
     assert_eq!(
@@ -67,16 +69,7 @@ fn installed_hook_contract_survives_retry_without_auto_injecting_history_to_anot
     );
     assert!(!other.join(".ley").exists());
 
-    ley(
-        &config,
-        &[
-            "init",
-            project.to_str().unwrap(),
-            "--name",
-            "CLI integration",
-        ],
-        None,
-    );
+    seed_legacy_project(&project, &vault, "CLI integration");
     ley(
         &config,
         &[

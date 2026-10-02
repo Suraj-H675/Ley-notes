@@ -112,11 +112,13 @@ The native Desktop now boots directly into the focused continuity control center
 workspace, Canvas, note graph, and related notebook UI and native filesystem engine have been removed rather
 than kept as a second product surface.
 
-Canonical continuity for native-born and successfully cut-over projects lives in Ley's owner-private
-SQLite/CAS state. Older JSON/session/learning/artifact/vault data remains a compatibility and migration source
-only where the corresponding native authority has not yet been established. A moved legacy vault must already
-contain valid captured memory for the same project before Ley accepts it as a reconnect source; reconnect must
-not manufacture a new legacy store and silently treat it as historical continuity.
+Canonical continuity for native-born and successfully cut-over projects lives in Ley's owner-private SQLite/CAS
+state. Older JSON/session/learning/artifact/vault data remains a compatibility and migration source only where the
+corresponding native authority has not yet been established. ADR 0098 closes new legacy-vault growth: fresh Desktop
+and CLI initialization are native-born, `bind` is reconnect-only, and explicit non-persistent overrides must already validate as
+captured memory for the exact project. A moved legacy vault can still be reconnected after cutover. Artifact
+transition fences/imports the existing historical snapshot and captures current source directly to native storage;
+it never refreshes the legacy vault from live source first.
 
 Old browser-local IndexedDB stores are not current continuity authority. ADR 0097 replaces the former dead Dexie
 schema/opening compatibility island with one migration-only same-origin recovery page. The normal website and

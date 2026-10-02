@@ -31,6 +31,10 @@ from run_eval import (
     WRITE_FLAGS,
     automatic_hook_context,
     cli_json,
+    cli_session_finish,
+    cli_session_show,
+    cli_session_start,
+    cli_session_turns,
     create_structured_session,
     git_commit_all,
     git_run,
@@ -1846,7 +1850,7 @@ def validate_compiled_fixture(
             root / "oracle-validation",
             ORACLE_REFERENCE_TIMEOUT_SECONDS,
         )
-        init_project(project, "Agent downstream eval validation", vault)
+        init_project(project, "Agent downstream eval validation")
         prior_session_id = (
             seed_prior_memory(project, fixture)
             if fixture.get("ley_seed_prior_memory", True)
@@ -1945,11 +1949,7 @@ def seed_prior_memory(
                 ],
                 stdin=str(crash_evidence["prompt"]),
             )
-            crashed = mcp_call(
-                project,
-                "ley_session_get",
-                {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
-            )
+            crashed = cli_session_show(project, session_id)
             if (
                 crashed.get("status") != "active"
                 or crashed.get("checkpointCount") != 1
@@ -1960,30 +1960,21 @@ def seed_prior_memory(
                     "crashed prior-memory fixture did not preserve one active post-checkpoint prompt"
                 )
         else:
-            mcp_call(
+            cli_session_finish(
                 project,
-                "ley_session_finish",
-                {
-                    "sessionId": session_id,
-                    "requestId": request_id(f"{fixture['id']}:prior:finish"),
-                    "status": "completed",
-                    "summary": str(prior["summary"]),
-                    "finalResponse": "The prior contract was recorded and verified for handoff.",
-                    "handoff": "Use the recorded prior contract when this topic is revisited.",
-                    "unresolved": [],
-                },
-                WRITE_FLAGS,
+                session_id,
+                request_id_value=request_id(f"{fixture['id']}:prior:finish"),
+                status="completed",
+                summary=str(prior["summary"]),
+                final_response="The prior contract was recorded and verified for handoff.",
+                handoff="Use the recorded prior contract when this topic is revisited.",
             )
     finally:
         if revision_state in {"divergent", "merged"} and original_branch:
             git_run(project, ["checkout", original_branch])
 
     if revision_state in {"divergent", "merged"}:
-        payload = mcp_call(
-            project,
-            "ley_session_get",
-            {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
-        )
+        payload = cli_session_show(project, session_id)
         checkpoints = [
             item for item in payload.get("checkpoints", []) if isinstance(item, dict)
         ]
@@ -2077,16 +2068,12 @@ def prepare_ley_context(
     fixture_min_tokens = int(fixture.get("ley_min_context_tokens", max_tokens))
     effective_max_tokens = max(max_tokens, fixture_min_tokens)
     reference_setup = prepare_ley_reference_projects(project, fixture)
-    started = mcp_call(
+    started = cli_session_start(
         project,
-        "ley_session_start",
-        {
-            "requestId": request_id(f"{fixture['id']}:eval:start"),
-            "name": "Real-agent downstream evaluation",
-            "goal": "Record an external fixture outcome against one bound context pack.",
-            "host": "codex",
-        },
-        WRITE_FLAGS,
+        seed=f"{fixture['id']}:eval",
+        name="Real-agent downstream evaluation",
+        goal="Record an external fixture outcome against one compiled context pack.",
+        host="codex",
     )
     session_id = str(started["sessionId"])
     compiled = mcp_call(
@@ -2106,22 +2093,35 @@ def prepare_ley_context(
     if fixture.get("prior_session_state", "completed") == "crashed-active":
         if prior_session_id is None:
             raise RuntimeError("crashed fixture has no prior Ley session")
-        recovery_pack = mcp_call(
+        recovery_session = cli_session_show(project, prior_session_id)
+        recovery_turns = cli_session_turns(
             project,
-            "ley_session_memory_compile",
-            {
-                "sessionId": prior_session_id,
-                "maxResults": max_results,
-                "maxCharacters": max(1_000, min(64_000, effective_max_tokens * 4)),
-            },
+            prior_session_id,
+            max_results=max_results,
+            max_characters=max(1_000, min(64_000, effective_max_tokens * 4)),
         )
+        evidence = [
+            item
+            for item in recovery_turns.get("turns", [])
+            if isinstance(item, dict)
+            and isinstance(item.get("text"), str)
+            and str(item.get("text", "")).strip()
+        ]
+        recovery_pack = {
+            "state": "partial-evidence",
+            "sessionStatus": recovery_session.get("status"),
+            "canCheckpoint": recovery_session.get("status") == "active",
+            "totalUnconsolidatedEvidence": len(evidence),
+            "evidence": evidence,
+            "liveSourceChecked": False,
+        }
         if (
             recovery_pack.get("sessionStatus") != "active"
             or recovery_pack.get("canCheckpoint") is not True
             or int(recovery_pack.get("totalUnconsolidatedEvidence", 0)) < 1
         ):
             raise RuntimeError(
-                "Ley recovery compilation did not expose active unconsolidated crash evidence"
+                "Ley crash evidence read did not expose active unconsolidated retained turns"
             )
         rendered = rendered.rstrip() + "\n\n" + render_recovery_evidence(recovery_pack)
 
@@ -2298,11 +2298,7 @@ def prepare_ley_brief_context(
     )
     if selected_reference:
         rendered = rendered.rstrip() + "\n\n" + selected_reference
-    session = mcp_call(
-        project,
-        "ley_session_get",
-        {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
-    )
+    session = cli_session_show(project, session_id)
     event_count = session.get("eventCount")
     if not isinstance(event_count, int) or event_count < 1:
         raise RuntimeError("explicit Ley brief evaluation returned an invalid session")
@@ -2360,11 +2356,7 @@ def prepare_ley_search_context(
     )
     if selected_reference:
         rendered = rendered.rstrip() + "\n\n" + selected_reference
-    session = mcp_call(
-        project,
-        "ley_session_get",
-        {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
-    )
+    session = cli_session_show(project, session_id)
     event_count = session.get("eventCount")
     if not isinstance(event_count, int) or event_count < 1:
         raise RuntimeError("retrieval-only Ley evaluation returned an invalid session")
@@ -2464,11 +2456,7 @@ def prepare_ley_automatic_context(
         rendered = rendered.rstrip() + "\n\n" + selected_reference
     marker_metrics = canonical_briefing_marker_metrics(fixture, rendered)
 
-    session = mcp_call(
-        project,
-        "ley_session_get",
-        {"sessionId": session_id, "maxCheckpoints": 3, "maxCharacters": 8_000},
-    )
+    session = cli_session_show(project, session_id)
     event_count = session.get("eventCount")
     if not isinstance(event_count, int) or event_count < 2:
         raise RuntimeError("automatic Ley evaluation did not retain the submitted task turn")
@@ -2570,7 +2558,7 @@ def record_ley_outcome(
     expected_session_status = str(fields["sessionStatus"])
     checkpoint = mcp_call(
         project,
-        "ley_session_checkpoint",
+        "ley_checkpoint",
         {
             "sessionId": session_id,
             "requestId": request_id(f"{fixture['id']}:eval:checkpoint"),
@@ -2587,19 +2575,14 @@ def record_ley_outcome(
         },
         WRITE_FLAGS,
     )
-    mcp_call(
+    cli_session_finish(
         project,
-        "ley_session_finish",
-        {
-            "sessionId": session_id,
-            "requestId": request_id(f"{fixture['id']}:eval:finish"),
-            "status": expected_session_status,
-            "summary": fields["sessionSummary"],
-            "finalResponse": fields["finalResponse"],
-            "handoff": "",
-            "unresolved": fields["unresolved"],
-        },
-        WRITE_FLAGS,
+        session_id,
+        request_id_value=request_id(f"{fixture['id']}:eval:finish"),
+        status=expected_session_status,
+        summary=str(fields["sessionSummary"]),
+        final_response=str(fields["finalResponse"]),
+        unresolved=[str(value) for value in fields["unresolved"]],
     )
     return {
         "observationEventId": None,
@@ -2888,7 +2871,7 @@ def execute_variant(
             vault = memory_root / "vault"
             vault.mkdir()
             EVAL_ENV["XDG_CONFIG_HOME"] = str(memory_root / "config")
-            init_project(memory_project, "Agent downstream eval", vault)
+            init_project(memory_project, "Agent downstream eval")
             prior_session_id = (
                 seed_prior_memory(memory_project, fixture)
                 if fixture.get("ley_seed_prior_memory", True)

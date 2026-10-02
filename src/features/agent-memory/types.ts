@@ -833,7 +833,6 @@ export type AgentProjectInspection =
       projectId: string;
       projectName: string;
       captureMode: CaptureMode;
-      preview: AgentInitialCapturePreview;
     }
   | {
       status: "vault-unavailable";

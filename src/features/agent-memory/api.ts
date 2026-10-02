@@ -178,12 +178,10 @@ export function initializeAgentProject(
 export function connectAgentProject(
   projectPath: string,
   vaultPath: string,
-  expectedApprovalFingerprint?: string,
 ): Promise<AgentMemoryDashboard> {
   return invoke("connect_agent_project", {
     projectPath,
     vaultPath,
-    expectedApprovalFingerprint,
   });
 }
 

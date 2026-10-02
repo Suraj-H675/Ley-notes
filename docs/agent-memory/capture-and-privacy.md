@@ -6,7 +6,13 @@ Every initialized project owns a tiny portable `.ley/capture.json` setting plus 
 
 Choosing an uninitialized project folder in Ley Desktop performs a read-only preview before setup. Ley evaluates the same default Structured policy and default `.leyignore` rules it would create, then shows eligible file/byte totals, the effective project root, fixed safety limits, bounded path samples, hard-bound skips, and default exclusion categories. This step creates no project `.ley` metadata or private Agent Memory state.
 
-The approval action is bound to the canonical selected project plus a deterministic capture-plan fingerprint covering the reviewed policy, observed candidate paths/sizes, and hard-bound exclusions. If the project changes before initialization or before first ingestion fixes its candidate set, Ley fails closed and asks the user to review the refreshed boundary rather than silently capturing a broader plan. If `.ley` was already created before that later drift was detected, the now-unbound project still requires a fresh reviewed preview before Ley may bind and perform its first capture. Existing scoped file reads still reject a candidate whose size changes while ingestion is reading it.
+The approval action is bound to the canonical selected project plus a deterministic capture-plan fingerprint covering
+the reviewed policy, observed candidate paths/sizes, and hard-bound exclusions. If the project changes before first
+capture finishes, Ley fails closed rather than silently capturing a broader plan. Once approved Desktop
+initialization creates `.ley`, the project is registered native-born **before** capture; a later capture-plan mismatch
+therefore returns to native **Needs capture** instead of falling into legacy-vault onboarding. A true initialized,
+unbound pre-cutover project is a different compatibility state and can only reconnect existing validated historical
+memory. Existing scoped file reads still reject a candidate whose size changes while ingestion is reading it.
 
 The preview is not a content secret scanner. Default ignored credential-oriented paths plus post-capture pattern redaction remain defense in depth; project-specific exclusions belong in `.leyignore`. Historical schema-1 capture files with narrower custom roots or limits remain honored rather than being silently broadened. See [ADR 0056](../adr/0056-reviewed-first-capture-onboarding.md) and [ADR 0095](../adr/0095-simplify-repo-local-capture-config.md).
 

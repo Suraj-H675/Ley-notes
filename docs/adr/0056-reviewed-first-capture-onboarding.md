@@ -1,6 +1,6 @@
 # ADR 0056: Review first capture before desktop initialization
 
-Status: Accepted
+Status: Superseded in part by ADR 0098
 
 ## Context
 
@@ -52,7 +52,11 @@ The desktop derives a separate ephemeral `approvalFingerprint` from the canonica
 
 The first ingestion is also given the approved plan fingerprint. It recomputes the capture plan before opening the private artifact store and fails with `CapturePreviewChanged` if the plan no longer matches. The resulting preview list is then the fixed candidate set for that ingestion, while the existing scoped-read checks still reject files that change while they are being read.
 
-If initialization created `.ley` but the later ingestion check detects drift, the project can remain initialized but unbound. That state is not an approval bypass: desktop inspection must show a fresh current preview and `connect_agent_project` requires its project-bound approval fingerprint before first binding/capture. The unbound path performs the same plan recheck before opening the private artifact store.
+The original slice allowed initialization to create `.ley` and then leave the project unbound if ingestion detected
+drift. ADR 0098 replaces that recovery behavior: Desktop records native-born continuity immediately after approved
+initialization and before first capture. A post-initialization capture mismatch therefore remains native **Needs
+capture** and retries into native storage; `connect_agent_project` is now legacy reconnect-only and never serves as a
+fresh first-capture path.
 
 This creates two race barriers:
 

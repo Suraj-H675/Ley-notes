@@ -709,8 +709,18 @@ fn ingest_project_with_transition_inner(
         );
     }
 
+    if matches!(
+        store.project_continuity_origin(&diagnostic.identity.project_id)?,
+        Some(crate::continuity_store::ContinuityProjectOrigin::NativeBorn)
+    ) {
+        return ingest_project_with_native_authority_inner(
+            project_start,
+            store,
+            expected_plan_fingerprint,
+        );
+    }
+
     if legacy_artifact_write_fence_state(project_start, legacy_vault)? != Some(true) {
-        ingest_project_inner(project_start, legacy_vault, expected_plan_fingerprint)?;
         fence_legacy_artifact_writes(project_start, legacy_vault)?;
     }
     finalize_legacy_artifact_authority_cutover(project_start, legacy_vault, store)?;
@@ -3107,9 +3117,9 @@ mod tests {
     }
 
     #[test]
-    fn legacy_artifact_cutover_reclassifies_provisional_native_origin_atomically() {
+    fn transition_ingest_keeps_registered_native_project_native() {
         let (base, project, vault) = setup_project(CaptureMode::Structured);
-        std::fs::write(project.join("README.md"), "# Legacy cutover origin\n").unwrap();
+        std::fs::write(project.join("README.md"), "# Native transition origin\n").unwrap();
         let store = ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
 
         crate::register_native_born_project(&project, &store).unwrap();
@@ -3127,35 +3137,48 @@ mod tests {
             store
                 .artifact_write_authority_origin(&identity.project_id)
                 .unwrap(),
+            Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn)
+        );
+        assert_eq!(
+            store
+                .project_continuity_origin(&identity.project_id)
+                .unwrap(),
+            Some(crate::continuity_store::ContinuityProjectOrigin::NativeBorn)
+        );
+        assert!(crate::native_born_project_registration_exists(&project, &store).unwrap());
+        assert!(std::fs::read_dir(&vault).unwrap().next().is_none());
+        assert!(crate::prepare_legacy_project_binding(&project, &store).is_err());
+    }
+
+    #[test]
+    fn legacy_transition_imports_existing_snapshot_without_recapturing_live_source_into_vault() {
+        let (base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::write(
+            project.join("README.md"),
+            "# Historical snapshot\nold body\n",
+        )
+        .unwrap();
+        let legacy = ingest_project(&project, &vault).unwrap();
+        let legacy_manifest_path = manifest_path(&project, &vault);
+        let legacy_manifest = std::fs::read(&legacy_manifest_path).unwrap();
+        let store = ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+
+        std::fs::write(project.join("README.md"), "# Current source\nnew body\n").unwrap();
+        let migrated = ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+
+        assert_ne!(migrated.snapshot_id, legacy.snapshot_id);
+        assert!(migrated.changed);
+        assert_eq!(
+            std::fs::read(&legacy_manifest_path).unwrap(),
+            legacy_manifest
+        );
+        assert_eq!(
+            store
+                .artifact_write_authority_origin(&legacy.project_id)
+                .unwrap(),
             Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::LegacyCutover)
         );
-        assert_eq!(
-            store
-                .project_continuity_origin(&identity.project_id)
-                .unwrap(),
-            Some(crate::continuity_store::ContinuityProjectOrigin::LegacyUnknown)
-        );
-        assert!(!crate::native_born_project_registration_exists(&project, &store).unwrap());
-        let catalog = crate::ProjectCatalog::native_at(
-            base.path().join("private/projects-v1.json"),
-            store.clone(),
-        );
-        catalog.forget(&identity.project_id).unwrap();
-        assert_eq!(
-            store
-                .project_continuity_origin(&identity.project_id)
-                .unwrap(),
-            None
-        );
-        catalog.observe(&project).unwrap();
-        assert_eq!(
-            store
-                .project_continuity_origin(&identity.project_id)
-                .unwrap(),
-            Some(crate::continuity_store::ContinuityProjectOrigin::LegacyUnknown)
-        );
-        assert!(crate::register_native_born_project(&project, &store).is_err());
-        assert!(crate::prepare_legacy_project_binding(&project, &store).is_err());
+        assert!(crate::prepare_legacy_project_binding(&project, &store).is_ok());
     }
 
     #[test]

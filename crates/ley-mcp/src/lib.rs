@@ -4767,6 +4767,7 @@ mod tests {
         .unwrap();
         initialize_project(&project, Some("Native brief"), CaptureMode::Structured).unwrap();
         let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        ley_core::ingest_project(&project, &vault).unwrap();
         ley_core::ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
         let started = ley_core::start_session_with_continuity_transition(
             &project,

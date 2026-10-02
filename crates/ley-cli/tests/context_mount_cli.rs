@@ -1,3 +1,6 @@
+mod common;
+
+use common::seed_legacy_project;
 use ley_core::{diagnose_project, APP_IDENTIFIER, CONTEXT_MOUNT_REGISTRY_FILE};
 use serde_json::Value;
 use std::fs;
@@ -31,13 +34,7 @@ fn json_stdout(output: Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 fn init_and_bind(config: &Path, project: &Path, vault: &Path, name: &str) {
-    fs::create_dir_all(project).unwrap();
-    fs::create_dir_all(vault).unwrap();
-    fs::write(project.join("README.md"), format!("# {name}\n")).unwrap();
-    ley(
-        config,
-        &["init", project.to_str().unwrap(), "--name", name, "--json"],
-    );
+    seed_legacy_project(project, vault, name);
     ley(
         config,
         &[

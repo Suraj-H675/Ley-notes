@@ -45,9 +45,11 @@ matrix. That workflow deliberately builds the CLI
 with the non-default `eval-private-root` feature; ordinary Ley builds do not accept evaluation path
 redirection.
 
-The same manual workflow also carries focused native/private-state gates. First, the Desktop migration
-boundary proves that a moved legacy vault must already validate as captured memory for the exact project
-before reconnect can mutate continuity or bindings, and project-memory erasure proves that independent
+The same manual workflow also carries focused native/private-state gates. First, the migration boundary proves
+that an empty/unrelated directory cannot become a new legacy binding or explicit override, while an existing/moved
+legacy vault must already validate as captured memory for the exact project before reconnect can mutate bindings.
+Artifact cutover fences/imports that historical snapshot and captures current source only into native continuity.
+Project-memory erasure proves that independent
 user-owned Markdown/Canvas copies remain untouched. Second, `binding_process_contention` launches independent OS processes against
 one binding/project-catalog pair and requires every concurrent mutation to survive. Third, Linux/macOS lanes build the ordinary
 CLI before the eval-feature rebuild and run `eval/run_private_config_permissions_eval.py` with umask
@@ -775,16 +777,22 @@ benchmark-only contentful mode on the current product surface.
 A full-corpus run validates the current P0 matrix for:
 
 - Context Compiler;
-- read-only Memory Compiler crash/interruption evidence;
+- native crash/interruption recovery;
 - user-authored Specifications;
 - origin-preserving derivation lineage;
 - premise/state adjudication;
 - revision/branch-aware retrieval; and
 - agent-context egress policy.
 
-Every capability keeps adversarial, downstream, privacy, and regression evidence. Task-facing capabilities and origin-lineage use the independent `downstream_task_contract`; Memory Compiler instead uses the real `crash-before-session-end-resume` outcome because its job is to preserve bounded interruption evidence rather than select normal task context.
+Every capability keeps adversarial, downstream, privacy, and regression evidence. Task-facing capabilities and origin-lineage use the independent `downstream_task_contract`; interruption recovery instead uses the real `crash-before-session-end-resume` outcome because its job is to preserve bounded interrupted-session evidence rather than select normal task context.
 
-The crash representative creates an active session with a retained prompt and interrupted response, then requires `ley_session_memory_compile` to report the expected partial/review state with bounded `tev_` event provenance, `canCheckpoint: true` only for the still-active session, `liveSourceChecked: false`, `sourceBoundary: untrusted-memory-compiler-input`, and `automaticCommandWriteAllowed: false`. It does **not** call the retired shape-specific recovery verifier/commit routes and does not claim the interrupted request succeeded. Privacy and character/token bounds remain mandatory.
+The crash representative creates an active native session with one retained prompt and no completed response, then
+reads that session/turn evidence through the current local CLI and checks the canonical native MCP tool inventory.
+The retained prompt must remain bounded `tev_` evidence with an untrusted source boundary and
+`liveSourceChecked: false`; an `--allow-session-writes` server may expose `ley_checkpoint`, but must not regain
+granular `ley_session_start` or `ley_session_memory_compile`. The interrupted request is never claimed to have
+succeeded. The retained read-only Memory Compiler remains separately covered by core/MCP compatibility tests for
+older/degraded continuity modes; it is not part of the fresh canonical native release surface.
 
 Origin-lineage coverage now comes from `parallel-agent-session-separation`: two independent checkpoints remain unchanged, an explicitly reviewed project-level learning cites both exact records, its durable origin lineage keeps the automatic authority ceiling at `review-required` with causal completeness unproven, canonical Search/Brief admit the reviewed synthesis, and conflicting raw Decisions remain historical/withheld. This tests lineage through a current workflow rather than recovery-generated synthetic checkpoints.
 

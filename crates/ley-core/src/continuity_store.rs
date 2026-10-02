@@ -6779,6 +6779,7 @@ mod tests {
             crate::CaptureMode::Structured,
         )
         .unwrap();
+        crate::ingest_project(&project_root, &vault).unwrap();
         crate::ingest_project_with_continuity_transition(&project_root, &vault, &store).unwrap();
 
         let connection = store.open_connection().unwrap();
@@ -6858,6 +6859,7 @@ mod tests {
         )
         .unwrap();
 
+        crate::ingest_project(&project_root, &vault).unwrap();
         let first = crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
             .unwrap();
         let connection = store.open_connection().unwrap();
@@ -7085,6 +7087,7 @@ mod tests {
             crate::CaptureMode::Structured,
         )
         .unwrap();
+        crate::ingest_project(&project_root, &vault).unwrap();
         let first = crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
             .unwrap();
         let connection = store.open_connection().unwrap();
@@ -7191,6 +7194,7 @@ mod tests {
             crate::CaptureMode::Structured,
         )
         .unwrap();
+        crate::ingest_project(&project_root, &vault).unwrap();
         let first = crate::ingest_project_with_continuity_transition(&project_root, &vault, &store)
             .unwrap();
 

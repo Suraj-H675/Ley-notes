@@ -1,6 +1,8 @@
+mod common;
+
+use common::seed_legacy_project;
 use ley_core::{ExternalConnectorRegistry, APP_IDENTIFIER, EXTERNAL_CONNECTOR_REGISTRY_FILE};
 use serde_json::Value;
-use std::fs;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use tempfile::tempdir;
@@ -32,19 +34,7 @@ fn json_stdout(output: Output) -> Value {
 }
 
 fn init_and_bind(config: &Path, project: &Path, vault: &Path) {
-    fs::create_dir_all(project).unwrap();
-    fs::create_dir_all(vault).unwrap();
-    fs::write(project.join("README.md"), "# Connector compatibility\n").unwrap();
-    ley(
-        config,
-        &[
-            "init",
-            project.to_str().unwrap(),
-            "--name",
-            "Connector compatibility",
-            "--json",
-        ],
-    );
+    seed_legacy_project(project, vault, "Connector compatibility");
     ley(
         config,
         &[

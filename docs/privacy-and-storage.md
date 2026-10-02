@@ -22,8 +22,9 @@ During migration, two storage generations coexist:
 ### Current implementation being migrated
 
 - a small repository-local `.ley/` project identity/capture configuration;
-- owner-private OS configuration registries for project bindings/authority;
-- filesystem Agent Memory data associated with the current binding;
+- owner-private OS configuration registries for current authority plus retained pre-cutover project bindings;
+- filesystem Agent Memory data only as an existing legacy migration source; current projects do not create new
+  bound vaults;
 - historical browser IndexedDB data may still exist in old browser profiles until the user exports/erases it through
   the migration-only recovery page; it is no longer opened by the product runtime.
 

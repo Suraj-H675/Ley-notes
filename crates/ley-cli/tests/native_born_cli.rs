@@ -61,6 +61,22 @@ fn fresh_cli_project_stays_native_without_a_vault_binding() {
     );
     assert!(!failed_bind.status.success());
 
+    fs::create_dir(&legacy_vault).unwrap();
+    let failed_override_ingest = run_ley(
+        &config,
+        &[
+            "ingest",
+            project.to_str().unwrap(),
+            "--vault",
+            legacy_vault.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert!(!failed_override_ingest.status.success());
+    assert!(String::from_utf8_lossy(&failed_override_ingest.stderr)
+        .contains("explicit legacy vault overrides are compatibility-only"));
+    assert!(fs::read_dir(&legacy_vault).unwrap().next().is_none());
+
     let ingested = json_stdout(ley(
         &config,
         &["ingest", project.to_str().unwrap(), "--json"],
@@ -187,7 +203,6 @@ fn fresh_cli_project_stays_native_without_a_vault_binding() {
     assert_eq!(resume["totalCurrentTrustedLearnings"], 1);
     assert_eq!(resume["learnings"][0]["learningId"], learning_id);
 
-    fs::create_dir(&legacy_vault).unwrap();
     let rejected = run_ley(
         &config,
         &[
@@ -198,6 +213,7 @@ fn fresh_cli_project_stays_native_without_a_vault_binding() {
         ],
     );
     assert!(!rejected.status.success());
-    assert!(String::from_utf8_lossy(&rejected.stderr)
-        .contains("cannot bind a legacy vault after native artifact authority is established"));
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains(
+        "cannot bind a legacy vault to a project already registered for native continuity"
+    ));
 }

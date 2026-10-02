@@ -412,6 +412,7 @@ mod tests {
         fs::write(project.join("binary.bin"), [0, 1, 2, 3]).unwrap();
         initialize_project(&project, Some("Native inventory"), CaptureMode::Structured).unwrap();
         let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+        ingest_project(&project, &vault).unwrap();
         ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
 
         fs::remove_dir_all(&vault).unwrap();

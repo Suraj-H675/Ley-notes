@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   readAgentCaptureSettings: vi.fn(),
   readAgentLearning: vi.fn(),
   readAgentSession: vi.fn(),
+  refreshAgentProject: vi.fn(),
   renameAgentSession: vi.fn(),
   searchAgentProjects: vi.fn(),
   searchAgentProjectMemory: vi.fn(),
@@ -54,7 +55,7 @@ vi.mock("./api", () => ({
   searchAgentProjects: api.searchAgentProjects,
   searchAgentProjectMemory: api.searchAgentProjectMemory,
   updateAgentCaptureMode: api.updateAgentCaptureMode,
-  refreshAgentProject: vi.fn(),
+  refreshAgentProject: api.refreshAgentProject,
   reviewAgentLearning: api.reviewAgentLearning,
 }));
 
@@ -170,7 +171,7 @@ describe("Agent Memory workspace boundaries", () => {
     vi.clearAllMocks();
   });
 
-  it("reviews first capture and requires fresh approval after initialization drift", async () => {
+  it("keeps a partially initialized project on native continuity after capture drift", async () => {
     api.listAgentProjects.mockResolvedValue({
       projects: [],
       totalProjects: 0,
@@ -180,7 +181,6 @@ describe("Agent Memory workspace boundaries", () => {
       privacyNotice: "Only explicitly opened projects.",
     });
     api.chooseAgentProject.mockResolvedValue("/projects/new-app");
-    api.chooseLegacyAgentVault.mockResolvedValue("/vault");
     const initialPreview = {
       mode: "structured" as const,
       approvedRoots: ["."],
@@ -203,14 +203,6 @@ describe("Agent Memory workspace boundaries", () => {
       privacyNotice:
         "This preview creates no .ley metadata or Agent Memory until approval.",
     };
-    const refreshedPreview = {
-      ...initialPreview,
-      planFingerprint: "sha256:plan-after",
-      approvalFingerprint: "sha256:approval-after",
-      eligibleFiles: 2,
-      eligibleBytes: 2048,
-      includedPaths: ["README.md", "src/new.ts"],
-    };
     api.inspectAgentProject
       .mockResolvedValueOnce({
         status: "uninitialized",
@@ -218,16 +210,16 @@ describe("Agent Memory workspace boundaries", () => {
         preview: initialPreview,
       })
       .mockResolvedValueOnce({
-        status: "unbound",
+        status: "needs-capture",
         projectId: "prj_new",
         projectName: "new-app",
         captureMode: "structured",
-        preview: refreshedPreview,
+        storage: { kind: "native", projectId: "prj_new" },
       });
     api.initializeAgentProject.mockRejectedValue(
       new Error("project capture plan changed after review"),
     );
-    api.connectAgentProject.mockResolvedValue(dashboard);
+    api.refreshAgentProject.mockResolvedValue(dashboard);
 
     render(
       <AgentMemoryWorkspace
@@ -259,21 +251,55 @@ describe("Agent Memory workspace boundaries", () => {
     );
     expect(
       await screen.findByRole("heading", {
-        name: "Review legacy migration",
+        name: "Create the first snapshot",
       }),
     ).toBeVisible();
-    expect(screen.getByText("src/new.ts")).toBeVisible();
-    expect(api.connectAgentProject).not.toHaveBeenCalled();
+    expect(screen.getByText(/native local continuity authority/i)).toBeVisible();
+    expect(api.chooseLegacyAgentVault).not.toHaveBeenCalled();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Approve, connect & capture" }),
+    fireEvent.click(screen.getByRole("button", { name: "Capture project" }));
+    await waitFor(() =>
+      expect(api.refreshAgentProject).toHaveBeenCalledWith("/projects/new-app"),
     );
+  });
+
+  it("treats unbound projects as reconnect-only legacy migration", async () => {
+    api.listAgentProjects.mockResolvedValue({
+      projects: [],
+      totalProjects: 0,
+      omittedProjects: 0,
+      readyProjects: 0,
+      attentionProjects: 0,
+      privacyNotice: "Only explicitly opened projects.",
+    });
+    api.chooseAgentProject.mockResolvedValue("/projects/legacy-app");
+    api.chooseLegacyAgentVault.mockResolvedValue("/vault/legacy-app");
+    api.inspectAgentProject.mockResolvedValue({
+      status: "unbound",
+      projectId: "prj_legacy",
+      projectName: "legacy-app",
+      captureMode: "structured",
+    });
+    api.connectAgentProject.mockResolvedValue(dashboard);
+
+    render(<AgentMemoryWorkspace open onClose={vi.fn()} />);
+    await screen.findByRole("heading", {
+      name: "Pick up any project without starting over",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+    expect(
+      await screen.findByRole("heading", {
+        name: "Reconnect historical Ley data",
+      }),
+    ).toBeVisible();
+    expect(screen.getByText(/will not create a new legacy vault/i)).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect & migrate" }));
     await waitFor(() => expect(api.chooseLegacyAgentVault).toHaveBeenCalled());
     await waitFor(() =>
       expect(api.connectAgentProject).toHaveBeenCalledWith(
-        "/projects/new-app",
-        "/vault",
-        "sha256:approval-after",
+        "/projects/legacy-app",
+        "/vault/legacy-app",
       ),
     );
   });
@@ -309,9 +335,7 @@ describe("Agent Memory workspace boundaries", () => {
     ).toBeVisible();
     expect(screen.getByText(/Old Ley vault/)).toBeVisible();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Reconnect & capture" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Reconnect & migrate" }));
     await waitFor(() => expect(api.chooseLegacyAgentVault).toHaveBeenCalled());
     expect(api.connectAgentProject).not.toHaveBeenCalled();
   });

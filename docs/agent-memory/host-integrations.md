@@ -12,14 +12,17 @@ All three run on the user's machine. The host may send deliberately retrieved co
 
 ## Before connecting a host
 
-Install the `ley` executable on `PATH`, initialize the project, bind it to the user's chosen filesystem vault, and capture the first snapshot. From a Ley source checkout:
+Install the `ley` executable on `PATH`, initialize the project, and capture the first native snapshot. From a Ley source checkout:
 
 ```bash
 cargo install --path crates/ley-cli --root "$HOME/.local"
 ley init /path/to/project --capture structured
-ley bind /path/to/project --vault /path/to/ley-vault
 ley ingest /path/to/project
 ```
+
+Fresh projects need no filesystem-vault binding. `ley bind PROJECT --vault EXISTING_LEGACY_VAULT` is a
+reconnect-only compatibility command for pre-cutover projects whose selected vault already validates as historical
+memory for that exact project.
 
 Users with access to the repository can install the same CLI directly from
 GitHub without machine-specific paths:

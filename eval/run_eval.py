@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -34,7 +35,7 @@ METRIC_NAMES = (
     "stale_learning",
     "stale_learning_recovery",
     "capture_recovery",
-    "memory_recovery",
+    "interruption_recovery",
     "origin_lineage",
     "idempotency",
     "learning_idempotency",
@@ -88,15 +89,15 @@ P0_CAPABILITY_COVERAGE = {
             "truthy",
         ),
     },
-    "memory-compiler": {
+    "interruption-recovery": {
         "adversarial": (
             "crash-before-session-end-resume",
-            "memory_recovery",
+            "interruption_recovery",
             "truthy",
         ),
         "downstream": (
             "crash-before-session-end-resume",
-            "memory_recovery",
+            "interruption_recovery",
             "truthy",
         ),
         "privacy": (
@@ -106,7 +107,7 @@ P0_CAPABILITY_COVERAGE = {
         ),
         "regression": (
             "crash-before-session-end-resume",
-            "memory_recovery",
+            "interruption_recovery",
             "truthy",
         ),
     },
@@ -502,6 +503,177 @@ def cli_json(args: list[str]) -> object:
         raise RuntimeError(f"expected JSON from ley {' '.join(args)}: {output!r}") from error
 
 
+def session_mutation_payload(raw: object) -> dict[str, object]:
+    if not isinstance(raw, dict) or not isinstance(raw.get("session"), dict):
+        raise RuntimeError("session mutation returned no session payload")
+    session = dict(raw["session"])
+    session["eventId"] = raw.get("eventId")
+    session["replayed"] = raw.get("replayed")
+    session["storage"] = raw.get("storage")
+    return session
+
+
+def cli_session_start(
+    project: Path,
+    *,
+    seed: str,
+    name: str,
+    goal: str,
+    host: str | None = None,
+) -> dict[str, object]:
+    args = [
+        "session",
+        "start",
+        str(project),
+        "--request-id",
+        request_id(f"{seed}:start"),
+        "--name",
+        name,
+        "--goal",
+        goal,
+    ]
+    if host:
+        args.extend(["--host", host])
+    args.append("--json")
+    return session_mutation_payload(cli_json(args))
+
+
+def cli_session_checkpoint(
+    project: Path,
+    session_id: str,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    checkpoint = dict(payload)
+    checkpoint.pop("sessionId", None)
+    if not isinstance(checkpoint.get("requestId"), str):
+        raise RuntimeError("checkpoint fixture requires requestId")
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        suffix=".json",
+        delete=False,
+    ) as handle:
+        json.dump(checkpoint, handle, separators=(",", ":"))
+        data_path = Path(handle.name)
+    try:
+        raw = cli_json(
+            [
+                "session",
+                "checkpoint",
+                session_id,
+                str(project),
+                "--data",
+                str(data_path),
+                "--json",
+            ]
+        )
+    finally:
+        data_path.unlink(missing_ok=True)
+    return session_mutation_payload(raw)
+
+
+def cli_session_show(project: Path, session_id: str) -> dict[str, object]:
+    value = cli_json(["session", "show", session_id, str(project), "--json"])
+    if not isinstance(value, dict):
+        raise RuntimeError("session show returned no object")
+    return value
+
+
+def cli_session_turns(
+    project: Path,
+    session_id: str,
+    *,
+    max_results: int,
+    max_characters: int,
+) -> dict[str, object]:
+    value = cli_json(
+        [
+            "session",
+            "turns",
+            session_id,
+            str(project),
+            "--max-results",
+            str(max_results),
+            "--max-characters",
+            str(max_characters),
+            "--json",
+        ]
+    )
+    if not isinstance(value, dict):
+        raise RuntimeError("session turns returned no object")
+    return value
+
+
+def cli_session_finish(
+    project: Path,
+    session_id: str,
+    *,
+    request_id_value: str,
+    status: str,
+    summary: str,
+    final_response: str = "",
+    handoff: str = "",
+    unresolved: list[str] | None = None,
+) -> dict[str, object]:
+    args = [
+        "session",
+        "finish",
+        session_id,
+        str(project),
+        "--request-id",
+        request_id_value,
+        "--status",
+        status,
+        "--summary",
+        summary,
+    ]
+    if final_response:
+        args.extend(["--final-response", final_response])
+    if handoff:
+        args.extend(["--handoff", handoff])
+    for item in unresolved or []:
+        args.extend(["--unresolved", item])
+    args.append("--json")
+    return session_mutation_payload(cli_json(args))
+
+
+def cli_session_list_payload(project: Path) -> dict[str, object]:
+    value = cli_json(["session", "list", str(project), "--json"])
+    if not isinstance(value, list):
+        raise RuntimeError("session list returned no array")
+    sessions = [item for item in value if isinstance(item, dict)]
+    return {
+        "sessions": sessions,
+        "totalSessions": len(sessions),
+        "omittedSessions": 0,
+    }
+
+
+def cli_resume_payload(
+    project: Path,
+    *,
+    max_sessions: int,
+    max_learnings: int,
+    max_characters: int,
+) -> dict[str, object]:
+    value = cli_json(
+        [
+            "resume",
+            str(project),
+            "--max-sessions",
+            str(max_sessions),
+            "--max-learnings",
+            str(max_learnings),
+            "--max-characters",
+            str(max_characters),
+            "--json",
+        ]
+    )
+    if not isinstance(value, dict):
+        raise RuntimeError("resume returned no object")
+    return value
+
+
 def write_project_files(project: Path, files: dict[str, str]) -> None:
     for relative, content in files.items():
         path = Path(relative)
@@ -528,9 +700,7 @@ def write_project_binary_files(project: Path, files: dict[str, str]) -> None:
         destination.write_bytes(body)
 
 
-def init_project(
-    project: Path, name: str, vault: Path, capture_mode: str = "structured"
-) -> None:
+def init_project(project: Path, name: str, capture_mode: str = "structured") -> None:
     run(
         [
             "init",
@@ -542,13 +712,18 @@ def init_project(
             "--json",
         ]
     )
-    run(["bind", str(project), "--vault", str(vault), "--json"])
     run(["ingest", str(project), "--json"])
 
 
 def install_specification_approvals(
-    project: Path, vault: Path, specifications: list[dict[str, object]]
+    project: Path, specifications: list[dict[str, object]]
 ) -> None:
+    """Seed explicit human approval for deterministic native-continuity fixtures.
+
+    Production approval is intentionally a local Desktop action. The eval harness has no GUI, so fixture setup
+    writes the same project-file authority rows directly into the already-initialized private continuity database,
+    before any MCP/hook process starts. Runtime behavior remains exercised through the real CLI/MCP surfaces.
+    """
     if not specifications:
         return
     diagnostic = cli_json(["doctor", str(project), "--json"])
@@ -558,43 +733,57 @@ def install_specification_approvals(
     if not isinstance(identity, dict) or not isinstance(identity.get("projectId"), str):
         raise RuntimeError("doctor returned no projectId for specification fixture")
     project_id = str(identity["projectId"])
-    registry_path = (
+    continuity_path = (
         Path(EVAL_ENV["XDG_CONFIG_HOME"])
         / "app.leynotes.desktop"
-        / "specifications-v1.json"
+        / "continuity.sqlite3"
     )
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    if registry_path.exists():
-        document = json.loads(registry_path.read_text(encoding="utf-8"))
-    else:
-        document = {"schemaVersion": 1, "approvals": {}}
-    approvals = document.setdefault("approvals", {}).setdefault(project_id, {})
-    for index, definition in enumerate(specifications):
-        relative_path = str(definition["path"])
-        source = str(definition["source"])
-        specification_id = str(
-            definition.get(
-                "specification_id",
-                "spec_"
-                + hashlib.sha256(
-                    f"{project_id}:{relative_path}:{index}".encode("utf-8")
-                ).hexdigest()[:32],
+    if not continuity_path.is_file():
+        raise RuntimeError("native continuity database missing before Specification fixture setup")
+    with sqlite3.connect(continuity_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        authority = connection.execute(
+            "SELECT approved_source_authority_migrated FROM projects WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        if authority != (1,):
+            raise RuntimeError(
+                "native approved-source authority is not ready before Specification fixture setup"
             )
-        )
-        destination = vault / relative_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(source, encoding="utf-8")
-        digest = "sha256:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
-        approvals[specification_id] = {
-            "relativePath": relative_path,
-            "contentHash": digest,
-            "approvedAtUnixMs": int(time.time() * 1000) + index,
-        }
-        definition["resolved_specification_id"] = specification_id
-    registry_path.write_text(
-        json.dumps(document, sort_keys=True, separators=(",", ":")), encoding="utf-8"
-    )
-    registry_path.chmod(0o600)
+        for index, definition in enumerate(specifications):
+            relative_path = str(definition["path"])
+            source = str(definition["source"])
+            specification_id = str(
+                definition.get(
+                    "specification_id",
+                    "spec_"
+                    + hashlib.sha256(
+                        f"{project_id}:{relative_path}:{index}".encode("utf-8")
+                    ).hexdigest()[:32],
+                )
+            )
+            destination = project / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(source, encoding="utf-8")
+            digest = "sha256:" + hashlib.sha256(source.encode("utf-8")).hexdigest()
+            connection.execute(
+                """
+                INSERT INTO approved_sources(
+                    project_id, source_id, source_kind, display_name,
+                    project_relative_path, content_hash, snapshot_blob_hash,
+                    approved_at_unix_ms
+                ) VALUES (?, ?, 'project-file', ?, ?, ?, NULL, ?)
+                """,
+                (
+                    project_id,
+                    specification_id,
+                    relative_path,
+                    relative_path,
+                    digest,
+                    int(time.time() * 1000) + index,
+                ),
+            )
+            definition["resolved_specification_id"] = specification_id
 
 
 def mcp_call_result(
@@ -1005,16 +1194,12 @@ def capture_events(
         shown = cli_json(["session", "show", session_id, str(project), "--json"])
         return session_id, [], [json.dumps(sessions[0]), json.dumps(shown)]
 
-    start_receipt = mcp_call(
+    start_receipt = cli_session_start(
         project,
-        "ley_session_start",
-        {
-            "requestId": request_id(f"{scenario['id']}:start"),
-            "name": str(scenario["goal"])[:128],
-            "goal": str(scenario["goal"]),
-            "host": "codex",
-        },
-        WRITE_FLAGS,
+        seed=str(scenario["id"]),
+        name=str(scenario["goal"])[:128],
+        goal=str(scenario["goal"]),
+        host="codex",
     )
     session_id = str(start_receipt["sessionId"])
     receipts: list[dict[str, object]] = []
@@ -1049,15 +1234,15 @@ def capture_events(
         }
         if artifact_paths:
             args["touchedArtifacts"] = artifact_paths
-        receipts.append(mcp_call(project, "ley_session_checkpoint", args, WRITE_FLAGS))
+        receipts.append(cli_session_checkpoint(project, session_id, args))
     if structured_events:
         args = checkpoint_from_events(structured_events, artifact_paths)
         args.update({"sessionId": session_id, "requestId": request_id(f"{scenario['id']}:structured")})
-        receipts.append(mcp_call(project, "ley_session_checkpoint", args, WRITE_FLAGS))
+        receipts.append(cli_session_checkpoint(project, session_id, args))
     elif not checkpoint_events:
         args = checkpoint_from_events(events, artifact_paths)
         args.update({"sessionId": session_id, "requestId": request_id(f"{scenario['id']}:fallback")})
-        receipts.append(mcp_call(project, "ley_session_checkpoint", args, WRITE_FLAGS))
+        receipts.append(cli_session_checkpoint(project, session_id, args))
 
     evidence_record_id = session_id
     if receipts:
@@ -1191,7 +1376,7 @@ def evaluate_bootstrap_specification_scenario(
     source.mkdir(parents=True)
     source_vault.mkdir(parents=True)
     write_project_files(source, {"README.md": "Bootstrap source project.\n"})
-    init_project(source, "Bootstrap Specification source", source_vault)
+    init_project(source, "Bootstrap Specification source")
 
     relative_path = str(expectation.get("path", "Specs/Product.md"))
     source_text = str(expectation.get("source", ""))
@@ -1205,7 +1390,7 @@ def evaluate_bootstrap_specification_scenario(
     definitions: list[dict[str, object]] = [
         {"path": relative_path, "source": source_text}
     ]
-    install_specification_approvals(source, source_vault, definitions)
+    install_specification_approvals(source, definitions)
     specification_id = str(definitions[0].get("resolved_specification_id", ""))
     if not specification_id.startswith("spec_"):
         raise RuntimeError("bootstrap Specification fixture did not resolve a specification ID")
@@ -1434,16 +1619,12 @@ def create_structured_session(
     unresolved: list[str] | None = None,
     host: str = "codex",
 ) -> tuple[str, dict[str, object]]:
-    started = mcp_call(
+    started = cli_session_start(
         project,
-        "ley_session_start",
-        {
-            "requestId": request_id(f"{seed}:start"),
-            "name": name,
-            "goal": goal,
-            "host": host,
-        },
-        WRITE_FLAGS,
+        seed=seed,
+        name=name,
+        goal=goal,
+        host=host,
     )
     session_id = str(started["sessionId"])
     checkpoint: dict[str, object] = {
@@ -1459,12 +1640,7 @@ def create_structured_session(
         checkpoint["touchedArtifacts"] = touched_artifacts
     if unresolved:
         checkpoint["unresolved"] = unresolved
-    receipt = mcp_call(
-        project,
-        "ley_session_checkpoint",
-        checkpoint,
-        WRITE_FLAGS,
-    )
+    receipt = cli_session_checkpoint(project, session_id, checkpoint)
     return session_id, receipt
 
 
@@ -1552,7 +1728,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
     init_project(
         project,
         str(scenario["goal"]),
-        vault,
         str(scenario.get("capture_mode", "structured")),
     )
     specification_definitions = [
@@ -1560,7 +1735,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         for item in scenario.get("specifications", [])
         if isinstance(item, dict)
     ]
-    install_specification_approvals(project, vault, specification_definitions)
+    install_specification_approvals(project, specification_definitions)
     if isinstance(revision_flow, dict):
         branch = str(revision_flow.get("branch", "experiment"))
         git_run(project, ["checkout", "-b", branch])
@@ -1808,15 +1983,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "maxTokens": 4_000,
                 },
             )
-            divergent_session = mcp_call(
-                project,
-                "ley_session_get",
-                {
-                    "sessionId": session_id,
-                    "maxCheckpoints": 5,
-                    "maxCharacters": 8_000,
-                },
-            )
+            divergent_session = cli_session_show(project, session_id)
             divergent_results = [
                 item
                 for item in divergent_search.get("results", [])
@@ -1935,15 +2102,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     "maxTokens": 4_000,
                 },
             )
-            merged_session = mcp_call(
-                project,
-                "ley_session_get",
-                {
-                    "sessionId": session_id,
-                    "maxCheckpoints": 5,
-                    "maxCharacters": 8_000,
-                },
-            )
+            merged_session = cli_session_show(project, session_id)
             merged_results = [
                 item
                 for item in merged_search.get("results", [])
@@ -2297,15 +2456,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "--json",
             ]
         )
-        memory_compilation = mcp_call(
-            project,
-            "ley_session_memory_compile",
-            {
-                "sessionId": imported_session_id,
-                "maxResults": 20,
-                "maxCharacters": 12000,
-            },
-        )
+        import_tools = mcp_tools_list(project)
         resume = cli_json(["resume", str(project), "--json"])
         search = cli_json(
             [
@@ -2440,31 +2591,19 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 for marker in selected_markers
             )
         )
-        compilation_evidence = (
-            memory_compilation.get("evidence", [])
-            if isinstance(memory_compilation, dict)
-            else []
-        )
-        memory_compiler_ok = (
-            isinstance(memory_compilation, dict)
-            and memory_compilation.get("sessionId") == imported_session_id
-            and memory_compilation.get("canCheckpoint") is False
-            and memory_compilation.get("returnedEvidence") == 2
-            and memory_compilation.get("liveSourceChecked") is False
-            and len(compilation_evidence) == 2
-            and all(
-                isinstance(item, dict)
-                and item.get("origin") == "import"
-                and item.get("sourceBoundary")
-                == "untrusted-imported-host-history"
-                for item in compilation_evidence
+        import_inspection_ok = (
+            all(
+                isinstance(turn, dict)
+                and turn.get("origin") == "import"
+                and turn.get("sourceBoundary") == "untrusted-imported-host-history"
+                for turn in returned_turns
             )
-            and [
-                int(item.get("sourceRecordedAtUnixMs", 0))
-                for item in compilation_evidence
-                if isinstance(item, dict)
-            ]
-            == expected_source_ms
+            and "ley_session_memory_compile"
+            not in {
+                str(tool.get("name", ""))
+                for tool in import_tools
+                if isinstance(tool, dict)
+            }
         )
         resume_ok = (
             isinstance(before_resume, dict)
@@ -2509,7 +2648,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             imported,
             session_context,
             turns,
-            memory_compilation,
+            import_tools,
             resume,
             search,
             retry,
@@ -2536,7 +2675,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             import_shape_ok
             and session_source_ok
             and turns_ok
-            and memory_compiler_ok
+            and import_inspection_ok
             and resume_ok
             and historical_search_ok
             and replay_ok
@@ -2578,7 +2717,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                     ("import-shape", import_shape_ok),
                     ("session-source", session_source_ok),
                     ("turns", turns_ok),
-                    ("memory-compiler", memory_compiler_ok),
+                    ("native-import-inspection", import_inspection_ok),
                     ("resume-exclusion", resume_ok),
                     ("historical-search-time", historical_search_ok),
                     ("idempotent-replay", replay_ok),
@@ -2723,15 +2862,29 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             else 0
         )
 
-        inbox = mcp_call(
-            project,
-            "ley_consolidation_inbox",
-            {"maxItems": 20, "maxSessions": 30},
+        inbox = cli_json(
+            [
+                "consolidation",
+                "inbox",
+                str(project),
+                "--max-items",
+                "20",
+                "--max-sessions",
+                "30",
+                "--json",
+            ]
         )
-        rebuilt = mcp_call(
-            project,
-            "ley_consolidation_inbox",
-            {"maxItems": 20, "maxSessions": 30},
+        rebuilt = cli_json(
+            [
+                "consolidation",
+                "inbox",
+                str(project),
+                "--max-items",
+                "20",
+                "--max-sessions",
+                "30",
+                "--json",
+            ]
         )
         candidates = [
             item
@@ -2887,11 +3040,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 encoding="utf-8",
             )
         live_hash = "sha256:" + hashlib.sha256(evidence_file.read_bytes()).hexdigest()
-        session_context = mcp_call(
-            project,
-            "ley_session_get",
-            {"sessionId": session_id, "maxCheckpoints": 5, "maxCharacters": 12000},
-        )
+        session_context = cli_session_show(project, session_id)
         checkpoint_rows = session_context.get("checkpoints", [])
         verification_rows = [
             item
@@ -3008,24 +3157,13 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 },
             },
         )
-        host_turns = mcp_call(
+        host_turns = cli_session_turns(
             project,
-            "ley_session_turns_get",
-            {
-                "sessionId": host_ley_session_id,
-                "maxResults": 20,
-                "maxCharacters": 16_000,
-            },
+            host_ley_session_id,
+            max_results=20,
+            max_characters=16_000,
         )
-        host_session = mcp_call(
-            project,
-            "ley_session_get",
-            {
-                "sessionId": host_ley_session_id,
-                "maxCheckpoints": 5,
-                "maxCharacters": 8_000,
-            },
-        )
+        host_session = cli_session_show(project, host_ley_session_id)
         matching_host_tool_rows = [
             item
             for item in host_turns.get("toolObservations", [])
@@ -3142,11 +3280,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         )
         expected_hash = "sha256:" + hashlib.sha256(expected_bytes).hexdigest()
 
-        session_context = mcp_call(
-            project,
-            "ley_session_get",
-            {"sessionId": session_id, "maxCheckpoints": 5, "maxCharacters": 12000},
-        )
+        session_context = cli_session_show(project, session_id)
         citation = next(
             (
                 evidence
@@ -3334,16 +3468,8 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             touched_artifacts=["README.md"],
             host="claude-code",
         )
-        context_a = mcp_call(
-            project,
-            "ley_session_get",
-            {"sessionId": session_a, "maxCheckpoints": 5, "maxCharacters": 8_000},
-        )
-        context_b = mcp_call(
-            project,
-            "ley_session_get",
-            {"sessionId": session_b, "maxCheckpoints": 5, "maxCharacters": 8_000},
-        )
+        context_a = cli_session_show(project, session_a)
+        context_b = cli_session_show(project, session_b)
         compiled = mcp_call(
             project,
             "ley_brief",
@@ -4384,27 +4510,32 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not checkpoints:
             raise RuntimeError("deletion fixture created no checkpoint")
         checkpoint_id = str(checkpoints[-1]["checkpointId"])
-        proposed = mcp_call(
-            project,
-            "ley_learning_propose",
-            {
-                "requestId": request_id(f"{scenario['id']}:erase:learning"),
-                "kind": "fact",
-                "title": "Private deletion learning",
-                "guidance": f"Dependent learning carrying {marker}.",
-                "confidencePercent": 50,
-                "provenance": "agent-authored",
-                "evidence": [
-                    {
-                        "sessionId": erased_session,
-                        "recordId": checkpoint_id,
-                        "note": "Deletion fidelity evidence.",
-                    }
-                ],
-            },
-            WRITE_FLAGS,
+        proposed = cli_json(
+            [
+                "learning",
+                "propose",
+                str(project),
+                "--request-id",
+                request_id(f"{scenario['id']}:erase:learning"),
+                "--actor",
+                "agent",
+                "--provenance",
+                "agent-authored",
+                "--kind",
+                "fact",
+                "--title",
+                "Private deletion learning",
+                "--guidance",
+                f"Dependent learning carrying {marker}.",
+                "--confidence",
+                "50",
+                "--evidence",
+                f"{erased_session}:{checkpoint_id}",
+                "--json",
+            ]
         )
-        learning_id = str(proposed["learningId"])
+        proposed_learning = proposed.get("learning", {}) if isinstance(proposed, dict) else {}
+        learning_id = str(proposed_learning.get("learningId", ""))
         event_count = int(shown["eventCount"])
         erased = cli_json(
             [
@@ -4672,35 +4803,20 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             "ley_brief",
             {"task": query, "maxResults": 8, "maxTokens": max_tokens},
         )
-        resume = mcp_call(
+        resume = cli_resume_payload(
             project,
-            "ley_project_resume",
-            {
-                "maxSessions": 3,
-                "maxLearnings": 1,
-                "maxCharacters": resume_characters,
-            },
+            max_sessions=3,
+            max_learnings=1,
+            max_characters=resume_characters,
         )
-        session_list = mcp_call(
-            project,
-            "ley_sessions_list",
-            {"maxResults": 50},
-        )
+        session_list = cli_session_list_payload(project)
         listed_sessions = [
             item
             for item in session_list.get("sessions", [])
             if isinstance(item, dict) and isinstance(item.get("sessionId"), str)
         ]
         raw_session_contexts = [
-            mcp_call(
-                project,
-                "ley_session_get",
-                {
-                    "sessionId": str(item["sessionId"]),
-                    "maxCheckpoints": 5,
-                    "maxCharacters": 8_000,
-                },
-            )
+            cli_session_show(project, str(item["sessionId"]))
             for item in listed_sessions
         ]
         compiler_success = (
@@ -5443,7 +5559,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             project_dir.mkdir()
             vault_dir.mkdir()
             write_project_files(project_dir, definition.get("files", {}))
-            init_project(project_dir, name, vault_dir)
+            init_project(project_dir, name)
             project_dirs.append(project_dir)
         query = str(scenario.get("query_from_alpha", ["cross project"])[0])
         payload = mcp_call(
@@ -6204,47 +6320,67 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         if not recovered:
             failures.append("crashed active session did not retain exactly one prompt and no response")
 
-    if scenario.get("expected_memory_compiler_state"):
+    if scenario.get("expected_interruption_recovery"):
         if not session_id:
-            scores["memory_recovery"] = False
-            failures.append("memory compiler fixture created no session")
+            scores["interruption_recovery"] = False
+            failures.append("interruption-recovery fixture created no session")
         else:
-            compiled = mcp_call(
-                project,
-                "ley_session_memory_compile",
-                {"sessionId": session_id, "maxResults": 20, "maxCharacters": 4_000},
+            session = cli_json(
+                ["session", "show", session_id, str(project), "--json"]
             )
-            evidence = [
-                item for item in compiled.get("evidence", []) if isinstance(item, dict)
+            turns = cli_json(
+                [
+                    "session",
+                    "turns",
+                    session_id,
+                    str(project),
+                    "--max-results",
+                    "20",
+                    "--max-characters",
+                    "4000",
+                    "--json",
+                ]
+            )
+            tools = mcp_tools_list(project, ("--allow-session-writes",))
+            tool_names = {
+                str(tool.get("name", "")) for tool in tools if isinstance(tool, dict)
+            }
+            retained_turns = [
+                item for item in turns.get("turns", []) if isinstance(item, dict)
             ]
-            evidence_ids = [str(item.get("recordId", "")) for item in evidence]
-            evidence_provenance_ok = (
-                bool(evidence)
-                and all(record_id.startswith("tev_") for record_id in evidence_ids)
-                and all(str(item.get("eventId", "")).startswith("evt_") for item in evidence)
-                and all("untrusted" in str(item.get("sourceBoundary", "")) for item in evidence)
-            )
-            expected_state = str(scenario["expected_memory_compiler_state"])
+            prompt_evidence = [
+                item
+                for item in retained_turns
+                if item.get("kind") == "user-prompt"
+                and str(item.get("recordId", "")).startswith("tev_")
+                and "untrusted" in str(item.get("sourceBoundary", ""))
+            ]
             recovery_ok = (
-                compiled.get("state") == expected_state
-                and compiled.get("sessionStatus") == "active"
-                and compiled.get("canCheckpoint") is True
-                and int(compiled.get("totalUnconsolidatedEvidence", 0)) >= len(evidence) >= 1
-                and int(compiled.get("returnedEvidence", 0)) == len(evidence)
-                and compiled.get("automaticCommandWriteAllowed") is False
-                and compiled.get("liveSourceChecked") is False
-                and compiled.get("sourceBoundary") == "untrusted-memory-compiler-input"
-                and int(compiled.get("textCharacters", 0)) <= int(compiled.get("maxCharacters", 0))
-                and evidence_provenance_ok
+                isinstance(session, dict)
+                and session.get("status") == "active"
+                and session.get("promptCount") == 1
+                and session.get("responseCount") == 0
+                and isinstance(turns, dict)
+                and turns.get("promptCount") == 1
+                and turns.get("responseCount") == 0
+                and turns.get("retainedTurnCount") == 1
+                and len(prompt_evidence) == 1
+                and prompt_evidence[0].get("text") == "Fix the login bug"
+                and turns.get("liveSourceChecked") is False
+                and bool(turns.get("instructionWarning"))
+                and int(turns.get("textCharacters", 0)) <= 4_000
+                and "ley_checkpoint" in tool_names
+                and "ley_session_memory_compile" not in tool_names
+                and "ley_session_start" not in tool_names
             )
-            scores["memory_recovery"] = recovery_ok
+            scores["interruption_recovery"] = recovery_ok
             scores["privacy_violation_rate"] = privacy_violation_rate(
-                [str(project), str(vault)], [compiled]
+                [str(project), str(vault)], [session, turns, tools]
             )
-            evidence_text.append(compiled)
+            evidence_text.extend([session, turns, tools])
             if not recovery_ok:
                 failures.append(
-                    "read-only crash recovery did not preserve bounded untrusted evidence without automatic write authority"
+                    "native crash recovery did not preserve bounded untrusted interruption evidence with only canonical checkpoint write authority"
                 )
 
     if scenario.get("expected_max_tokens") is not None:

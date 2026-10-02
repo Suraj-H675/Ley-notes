@@ -1,3 +1,6 @@
+mod common;
+
+use common::seed_legacy_project;
 use ley_core::{
     diagnose_project, generate_specification_id, SpecificationRegistry, APP_IDENTIFIER,
     KNOWLEDGE_SCOPE_REGISTRY_FILE, POLICY_BUNDLE_REGISTRY_FILE, SPECIFICATION_REGISTRY_FILE,
@@ -35,13 +38,7 @@ fn json_stdout(output: Output) -> Value {
 }
 
 fn init_and_bind(config: &Path, project: &Path, vault: &Path, name: &str) {
-    fs::create_dir_all(project).unwrap();
-    fs::create_dir_all(vault).unwrap();
-    fs::write(project.join("README.md"), format!("# {name}\n")).unwrap();
-    ley(
-        config,
-        &["init", project.to_str().unwrap(), "--name", name, "--json"],
-    );
+    seed_legacy_project(project, vault, name);
     ley(
         config,
         &[
