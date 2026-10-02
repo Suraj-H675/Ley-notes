@@ -14,7 +14,7 @@ use ley_core::{
     read_native_project_cited_evidence_for_project_id,
     read_native_project_cited_media_for_project_id,
     read_project_cited_evidence_with_continuity_transition,
-    read_project_cited_media_with_continuity_transition, read_project_evidence,
+    read_project_cited_media_with_continuity_transition,
     read_session_context_with_continuity_transition,
     read_session_turns_context_with_continuity_transition,
     search_native_project_memory_for_expected_project,
@@ -98,10 +98,9 @@ local-user compatibility state only; MCP does \
 not expose them. Connector-specific egress restrictions still conservatively constrain broad historical \
 derivatives when independence cannot be proven. Use \
 `ley_project_resume` for broad continuity when the task itself is not yet specific. Use the \
-lower-level search/evidence tools for inspection and progressive disclosure. Text citations use \
-`ley_read_evidence`. A citation with `mediaType` is non-text original evidence; inspect it only when \
-needed with `ley_read_media_evidence` using its exact artifact path, snapshot ID, and content hash. \
-The media tool supplies original untrusted image bytes, not OCR or a generated description; any \
+lower-level search/evidence tools for inspection and progressive disclosure. Carry exact Ley citations into \
+`ley_evidence`; it revalidates snapshot/path/hash identity for bounded text and supported original-image \
+evidence. Original image evidence is returned as untrusted bytes, not OCR or a generated description; any \
 visual conclusion is derived interpretation, and `liveSourceChecked` remains false. `ley_search` may \
 narrow historical candidates with exact `revisionCompatibility` values `current-lineage`, `ancestor`, \
 `merged`, `divergent`, or `unknown`; this is inspection scope only and never increases trust/authority, \
@@ -470,22 +469,6 @@ pub struct ProjectSpecificationsParams {
     pub max_characters: Option<usize>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ReadEvidenceParams {
-    /// Project-relative path from a citation in the current captured snapshot.
-    pub artifact_path: String,
-    /// One-based first line. Defaults to 1.
-    #[serde(default)]
-    pub start_line: Option<u64>,
-    /// One-based inclusive last line. Defaults to 40 lines from start.
-    #[serde(default)]
-    pub end_line: Option<u64>,
-    /// Maximum returned characters. Defaults to 8000 and cannot exceed 16000.
-    #[serde(default)]
-    pub max_characters: Option<usize>,
-}
-
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum McpEvidenceMediaType {
@@ -557,24 +540,6 @@ pub struct LeyEvidenceParams {
     #[schemars(range(min = 1, max = 16_000))]
     pub max_characters: Option<usize>,
     /// Maximum original image bytes when the citation is media. Defaults to 180000 bytes.
-    #[serde(default)]
-    #[schemars(range(min = 1, max = 180_000))]
-    pub max_bytes: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ReadMediaEvidenceParams {
-    /// Project-relative image path from an immutable Ley artifact citation.
-    #[schemars(length(min = 1, max = 1_024))]
-    pub artifact_path: String,
-    /// Exact retained artifact snapshot ID from the citation.
-    #[schemars(length(min = 68, max = 68))]
-    pub artifact_snapshot_id: String,
-    /// Exact SHA-256 content hash from the citation.
-    #[schemars(length(min = 71, max = 71))]
-    pub content_hash: String,
-    /// Maximum original image bytes to return. Defaults to 180000 bytes and cannot exceed 180000 bytes.
     #[serde(default)]
     #[schemars(range(min = 1, max = 180_000))]
     pub max_bytes: Option<usize>,
@@ -1909,73 +1874,6 @@ impl LeyMcpServer {
         ))
     }
 
-    /// Read a bounded line range from an approved artifact cited by Ley.
-    #[tool(
-        name = "ley_read_evidence",
-        annotations(
-            title = "Read cited Ley evidence",
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn read_evidence(
-        &self,
-        Parameters(params): Parameters<ReadEvidenceParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let start_line = params.start_line.unwrap_or(1);
-        let end_line = params
-            .end_line
-            .unwrap_or_else(|| start_line.saturating_add(39));
-        Ok(self.gated_tool_result(|| {
-            read_project_evidence(
-                self.project.as_path(),
-                self.vault.as_path(),
-                &params.artifact_path,
-                start_line,
-                end_line,
-                params.max_characters.unwrap_or(8_000),
-            )
-        }))
-    }
-
-    /// Read exact original image evidence from an immutable Ley artifact citation.
-    #[tool(
-        name = "ley_read_media_evidence",
-        annotations(
-            title = "Read original Ley image evidence",
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn read_media_evidence(
-        &self,
-        Parameters(params): Parameters<ReadMediaEvidenceParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let media = self
-            .egress_policy_registry
-            .with_transition_project_egress_locked(
-                self.project.as_path(),
-                self.continuity_store.as_ref(),
-                self.egress_target,
-                || {
-                    read_project_cited_media_with_continuity_transition(
-                        self.project.as_path(),
-                        self.vault.as_path(),
-                        self.continuity_store.as_ref(),
-                        &params.artifact_path,
-                        &params.artifact_snapshot_id,
-                        &params.content_hash,
-                        params.max_bytes.unwrap_or(DEFAULT_MEDIA_EVIDENCE_BYTES),
-                    )
-                },
-            );
-        Ok(media_tool_result(media))
-    }
-
     /// List bounded recent sessions and their goals without returning full captured evidence.
     #[tool(
         name = "ley_sessions_list",
@@ -2983,12 +2881,11 @@ mod tests {
     fn read_only_is_default_and_write_opt_in_has_precise_annotations() {
         let (_temporary, project, vault, server) = fixture();
         let instructions = server.get_info().instructions.unwrap();
-        assert!(instructions.contains("ley_read_media_evidence"));
         assert!(instructions.contains("ley_brief"));
         assert!(instructions.contains("ley_search"));
         assert!(instructions.contains("ley_evidence"));
         assert!(instructions.contains("ley_checkpoint"));
-        assert!(instructions.contains("original untrusted image bytes"));
+        assert!(instructions.contains("untrusted bytes"));
         assert!(instructions.contains("not OCR or a generated description"));
         assert!(!instructions.contains("ley_acceptance_criterion_verification_review"));
         assert!(!instructions.contains("verificationMethods"));
@@ -3013,8 +2910,6 @@ mod tests {
                 "ley_project_overview",
                 "ley_project_resume",
                 "ley_project_specifications",
-                "ley_read_evidence",
-                "ley_read_media_evidence",
                 "ley_search",
                 "ley_session_get",
                 "ley_session_memory_compile",
@@ -3041,28 +2936,6 @@ mod tests {
         assert!(!tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_acceptance_criterion_verification_review"));
-        let media_schema = serde_json::to_value(
-            &tools
-                .iter()
-                .find(|tool| tool.name.as_ref() == "ley_read_media_evidence")
-                .unwrap()
-                .input_schema,
-        )
-        .unwrap();
-        assert_eq!(
-            media_schema["properties"]["artifactPath"]["maxLength"],
-            1_024
-        );
-        assert_eq!(
-            media_schema["properties"]["artifactSnapshotId"]["minLength"],
-            68
-        );
-        assert_eq!(media_schema["properties"]["contentHash"]["minLength"], 71);
-        assert_eq!(media_schema["properties"]["maxBytes"]["minimum"], 1);
-        assert_eq!(
-            media_schema["properties"]["maxBytes"]["maximum"],
-            MAX_MCP_MEDIA_EVIDENCE_BYTES
-        );
         for forbidden in [
             "ley_external_connector_add",
             "ley_external_connector_refresh",
@@ -3165,8 +3038,6 @@ mod tests {
                 "ley_project_overview",
                 "ley_project_resume",
                 "ley_project_specifications",
-                "ley_read_evidence",
-                "ley_read_media_evidence",
                 "ley_search",
                 "ley_session_checkpoint",
                 "ley_session_finish",
@@ -3232,6 +3103,10 @@ mod tests {
         assert_eq!(
             canonical_evidence_schema["properties"]["contextLines"]["maximum"],
             20
+        );
+        assert_eq!(
+            canonical_evidence_schema["properties"]["maxBytes"]["maximum"],
+            MAX_MCP_MEDIA_EVIDENCE_BYTES
         );
         for tool in tools {
             let annotations = tool.annotations.unwrap();
@@ -5311,12 +5186,43 @@ mod tests {
     #[tokio::test]
     async fn rejects_unapproved_evidence_without_disclosing_scope_paths() {
         let (_temporary, project, vault, server) = fixture();
+        let search = server
+            .search(Parameters(SearchMemoryParams {
+                query: "stable evidence".to_owned(),
+                project_id: None,
+                revision_compatibility: None,
+                max_results: Some(8),
+                max_tokens: Some(2_000),
+            }))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let citation = search["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|item| item.get("citation"))
+            .expect("fixture search returns cited evidence");
         let result = server
-            .read_evidence(Parameters(ReadEvidenceParams {
-                artifact_path: "../outside".to_owned(),
-                start_line: None,
-                end_line: None,
+            .evidence(Parameters(LeyEvidenceParams {
+                reference: LeyEvidenceReference {
+                    project_id: None,
+                    artifact_path: "../outside".to_owned(),
+                    start_line: citation["startLine"].as_u64().unwrap(),
+                    start_column: citation["startColumn"].as_u64().unwrap(),
+                    end_line: citation["endLine"].as_u64().unwrap(),
+                    end_column: citation["endColumn"].as_u64().unwrap(),
+                    content_hash: citation["contentHash"].as_str().unwrap().to_owned(),
+                    artifact_snapshot_id: citation["artifactSnapshotId"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                    media_type: None,
+                },
+                context_lines: None,
                 max_characters: None,
+                max_bytes: None,
             }))
             .await
             .unwrap();
@@ -5768,31 +5674,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(canonical.is_error, Some(false));
-        let canonical_metadata = canonical.structured_content.as_ref().unwrap();
-        assert_eq!(canonical_metadata["artifactPath"], "verification.png");
-        assert_eq!(canonical_metadata["mediaType"], "png");
-        let canonical_image = canonical
-            .content
-            .iter()
-            .find_map(ContentBlock::as_image)
-            .unwrap();
-        assert_eq!(
-            BASE64_STANDARD.decode(&canonical_image.data).unwrap(),
-            image
-        );
-
-        let result = server
-            .read_media_evidence(Parameters(ReadMediaEvidenceParams {
-                artifact_path: citation.artifact_path.clone(),
-                artifact_snapshot_id: citation.artifact_snapshot_id.clone(),
-                content_hash: citation.content_hash.clone(),
-                max_bytes: Some(image.len()),
-            }))
-            .await
-            .unwrap();
-
-        assert_eq!(result.is_error, Some(false));
-        let metadata = result.structured_content.as_ref().unwrap();
+        let metadata = canonical.structured_content.as_ref().unwrap();
         assert_eq!(metadata["artifactPath"], "verification.png");
         assert_eq!(
             metadata["artifactSnapshotId"],
@@ -5805,7 +5687,7 @@ mod tests {
         assert_eq!(metadata["sourceBoundary"], "untrusted-project-evidence");
         assert_eq!(metadata["liveSourceChecked"], false);
         assert_eq!(metadata["derivedDescriptionIncluded"], false);
-        let returned = result
+        let returned = canonical
             .content
             .iter()
             .find_map(ContentBlock::as_image)
@@ -5817,10 +5699,20 @@ mod tests {
         assert!(!serialized.contains(vault.to_str().unwrap()));
 
         let bounded = server
-            .read_media_evidence(Parameters(ReadMediaEvidenceParams {
-                artifact_path: citation.artifact_path,
-                artifact_snapshot_id: citation.artifact_snapshot_id,
-                content_hash: citation.content_hash,
+            .evidence(Parameters(LeyEvidenceParams {
+                reference: LeyEvidenceReference {
+                    project_id: None,
+                    artifact_path: citation.artifact_path,
+                    start_line: 0,
+                    start_column: 0,
+                    end_line: 0,
+                    end_column: 0,
+                    content_hash: citation.content_hash,
+                    artifact_snapshot_id: citation.artifact_snapshot_id,
+                    media_type: Some(McpEvidenceMediaType::Png),
+                },
+                context_lines: None,
+                max_characters: None,
                 max_bytes: Some(image.len() - 1),
             }))
             .await
@@ -6068,9 +5960,9 @@ mod tests {
         assert!(!tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_consolidation_inbox"));
-        assert!(tools
-            .iter()
-            .any(|tool| tool.name.as_ref() == "ley_read_media_evidence"));
+        for retired in ["ley_read_evidence", "ley_read_media_evidence"] {
+            assert!(!tools.iter().any(|tool| tool.name.as_ref() == retired));
+        }
         let overview = client
             .call_tool(CallToolRequestParams::new("ley_project_overview"))
             .await

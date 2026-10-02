@@ -33,7 +33,9 @@ Text and media citations have different durable semantics.
 
 ## Agent read boundary
 
-`ley_read_media_evidence` is a fixed-project, read-only MCP tool. The caller must supply the exact path/snapshot/hash from a Ley citation. A successful result contains:
+Historically, `ley_read_media_evidence` was the fixed-project read-only MCP tool for this capability. ADR 0100
+retires that wrapper; canonical `ley_evidence` now owns the same exact path/snapshot/hash validation and original-byte
+result contract. A successful media evidence result contains:
 
 - compact structured provenance metadata; and
 - one native MCP image content block containing the exact retained original bytes.

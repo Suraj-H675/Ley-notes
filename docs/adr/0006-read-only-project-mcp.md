@@ -1,6 +1,6 @@
 # ADR 0006: Fixed-project read-only Model Context Protocol retrieval
 
-- Status: Superseded for the normal agent surface on 2026-09-30; historical fixed-project/read-only rationale retained. The current canonical native server exposes `ley_brief`, `ley_search`, and `ley_evidence`, plus `ley_checkpoint` only when session writes are enabled. Bootstrap `ley_compile_context` and bounded legacy-recovery modes are explicit exceptions. Later contraction ADRs remove compatibility routes including Context Pack Inspector (ADR 0089) and Consolidation Inbox MCP (ADR 0099).
+- Status: Superseded for the normal agent surface on 2026-09-30; historical fixed-project/read-only rationale retained. The current canonical native server exposes `ley_brief`, `ley_search`, and `ley_evidence`, plus `ley_checkpoint` only when session writes are enabled. Bootstrap `ley_compile_context` and bounded legacy-recovery modes are explicit exceptions. Later contraction ADRs remove compatibility routes including Context Pack Inspector (ADR 0089), Consolidation Inbox MCP (ADR 0099), and the two legacy Evidence readers (ADR 0100).
 - Date: 2026-07-18
 
 ## Context
