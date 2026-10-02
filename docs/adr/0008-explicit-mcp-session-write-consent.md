@@ -34,7 +34,9 @@ The flag enables the following session lifecycle and recovery tools:
 | `ley_session_memory_commit_unresolved` | Appends one candidate-bound unresolved recovery checkpoint after re-verification |
 | `ley_session_finish` | Appends one completed, paused, or abandoned result |
 
-Later extensions also place their session-mutating MCP routes behind this same startup capability. In particular, `ley_context_utility_bind` and `ley_context_utility_observe` are absent unless `--allow-session-writes` is enabled; they retain their own narrower provenance/evidence contracts.
+Historical extension note: Context Utility once added `ley_context_utility_bind` and
+`ley_context_utility_observe` behind this startup capability. Those wrappers were later disabled globally and
+are deleted by ADR 0090; historical Context Utility events remain replayable compatibility data.
 
 Each write requires a caller-stable `req_` ID. Exact retries return the original compact receipt. Reusing the ID with different content fails. Receipts contain stable project, session, and event IDs plus status, counts, timestamp, and replay state. They do not return the growing session body or absolute local paths.
 

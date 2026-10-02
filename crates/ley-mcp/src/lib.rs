@@ -2,7 +2,6 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 #[cfg(test)]
 use ley_core::finish_session;
 use ley_core::{
-    bind_context_utility_pack_with_continuity_transition,
     checkpoint_session_if_current_with_continuity_transition,
     checkpoint_session_with_continuity_transition,
     commit_batch_memory_transition_with_continuity_transition,
@@ -30,8 +29,6 @@ use ley_core::{
     read_project_cited_media_with_continuity_transition, read_project_evidence,
     read_session_context_with_continuity_transition,
     read_session_turns_context_with_continuity_transition,
-    record_context_utility_observation_with_continuity_transition,
-    replay_context_utility_binding_if_present_with_continuity_transition,
     search_native_project_memory_for_expected_project,
     search_project_memory_with_continuity_transition, start_session_with_continuity_transition,
     validate_project_memory, verify_batch_memory_transition_with_continuity_transition,
@@ -47,10 +44,9 @@ use ley_core::{
     CommitPlanMemoryTransitionInput, CommitRichProblemMemoryTransitionInput,
     CommitStructuredMemoryTransitionInput, CommitTaskMemoryTransitionInput,
     CommitUnresolvedMemoryTransitionInput, CompositeMemoryTransitionInput,
-    ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry,
-    ContextUtilityBindingInput, ContextUtilityObservationInput, ContinuityStore, DecisionInput,
-    EgressPolicyRegistry, FinishSessionInput, GraphCitation, KnowledgeScopeRegistry, LearningActor,
-    LearningEvidenceInput, LearningKind, LearningListScope, LearningProvenance,
+    ConsolidationInboxLimits, ContextCompileLimits, ContextMountRegistry, ContinuityStore,
+    DecisionInput, EgressPolicyRegistry, FinishSessionInput, GraphCitation, KnowledgeScopeRegistry,
+    LearningActor, LearningEvidenceInput, LearningKind, LearningListScope, LearningProvenance,
     LearningWriteResult, LeyCoreError, MemoryCandidateClaim, MemoryCandidateKind,
     MemoryTransitionInput, ObservedCommandMemoryTransitionInput, PlanItemInput, PlanStatus,
     PolicyBundleRegistry, ProblemInput, ProjectCatalog, ProjectMemorySearchLimits,
@@ -201,8 +197,6 @@ const CONTINUITY_CANONICAL_READ_TOOLS: &[&str] = &["ley_brief", "ley_search", "l
 const CONTINUITY_CANONICAL_SESSION_WRITE_TOOLS: &[&str] = &["ley_checkpoint"];
 const CONTINUITY_CANONICAL_LEARNING_WRITE_TOOLS: &[&str] = &[];
 const RETIRED_MODEL_RECOVERY_TOOLS: &[&str] = &[
-    "ley_context_utility_bind",
-    "ley_context_utility_observe",
     "ley_session_memory_verify_observed_command",
     "ley_session_memory_commit_observed_command",
     "ley_session_memory_verify",
@@ -509,63 +503,6 @@ pub struct CompileContextParams {
     #[serde(default)]
     #[schemars(range(min = 500, max = 8_000))]
     pub max_tokens: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BindContextUtilityParams {
-    /// Stable session that will later produce downstream typed outcomes for this pack.
-    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
-    pub session_id: String,
-    /// Caller-stable idempotency key. Reuse only when retrying this exact pack binding.
-    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
-    pub request_id: String,
-    /// Exact current event count before the binding is appended.
-    #[schemars(range(min = 1))]
-    pub expected_event_count: u64,
-    /// Exact logical pack ID returned by ley_compile_context immediately before this binding.
-    #[schemars(regex(pattern = "^cpk_[0-9a-f]{64}$"))]
-    pub context_pack_id: String,
-    /// The same concrete task/query used to compile the pack.
-    #[schemars(length(min = 1, max = 256))]
-    pub task: String,
-    /// The same maxResults used for compilation. Defaults to 8.
-    #[serde(default)]
-    #[schemars(range(min = 1, max = 20))]
-    pub max_results: Option<usize>,
-    /// The same maxTokens used for compilation. Defaults to 1500.
-    #[serde(default)]
-    #[schemars(range(min = 500, max = 8_000))]
-    pub max_tokens: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ObserveContextUtilityParams {
-    /// Stable session containing the prior pack binding and downstream typed outcomes.
-    #[schemars(regex(pattern = "^ses_[0-9a-f]{32}$"))]
-    pub session_id: String,
-    /// Caller-stable idempotency key. Reuse only when retrying this exact observation.
-    #[schemars(regex(pattern = "^req_[0-9a-f]{32}$"))]
-    pub request_id: String,
-    /// Exact current event count before the observation is appended.
-    #[schemars(range(min = 1))]
-    pub expected_event_count: u64,
-    /// Immutable cub_ binding ID returned by the earlier ley_context_utility_bind write.
-    #[schemars(regex(pattern = "^cub_[0-9a-f]{32}$"))]
-    pub binding_id: String,
-    /// Prior checkpoint/session-finish event IDs that occurred after the bound context pack.
-    #[schemars(length(min = 1, max = 20))]
-    #[schemars(inner(regex(pattern = "^evt_[0-9a-f]{64}$")))]
-    pub downstream_event_ids: Vec<String>,
-    /// Optional caller-declared active-project procedure learning IDs that were applied during
-    /// the downstream work. Every ID must have been present as the exact reviewed procedure
-    /// version in the bound pack. This is an application claim, not proof of model attention,
-    /// causation, universal applicability, or permission to change learning trust/ranking.
-    #[serde(default)]
-    #[schemars(length(max = 16))]
-    #[schemars(inner(regex(pattern = "^lrn_[0-9a-f]{32}$")))]
-    pub claimed_applied_learning_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -1773,20 +1710,6 @@ struct SessionWriteReceipt {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ContextUtilityBindingReceipt {
-    project_id: String,
-    session_id: String,
-    event_id: String,
-    binding_id: String,
-    context_pack_id: String,
-    status: SessionStatus,
-    event_count: u64,
-    updated_at_unix_ms: u64,
-    replayed: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 struct LearningProposalReceipt {
     project_id: String,
     learning_id: String,
@@ -2016,8 +1939,6 @@ impl LeyMcpServer {
             tool_router.disable_route("ley_session_memory_commit_task");
             tool_router.disable_route("ley_session_memory_commit_unresolved");
             tool_router.disable_route("ley_session_finish");
-            tool_router.disable_route("ley_context_utility_bind");
-            tool_router.disable_route("ley_context_utility_observe");
         }
         if legacy_compatibility_available && !learning_proposals_enabled {
             tool_router.disable_route("ley_learning_propose");
@@ -2532,133 +2453,6 @@ impl LeyMcpServer {
                 self.egress_target,
             ),
         ))
-    }
-
-    /// Persist a bounded metadata binding for the exact context pack about to be used.
-    /// The pack is recompiled immediately and must still match the supplied contextPackId.
-    #[tool(
-        name = "ley_context_utility_bind",
-        annotations(
-            title = "Bind Ley context pack for utility feedback",
-            read_only_hint = false,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn context_utility_bind(
-        &self,
-        Parameters(params): Parameters<BindContextUtilityParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let max_results = params
-            .max_results
-            .unwrap_or(DEFAULT_CONTEXT_COMPILE_RESULTS);
-        let max_tokens = params.max_tokens.unwrap_or(DEFAULT_CONTEXT_COMPILE_TOKENS);
-        let binding_input = ContextUtilityBindingInput {
-            request_id: params.request_id.clone(),
-            expected_event_count: params.expected_event_count,
-            expected_context_pack_id: params.context_pack_id.clone(),
-            task: params.task.clone(),
-            max_results,
-            max_tokens,
-        };
-        let replay = self
-            .egress_policy_registry
-            .with_transition_project_egress_locked(
-                self.project.as_path(),
-                self.continuity_store.as_ref(),
-                self.egress_target,
-                || {
-                    replay_context_utility_binding_if_present_with_continuity_transition(
-                        self.project.as_path(),
-                        self.vault.as_path(),
-                        self.continuity_store.as_ref(),
-                        &params.session_id,
-                        &binding_input,
-                    )
-                },
-            );
-        match replay {
-            Ok(Some(mutation)) => {
-                return Ok(tool_result(context_utility_binding_receipt(mutation)))
-            }
-            Ok(None) => {}
-            Err(error) => return Ok(tool_result(Err::<ContextUtilityBindingReceipt, _>(error))),
-        }
-        let compiled = compile_project_context_for_agent_with_transition_registries(
-            self.project.as_path(),
-            self.vault.as_path(),
-            &params.task,
-            ContextCompileLimits {
-                max_results,
-                max_tokens,
-            },
-            AgentContextAuthorities {
-                specifications: self.specification_registry.as_ref(),
-                approved_sources: self.approved_source_registry.as_ref(),
-                mounts: self.context_mount_registry.as_ref(),
-                knowledge_scopes: self.knowledge_scope_registry.as_ref(),
-                policy_bundles: self.policy_bundle_registry.as_ref(),
-                egress: self.egress_policy_registry.as_ref(),
-            },
-            self.continuity_store.as_ref(),
-            self.egress_target,
-        );
-        let result = compiled.and_then(|pack| {
-            self.egress_policy_registry
-                .with_transition_project_egress_locked(
-                    self.project.as_path(),
-                    self.continuity_store.as_ref(),
-                    self.egress_target,
-                    || {
-                        bind_context_utility_pack_with_continuity_transition(
-                            self.project.as_path(),
-                            self.vault.as_path(),
-                            self.continuity_store.as_ref(),
-                            &params.session_id,
-                            binding_input,
-                            &pack,
-                        )
-                    },
-                )
-        });
-        Ok(tool_result(
-            result.and_then(context_utility_binding_receipt),
-        ))
-    }
-
-    /// Associate one prior exact context-pack binding with later typed session outcomes.
-    /// This records correlation evidence only: it does not prove the agent used the pack,
-    /// does not prove causation, and cannot change memory trust or retrieval ranking.
-    #[tool(
-        name = "ley_context_utility_observe",
-        annotations(
-            title = "Record Ley context utility outcome",
-            read_only_hint = false,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn context_utility_observe(
-        &self,
-        Parameters(params): Parameters<ObserveContextUtilityParams>,
-    ) -> Result<CallToolResult, McpError> {
-        Ok(self.gated_transition_session_write_result(|| {
-            record_context_utility_observation_with_continuity_transition(
-                self.project.as_path(),
-                self.vault.as_path(),
-                self.continuity_store.as_ref(),
-                &params.session_id,
-                ContextUtilityObservationInput {
-                    request_id: params.request_id,
-                    expected_event_count: params.expected_event_count,
-                    binding_id: params.binding_id,
-                    downstream_event_ids: params.downstream_event_ids,
-                    claimed_applied_learning_ids: params.claimed_applied_learning_ids,
-                },
-            )
-        }))
     }
 
     /// Inspect bounded local consolidation candidates at meaningful session boundaries without writing memory.
@@ -4107,32 +3901,6 @@ fn session_write_receipt(mutation: SessionWriteResult) -> SessionWriteReceipt {
     }
 }
 
-fn context_utility_binding_receipt(
-    mutation: SessionWriteResult,
-) -> Result<ContextUtilityBindingReceipt, LeyCoreError> {
-    let binding = mutation
-        .session
-        .context_utility_bindings
-        .iter()
-        .find(|binding| binding.event_id == mutation.event_id)
-        .ok_or_else(|| {
-            LeyCoreError::InvalidSessionStore(
-                "context utility binding event is missing from the rebuilt session".to_owned(),
-            )
-        })?;
-    Ok(ContextUtilityBindingReceipt {
-        project_id: mutation.session.project_id.clone(),
-        session_id: mutation.session.session_id.clone(),
-        event_id: mutation.event_id,
-        binding_id: binding.id.clone(),
-        context_pack_id: binding.context_pack_id.clone(),
-        status: mutation.session.status,
-        event_count: mutation.session.event_count,
-        updated_at_unix_ms: mutation.session.updated_at_unix_ms,
-        replayed: mutation.replayed,
-    })
-}
-
 fn learning_proposal_receipt(mutation: LearningWriteResult) -> LearningProposalReceipt {
     LearningProposalReceipt {
         project_id: mutation.learning.project_id,
@@ -4291,17 +4059,15 @@ mod tests {
     use super::*;
     use ley_core::{
         checkpoint_session, generate_specification_id, ingest_project, initialize_project,
-        propose_learning, record_session_prompt, record_session_response,
-        record_session_tool_observation, review_learning, start_session, AgentEgressPolicy,
-        AttemptInput, BindingRegistry, BootstrapSpecificationRegistry, CaptureMode,
-        CheckpointInput, DecisionInput, LearningActor, LearningEvidenceInput,
-        LearningFeedbackAction, LearningKind, LearningProvenance, ProblemInput,
-        ProposeLearningInput, ResolutionInput, ReviewLearningInput, SessionSource,
-        SpecificationRegistry, StartSessionInput, ToolObservationInput, ToolObservationKind,
-        TurnEvidenceInput, TurnEvidenceOrigin, BINDING_REGISTRY_FILE,
-        BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_FILE,
-        MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS, MAX_PROJECT_ACTIVITY_RESULTS,
-        SPECIFICATION_REGISTRY_FILE,
+        record_session_prompt, record_session_response, record_session_tool_observation,
+        start_session, AgentEgressPolicy, AttemptInput, BindingRegistry,
+        BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, DecisionInput, LearningActor,
+        LearningEvidenceInput, LearningKind, LearningProvenance, ProblemInput,
+        ProposeLearningInput, ResolutionInput, SessionSource, SpecificationRegistry,
+        StartSessionInput, ToolObservationInput, ToolObservationKind, TurnEvidenceInput,
+        TurnEvidenceOrigin, BINDING_REGISTRY_FILE, BOOTSTRAP_SPECIFICATION_REGISTRY_FILE,
+        EGRESS_POLICY_REGISTRY_FILE, MAX_PROJECT_ACTIVITY_QUERY_CHARACTERS,
+        MAX_PROJECT_ACTIVITY_RESULTS, SPECIFICATION_REGISTRY_FILE,
     };
     use rmcp::{
         model::{CallToolRequestParams, ClientInfo},
@@ -9158,519 +8924,6 @@ mod tests {
         let serialized = context.to_string();
         assert!(!serialized.contains(project.to_str().unwrap()));
         assert!(!serialized.contains(vault.to_str().unwrap()));
-    }
-
-    #[tokio::test]
-    async fn context_utility_binding_precedes_and_attributes_terminal_outcomes() {
-        let (temporary, project, vault, _read_only_server) = fixture();
-        let mut server =
-            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
-        server.specification_registry = Arc::new(SpecificationRegistry::at(
-            temporary.path().join("utility-specifications-v1.json"),
-        ));
-        server.context_mount_registry = Arc::new(ContextMountRegistry::at(
-            temporary.path().join("utility-context-mounts-v1.json"),
-        ));
-        server.knowledge_scope_registry = Arc::new(KnowledgeScopeRegistry::at(
-            temporary.path().join("utility-knowledge-scopes-v1.json"),
-        ));
-        server.policy_bundle_registry = Arc::new(PolicyBundleRegistry::at(
-            temporary.path().join("utility-policy-bundles-v1.json"),
-        ));
-
-        let started = server
-            .session_start(Parameters(StartSessionParams {
-                request_id: format!("req_{}", "b".repeat(32)),
-                name: "Context utility lifecycle".to_owned(),
-                goal: "Bind supplied context to later typed outcomes".to_owned(),
-                host: Some("test-host".to_owned()),
-                agent: Some("test-agent".to_owned()),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        let session_id = started["sessionId"].as_str().unwrap().to_owned();
-
-        let task = "stable evidence remember implementation";
-        let compiled = server
-            .compile_context(Parameters(CompileContextParams {
-                task: task.to_owned(),
-                max_results: Some(8),
-                max_tokens: Some(1_500),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        let context_pack_id = compiled["contextPackId"].as_str().unwrap().to_owned();
-        assert!(compiled["items"]
-            .as_array()
-            .is_some_and(|items| !items.is_empty()));
-
-        let bind_params = || BindContextUtilityParams {
-            session_id: session_id.clone(),
-            request_id: format!("req_{}", "c".repeat(32)),
-            expected_event_count: 1,
-            context_pack_id: context_pack_id.clone(),
-            task: task.to_owned(),
-            max_results: Some(8),
-            max_tokens: Some(1_500),
-        };
-        let bound = server
-            .context_utility_bind(Parameters(bind_params()))
-            .await
-            .unwrap();
-        assert_eq!(bound.is_error, Some(false));
-        let bound = bound.structured_content.unwrap();
-        assert_eq!(bound["eventCount"], 2);
-        assert_eq!(bound["contextPackId"], context_pack_id);
-        assert_eq!(bound["replayed"], false);
-        let binding_id = bound["bindingId"].as_str().unwrap().to_owned();
-        assert!(binding_id.starts_with("cub_"));
-
-        let bound_retry = server
-            .context_utility_bind(Parameters(bind_params()))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        assert_eq!(bound_retry["eventCount"], 2);
-        assert_eq!(bound_retry["bindingId"], binding_id);
-        assert_eq!(bound_retry["replayed"], true);
-
-        let checkpoint = server
-            .session_checkpoint(Parameters(CheckpointSessionParams {
-                session_id: session_id.clone(),
-                request_id: format!("req_{}", "d".repeat(32)),
-                expected_event_count: Some(2),
-                summary: "Applied the supplied context to the implementation task".to_owned(),
-                plan: Vec::new(),
-                decisions: Vec::new(),
-                tasks: vec![McpTask {
-                    title: "Apply stable evidence change".to_owned(),
-                    status: McpTaskStatus::Completed,
-                    details: "Implementation slice completed".to_owned(),
-                }],
-                problems: vec![McpProblem {
-                    title: "Utility verification".to_owned(),
-                    symptom: "Need evidence the downstream task worked".to_owned(),
-                    expected: "Typed verification passes".to_owned(),
-                    attempts: vec![McpAttempt {
-                        action: "Run the bounded verification".to_owned(),
-                        outcome: McpAttemptOutcome::Helped,
-                        evidence: "Verification completed".to_owned(),
-                    }],
-                    resolution: Some(McpResolution {
-                        root_cause: "Outcome was previously unbound to supplied context".to_owned(),
-                        change: "Record an outcome-bound utility observation".to_owned(),
-                        verification: "Typed verification passed".to_owned(),
-                    }),
-                }],
-                touched_artifacts: vec!["lib.rs".to_owned()],
-                commands: Vec::new(),
-                verification: vec![McpVerification {
-                    kind: "test".to_owned(),
-                    status: McpVerificationStatus::Passed,
-                    summary: "Context utility downstream verification passed".to_owned(),
-                    command: Some("cargo test -p fixture".to_owned()),
-                    evidence_artifact_paths: vec!["lib.rs".to_owned()],
-                }],
-                unresolved: Vec::new(),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        assert_eq!(checkpoint["eventCount"], 3);
-        let checkpoint_event_id = checkpoint["eventId"].as_str().unwrap().to_owned();
-
-        let finished = server
-            .session_finish(Parameters(FinishSessionParams {
-                session_id: session_id.clone(),
-                request_id: format!("req_{}", "e".repeat(32)),
-                status: McpFinishedStatus::Completed,
-                summary: "Downstream task completed and verified".to_owned(),
-                final_response: "Finished the utility-bound task".to_owned(),
-                handoff: String::new(),
-                unresolved: Vec::new(),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        assert_eq!(finished["eventCount"], 4);
-        let finish_event_id = finished["eventId"].as_str().unwrap().to_owned();
-
-        let utility_params = || ObserveContextUtilityParams {
-            session_id: session_id.clone(),
-            request_id: format!("req_{}", "f".repeat(32)),
-            expected_event_count: 4,
-            binding_id: binding_id.clone(),
-            downstream_event_ids: vec![checkpoint_event_id.clone(), finish_event_id.clone()],
-            claimed_applied_learning_ids: Vec::new(),
-        };
-        let observed = server
-            .context_utility_observe(Parameters(utility_params()))
-            .await
-            .unwrap();
-        assert_eq!(observed.is_error, Some(false));
-        let observed = observed.structured_content.unwrap();
-        assert_eq!(observed["eventCount"], 5);
-        assert_eq!(observed["status"], "completed");
-        assert_eq!(observed["replayed"], false);
-
-        let replayed = server
-            .context_utility_observe(Parameters(utility_params()))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        assert_eq!(replayed["eventCount"], 5);
-        assert_eq!(replayed["replayed"], true);
-        assert_eq!(replayed["eventId"], observed["eventId"]);
-
-        let context = server
-            .session_get(Parameters(SessionContextParams {
-                session_id,
-                max_checkpoints: Some(5),
-                max_characters: Some(8_000),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        assert_eq!(context["contextUtilityBindingCount"], 1);
-        assert_eq!(context["contextUtilityObservationCount"], 1);
-        assert_eq!(context["observedContextUtilityBindingCount"], 1);
-        assert_eq!(context["unobservedContextUtilityBindingCount"], 0);
-        assert!(context["unobservedContextUtilityBindings"]
-            .as_array()
-            .is_some_and(|bindings| bindings.is_empty()));
-        assert_eq!(context["omittedUnobservedContextUtilityBindings"], 0);
-        assert_eq!(context["omittedContextUtilityObservations"], 0);
-        assert_eq!(context["finish"]["eventId"], finish_event_id);
-        let utility = &context["contextUtilityObservations"][0];
-        assert_eq!(utility["bindingId"], binding_id);
-        assert_eq!(utility["contextPackId"], context_pack_id);
-        assert_eq!(utility["contextPackRevalidated"], true);
-        assert_eq!(utility["contextUsageProven"], false);
-        assert_eq!(utility["causalUtilityProven"], false);
-        assert_eq!(utility["trustChangesApplied"], false);
-        assert_eq!(utility["rankingChangesApplied"], false);
-        assert!(utility["includedRecords"]
-            .as_array()
-            .is_some_and(|records| !records.is_empty()));
-        assert_eq!(utility["downstreamOutcomes"].as_array().unwrap().len(), 2);
-        assert!(utility["downstreamOutcomes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|outcome| {
-                outcome["kind"] == "checkpoint"
-                    && outcome["completedTasks"] == 1
-                    && outcome["resolvedProblems"] == 1
-                    && outcome["helpedAttempts"] == 1
-                    && outcome["passedVerifications"] == 1
-            }));
-        assert!(utility["downstreamOutcomes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|outcome| {
-                outcome["kind"] == "session-finish" && outcome["sessionStatus"] == "completed"
-            }));
-        let serialized = context.to_string();
-        assert!(!serialized.contains(project.to_str().unwrap()));
-        assert!(!serialized.contains(vault.to_str().unwrap()));
-    }
-
-    #[tokio::test]
-    async fn context_utility_claims_reviewed_procedure_application_without_granting_proof() {
-        let (temporary, project, vault, _read_only_server) = fixture();
-        let evidence_session = start_session(
-            &project,
-            &vault,
-            StartSessionInput {
-                request_id: format!("req_{}", "1".repeat(32)),
-                name: "Procedure evidence".to_owned(),
-                goal: "Create reviewed procedure evidence".to_owned(),
-                source: SessionSource::default(),
-            },
-        )
-        .unwrap();
-        let evidence_checkpoint = checkpoint_session(
-            &project,
-            &vault,
-            &evidence_session.session.session_id,
-            CheckpointInput {
-                request_id: format!("req_{}", "2".repeat(32)),
-                summary: "Verified release procedure source".to_owned(),
-                plan: Vec::new(),
-                decisions: Vec::new(),
-                tasks: Vec::new(),
-                problems: Vec::new(),
-                touched_artifacts: vec!["lib.rs".to_owned()],
-                commands: Vec::new(),
-                verification: Vec::new(),
-                unresolved: Vec::new(),
-            },
-        )
-        .unwrap();
-        let proposed = propose_learning(
-            &project,
-            &vault,
-            ProposeLearningInput {
-                request_id: format!("req_{}", "3".repeat(32)),
-                actor: LearningActor::Agent,
-                kind: LearningKind::Procedure,
-                title: "Release verification procedure".to_owned(),
-                guidance: "Run release verification before shipping.".to_owned(),
-                confidence_percent: 90,
-                provenance: LearningProvenance::AgentAuthored,
-                evidence: vec![LearningEvidenceInput {
-                    session_id: evidence_session.session.session_id,
-                    record_id: evidence_checkpoint.session.checkpoints[0].id.clone(),
-                    note: "Reviewed MCP application evidence.".to_owned(),
-                }],
-            },
-        )
-        .unwrap();
-        let learning_id = proposed.learning.learning_id.clone();
-        let reviewed = review_learning(
-            &project,
-            &vault,
-            &learning_id,
-            ReviewLearningInput {
-                request_id: format!("req_{}", "4".repeat(32)),
-                expected_event_count: Some(proposed.learning.event_count),
-                actor: LearningActor::User,
-                action: LearningFeedbackAction::Confirm,
-                note: "Reviewed procedure for MCP application test.".to_owned(),
-                replacement_learning_id: None,
-            },
-        )
-        .unwrap();
-        assert_eq!(reviewed.learning.event_count, 2);
-
-        let mut server =
-            LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
-        server.specification_registry = Arc::new(SpecificationRegistry::at(
-            temporary.path().join("application-specifications-v1.json"),
-        ));
-        server.context_mount_registry = Arc::new(ContextMountRegistry::at(
-            temporary.path().join("application-context-mounts-v1.json"),
-        ));
-        server.knowledge_scope_registry = Arc::new(KnowledgeScopeRegistry::at(
-            temporary
-                .path()
-                .join("application-knowledge-scopes-v1.json"),
-        ));
-        server.policy_bundle_registry = Arc::new(PolicyBundleRegistry::at(
-            temporary.path().join("application-policy-bundles-v1.json"),
-        ));
-
-        let started = server
-            .session_start(Parameters(StartSessionParams {
-                request_id: format!("req_{}", "5".repeat(32)),
-                name: "Apply reviewed release procedure".to_owned(),
-                goal: "Exercise one bound procedure application".to_owned(),
-                host: Some("test-host".to_owned()),
-                agent: Some("test-agent".to_owned()),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        let session_id = started["sessionId"].as_str().unwrap().to_owned();
-        let task = "release verification procedure shipping";
-        let compiled = server
-            .compile_context(Parameters(CompileContextParams {
-                task: task.to_owned(),
-                max_results: Some(8),
-                max_tokens: Some(1_500),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        let learning_item = compiled["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|item| item["learningId"] == learning_id)
-            .unwrap();
-        assert_eq!(learning_item["learningKind"], "procedure");
-        assert_eq!(learning_item["learningEventCount"], 2);
-        assert_eq!(learning_item["trustedForReuse"], true);
-        let context_pack_id = compiled["contextPackId"].as_str().unwrap().to_owned();
-
-        let bound = server
-            .context_utility_bind(Parameters(BindContextUtilityParams {
-                session_id: session_id.clone(),
-                request_id: format!("req_{}", "6".repeat(32)),
-                expected_event_count: 1,
-                context_pack_id: context_pack_id.clone(),
-                task: task.to_owned(),
-                max_results: Some(8),
-                max_tokens: Some(1_500),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        let binding_id = bound["bindingId"].as_str().unwrap().to_owned();
-
-        let checkpoint = server
-            .session_checkpoint(Parameters(CheckpointSessionParams {
-                session_id: session_id.clone(),
-                request_id: format!("req_{}", "7".repeat(32)),
-                expected_event_count: Some(2),
-                summary: "Claimed the reviewed procedure was applied; typed verification passed."
-                    .to_owned(),
-                plan: Vec::new(),
-                decisions: Vec::new(),
-                tasks: Vec::new(),
-                problems: Vec::new(),
-                touched_artifacts: vec!["lib.rs".to_owned()],
-                commands: Vec::new(),
-                verification: vec![McpVerification {
-                    kind: "test".to_owned(),
-                    status: McpVerificationStatus::Passed,
-                    summary: "Release verification passed".to_owned(),
-                    command: Some("cargo test -p fixture".to_owned()),
-                    evidence_artifact_paths: vec!["lib.rs".to_owned()],
-                }],
-                unresolved: Vec::new(),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        let checkpoint_event_id = checkpoint["eventId"].as_str().unwrap().to_owned();
-
-        let observed = server
-            .context_utility_observe(Parameters(ObserveContextUtilityParams {
-                session_id: session_id.clone(),
-                request_id: format!("req_{}", "8".repeat(32)),
-                expected_event_count: 3,
-                binding_id: binding_id.clone(),
-                downstream_event_ids: vec![checkpoint_event_id],
-                claimed_applied_learning_ids: vec![learning_id.clone()],
-            }))
-            .await
-            .unwrap();
-        assert_eq!(observed.is_error, Some(false));
-
-        let session = server
-            .session_get(Parameters(SessionContextParams {
-                session_id: session_id.clone(),
-                max_checkpoints: Some(5),
-                max_characters: Some(8_000),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        assert_eq!(session["schemaVersion"], 15);
-        assert_eq!(session["projectionSchemaVersion"], 1);
-        let utility = &session["contextUtilityObservations"][0];
-        assert_eq!(utility["claimedAppliedLearningIds"][0], learning_id);
-        assert_eq!(utility["downstreamOutcomes"][0]["passedVerifications"], 1);
-        assert_eq!(utility["contextUsageProven"], false);
-        assert_eq!(utility["causalUtilityProven"], false);
-        assert_eq!(utility["trustChangesApplied"], false);
-        assert_eq!(utility["rankingChangesApplied"], false);
-
-        let learning = server
-            .learning_get(Parameters(LearningContextParams {
-                learning_id: learning_id.clone(),
-                max_evidence: Some(5),
-                max_history: Some(10),
-                max_artifacts_per_evidence: Some(20),
-                max_characters: Some(16_000),
-            }))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        assert_eq!(learning["schemaVersion"], 3);
-        assert_eq!(learning["projectionSchemaVersion"], 1);
-        assert_eq!(learning["eventCount"], 2);
-        assert_eq!(learning["state"], "verified");
-        assert_eq!(learning["trustState"], "trusted");
-        assert_eq!(learning["applicationObservationCount"], 1);
-        assert_eq!(learning["omittedApplicationObservations"], 0);
-        assert!(learning["applicationClaimNotice"]
-            .as_str()
-            .unwrap()
-            .contains("caller-declared"));
-        let application = &learning["applicationObservations"][0];
-        assert_eq!(application["sessionId"], session_id);
-        assert_eq!(application["learningEventCount"], 2);
-        assert_eq!(application["learningVersionMatchesCurrent"], true);
-        assert_eq!(application["taskExcerpt"], task);
-        assert_eq!(application["passedVerifications"], 1);
-        assert_eq!(application["failedVerifications"], 0);
-        assert_eq!(application["procedureFollowedProven"], false);
-        assert_eq!(application["conditionApplicabilityProven"], false);
-        assert_eq!(application["contextUsageProven"], false);
-        assert_eq!(application["causalUtilityProven"], false);
-
-        let serialized = learning.to_string();
-        assert!(!serialized.contains(project.to_str().unwrap()));
-        assert!(!serialized.contains(vault.to_str().unwrap()));
-    }
-
-    #[test]
-    fn resource_uri_is_project_scoped_and_path_free() {
-        let (_temporary, project, vault, server) = fixture();
-        assert!(server.overview_uri.starts_with("ley://project/"));
-        assert!(server.overview_uri.ends_with("/overview"));
-        assert!(!server.overview_uri.contains(project.to_str().unwrap()));
-        assert!(!server.overview_uri.contains(vault.to_str().unwrap()));
-    }
-
-    #[test]
-    fn serialized_tool_results_have_a_hard_output_limit() {
-        let result = tool_result::<String>(Ok("x".repeat(MAX_TOOL_RESULT_BYTES)));
-        assert_eq!(result.is_error, Some(true));
-        assert_eq!(result.structured_content.unwrap()["retryable"], true);
-    }
-
-    #[test]
-    fn serialized_media_results_keep_the_same_hard_output_limit() {
-        let result = media_tool_result(Ok(ley_core::MediaEvidence {
-            project_id: format!("prj_{}", "1".repeat(32)),
-            artifact_path: "large.png".to_owned(),
-            artifact_snapshot_id: format!("snp_{}", "a".repeat(64)),
-            content_hash: format!("sha256:{}", "b".repeat(64)),
-            media_type: ley_core::ArtifactMediaType::Png,
-            source_bytes: MAX_MCP_MEDIA_EVIDENCE_BYTES as u64,
-            data: vec![0; MAX_MCP_MEDIA_EVIDENCE_BYTES],
-            evidence_role: "original-media",
-            source_boundary: "untrusted-project-evidence",
-            live_source_checked: false,
-            derived_description_included: false,
-        }));
-        assert_eq!(result.is_error, Some(false));
-        assert!(serde_json::to_vec(&result).unwrap().len() <= MAX_TOOL_RESULT_BYTES);
-
-        let oversized = media_tool_result(Ok(ley_core::MediaEvidence {
-            project_id: format!("prj_{}", "2".repeat(32)),
-            artifact_path: "too-large.png".to_owned(),
-            artifact_snapshot_id: format!("snp_{}", "c".repeat(64)),
-            content_hash: format!("sha256:{}", "d".repeat(64)),
-            media_type: ley_core::ArtifactMediaType::Png,
-            source_bytes: (MAX_MCP_MEDIA_EVIDENCE_BYTES + 20_000) as u64,
-            data: vec![0; MAX_MCP_MEDIA_EVIDENCE_BYTES + 20_000],
-            evidence_role: "original-media",
-            source_boundary: "untrusted-project-evidence",
-            live_source_checked: false,
-            derived_description_included: false,
-        }));
-        assert_eq!(oversized.is_error, Some(true));
-        assert_eq!(oversized.structured_content.unwrap()["retryable"], true);
     }
 
     #[tokio::test]

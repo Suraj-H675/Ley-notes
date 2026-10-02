@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted historically; model-facing MCP wrappers retired by [ADR 0090](0090-retire-context-utility-mcp-wrappers.md).
+Durable historical Context Utility events/replay/projections remain supported compatibility data.
 
 Later extension: ADR 0073 adds optional exact-version Procedure application claims on top of this
 correlation protocol. Ordinary utility events remain schema v5; claim-bearing observations use schema

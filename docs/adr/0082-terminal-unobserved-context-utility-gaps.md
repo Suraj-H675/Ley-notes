@@ -3,9 +3,9 @@
 Status: Partially superseded (2026-09-30)
 
 Current note: the durable context-utility events and body-free Session coverage described here remain in
-force. The separate Memory Health projection was later retired during the focused-product reset, so current
-evaluation reads unobserved binding state directly from the Session projection instead of requiring a second
-health signal.
+force. The separate Memory Health projection was later retired during the focused-product reset, and ADR 0090
+later removes the already-disabled model-facing `ley_context_utility_bind` / `ley_context_utility_observe` MCP
+wrappers. Historical event replay/projection remains supported compatibility behavior.
 
 ## Context
 
