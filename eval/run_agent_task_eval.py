@@ -62,12 +62,13 @@ COMPARISON_VARIANTS = (
     "handoff",
     "minimal",
     "ley",
+    "ley-no-recovery",
     "ley-brief",
     "ley-search",
     "ley-auto",
 )
 RETIRED_VARIANTS = frozenset({"ley-auto"})
-EXPERIMENTAL_VARIANTS = frozenset({"ley-search"})
+EXPERIMENTAL_VARIANTS = frozenset({"ley-search", "ley-no-recovery"})
 ACTIVE_COMPARISON_VARIANTS = tuple(
     variant
     for variant in COMPARISON_VARIANTS
@@ -75,6 +76,7 @@ ACTIVE_COMPARISON_VARIANTS = tuple(
 )
 SIMPLER_VARIANTS = ("baseline", "handoff", "minimal")
 COMPILER_ABLATION_VARIANTS = ("ley-brief", "ley-search")
+INTERRUPTION_RECOVERY_VARIANTS = ("ley", "ley-no-recovery")
 DEFAULT_RUNNER_ENV = (
     "LANG",
     "LC_ALL",
@@ -1863,6 +1865,36 @@ def validate_compiled_fixture(
             max_results=max_results,
             max_tokens=max_tokens,
         )
+        no_recovery_validation: dict[str, object] | None = None
+        if fixture.get("prior_session_state", "completed") == "crashed-active":
+            no_recovery_rendered, no_recovery_utility = prepare_ley_context(
+                project,
+                fixture,
+                prior_session_id,
+                max_results=max_results,
+                max_tokens=max_tokens,
+                include_interruption_evidence=False,
+            )
+            no_recovery_validation = {
+                "contextSha256": no_recovery_utility["contextSha256"],
+                "contextCharacters": len(no_recovery_rendered),
+                "estimatedTokens": no_recovery_utility["estimatedTokens"],
+                "contextComposition": no_recovery_utility["contextComposition"],
+                "recoveryState": no_recovery_utility["recoveryState"],
+                "interruptionEvidenceIncluded": no_recovery_utility[
+                    "interruptionEvidenceIncluded"
+                ],
+                "withheldInterruptionMarkerCount": no_recovery_utility[
+                    "withheldInterruptionMarkerCount"
+                ],
+            }
+            if (
+                utility["matchedControlContextSha256"]
+                != no_recovery_utility["contextSha256"]
+            ):
+                raise RuntimeError(
+                    "interruption-recovery arms differ outside the withheld crash evidence"
+                )
         return {
             "taskId": fixture["id"],
             "fixtureSecretCommitment": fixture.get("_secret_commitment"),
@@ -1877,6 +1909,7 @@ def validate_compiled_fixture(
             "contextTokenBudget": utility["contextTokenBudget"],
             "referenceProjectCount": utility["referenceProjectCount"],
             "selectedReferenceCount": utility["selectedReferenceCount"],
+            "noRecoveryControl": no_recovery_validation,
             "oracleReferenceValidation": oracle_reference,
         }
     finally:
@@ -2063,6 +2096,8 @@ def prepare_ley_context(
     prior_session_id: str | None,
     max_results: int,
     max_tokens: int,
+    *,
+    include_interruption_evidence: bool = True,
 ) -> tuple[str, dict[str, object]]:
     task = str(fixture["task"])
     fixture_min_tokens = int(fixture.get("ley_min_context_tokens", max_tokens))
@@ -2088,9 +2123,11 @@ def prepare_ley_context(
     context_pack_id = str(compiled.get("contextPackId", ""))
     if not context_pack_id.startswith("cpk_"):
         raise RuntimeError("Ley context compilation returned no stable contextPackId")
-    rendered = render_context(compiled)
+    base_rendered = render_context(compiled)
+    rendered = base_rendered
     recovery_pack: dict[str, object] | None = None
-    if fixture.get("prior_session_state", "completed") == "crashed-active":
+    crashed_active = fixture.get("prior_session_state", "completed") == "crashed-active"
+    if crashed_active and include_interruption_evidence:
         if prior_session_id is None:
             raise RuntimeError("crashed fixture has no prior Ley session")
         recovery_session = cli_session_show(project, prior_session_id)
@@ -2135,11 +2172,21 @@ def prepare_ley_context(
     if selected_reference:
         rendered = rendered.rstrip() + "\n\n" + selected_reference
 
+    matched_control_rendered = base_rendered
+    if selected_reference:
+        matched_control_rendered = (
+            matched_control_rendered.rstrip() + "\n\n" + selected_reference
+        )
+
     markers = [
         str(value)
         for value in [
             *fixture.get("context_markers", []),
-            *fixture.get("ley_context_markers", []),
+            *(
+                fixture.get("ley_context_markers", [])
+                if include_interruption_evidence or not crashed_active
+                else []
+            ),
         ]
     ]
     missing = [marker for marker in markers if marker.lower() not in rendered.lower()]
@@ -2161,11 +2208,26 @@ def prepare_ley_context(
         raise RuntimeError(
             f"Ley context exposed {len(leaked)} forbidden benchmark evidence marker(s)"
         )
+    withheld_recovery_markers = [
+        str(value)
+        for value in fixture.get("ley_context_markers", [])
+        if crashed_active and not include_interruption_evidence
+    ]
+    leaked_withheld = [
+        marker
+        for marker in withheld_recovery_markers
+        if marker.lower() in rendered.lower()
+    ]
+    if leaked_withheld:
+        raise RuntimeError(
+            "no-recovery Ley context leaked withheld interruption evidence"
+        )
     return rendered, {
         "sessionId": session_id,
         "bindingId": None,
         "contextPackId": context_pack_id,
         "contextSha256": sha256_text(rendered),
+        "matchedControlContextSha256": sha256_text(matched_control_rendered),
         "contextCharacters": len(rendered),
         "estimatedTokens": approximate_text_tokens(rendered),
         "evidenceState": compiled.get("evidenceState"),
@@ -2178,6 +2240,8 @@ def prepare_ley_context(
             + ("+selected-source-search" if selected_reference else "")
         ),
         "recoveryState": recovery_pack.get("state") if recovery_pack is not None else None,
+        "interruptionEvidenceIncluded": recovery_pack is not None,
+        "withheldInterruptionMarkerCount": len(withheld_recovery_markers),
         **selected_reference_meta,
         **reference_setup,
     }
@@ -2604,8 +2668,25 @@ def variants_for_repetition(
         raise RuntimeError(
             "ley-auto is retired by ADR 0086; use the recorded 2026-10-01 B1 result for that historical workflow"
         )
-    if selected_variant not in {"all", "both", "briefing", "compiler-ablation"}:
+    if selected_variant not in {
+        "all",
+        "both",
+        "briefing",
+        "compiler-ablation",
+        "interruption-recovery",
+    }:
         return (selected_variant,)
+    if selected_variant == "interruption-recovery":
+        if first_variant not in INTERRUPTION_RECOVERY_VARIANTS:
+            raise RuntimeError(
+                "--variant interruption-recovery requires ley or ley-no-recovery as --first-variant"
+            )
+        first = (
+            first_variant
+            if repetition % 2 == 1
+            else ("ley-no-recovery" if first_variant == "ley" else "ley")
+        )
+        return (first, "ley-no-recovery" if first == "ley" else "ley")
     if selected_variant == "compiler-ablation":
         if first_variant not in COMPILER_ABLATION_VARIANTS:
             raise RuntimeError(
@@ -2683,9 +2764,16 @@ def summarize_variant_results(results: list[dict[str, object]]) -> dict[str, obj
         if isinstance(item.get("context"), dict)
         and isinstance(item["context"].get("contextCharacters"), int)
     ]
+    completed_with_failed_oracle = sum(
+        bool(item.get("runner", {}).get("completed"))
+        and item.get("hiddenOracleStatus") == "failed"
+        for item in results
+        if isinstance(item.get("runner"), dict)
+    )
     return {
         "taskPassRate": task_rate,
         "hiddenOracle": summarize_hidden_oracles(results),
+        "completedProcessWithFailedOracleCount": completed_with_failed_oracle,
         "meanRunnerSeconds": (
             sum(runner_seconds) / len(runner_seconds) if runner_seconds else None
         ),
@@ -2864,7 +2952,12 @@ def execute_variant(
     memory_snapshot: bytes | None = None
     previous_config = EVAL_ENV.get("XDG_CONFIG_HOME")
     try:
-        if variant in {"ley", "ley-brief", "ley-search", "ley-auto"}:
+        if variant in {"ley", "ley-no-recovery", "ley-brief", "ley-search", "ley-auto"}:
+            if (
+                variant == "ley-no-recovery"
+                and fixture.get("prior_session_state", "completed") != "crashed-active"
+            ):
+                raise RuntimeError("ley-no-recovery requires a crashed-active fixture")
             memory_root = Path(tempfile.mkdtemp(prefix="ley-real-agent-memory-"))
             memory_project = memory_root / "project"
             shutil.copytree(project, memory_project)
@@ -2877,13 +2970,14 @@ def execute_variant(
                 if fixture.get("ley_seed_prior_memory", True)
                 else None
             )
-            if variant == "ley":
+            if variant in {"ley", "ley-no-recovery"}:
                 context_text, utility = prepare_ley_context(
                     memory_project,
                     fixture,
                     prior_session_id,
                     max_results=max_results,
                     max_tokens=max_tokens,
+                    include_interruption_evidence=variant == "ley",
                 )
             elif variant == "ley-brief":
                 context_text, utility = prepare_ley_brief_context(
@@ -2904,6 +2998,7 @@ def execute_variant(
             context_metadata = {
                 "kind": {
                     "ley": "current-full-ley-compiled-context",
+                    "ley-no-recovery": "current-ley-with-interruption-evidence-withheld",
                     "ley-brief": "canonical-explicit-ley-brief",
                     "ley-search": "canonical-retrieval-only-ley-search-ablation",
                     "ley-auto": "current-ley-automatic-hook-context",
@@ -3194,10 +3289,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--variant",
-        choices=("all", "both", "briefing", "compiler-ablation", *COMPARISON_VARIANTS),
+        choices=(
+            "all",
+            "both",
+            "briefing",
+            "compiler-ablation",
+            "interruption-recovery",
+            *COMPARISON_VARIANTS,
+        ),
         default="all",
         help=(
-            "Run all current comparison arms, legacy baseline+Ley, the opt-in compiler-ablation pair, or one arm. The historical "
+            "Run all current comparison arms, legacy baseline+Ley, the opt-in compiler-ablation pair, the opt-in "
+            "interruption-recovery pair, or one arm. The historical "
             "ley-auto/briefing workflow is retained only as recorded evidence after ADR 0086. "
             "The minimal arm is a fixture-derived benchmark baseline, not the redesigned Ley implementation."
         ),
@@ -3330,6 +3433,20 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(
             "--variant compiler-ablation requires --first-variant ley-brief or ley-search"
         )
+    if (
+        args.variant == "interruption-recovery"
+        and args.first_variant not in INTERRUPTION_RECOVERY_VARIANTS
+    ):
+        raise SystemExit(
+            "--variant interruption-recovery requires --first-variant ley or ley-no-recovery"
+        )
+    if args.variant in {"interruption-recovery", "ley-no-recovery"} and any(
+        fixture.get("prior_session_state", "completed") != "crashed-active"
+        for fixture in selected
+    ):
+        raise SystemExit(
+            "interruption-recovery evaluation requires only crashed-active fixtures"
+        )
     if args.variant in RETIRED_VARIANTS or args.variant == "briefing":
         raise SystemExit(
             "the ley-auto briefing comparison is retired by ADR 0086; use the recorded 2026-10-01 B1 result"
@@ -3338,7 +3455,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--first-variant ley-auto is retired by ADR 0086")
     if args.variant == "all" and args.first_variant in EXPERIMENTAL_VARIANTS:
         raise SystemExit(
-            "--first-variant ley-search is experimental; use --variant compiler-ablation"
+            "experimental first variants require their dedicated ablation mode"
         )
     if args.require_ley_advantage and args.variant not in {"all", "both"}:
         raise SystemExit("--require-ley-advantage requires --variant all or both")
@@ -3435,6 +3552,13 @@ def main(argv: list[str] | None = None) -> int:
     handoff_task_rate = summaries["handoff"]["taskPassRate"]
     minimal_task_rate = summaries["minimal"]["taskPassRate"]
     ley_task_rate = summaries["ley"]["taskPassRate"]
+    ley_no_recovery_task_rate = summaries["ley-no-recovery"]["taskPassRate"]
+    ley_recovery_context_characters = summaries["ley"]["meanContextCharacters"]
+    ley_no_recovery_context_characters = summaries["ley-no-recovery"][
+        "meanContextCharacters"
+    ]
+    ley_recovery_runner_seconds = summaries["ley"]["meanRunnerSeconds"]
+    ley_no_recovery_runner_seconds = summaries["ley-no-recovery"]["meanRunnerSeconds"]
     ley_brief_task_rate = summaries["ley-brief"]["taskPassRate"]
     ley_search_task_rate = summaries["ley-search"]["taskPassRate"]
     ley_auto_task_rate = summaries["ley-auto"]["taskPassRate"]
@@ -3491,7 +3615,8 @@ def main(argv: list[str] | None = None) -> int:
         "repetitions": args.repetitions,
         "firstVariant": (
             args.first_variant
-            if args.variant in {"all", "both", "briefing", "compiler-ablation"}
+            if args.variant
+            in {"all", "both", "briefing", "compiler-ablation", "interruption-recovery"}
             else None
         ),
         "results": results,
@@ -3503,6 +3628,34 @@ def main(argv: list[str] | None = None) -> int:
             "handoffTaskPassRate": handoff_task_rate,
             "minimalTaskPassRate": minimal_task_rate,
             "leyTaskPassRate": ley_task_rate,
+            "leyNoRecoveryTaskPassRate": ley_no_recovery_task_rate,
+            "recoveryMinusNoRecoveryTaskPassRate": (
+                float(ley_task_rate) - float(ley_no_recovery_task_rate)
+                if ley_task_rate is not None and ley_no_recovery_task_rate is not None
+                else None
+            ),
+            "leyRecoveryMeanContextCharacters": ley_recovery_context_characters,
+            "leyNoRecoveryMeanContextCharacters": ley_no_recovery_context_characters,
+            "recoveryMinusNoRecoveryMeanContextCharacters": (
+                float(ley_recovery_context_characters)
+                - float(ley_no_recovery_context_characters)
+                if ley_task_rate is not None and ley_no_recovery_task_rate is not None
+                else None
+            ),
+            "leyRecoveryMeanRunnerSeconds": ley_recovery_runner_seconds,
+            "leyNoRecoveryMeanRunnerSeconds": ley_no_recovery_runner_seconds,
+            "recoveryMinusNoRecoveryMeanRunnerSeconds": (
+                float(ley_recovery_runner_seconds) - float(ley_no_recovery_runner_seconds)
+                if ley_recovery_runner_seconds is not None
+                and ley_no_recovery_runner_seconds is not None
+                else None
+            ),
+            "leyRecoveryCompletedProcessWithFailedOracleCount": summaries["ley"][
+                "completedProcessWithFailedOracleCount"
+            ],
+            "leyNoRecoveryCompletedProcessWithFailedOracleCount": summaries[
+                "ley-no-recovery"
+            ]["completedProcessWithFailedOracleCount"],
             "leyBriefTaskPassRate": ley_brief_task_rate,
             "leySearchTaskPassRate": ley_search_task_rate,
             "briefMinusSearchTaskPassRate": (
@@ -3539,6 +3692,7 @@ def main(argv: list[str] | None = None) -> int:
             "handoffHiddenOracle": summaries["handoff"]["hiddenOracle"],
             "minimalHiddenOracle": summaries["minimal"]["hiddenOracle"],
             "leyHiddenOracle": summaries["ley"]["hiddenOracle"],
+            "leyNoRecoveryHiddenOracle": summaries["ley-no-recovery"]["hiddenOracle"],
             "leyBriefHiddenOracle": summaries["ley-brief"]["hiddenOracle"],
             "leySearchHiddenOracle": summaries["ley-search"]["hiddenOracle"],
             "leyAutomaticHiddenOracle": summaries["ley-auto"]["hiddenOracle"],
@@ -3553,7 +3707,9 @@ def main(argv: list[str] | None = None) -> int:
                 "active-project briefing arm; initialized-project ley-auto injection is retired by ADR 0086 and "
                 "remains only as historical summary slots for the recorded 2026-10-01 B1 study. The opt-in "
                 "compiler-ablation mode compares that Brief against canonical ley_search-only retrieval while "
-                "preserving Search's native trust/revision/conflict metadata and adding no compiler premise/admission layer. Historical Phase-0 "
+                "preserving Search's native trust/revision/conflict metadata and adding no compiler premise/admission layer. "
+                "The opt-in interruption-recovery mode compares the same current/full Ley context with versus without only "
+                "the bounded post-checkpoint crash evidence and is restricted to crashed-active fixtures. Historical Phase-0 "
                 "results remain separate evidence for the older implementation and are not silently attributed to this one. "
                 "Results are not a deterministic CI gate, do not prove causation, and must be reproduced "
                 "before product claims."

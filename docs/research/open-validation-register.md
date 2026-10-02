@@ -108,12 +108,21 @@ persistent mount/scope graph should be tested only as a competing arm after this
 
 ### 3. Read-only interruption-recovery sufficiency study
 
-Use interrupted coding tasks to compare the current baseline—bounded read-only Memory Compiler evidence,
-live repository/runtime re-verification, then an ordinary checkpoint for newly supportable state—against
-no retained interruption evidence. Measure task completion, false completion claims, recovery time, privacy,
-and context cost. Only if this simpler path is materially insufficient should a semantic/structured recovery
+Use interrupted coding tasks to compare bounded retained post-checkpoint evidence against the same Ley context with
+that evidence withheld. Measure task completion, process/oracle mismatches plus preserved model output
+for any actual false-completion claim review, recovery time, privacy, and context cost. Only if this simpler path is materially insufficient should a semantic/structured recovery
 writer become a competing arm. Do not reintroduce the v1–v16 verifier/commit state machine merely because its
 historical deterministic tests still exist.
+
+**Harness status on 2026-10-02:** the matched control is now implemented but has not been run against an external
+agent. `ley` and experimental `ley-no-recovery` share the same project/task/structured prior state/compiler/oracle;
+the control withholds only post-checkpoint crash evidence and asserts crash-only markers remain absent. The checked-in
+study set has three `crash-missing-checkpoint` fixtures, and `--validate` exercises both context paths without a model.
+The first planned pinned run is 12 attempts (three tasks × two arms × two repetitions). Treat
+`completedProcessWithFailedOracleCount` as a process/oracle mismatch proxy, not a semantic false-success claim.
+This harness materializes retained turn evidence through local session reads; it does **not** directly evaluate the
+compatibility `ley_session_memory_compile` transport or prove correctness of a later checkpoint. See
+`research/interruption-recovery-study-protocol-2026-10-02.md`.
 
 ## Dated Git revision portability evidence — 2026-09-25
 

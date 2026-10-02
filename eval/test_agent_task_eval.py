@@ -761,6 +761,18 @@ class AgentTaskEvalTests(unittest.TestCase):
             ("ley-search", "ley-brief"),
         )
         self.assertEqual(
+            agent_eval.variants_for_repetition(
+                "interruption-recovery", "ley", 1
+            ),
+            ("ley", "ley-no-recovery"),
+        )
+        self.assertEqual(
+            agent_eval.variants_for_repetition(
+                "interruption-recovery", "ley", 2
+            ),
+            ("ley-no-recovery", "ley"),
+        )
+        self.assertEqual(
             agent_eval.variants_for_repetition("both", "baseline", 2),
             ("ley", "baseline"),
         )
@@ -967,6 +979,59 @@ class AgentTaskEvalTests(unittest.TestCase):
         )
         self.assertEqual(result["recoveryState"], "partial-evidence")
         self.assertGreater(result["contextCharacters"], 0)
+        no_recovery = result["noRecoveryControl"]
+        self.assertIsNotNone(no_recovery)
+        self.assertEqual(no_recovery["contextComposition"], "compiled-context")
+        self.assertIsNone(no_recovery["recoveryState"])
+        self.assertFalse(no_recovery["interruptionEvidenceIncluded"])
+        self.assertGreaterEqual(no_recovery["withheldInterruptionMarkerCount"], 1)
+        self.assertLess(no_recovery["contextCharacters"], result["contextCharacters"])
+
+    def test_interruption_recovery_ablation_withholds_only_crash_evidence(self) -> None:
+        fixture = agent_eval.materialize_fixture(
+            self.fixture("crash-slug-normalization-contract"),
+            bytes.fromhex("4a" * 32),
+        )
+        crash_marker = str(fixture["ley_context_markers"][0])
+        prior_marker = str(fixture["context_markers"][0])
+        runner_code = (
+            "from pathlib import Path\n"
+            "import sys\n"
+            "prompt = sys.stdin.read()\n"
+            f"if {crash_marker!r}.lower() in prompt.lower():\n"
+            "    Path('slug.py').write_text("
+            "'import re\\n\\ndef canonical_slug(value: str) -> str:\\n'"
+            "+ '    return re.sub(r\"[\\\\s_-]+\", \"-\", value.strip().lower())\\n',"
+            " encoding='utf-8')\n"
+        )
+        results: dict[str, dict[str, object]] = {}
+        for variant in agent_eval.INTERRUPTION_RECOVERY_VARIANTS:
+            with tempfile.TemporaryDirectory() as temporary:
+                results[variant] = agent_eval.execute_variant(
+                    fixture,
+                    Path(temporary),
+                    ["python3", "-c", runner_code],
+                    [],
+                    [],
+                    variant,
+                    timeout_seconds=20,
+                    max_results=8,
+                    max_tokens=500,
+                    capture_audit=True,
+                )
+
+        self.assertTrue(results["ley"]["taskPassed"])
+        self.assertFalse(results["ley-no-recovery"]["taskPassed"])
+        recovery_prompt = results["ley"]["_audit"]["prompt"]
+        control_prompt = results["ley-no-recovery"]["_audit"]["prompt"]
+        self.assertIn(prior_marker.lower(), recovery_prompt.lower())
+        self.assertIn(prior_marker.lower(), control_prompt.lower())
+        self.assertIn(crash_marker.lower(), recovery_prompt.lower())
+        self.assertNotIn(crash_marker.lower(), control_prompt.lower())
+        self.assertTrue(results["ley"]["context"]["interruptionEvidenceIncluded"])
+        self.assertFalse(
+            results["ley-no-recovery"]["context"]["interruptionEvidenceIncluded"]
+        )
 
     def test_crash_ley_arm_records_outcome_without_partial_utility_binding(self) -> None:
         fixture = agent_eval.materialize_fixture(
@@ -1571,6 +1636,106 @@ class AgentTaskEvalTests(unittest.TestCase):
             self.assertEqual(comparison["leySearchTaskPassRate"], 0.0)
             self.assertEqual(comparison["briefMinusSearchTaskPassRate"], 1.0)
             self.assertEqual(comparison["leySearchForbiddenMarkerLeakCount"], 2)
+
+    def test_main_interruption_recovery_ablation_runs_only_matched_crash_pair(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def fake_execute(
+            fixture,
+            root,
+            command,
+            inherited_env_names,
+            read_only_mounts,
+            variant,
+            timeout_seconds,
+            max_results,
+            max_tokens,
+            capture_audit,
+        ):
+            del root, command, inherited_env_names, read_only_mounts
+            del timeout_seconds, max_results, max_tokens, capture_audit
+            calls.append((str(fixture["id"]), variant))
+            recovered = variant == "ley"
+            return {
+                "variant": variant,
+                "taskPassed": recovered,
+                "hiddenOracleAttempted": True,
+                "hiddenOracleStatus": "passed" if recovered else "failed",
+                "hiddenOraclePassed": recovered,
+                "hiddenOracleExitCode": 0 if recovered else 1,
+                "postCheckTreeStable": True,
+                "runner": {"completed": True, "seconds": 1.0 if recovered else 2.0},
+                "constraints": {"passed": True},
+                "changedFileCount": 1,
+                "changedPathsSha256": "0" * 64,
+                "diffBytes": 1,
+                "diffSha256": "1" * 64,
+                "promptSha256": "2" * 64,
+                "promptCharacters": 10,
+                "context": {
+                    "contextCharacters": 140 if recovered else 90,
+                    "interruptionEvidenceIncluded": recovered,
+                },
+                "utilityObservation": None,
+            }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "report.json"
+            with mock.patch.object(agent_eval, "execute_variant", side_effect=fake_execute):
+                exit_code = agent_eval.main(
+                    [
+                        "--task",
+                        "crash-slug-normalization-contract",
+                        "--task",
+                        "crash-retry-window-contract",
+                        "--runner-command",
+                        "fake-runner",
+                        "--variant",
+                        "interruption-recovery",
+                        "--first-variant",
+                        "ley",
+                        "--output",
+                        str(output),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                calls,
+                [
+                    ("crash-slug-normalization-contract", "ley"),
+                    ("crash-slug-normalization-contract", "ley-no-recovery"),
+                    ("crash-retry-window-contract", "ley-no-recovery"),
+                    ("crash-retry-window-contract", "ley"),
+                ],
+            )
+            report = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(report["plannedAgentAttempts"], 4)
+            comparison = report["comparison"]
+            self.assertEqual(comparison["leyTaskPassRate"], 1.0)
+            self.assertEqual(comparison["leyNoRecoveryTaskPassRate"], 0.0)
+            self.assertEqual(comparison["recoveryMinusNoRecoveryTaskPassRate"], 1.0)
+            self.assertEqual(
+                comparison["recoveryMinusNoRecoveryMeanContextCharacters"],
+                50.0,
+            )
+            self.assertEqual(
+                comparison["leyNoRecoveryCompletedProcessWithFailedOracleCount"],
+                2,
+            )
+
+        with self.assertRaisesRegex(SystemExit, "requires only crashed-active fixtures"):
+            agent_eval.main(
+                [
+                    "--task",
+                    "prior-label-normalization-contract",
+                    "--runner-command",
+                    "fake-runner",
+                    "--variant",
+                    "interruption-recovery",
+                    "--first-variant",
+                    "ley",
+                ]
+            )
 
     def test_private_ley_state_is_removed_before_external_runner(self) -> None:
         fixture = agent_eval.materialize_fixture(

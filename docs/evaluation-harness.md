@@ -625,6 +625,10 @@ Repeated all-arm runs rotate the five current executable arms across **task × r
 task family is not systematically coupled to the same first arm. The former dedicated `briefing` mode is
 retired with `ley-auto`; use the recorded 2026-10-01 B1 result when discussing that historical comparison.
 The separate `compiler-ablation` mode alternates only `ley-brief` and the benchmark-only `ley-search` arm.
+The separate `interruption-recovery` mode alternates only `ley` and experimental `ley-no-recovery`, and accepts
+only `crashed-active` fixtures. Both arms seed the same structured prior session and compile the same Ley context;
+the control withholds only the bounded post-checkpoint crash evidence and asserts that crash-only markers do not
+leak into the supplied context. This mode is a study harness, not part of the normal five-arm comparison.
 A suite report aggregates the current attempts overall,
 per-task, and per-family; it also records any task IDs/families where Ley's pass rate is below at least
 one simpler arm. Aggregate improvement must therefore never be used to hide stale-memory harm in a
@@ -697,6 +701,36 @@ separate recovery surface is supplied, so interpret that family as a shared-capa
 clean compiler ablation. Reports expose Brief/Search task and hidden-oracle rates, mean supplied context size,
 Search required-marker coverage, and Search forbidden-marker leakage. The mode is model-dependent evidence and
 is never a deterministic CI gate.
+
+Validate the matched read-only interruption-recovery study without invoking a model:
+
+```text
+python eval/run_agent_task_eval.py \
+  --validate \
+  --task crash-slug-normalization-contract \
+  --task crash-retry-window-contract \
+  --task crash-cache-namespace-contract
+```
+
+Run the opt-in recovery-vs-no-recovery pair only when external-agent quota/cost is intended:
+
+```text
+python eval/run_agent_task_eval.py \
+  --task crash-slug-normalization-contract \
+  --task crash-retry-window-contract \
+  --task crash-cache-namespace-contract \
+  --variant interruption-recovery \
+  --first-variant ley \
+  --repetitions 2 \
+  --runner-label pinned-runner-model \
+  --runner-command '<runner command>'
+```
+
+The report includes recovery/no-recovery task and hidden-oracle rates, mean runner time, mean supplied context
+characters, their deltas, and `completedProcessWithFailedOracleCount`. That last metric means only that the runner
+process exited normally while the hidden oracle failed; it is not evidence that the model explicitly claimed success.
+The reproducibility protocol and current no-result status are recorded in
+[`research/interruption-recovery-study-protocol-2026-10-02.md`](research/interruption-recovery-study-protocol-2026-10-02.md).
 
 The first completed compiler-ablation study ran on 2026-10-01 with Codex `0.159.3`, `gpt-6-luna`, `xhigh`,
 two repetitions, and three task families: divergent revision, verified-vs-claimed, and explicit selected-source
