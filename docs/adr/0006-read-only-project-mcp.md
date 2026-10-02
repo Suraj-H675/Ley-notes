@@ -1,6 +1,6 @@
 # ADR 0006: Fixed-project read-only Model Context Protocol retrieval
 
-- Status: Superseded for the normal agent surface on 2026-09-30; historical fixed-project/read-only rationale retained. The current canonical native server exposes `ley_brief`, `ley_search`, and `ley_evidence`, plus `ley_checkpoint` only when session writes are enabled. Bootstrap `ley_compile_context` and bounded legacy-recovery modes are explicit exceptions. ADR 0089 later removes the retained `ley_context_pack_inspect` compatibility route entirely.
+- Status: Superseded for the normal agent surface on 2026-09-30; historical fixed-project/read-only rationale retained. The current canonical native server exposes `ley_brief`, `ley_search`, and `ley_evidence`, plus `ley_checkpoint` only when session writes are enabled. Bootstrap `ley_compile_context` and bounded legacy-recovery modes are explicit exceptions. Later contraction ADRs remove compatibility routes including Context Pack Inspector (ADR 0089) and Consolidation Inbox MCP (ADR 0099).
 - Date: 2026-07-18
 
 ## Context
@@ -13,7 +13,8 @@ MCP Roots are client-supplied workspace hints, not an authorization boundary, an
 
 `ley mcp [project] [--vault <temporary-vault>]` starts a local stdio MCP server using protocol version `2025-11-25`. Startup resolves exactly one initialized project and its persisted or explicit temporary vault binding. A ready server requires an existing, internally consistent artifact and graph snapshot. ADR 0018 later adds one packaging-safe fallback: outside a ready project, the process can complete MCP initialization with zero capabilities, tools, and resources so a global host integration does not fail startup. That inactive process still never discovers or creates projects, consumes MCP Roots, or accepts a project/vault selector in a tool call.
 
-The default read-only server currently exposes twenty-nine tools (the original surface plus later ADR extensions):
+The historical compatibility server exposed the following broad tool set over time; this table is not a current
+inventory, and later contraction ADRs retire individual routes:
 
 | Tool | Result boundary |
 | --- | --- |

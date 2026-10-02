@@ -1,6 +1,6 @@
 # ADR 0055: Local meaningful-boundary consolidation inbox
 
-Status: Accepted
+Status: Accepted for the local CLI/core workflow; MCP exposure retired by ADR 0099
 
 ## Context
 
@@ -19,17 +19,14 @@ The next useful slice is therefore an explicit **local consolidation inbox**, no
 
 ## Decision
 
-Ley adds an on-demand read-only projection:
+Ley adds an on-demand read-only local projection:
 
 ```text
 ley consolidation inbox [PROJECT] [--max-items N] [--max-sessions N] [--json]
 ```
 
-and the fixed-project MCP read tool:
-
-```text
-ley_consolidation_inbox
-```
+ADR 0099 later retires the fixed-project `ley_consolidation_inbox` MCP wrapper. The local CLI/core workflow below
+remains current.
 
 The inbox considers only native sessions at a meaningful lifecycle boundary:
 
