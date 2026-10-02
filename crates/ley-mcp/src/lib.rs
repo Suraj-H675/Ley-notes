@@ -9,8 +9,7 @@ use ley_core::{
     finish_session_with_continuity_transition, list_learning_contexts_with_continuity_transition,
     native_canonical_read_authority_available,
     native_canonical_read_authority_available_for_project_id, native_session_authority_available,
-    project_memory_overview, propose_learning_with_continuity_transition,
-    read_learning_context_with_continuity_transition,
+    propose_learning_with_continuity_transition, read_learning_context_with_continuity_transition,
     read_native_project_cited_evidence_for_project_id,
     read_native_project_cited_media_for_project_id,
     read_project_cited_evidence_with_continuity_transition,
@@ -43,9 +42,8 @@ use ley_core::{list_session_contexts_with_continuity_transition, DEFAULT_SESSION
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{
-        CallToolResult, ContentBlock, Implementation, ListResourcesResult, PaginatedRequestParams,
-        ProtocolVersion, ReadResourceRequestParams, ReadResourceResult, Resource, ResourceContents,
-        ServerCapabilities, ServerInfo,
+        CallToolResult, ContentBlock, Implementation, ProtocolVersion, ServerCapabilities,
+        ServerInfo,
     },
     tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
 };
@@ -177,8 +175,6 @@ pub enum McpServerError {
 pub struct LeyMcpServer {
     project: Arc<PathBuf>,
     vault: Arc<PathBuf>,
-    project_name: Arc<str>,
-    overview_uri: Arc<str>,
     instructions: Arc<str>,
     session_writes_enabled: bool,
     learning_proposals_enabled: bool,
@@ -1147,7 +1143,6 @@ impl LeyMcpServer {
         )?;
         let diagnostic = diagnose_project(&project)?;
         let project_id = diagnostic.identity.project_id.clone();
-        let project_name = diagnostic.identity.name.clone();
         let specification_registry = SpecificationRegistry::system_default()?;
         let approved_source_registry = ApprovedSourceRegistry::at(continuity_store.clone());
         let project_catalog = ProjectCatalog::native_at(
@@ -1200,7 +1195,6 @@ impl LeyMcpServer {
             session_writes_enabled && (legacy_compatibility_available || canonical_reads_available);
         let learning_proposals_enabled =
             learning_proposals_enabled && legacy_compatibility_available;
-        let overview_uri = format!("ley://project/{project_id}/overview");
         let context_mount_registry = ContextMountRegistry::system_default()?;
         let knowledge_scope_registry = KnowledgeScopeRegistry::system_default()?;
         let policy_bundle_registry = PolicyBundleRegistry::system_default()?;
@@ -1259,8 +1253,6 @@ impl LeyMcpServer {
         Ok(Self {
             project: Arc::new(project),
             vault: Arc::new(vault),
-            project_name: Arc::from(project_name),
-            overview_uri: Arc::from(overview_uri),
             instructions: Arc::from(instructions),
             session_writes_enabled,
             learning_proposals_enabled,
@@ -1777,23 +1769,6 @@ impl LeyMcpServer {
         ))
     }
 
-    /// Read identity, snapshot, capture, graph, Git, freshness, and privacy metadata.
-    #[tool(
-        name = "ley_project_overview",
-        annotations(
-            title = "Ley project overview",
-            read_only_hint = true,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn project_overview(&self) -> Result<CallToolResult, McpError> {
-        Ok(self.gated_tool_result(|| {
-            project_memory_overview(self.project.as_path(), self.vault.as_path())
-        }))
-    }
-
     /// Read current user-approved Specification revisions for this fixed project.
     /// Exact approved revisions may additionally expose read-only structured acceptance criteria derived from Markdown; task-list markers are never interpreted as completion state.
     #[tool(
@@ -2165,17 +2140,7 @@ impl LeyMcpServer {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for LeyMcpServer {
     fn get_info(&self) -> ServerInfo {
-        let capabilities = if self.legacy_compatibility_available {
-            ServerCapabilities::builder()
-                .enable_tools()
-                .enable_resources()
-                .build()
-        } else {
-            ServerCapabilities::builder().enable_tools().build()
-        };
-        ServerInfo::new(
-            capabilities,
-        )
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
         .with_protocol_version(ProtocolVersion::V_2025_11_25)
         .with_server_info(
             Implementation::new("ley", env!("CARGO_PKG_VERSION"))
@@ -2209,74 +2174,6 @@ impl ServerHandler for LeyMcpServer {
                 ),
         )
         .with_instructions(self.instructions.to_string())
-    }
-
-    async fn list_resources(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<ListResourcesResult, McpError> {
-        if !self.legacy_compatibility_available {
-            return Ok(ListResourcesResult::with_all_items(Vec::new()));
-        }
-        self.egress_policy_registry
-            .with_transition_project_egress_locked(
-                self.project.as_path(),
-                self.continuity_store.as_ref(),
-                self.egress_target,
-                || {
-                    Ok(ListResourcesResult::with_all_items(vec![Resource::new(
-                        self.overview_uri.to_string(),
-                        "ley-project-overview",
-                    )
-                    .with_title(format!("{} project overview", self.project_name))
-                    .with_description(
-                        "Read-only identity, snapshot, graph, freshness, and privacy metadata",
-                    )
-                    .with_mime_type("application/json")]))
-                },
-            )
-            .map_err(|error| McpError::internal_error(safe_error_message(&error), None))
-    }
-
-    async fn read_resource(
-        &self,
-        request: ReadResourceRequestParams,
-        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<ReadResourceResult, McpError> {
-        if !self.legacy_compatibility_available {
-            return Err(McpError::resource_not_found(
-                "captured-memory resources are unavailable in native session-continuity mode",
-                None,
-            ));
-        }
-        if request.uri != self.overview_uri.as_ref() {
-            return Err(McpError::resource_not_found(
-                "resource is not available in this fixed project scope",
-                None,
-            ));
-        }
-        self.egress_policy_registry
-            .with_transition_project_egress_locked(
-                self.project.as_path(),
-                self.continuity_store.as_ref(),
-                self.egress_target,
-                || {
-                    let overview =
-                        project_memory_overview(self.project.as_path(), self.vault.as_path())?;
-                    let text = serde_json::to_string_pretty(&overview).map_err(|_| {
-                        LeyCoreError::ProjectMemoryUnavailable(
-                            "could not serialize Ley overview".to_owned(),
-                        )
-                    })?;
-                    Ok(ReadResourceResult::new(vec![ResourceContents::text(
-                        text,
-                        self.overview_uri.to_string(),
-                    )
-                    .with_mime_type("application/json")]))
-                },
-            )
-            .map_err(|error| McpError::internal_error(safe_error_message(&error), None))
     }
 }
 
@@ -2628,10 +2525,7 @@ mod tests {
         BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_FILE,
         SPECIFICATION_REGISTRY_FILE,
     };
-    use rmcp::{
-        model::{CallToolRequestParams, ClientInfo},
-        ClientHandler,
-    };
+    use rmcp::{model::ClientInfo, ClientHandler};
     use std::fs;
     use std::process::Command;
     use tempfile::tempdir;
@@ -2862,7 +2756,6 @@ mod tests {
                 "ley_evidence",
                 "ley_learning_get",
                 "ley_learnings_list",
-                "ley_project_overview",
                 "ley_project_specifications",
                 "ley_search",
                 "ley_session_get",
@@ -2989,7 +2882,6 @@ mod tests {
                 "ley_evidence",
                 "ley_learning_get",
                 "ley_learnings_list",
-                "ley_project_overview",
                 "ley_project_specifications",
                 "ley_search",
                 "ley_session_checkpoint",
@@ -3209,6 +3101,7 @@ mod tests {
         assert_eq!(context["sessionId"], started.session.session_id);
         assert_eq!(context["liveSourceChecked"], false);
 
+        assert!(server.get_info().capabilities.resources.is_none());
         let (server_transport, client_transport) = tokio::io::duplex(65_536);
         let server_task = tokio::spawn(async move {
             server
@@ -3228,7 +3121,6 @@ mod tests {
             .map(|tool| tool.name.to_string())
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(protocol_routes, expected_routes);
-        assert!(client.list_all_resources().await.unwrap().is_empty());
         client.cancel().await.unwrap();
         server_task.await.unwrap();
     }
@@ -3648,7 +3540,16 @@ mod tests {
     #[tokio::test]
     async fn running_server_rechecks_project_egress_before_each_agent_read() {
         let (_temporary, project, _vault, server) = fixture();
-        let before = server.project_overview().await.unwrap();
+        let before = server
+            .search(Parameters(SearchMemoryParams {
+                query: "stable evidence".to_owned(),
+                project_id: None,
+                revision_compatibility: None,
+                max_results: Some(4),
+                max_tokens: Some(1_000),
+            }))
+            .await
+            .unwrap();
         assert_eq!(
             before.is_error,
             Some(false),
@@ -3660,14 +3561,6 @@ mod tests {
             .egress_policy_registry
             .set_project_policy(&project, AgentEgressPolicy::NeverSend)
             .unwrap();
-        let blocked = server.project_overview().await.unwrap();
-        assert_eq!(blocked.is_error, Some(true));
-        let blocked_json = blocked.structured_content.unwrap();
-        assert!(blocked_json["error"]
-            .as_str()
-            .unwrap()
-            .contains("never-send"));
-
         let blocked_search = server
             .search(Parameters(SearchMemoryParams {
                 query: "stable evidence".to_owned(),
@@ -3689,7 +3582,16 @@ mod tests {
             .egress_policy_registry
             .set_project_policy(&project, AgentEgressPolicy::AgentOk)
             .unwrap();
-        let restored = server.project_overview().await.unwrap();
+        let restored = server
+            .search(Parameters(SearchMemoryParams {
+                query: "stable evidence".to_owned(),
+                project_id: None,
+                revision_compatibility: None,
+                max_results: Some(4),
+                max_tokens: Some(1_000),
+            }))
+            .await
+            .unwrap();
         assert_eq!(restored.is_error, Some(false));
     }
 
@@ -4652,7 +4554,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn project_overview_exposes_git_freshness_without_claiming_live_source() {
+    async fn canonical_search_exposes_git_freshness_without_claiming_live_source() {
         let (_temporary, project, vault, server) = fixture();
         let output = Command::new("git")
             .arg("-C")
@@ -4684,7 +4586,16 @@ mod tests {
             .unwrap();
         assert!(output.status.success());
 
-        let result = server.project_overview().await.unwrap();
+        let result = server
+            .search(Parameters(SearchMemoryParams {
+                query: "stable evidence".to_owned(),
+                project_id: None,
+                revision_compatibility: None,
+                max_results: Some(4),
+                max_tokens: Some(1_000),
+            }))
+            .await
+            .unwrap();
         assert_eq!(result.is_error, Some(false));
         let json = result.structured_content.unwrap();
         assert_eq!(json["revisionFreshness"]["liveGitChecked"], true);
@@ -5863,9 +5774,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn official_client_completes_protocol_tools_and_resource_round_trip() {
+    async fn official_client_completes_protocol_tools_round_trip_without_resources() {
         let (_temporary, _project, _vault, server) = fixture();
-        let expected_uri = server.overview_uri.to_string();
+        assert!(server.get_info().capabilities.resources.is_none());
         let (server_transport, client_transport) = tokio::io::duplex(65_536);
         let server_task = tokio::spawn(async move {
             server
@@ -5885,28 +5796,13 @@ mod tests {
         assert!(!tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_consolidation_inbox"));
-        for retired in ["ley_read_evidence", "ley_read_media_evidence"] {
+        for retired in [
+            "ley_project_overview",
+            "ley_read_evidence",
+            "ley_read_media_evidence",
+        ] {
             assert!(!tools.iter().any(|tool| tool.name.as_ref() == retired));
         }
-        let overview = client
-            .call_tool(CallToolRequestParams::new("ley_project_overview"))
-            .await
-            .unwrap();
-        assert_eq!(overview.is_error, Some(false));
-        assert_eq!(
-            overview.structured_content.unwrap()["freshness"],
-            "captured-snapshot"
-        );
-
-        let resources = client.list_all_resources().await.unwrap();
-        assert_eq!(resources.len(), 1);
-        assert_eq!(resources[0].uri, expected_uri);
-        let resource = client
-            .read_resource(ReadResourceRequestParams::new(expected_uri))
-            .await
-            .unwrap();
-        assert_eq!(resource.contents.len(), 1);
-
         client.cancel().await.unwrap();
         server_task.await.unwrap();
     }

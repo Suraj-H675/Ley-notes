@@ -209,6 +209,7 @@ fn packaged_skills_teach_explicit_task_retrieval_without_weak_memory_padding() {
             "ley_external_connector",
             "ley_project_specifications",
             "ley_project_resume",
+            "ley_project_overview",
             "ley_search_activity",
             "ley_search_memory",
             "ley_search_context",

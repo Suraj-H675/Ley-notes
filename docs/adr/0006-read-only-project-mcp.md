@@ -1,6 +1,6 @@
 # ADR 0006: Fixed-project read-only Model Context Protocol retrieval
 
-- Status: Superseded for the normal agent surface on 2026-09-30; historical fixed-project/read-only rationale retained. The current canonical native server exposes `ley_brief`, `ley_search`, and `ley_evidence`, plus `ley_checkpoint` only when session writes are enabled. Bootstrap `ley_compile_context` and bounded legacy-recovery modes are explicit exceptions. Later contraction ADRs remove compatibility routes including Context Pack Inspector (ADR 0089), Consolidation Inbox MCP (ADR 0099), the two legacy Evidence readers (ADR 0100), and Project Resume MCP (ADR 0101).
+- Status: Superseded for the normal agent surface on 2026-09-30; historical fixed-project/read-only rationale retained. The current canonical native server exposes `ley_brief`, `ley_search`, and `ley_evidence`, plus `ley_checkpoint` only when session writes are enabled. Bootstrap `ley_compile_context` and bounded legacy-recovery modes are explicit exceptions. Later contraction ADRs remove compatibility routes including Context Pack Inspector (ADR 0089), Consolidation Inbox MCP (ADR 0099), the two legacy Evidence readers (ADR 0100), Project Resume MCP (ADR 0101), and the Project Overview tool/resource (ADR 0102).
 - Date: 2026-07-18
 
 ## Context
@@ -24,7 +24,7 @@ inventory, and later contraction ADRs retire individual routes:
 | `ley_context_pack_inspect` | Non-persistent diagnostic attribution for one exact compiled context pack and its omissions/source boundaries |
 | `ley_external_connector_get` | Read one explicitly configured connector snapshot under its current egress/authority boundary |
 | `ley_external_connectors_list` | List bounded connector metadata without granting connector mutation authority |
-| `ley_project_overview` | Identity, capture mode, artifact/graph snapshots, counts, bounded Git state, freshness, and privacy notice |
+| `ley_project_overview` | Historical identity/capture/snapshot/diagnostic projection; retired from MCP by ADR 0102 while the core/Desktop Overview remains |
 | `ley_search_context` | Exact local lexical search over approved artifacts/symbols/dependencies, capped at 20 results and an 8,000-token estimate |
 | `ley_search_memory` | Bounded fixed-project hybrid search across captured evidence, structured activity, and learnings with separate ranking/trust/conflict signals |
 | `ley_search_activity` | Bounded search over structured session decisions, problems, attempts, outcomes, and resolutions |
@@ -49,7 +49,7 @@ inventory, and later contraction ADRs retire individual routes:
 | `ley_project_resume` | Active/paused/recent work plus only current trusted lessons in one startup pack |
 | `ley_topic_dossier` | Bounded source-fingerprinted progressive-disclosure map for one repeatedly revisited topic |
 
-All default tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. The only resource is `ley://project/<project-id>/overview`; unknown resources fail instead of mapping arbitrary URIs to files. The default process has no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout. ADR 0008 defines the explicit startup flag that adds append-only session writes; ADR 0010 separately governs review-required learning proposals; ADR 0011 defines startup selection.
+All retained default tools declare the MCP hints `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`. Every serialized tool result has a 256 KB hard limit. ADR 0102 retires the former overview resource, so the normal server no longer advertises MCP resources. The default process has no prompts, resource templates, subscriptions, sampling requests, write tools, network listeners, or logging on stdout. ADR 0008 defines the explicit startup flag that adds append-only session writes; ADR 0010 separately governs review-required learning proposals; ADR 0011 defines the historical startup selection model.
 
 Every successful result is structured JSON and repeats stable project or session identity. Project evidence carries a project-relative range, post-redaction content hash, provenance, confidence, trust state, and `untrusted-project-evidence` boundary. Session packs carry an `untrusted-agent-memory` boundary, an instruction warning, omission counts, and truncation state. Project results say `freshness: captured-snapshot` and `liveSourceChecked: false`; Ley does not imply that an old ingestion reflects the current working tree. Tool failures use MCP tool errors with sanitized messages rather than exposing absolute scope paths.
 

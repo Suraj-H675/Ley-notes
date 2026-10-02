@@ -26,7 +26,11 @@ Fixed-project search attaches checkpoint-specific applicability to revision, dec
 
 Learnings and current captured artifact candidates also receive the latest captured snapshot's applicability as a conservative capture-level ceiling. A learning that is otherwise user-trusted/current is still withheld when the captured snapshot it is being evaluated against is divergent from the checked-out HEAD. This does not claim every origin in a derived learning came from that Git branch; per-origin branch aggregation would require a separate causal/applicability model.
 
-`ley_project_overview`, fixed-project search, and `ley_compile_context` expose `revisionFreshness`. Returned historical items may expose `revisionApplicability`. A changed HEAD/branch or tracked working-tree changes add a `revision-drift` gap. None of these signals reads live file contents, and `liveSourceChecked` therefore remains false.
+Historically, `ley_project_overview` also exposed `revisionFreshness`; ADR 0102 retires that MCP surface while
+preserving the local/Desktop Overview projection. Current agent-facing `ley_search` and `ley_brief` expose
+`revisionFreshness`. Returned historical items may expose `revisionApplicability`. A changed HEAD/branch or tracked
+working-tree changes add a `revision-drift` gap. None of these signals reads live file contents, and
+`liveSourceChecked` therefore remains false.
 
 Mounted project searches use the same source-project revision rules before their lower-precedence results are admitted. No revision result changes mount/write authority.
 
