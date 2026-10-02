@@ -1,11 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import {
   AlertTriangle,
   ArrowRight,
   BookCheck,
   BrainCircuit,
-  CheckCircle2,
-  Download,
   FileCode2,
   GitBranch,
   History,
@@ -16,17 +14,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/lib/classnames";
-import {
-  installSemanticModel,
-  readSemanticModelSetup,
-  searchAgentProjectMemory,
-} from "./api";
+import { searchAgentProjectMemory } from "./api";
 import type {
   AgentProjectSearchResultKind,
   ProjectMemorySearch,
   ProjectMemorySearchResult,
   RevisionCompatibility,
-  SemanticModelSetup,
 } from "./types";
 
 const RESULT_ICONS = {
@@ -56,39 +49,6 @@ export function MemorySearch({
   const [search, setSearch] = useState<ProjectMemorySearch | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [semanticSetup, setSemanticSetup] = useState<SemanticModelSetup | null>(
-    null,
-  );
-  const [semanticInstalling, setSemanticInstalling] = useState(false);
-  const [semanticError, setSemanticError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let current = true;
-    void readSemanticModelSetup()
-      .then((setup) => {
-        if (current) setSemanticSetup(setup);
-      })
-      .catch(() => {
-        // Search remains fully functional in lexical mode when setup status is unavailable.
-      });
-    return () => {
-      current = false;
-    };
-  }, []);
-
-  async function enableSemanticSearch() {
-    if (semanticInstalling) return;
-    setSemanticInstalling(true);
-    setSemanticError(null);
-    try {
-      await installSemanticModel();
-      setSemanticSetup(await readSemanticModelSetup());
-    } catch (cause) {
-      setSemanticError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSemanticInstalling(false);
-    }
-  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -121,11 +81,7 @@ export function MemorySearch({
       search={search}
       busy={busy}
       error={error}
-      semanticSetup={semanticSetup}
-      semanticInstalling={semanticInstalling}
-      semanticError={semanticError}
       onSubmit={submit}
-      onEnableSemanticSearch={enableSemanticSearch}
       onOpen={onOpen}
     />
   );
@@ -140,11 +96,7 @@ function MemorySearchContent({
   search,
   busy,
   error,
-  semanticSetup,
-  semanticInstalling,
-  semanticError,
   onSubmit,
-  onEnableSemanticSearch,
   onOpen,
 }: {
   projectName: string;
@@ -155,11 +107,7 @@ function MemorySearchContent({
   search: ProjectMemorySearch | null;
   busy: boolean;
   error: string | null;
-  semanticSetup: SemanticModelSetup | null;
-  semanticInstalling: boolean;
-  semanticError: string | null;
   onSubmit: (event: FormEvent) => Promise<void>;
-  onEnableSemanticSearch: () => Promise<void>;
   onOpen: (result: ProjectMemorySearchResult) => void;
 }) {
   return (
@@ -215,12 +163,7 @@ function MemorySearchContent({
         <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 px-1">
           <div className="flex items-center gap-2 text-micro text-muted-foreground">
             <BrainCircuit size={12} aria-hidden="true" />
-            <span>
-              Runs on this device. Captured text never leaves Ley.
-              {semanticSetup?.status.state === "ready"
-                ? " Hybrid retrieval is ready."
-                : " Exact local search remains available."}
-            </span>
+            <span>Runs on this device. Captured text never leaves Ley.</span>
           </div>
           <label className="flex items-center gap-2 text-micro text-muted-foreground">
             <GitBranch size={12} aria-hidden="true" />
@@ -245,13 +188,6 @@ function MemorySearchContent({
           </label>
         </div>
       </form>
-
-      <SemanticSearchSetup
-        setup={semanticSetup}
-        installing={semanticInstalling}
-        error={semanticError}
-        onEnable={onEnableSemanticSearch}
-      />
 
       {error && (
         <div className="max-w-3xl rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta text-destructive">
@@ -280,88 +216,6 @@ function MemorySearchContent({
       )}
 
       <MemorySearchResults search={search} onOpen={onOpen} />
-    </section>
-  );
-}
-
-function SemanticSearchSetup({
-  setup,
-  installing,
-  error,
-  onEnable,
-}: {
-  setup: SemanticModelSetup | null;
-  installing: boolean;
-  error: string | null;
-  onEnable: () => Promise<void>;
-}) {
-  if (!setup || setup.status.state === "ready") return null;
-  return (
-    <section
-      aria-labelledby="semantic-search-setup-title"
-      className="max-w-3xl overflow-hidden rounded-sm border border-border bg-surface-1 shadow-sm"
-    >
-      <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-        <div className="flex min-w-0 items-start gap-3.5">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-sm border border-primary/25 bg-primary/7 text-primary">
-            <BrainCircuit size={18} aria-hidden="true" />
-          </div>
-          <div className="min-w-0">
-            <h2
-              id="semantic-search-setup-title"
-              className="text-body font-semibold text-foreground"
-            >
-              {setup.status.state === "corrupt"
-                ? "Repair meaning-based search"
-                : "Find related ideas, even when the words differ"}
-            </h2>
-            <p className="mt-1 text-meta leading-relaxed text-muted-foreground">
-              Install Ley’s optional pinned local model. The one-time{" "}
-              {formatBytes(setup.totalBytes)} download comes from Hugging Face
-              only after you choose to install it; project text and queries are
-              never uploaded.
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-muted-foreground">
-              <span>{shortModelName(setup.model.modelId)}</span>
-              <span aria-hidden="true">·</span>
-              <span>Verified before use</span>
-              <span aria-hidden="true">·</span>
-              <span>Inference stays on this device</span>
-            </div>
-          </div>
-        </div>
-        <Button
-          type="button"
-          className="shrink-0 self-start active:scale-[0.97] sm:self-center"
-          disabled={installing}
-          onClick={() => void onEnable()}
-        >
-          {installing ? (
-            <LoaderCircle
-              size={14}
-              className="animate-spin motion-reduce:animate-none"
-            />
-          ) : setup.status.state === "corrupt" ? (
-            <CheckCircle2 size={14} aria-hidden="true" />
-          ) : (
-            <Download size={14} aria-hidden="true" />
-          )}
-          {installing
-            ? "Downloading & verifying…"
-            : setup.status.state === "corrupt"
-              ? "Repair local model"
-              : "Enable semantic search"}
-        </Button>
-      </div>
-      {error && (
-        <p
-          role="alert"
-          className="border-t border-destructive/20 bg-destructive/[0.045] px-5 py-3 text-meta text-destructive"
-        >
-          Installation did not complete. Exact local search is still available.{" "}
-          {error}
-        </p>
-      )}
     </section>
   );
 }
@@ -428,24 +282,14 @@ function MemorySearchResults({
         ))}
       </div>
 
-      {(search.truncated || search.retrieval.boundedRerankFallbackReason) && (
+      {search.truncated && (
         <p className="px-1 text-micro leading-relaxed text-muted-foreground">
-          {search.retrieval.boundedRerankFallbackReason
-            ? `Semantic ranking unavailable: ${search.retrieval.boundedRerankFallbackReason}. Exact local search still ran.`
-            : "Results were bounded to keep agent context focused. Refine the question for a narrower answer."}
+          Results were bounded to keep agent context focused. Refine the
+          question for a narrower answer.
         </p>
       )}
     </div>
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1_048_576) return `${Math.ceil(bytes / 1_024)} KB`;
-  return `${Math.ceil(bytes / 1_048_576)} MiB`;
-}
-
-function shortModelName(modelId: string): string {
-  return modelId.split("/").at(-1) ?? modelId;
 }
 
 function MemoryResult({

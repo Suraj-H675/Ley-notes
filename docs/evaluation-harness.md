@@ -234,20 +234,20 @@ requires:
 - `estimatedTokens <= maxTokens` at every layer/budget;
 - low-level and compiler retrieval metadata to report `lexical` for overall, bounded-rerank, and
   artifact-context modes;
-- non-empty “model not installed” fallback reasons without leaking the private cache/project/vault
-  paths;
-- an explicit compiler `semantic-fallback` gap;
+- no model-cache fallback reason and no compiler `semantic-fallback` gap, because the canonical
+  lexical baseline intentionally does not attempt the deferred model;
+- no private cache/project/vault path leakage;
 - non-decreasing bounded search-result counts as budget grows; and
 - strictly more retained results at 8,000 tokens than at 500.
 
-The deterministic harness deliberately does **not** download Ley's pinned semantic model and therefore
-does not call its current canonical Search lane a lexical-vs-hybrid benchmark. Canonical native artifact
-continuity is intentionally lexical-only today; it does not consult the legacy vault semantic index.
-The former opt-in `run_semantic_eval.py` lane depended on that legacy-vault search path and was retired
-with ADR 0093 instead of being relabeled as evidence for canonical Search. Core semantic-index binding and
-corruption tests remain compatibility/research evidence. Any future vector retrieval on canonical native
-state needs a new task/retrieval ablation against the current lexical baseline before it becomes a release
-lane.
+The deterministic harness deliberately does **not** download Ley's pinned semantic model. ADR 0094 now makes
+that lexical behavior the canonical native Search baseline rather than an environment-dependent fallback:
+bounded cross-kind transition/native ranking does not inspect the optional model cache, and native artifact
+continuity remains lexical-only. A pre-cutover transition read may still use the retained legacy artifact
+semantic path as compatibility. The former opt-in `run_semantic_eval.py` lane depended on the legacy-vault
+artifact semantic-index path and was retired with ADR 0093 instead of being relabeled as evidence for canonical
+Search. Core semantic/index tests remain compatibility/research evidence. Any future model-assisted canonical
+retrieval needs a new native-state downstream ablation against this baseline before it becomes a release lane.
 
 ## Learning mutation idempotency
 

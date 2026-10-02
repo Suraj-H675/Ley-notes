@@ -18,28 +18,24 @@ use ley_core::{
     record_session_response_with_continuity_transition, register_native_born_project,
     remove_external_connector_with_registry, rename_session_with_continuity_transition,
     review_learning_with_continuity_transition, search_project_memory_with_continuity_transition,
-    semantic_model_status, start_session_with_continuity_transition, supported_semantic_model,
-    AgentEgressPolicy, AgentEgressTarget, AgentHost, ApprovedSourceRegistry, BindingRegistry,
-    BindingSource, BootstrapSpecificationRegistry, CaptureMode, CheckpointInput, CommandInput,
-    ConsolidationInboxLimits, ContextMountRegistry, ContinuityStore, CorrectLearningInput,
-    EgressPolicyRegistry, EraseSessionMemoryInput, ExternalConnectorRegistry, FinishSessionInput,
-    HostAgentContextRegistries, KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput,
-    LearningFeedbackAction, LearningKind, LearningProvenance, LearningState, LearningTrustState,
-    LeyCoreError, PolicyBundleRegistry, ProjectCatalog, ProjectMemorySearchLimits,
-    ProjectVaultBinding, ProposeLearningInput, RenameSessionInput, ReviewLearningInput,
-    RevisionCompatibility, SemanticModelStatus, SessionSource, SessionSourceKind, SessionStatus,
-    SessionWriteResult, SpecificationRegistry, StartSessionInput, TurnEvidenceInput,
-    TurnEvidenceOrigin, VerificationInput, VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS,
-    DEFAULT_CONSOLIDATION_INBOX_SESSIONS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    start_session_with_continuity_transition, AgentEgressPolicy, AgentEgressTarget, AgentHost,
+    ApprovedSourceRegistry, BindingRegistry, BindingSource, BootstrapSpecificationRegistry,
+    CaptureMode, CheckpointInput, CommandInput, ConsolidationInboxLimits, ContextMountRegistry,
+    ContinuityStore, CorrectLearningInput, EgressPolicyRegistry, EraseSessionMemoryInput,
+    ExternalConnectorRegistry, FinishSessionInput, HostAgentContextRegistries,
+    KnowledgeScopeRegistry, LearningActor, LearningEvidenceInput, LearningFeedbackAction,
+    LearningKind, LearningProvenance, LearningState, LearningTrustState, LeyCoreError,
+    PolicyBundleRegistry, ProjectCatalog, ProjectMemorySearchLimits, ProjectVaultBinding,
+    ProposeLearningInput, RenameSessionInput, ReviewLearningInput, RevisionCompatibility,
+    SessionSource, SessionSourceKind, SessionStatus, SessionWriteResult, SpecificationRegistry,
+    StartSessionInput, TurnEvidenceInput, TurnEvidenceOrigin, VerificationInput,
+    VerificationStatus, DEFAULT_CONSOLIDATION_INBOX_ITEMS, DEFAULT_CONSOLIDATION_INBOX_SESSIONS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
 };
 use ley_mcp::{
     run_bootstrap_stdio_with_egress_target, run_stdio_with_egress_target, run_unavailable_stdio,
-};
-use ley_semantic_installer::{
-    install_supported_semantic_model_with_progress, SemanticModelInstallerError,
 };
 use std::env;
 use std::io::Read;
@@ -77,7 +73,6 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         "learning" => learning(&arguments[1..]),
         "resume" => resume(&arguments[1..]),
         "search" => search(&arguments[1..]),
-        "semantic" => semantic(&arguments[1..]),
         "doctor" => doctor(&arguments[1..]),
         "preview" => preview(&arguments[1..]),
         "help" | "--help" | "-h" => {
@@ -90,103 +85,6 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         }
         other => Err(CliError::Usage(format!("unknown command '{other}'"))),
     }
-}
-
-fn semantic(arguments: &[String]) -> Result<(), CliError> {
-    let Some(command) = arguments.first().map(String::as_str) else {
-        return Err(CliError::Usage(
-            "semantic requires status or install".to_owned(),
-        ));
-    };
-    let mut json = false;
-    for argument in &arguments[1..] {
-        match argument.as_str() {
-            "--json" => json = true,
-            value => return Err(CliError::Usage(format!("unexpected argument '{value}'"))),
-        }
-    }
-    match command {
-        "status" => print_semantic_status(semantic_model_status(), json),
-        "install" => semantic_install(json),
-        other => Err(CliError::Usage(format!(
-            "unknown semantic command '{other}'"
-        ))),
-    }
-}
-
-fn print_semantic_status(status: SemanticModelStatus, json: bool) -> Result<(), CliError> {
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&status).expect("semantic status is serializable")
-        );
-        return Ok(());
-    }
-    match status {
-        SemanticModelStatus::Ready { model } => {
-            println!("Semantic retrieval: ready");
-            println!("Model: {}", model.model_id);
-            println!("Revision: {}", model.revision);
-            println!("Dimension: {}", model.dimension);
-            println!("Privacy: local inference only; normal search performs no network requests");
-        }
-        SemanticModelStatus::Uninstalled { reason } => {
-            println!("Semantic retrieval: not installed");
-            println!("Reason: {reason}");
-            println!("Run 'ley semantic install' to explicitly download the pinned local model.");
-        }
-        SemanticModelStatus::Corrupt { reason } => {
-            println!("Semantic retrieval: corrupt");
-            println!("Reason: {reason}");
-            println!("Ley will use lexical retrieval until the local model is repaired.");
-        }
-    }
-    Ok(())
-}
-
-fn semantic_install(json: bool) -> Result<(), CliError> {
-    if let SemanticModelStatus::Ready { model } = semantic_model_status() {
-        if json {
-            println!(
-                "{}",
-                serde_json::json!({ "model": model, "installed": false })
-            );
-        } else {
-            println!("Semantic retrieval is already installed and verified.");
-        }
-        return Ok(());
-    }
-
-    let model = supported_semantic_model();
-    if !json {
-        let bytes = model.files.iter().map(|file| file.bytes).sum::<u64>();
-        println!(
-            "Installing {} ({} MiB, pinned revision {})",
-            model.model_id,
-            (bytes + 1_048_575) / 1_048_576,
-            model.revision
-        );
-        println!("Downloads are explicit; inference and search remain fully local.");
-    }
-    let result = install_supported_semantic_model_with_progress(|file| {
-        if !json {
-            println!("Downloading {} ({} bytes)…", file.name, file.bytes);
-        }
-    })
-    .map_err(|error| match error {
-        SemanticModelInstallerError::Core(error) => CliError::Core(error),
-        error => CliError::ModelDownload(error.to_string()),
-    })?;
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&result).expect("semantic installation is serializable")
-        );
-    } else {
-        println!("Semantic retrieval installed and checksum-verified.");
-        println!("No project content or query was uploaded.");
-    }
-    Ok(())
 }
 
 fn egress(arguments: &[String]) -> Result<(), CliError> {
@@ -3621,8 +3519,6 @@ fn print_help() {
     );
     println!("  ley resume [path] [--max-sessions N] [--max-learnings N] [--json]");
     println!("  ley search QUERY [path] [--revision COMPATIBILITY] [--max-results N] [--max-tokens N] [--json]");
-    println!("  ley semantic status [--json]");
-    println!("  ley semantic install [--json]");
     println!(
         "  ley learning propose [path] --actor ACTOR --provenance SOURCE --kind KIND --title TITLE"
     );
@@ -3653,7 +3549,6 @@ enum CliError {
     HookInput(std::io::Error),
     HookJson(serde_json::Error),
     StdinInput(std::io::Error),
-    ModelDownload(String),
     InputFile {
         path: PathBuf,
         source: std::io::Error,
@@ -3679,9 +3574,6 @@ impl std::fmt::Display for CliError {
             Self::HookJson(error) => write!(formatter, "hook input is not valid JSON: {error}"),
             Self::StdinInput(error) => {
                 write!(formatter, "could not read session text from stdin: {error}")
-            }
-            Self::ModelDownload(message) => {
-                write!(formatter, "semantic model install failed: {message}")
             }
             Self::InputFile { path, source } => {
                 write!(formatter, "could not read {}: {source}", path.display())

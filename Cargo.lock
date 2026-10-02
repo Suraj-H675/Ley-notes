@@ -2117,7 +2117,6 @@ version = "0.1.0"
 dependencies = [
  "ley-core",
  "ley-mcp",
- "ley-semantic-installer",
  "serde_json",
  "tempfile",
 ]
@@ -2155,7 +2154,6 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ley-core",
- "ley-semantic-installer",
  "serde",
  "serde_json",
  "sha2",
@@ -2188,16 +2186,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
-]
-
-[[package]]
-name = "ley-semantic-installer"
-version = "0.1.0"
-dependencies = [
- "ley-core",
- "tempfile",
- "thiserror 2.0.18",
- "ureq",
 ]
 
 [[package]]

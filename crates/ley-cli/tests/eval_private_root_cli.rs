@@ -77,24 +77,6 @@ fn cli_eval_private_root_isolates_binding_and_egress_authority() {
     assert!(application_config.join("bindings-v1.json").is_file());
     assert!(application_config.join("agent-egress-v1.json").is_file());
     assert!(!decoy_config.join("app.leynotes.desktop").exists());
-
-    let model = ley_core::supported_semantic_model();
-    let model_directory = private_root
-        .join("cache/ley/models/minishlab--potion-retrieval-32m")
-        .join(&model.revision);
-    fs::create_dir_all(&model_directory).unwrap();
-    make_private(&private_root.join("cache/ley"));
-    make_private(&private_root.join("cache/ley/models"));
-    make_private(&private_root.join("cache/ley/models/minishlab--potion-retrieval-32m"));
-    make_private(&model_directory);
-    let semantic = run_ley(
-        &private_root,
-        &decoy_config,
-        &["semantic", "status", "--json"],
-    );
-    assert!(semantic.status.success());
-    let semantic: serde_json::Value = serde_json::from_slice(&semantic.stdout).unwrap();
-    assert_eq!(semantic["state"], "corrupt");
 }
 
 #[cfg(not(feature = "eval-private-root"))]

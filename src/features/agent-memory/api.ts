@@ -18,8 +18,6 @@ import type {
   ProjectProblemScope,
   ProjectMemorySearch,
   RevisionCompatibility,
-  SemanticModelInstallation,
-  SemanticModelSetup,
   SessionContext,
   SessionTurnsContext,
 } from "./types";
@@ -70,14 +68,6 @@ export function searchAgentProjectMemory(
     query,
     revisionFilter,
   });
-}
-
-export function readSemanticModelSetup(): Promise<SemanticModelSetup> {
-  return invoke("semantic_model_status");
-}
-
-export function installSemanticModel(): Promise<SemanticModelInstallation> {
-  return invoke("install_semantic_model");
 }
 
 export function readAgentCaptureSettings(

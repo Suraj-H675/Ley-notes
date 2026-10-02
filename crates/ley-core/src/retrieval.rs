@@ -518,10 +518,7 @@ pub fn find_project_hybrid_context_with_continuity_transition(
         retrieval: HybridRetrievalMetadata {
             mode: RetrievalMode::Lexical,
             semantic_index: SemanticIndexState::Unavailable,
-            fallback_reason: Some(
-                "native artifact continuity intentionally does not depend on the legacy semantic index"
-                    .to_owned(),
-            ),
+            fallback_reason: None,
             conflict_projection: HybridConflictProjection::NotParticipating,
             conflict_projection_note:
                 "No structured conflict projection participated in artifact retrieval.",
@@ -563,10 +560,7 @@ pub(crate) fn find_native_project_hybrid_context_for_project_id(
         retrieval: HybridRetrievalMetadata {
             mode: RetrievalMode::Lexical,
             semantic_index: SemanticIndexState::Unavailable,
-            fallback_reason: Some(
-                "native artifact continuity intentionally does not depend on the legacy semantic index"
-                    .to_owned(),
-            ),
+            fallback_reason: None,
             conflict_projection: HybridConflictProjection::NotParticipating,
             conflict_projection_note:
                 "No structured conflict projection participated in artifact retrieval.",

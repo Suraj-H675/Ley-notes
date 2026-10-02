@@ -58,9 +58,9 @@ Image/multimodal evidence and the current Full Evidence mode remain optional mig
 
 ## Optional semantic retrieval
 
-The current implementation can explicitly install a pinned local Model2Vec model from Hugging Face. Model files are public, checksum-verified, and inference stays local; project text and queries are not included in the download request.
+The bundled local Model2Vec experiment is deferred from the focused product by ADR 0094. Canonical native Search and transition cross-kind ranking now use the deterministic lexical baseline and do not inspect the optional model cache. A pre-cutover legacy artifact fallback may still exercise retained semantic compatibility internals. The Desktop and CLI no longer download or install the model.
 
-The reset treats this bundled model as optional/deferred. Canonical native Search is currently lexical-only and intentionally does not consult the legacy-vault semantic index, so installing the model is not a claim that current canonical retrieval becomes hybrid. The storage/network boundary remains valid while the installer/compatibility code exists, but vector retrieval returns to the focused product only if a native-state retrieval/task ablation shows material value over the lexical baseline.
+Retained core semantic/index code is compatibility/research machinery rather than a current product feature. Existing cache files are derived public-model data and are left untouched. Model-assisted canonical retrieval should return only after a native-state retrieval/task ablation shows material value over the lexical baseline under the same trust, revision, egress, and budget constraints.
 
 ## External network connectors
 

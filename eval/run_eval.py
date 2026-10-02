@@ -4845,14 +4845,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
             search_retrieval = search_payload.get("retrieval", {})
             compiler_retrieval = compiler_payload.get("retrieval", {})
-            search_fallback_reasons = [
-                str(search_retrieval.get("boundedRerankFallbackReason", "")),
-                str(search_retrieval.get("artifactContextFallbackReason", "")),
-            ]
-            compiler_fallback_reasons = [
-                str(compiler_retrieval.get("boundedRerankFallbackReason", "")),
-                str(compiler_retrieval.get("artifactContextFallbackReason", "")),
-            ]
             compiler_semantic_gap = any(
                 isinstance(item, dict)
                 and item.get("kind") == "semantic-fallback"
@@ -4873,21 +4865,11 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 and compiler_retrieval.get("mode") == "lexical"
                 and compiler_retrieval.get("boundedRerankMode") == "lexical"
                 and compiler_retrieval.get("artifactContextMode") == "lexical"
-                and all(
-                    "not installed" in reason
-                    for reason in (
-                        search_fallback_reasons[0],
-                        compiler_fallback_reasons[0],
-                    )
-                )
-                and all(
-                    "does not depend on the legacy semantic index" in reason
-                    for reason in (
-                        search_fallback_reasons[1],
-                        compiler_fallback_reasons[1],
-                    )
-                )
-                and compiler_semantic_gap
+                and "boundedRerankFallbackReason" not in search_retrieval
+                and "artifactContextFallbackReason" not in search_retrieval
+                and "boundedRerankFallbackReason" not in compiler_retrieval
+                and "artifactContextFallbackReason" not in compiler_retrieval
+                and not compiler_semantic_gap
                 and required_marker in search_text
                 and task_contract_success(
                     compiler_payload,

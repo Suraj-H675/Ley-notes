@@ -12,7 +12,6 @@ const api = vi.hoisted(() => ({
   eraseAgentSession: vi.fn(),
   forgetAgentProject: vi.fn(),
   initializeAgentProject: vi.fn(),
-  installSemanticModel: vi.fn(),
   inspectAgentProject: vi.fn(),
   listAgentProjects: vi.fn(),
   readAgentProjectActivity: vi.fn(),
@@ -20,7 +19,6 @@ const api = vi.hoisted(() => ({
   readAgentMediaEvidence: vi.fn(),
   readAgentCaptureSettings: vi.fn(),
   readAgentLearning: vi.fn(),
-  readSemanticModelSetup: vi.fn(),
   readAgentSession: vi.fn(),
   renameAgentSession: vi.fn(),
   searchAgentProjects: vi.fn(),
@@ -38,7 +36,6 @@ vi.mock("./api", () => ({
   eraseAgentSession: api.eraseAgentSession,
   forgetAgentProject: api.forgetAgentProject,
   initializeAgentProject: api.initializeAgentProject,
-  installSemanticModel: api.installSemanticModel,
   inspectAgentProject: api.inspectAgentProject,
   listAgentProjects: api.listAgentProjects,
   readAgentProjectActivity: api.readAgentProjectActivity,
@@ -46,7 +43,6 @@ vi.mock("./api", () => ({
   readAgentMediaEvidence: api.readAgentMediaEvidence,
   readAgentCaptureSettings: api.readAgentCaptureSettings,
   readAgentLearning: api.readAgentLearning,
-  readSemanticModelSetup: api.readSemanticModelSetup,
   readAgentSession: api.readAgentSession,
   renameAgentSession: api.renameAgentSession,
   searchAgentProjects: api.searchAgentProjects,
@@ -426,17 +422,6 @@ describe("Agent Memory workspace boundaries", () => {
       sourceBoundary: "untrusted-project-evidence",
       liveSourceChecked: false,
       derivedDescriptionIncluded: false,
-    });
-    const semanticModel = {
-      modelId: "local/test-model",
-      revision: "test",
-      dimension: 4,
-      files: [],
-    };
-    api.readSemanticModelSetup.mockResolvedValue({
-      status: { state: "ready", model: semanticModel },
-      model: semanticModel,
-      totalBytes: 0,
     });
     api.searchAgentProjectMemory.mockResolvedValue({
       projectId: "prj_test",

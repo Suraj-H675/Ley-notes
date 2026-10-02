@@ -1,26 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemorySearch } from "./MemorySearch";
-import type { ProjectMemorySearch, SemanticModelDescriptor } from "./types";
+import type { ProjectMemorySearch } from "./types";
 
 const api = vi.hoisted(() => ({
-  installSemanticModel: vi.fn(),
-  readSemanticModelSetup: vi.fn(),
   searchAgentProjectMemory: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
-  installSemanticModel: api.installSemanticModel,
-  readSemanticModelSetup: api.readSemanticModelSetup,
   searchAgentProjectMemory: api.searchAgentProjectMemory,
 }));
-
-const model: SemanticModelDescriptor = {
-  modelId: "local/test-model",
-  revision: "test",
-  dimension: 4,
-  files: [],
-};
 
 const divergentSearch: ProjectMemorySearch = {
   projectId: "prj_test",
@@ -93,11 +82,6 @@ const divergentSearch: ProjectMemorySearch = {
 describe("MemorySearch branch controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    api.readSemanticModelSetup.mockResolvedValue({
-      status: { state: "ready", model },
-      model,
-      totalBytes: 0,
-    });
     api.searchAgentProjectMemory.mockResolvedValue(divergentSearch);
   });
 
