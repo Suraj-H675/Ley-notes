@@ -38,7 +38,7 @@ const modes: Array<{
     name: "Minimal",
     eyebrow: "Maximum privacy",
     description:
-      "Keeps deterministic structure, hashes, graph relationships, and structured session memory.",
+      "Keeps bounded artifact metadata, hashes, and structured session memory.",
     retention:
       "Project source and automatic prompt/response bodies are not retained.",
     tone: "bg-success/10 text-success",
@@ -174,7 +174,7 @@ export function CapturePrivacyPanel({
   const changed = selected !== settings.mode;
   const fullNeedsConsent =
     selected === "full-evidence" &&
-    !settings.storeRawTranscripts &&
+    settings.mode !== "full-evidence" &&
     !fullConsent;
 
   return (
@@ -255,9 +255,10 @@ function CapturePrivacyContent({
             Decide what this project remembers
           </h2>
           <p className="mt-3 text-body leading-6 text-muted-foreground-strong">
-            The policy lives in this project’s small{" "}
-            <span className="font-mono text-meta">.ley/capture.json</span> file.
-            Applying a change rebuilds the cited snapshot in{" "}
+            The capture mode lives in this project’s small{" "}
+            <span className="font-mono text-meta">.ley/capture.json</span> file;
+            exclusions live in <span className="font-mono text-meta">.ley/.leyignore</span>.
+            Applying a mode change rebuilds the cited snapshot in{" "}
             {dashboard.storage.kind === "native"
               ? "Ley’s private local app storage"
               : dashboard.storage.vaultName}
@@ -357,7 +358,7 @@ function CapturePrivacyContent({
           })}
         </div>
 
-        {selected === "full-evidence" && !settings.storeRawTranscripts && (
+        {selected === "full-evidence" && settings.mode !== "full-evidence" && (
           <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-md border border-warning/30 bg-warning/8 p-4">
             <input
               type="checkbox"
@@ -371,10 +372,10 @@ function CapturePrivacyContent({
                 Permit Full Evidence for this project
               </span>
               <span className="mt-1 block text-meta leading-5 text-muted-foreground">
-                I understand a transcript-capable adapter may store raw host
-                evidence locally. Ley does not capture complete chats by itself,
-                and cloud agents may receive only context I ask them to
-                retrieve.
+                I understand Full Evidence may retain supported original images
+                without visual redaction. It does not authorize raw host
+                transcript collection; any future transcript-capable adapter
+                must request separate consent.
               </span>
             </span>
           </label>
@@ -419,7 +420,7 @@ function CapturePrivacyContent({
             id="capture-boundary-title"
             className="mt-1 text-lg font-semibold tracking-tight"
           >
-            Current approved boundary
+            Effective capture boundary
           </h3>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -453,7 +454,7 @@ function CapturePrivacyContent({
 
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <div className="rounded-md border border-border bg-surface-1 p-4">
-            <p className="text-meta font-semibold">Approved roots</p>
+            <p className="text-meta font-semibold">Effective roots</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {settings.approvedRoots.map((root) => (
                 <span

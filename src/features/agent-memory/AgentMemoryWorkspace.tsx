@@ -3181,7 +3181,7 @@ function InitialCapturePreviewCard({
 
       <div className="mt-3 grid gap-2 text-micro sm:grid-cols-2">
         <div className="rounded-sm bg-surface-1 px-3 py-2">
-          <span className="text-muted-foreground">Approved roots</span>
+          <span className="text-muted-foreground">Effective roots</span>
           <p className="mt-0.5 font-mono text-foreground">
             {preview.approvedRoots.join(", ")}
           </p>

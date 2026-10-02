@@ -412,6 +412,8 @@ pub const PROJECT_FILE: &str = "project.json";
 pub const CAPTURE_FILE: &str = "capture.json";
 pub const IGNORE_FILE: &str = ".leyignore";
 pub const PROJECT_SCHEMA_VERSION: u32 = 1;
+const LEGACY_CAPTURE_POLICY_SCHEMA_VERSION: u32 = 1;
+const CAPTURE_CONFIG_SCHEMA_VERSION: u32 = 2;
 pub const METADATA_FILE_LIMIT_BYTES: u64 = 1_048_576;
 
 pub const DEFAULT_IGNORE_RULES: &str = r#"# Ley project capture exclusions
@@ -488,15 +490,58 @@ pub struct CapturePolicy {
 impl CapturePolicy {
     pub fn for_mode(mode: CaptureMode) -> Self {
         Self {
-            schema_version: PROJECT_SCHEMA_VERSION,
+            schema_version: LEGACY_CAPTURE_POLICY_SCHEMA_VERSION,
             mode,
             approved_roots: vec![".".to_owned()],
             respect_gitignore: true,
             max_file_bytes: 1_048_576,
             max_total_bytes: 536_870_912,
-            store_raw_transcripts: mode == CaptureMode::FullEvidence,
+            store_raw_transcripts: false,
         }
     }
+}
+
+fn legacy_default_capture_policy(mode: CaptureMode) -> CapturePolicy {
+    let mut policy = CapturePolicy::for_mode(mode);
+    policy.store_raw_transcripts = mode == CaptureMode::FullEvidence;
+    policy
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CaptureConfig {
+    schema_version: u32,
+    mode: CaptureMode,
+}
+
+impl CaptureConfig {
+    fn for_mode(mode: CaptureMode) -> Self {
+        Self {
+            schema_version: CAPTURE_CONFIG_SCHEMA_VERSION,
+            mode,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StoredCaptureConfig {
+    Current(CaptureConfig),
+    Legacy(CapturePolicy),
+}
+
+impl StoredCaptureConfig {
+    fn policy(&self) -> CapturePolicy {
+        match self {
+            Self::Current(config) => CapturePolicy::for_mode(config.mode),
+            Self::Legacy(policy) => policy.clone(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureSchemaProbe {
+    schema_version: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -895,7 +940,7 @@ pub(crate) fn initialize_project_uncoordinated(
     })?;
     let staged = (|| {
         write_json_atomic(&staging.join(PROJECT_FILE), &identity)?;
-        write_json_atomic(&staging.join(CAPTURE_FILE), &capture)?;
+        write_json_atomic(&staging.join(CAPTURE_FILE), &CaptureConfig::for_mode(mode))?;
         write_new_file(&staging.join(IGNORE_FILE), DEFAULT_IGNORE_RULES.as_bytes())?;
         fs::rename(&staging, &ley_directory).map_err(|source| LeyCoreError::Io {
             path: ley_directory.clone(),
@@ -916,20 +961,30 @@ pub(crate) fn initialize_project_uncoordinated(
 }
 
 pub fn diagnose_project(start: impl AsRef<Path>) -> Result<ProjectDiagnostic, LeyCoreError> {
+    diagnose_project_with_stored_capture(start).map(|(diagnostic, _)| diagnostic)
+}
+
+fn diagnose_project_with_stored_capture(
+    start: impl AsRef<Path>,
+) -> Result<(ProjectDiagnostic, StoredCaptureConfig), LeyCoreError> {
     let root = find_project_root(start.as_ref())?;
     let ley_directory = root.join(LEY_DIRECTORY);
     let identity: ProjectIdentity = read_json(&ley_directory.join(PROJECT_FILE))?;
     validate_identity(&identity)?;
-    let capture: CapturePolicy = read_json(&ley_directory.join(CAPTURE_FILE))?;
+    let stored_capture = read_stored_capture_config(&ley_directory.join(CAPTURE_FILE))?;
+    let capture = stored_capture.policy();
     validate_capture(&capture)?;
     let ignore_file_present = optional_regular_metadata_file(&ley_directory.join(IGNORE_FILE))?;
 
-    Ok(ProjectDiagnostic {
-        root,
-        identity,
-        capture,
-        ignore_file_present,
-    })
+    Ok((
+        ProjectDiagnostic {
+            root,
+            identity,
+            capture,
+            ignore_file_present,
+        },
+        stored_capture,
+    ))
 }
 
 pub fn update_capture_mode(
@@ -1055,7 +1110,7 @@ fn update_capture_mode_under_lock(
     next_mode: CaptureMode,
     full_evidence_consent: bool,
 ) -> Result<CapturePolicyUpdate, LeyCoreError> {
-    let diagnostic = diagnose_project(start)?;
+    let (diagnostic, stored_capture) = diagnose_project_with_stored_capture(start)?;
     if diagnostic.identity.project_id != expected_project_id {
         return Err(LeyCoreError::InvalidCapturePolicy(
             "project identity changed before the capture policy could be saved".to_owned(),
@@ -1067,10 +1122,16 @@ fn update_capture_mode_under_lock(
             diagnostic.capture.mode
         )));
     }
-    if next_mode == CaptureMode::FullEvidence
-        && !diagnostic.capture.store_raw_transcripts
-        && !full_evidence_consent
-    {
+    let full_evidence_requires_consent = match &stored_capture {
+        StoredCaptureConfig::Current(_) => {
+            next_mode == CaptureMode::FullEvidence
+                && diagnostic.capture.mode != CaptureMode::FullEvidence
+        }
+        StoredCaptureConfig::Legacy(_) => {
+            next_mode == CaptureMode::FullEvidence && !diagnostic.capture.store_raw_transcripts
+        }
+    };
+    if full_evidence_requires_consent && !full_evidence_consent {
         return Err(LeyCoreError::InvalidCapturePolicy(
             "enabling full-evidence mode requires explicit consent".to_owned(),
         ));
@@ -1080,7 +1141,10 @@ fn update_capture_mode_under_lock(
     let previous_raw_transcripts = diagnostic.capture.store_raw_transcripts;
     let mut capture = diagnostic.capture;
     capture.mode = next_mode;
-    capture.store_raw_transcripts = next_mode == CaptureMode::FullEvidence;
+    capture.store_raw_transcripts = match &stored_capture {
+        StoredCaptureConfig::Current(_) => false,
+        StoredCaptureConfig::Legacy(_) => next_mode == CaptureMode::FullEvidence,
+    };
     validate_capture(&capture)?;
     let changed =
         capture.mode != previous_mode || capture.store_raw_transcripts != previous_raw_transcripts;
@@ -1093,10 +1157,21 @@ fn update_capture_mode_under_lock(
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err(LeyCoreError::UnsafeProjectLayout(ley_directory));
         }
-        write_json_atomic(
-            &diagnostic.root.join(LEY_DIRECTORY).join(CAPTURE_FILE),
-            &capture,
-        )?;
+        let capture_path = diagnostic.root.join(LEY_DIRECTORY).join(CAPTURE_FILE);
+        match stored_capture {
+            StoredCaptureConfig::Current(_) => {
+                write_json_atomic(&capture_path, &CaptureConfig::for_mode(next_mode))?;
+            }
+            StoredCaptureConfig::Legacy(original)
+                if original == legacy_default_capture_policy(previous_mode) =>
+            {
+                capture = CapturePolicy::for_mode(next_mode);
+                write_json_atomic(&capture_path, &CaptureConfig::for_mode(next_mode))?;
+            }
+            StoredCaptureConfig::Legacy(_) => {
+                write_json_atomic(&capture_path, &capture)?;
+            }
+        }
     }
 
     Ok(CapturePolicyUpdate {
@@ -1456,7 +1531,7 @@ pub(crate) fn validate_project_id(project_id: &str) -> Result<(), LeyCoreError> 
 }
 
 fn validate_capture(capture: &CapturePolicy) -> Result<(), LeyCoreError> {
-    if capture.schema_version != PROJECT_SCHEMA_VERSION {
+    if capture.schema_version != LEGACY_CAPTURE_POLICY_SCHEMA_VERSION {
         return Err(LeyCoreError::InvalidCapturePolicy(format!(
             "unsupported schema version {}",
             capture.schema_version
@@ -1487,6 +1562,47 @@ fn validate_capture(capture: &CapturePolicy) -> Result<(), LeyCoreError> {
         ));
     }
     Ok(())
+}
+
+fn read_stored_capture_config(path: &Path) -> Result<StoredCaptureConfig, LeyCoreError> {
+    let metadata = ensure_regular_metadata_file(path)?;
+    if metadata.len() > METADATA_FILE_LIMIT_BYTES {
+        return Err(LeyCoreError::MetadataTooLarge {
+            path: path.to_path_buf(),
+            limit_bytes: METADATA_FILE_LIMIT_BYTES,
+        });
+    }
+    let bytes = fs::read(path).map_err(|source| LeyCoreError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let probe: CaptureSchemaProbe =
+        serde_json::from_slice(&bytes).map_err(|source| LeyCoreError::Json {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    match probe.schema_version {
+        LEGACY_CAPTURE_POLICY_SCHEMA_VERSION => {
+            let policy: CapturePolicy =
+                serde_json::from_slice(&bytes).map_err(|source| LeyCoreError::Json {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
+            validate_capture(&policy)?;
+            Ok(StoredCaptureConfig::Legacy(policy))
+        }
+        CAPTURE_CONFIG_SCHEMA_VERSION => {
+            let config: CaptureConfig =
+                serde_json::from_slice(&bytes).map_err(|source| LeyCoreError::Json {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
+            Ok(StoredCaptureConfig::Current(config))
+        }
+        version => Err(LeyCoreError::InvalidCapturePolicy(format!(
+            "unsupported schema version {version}"
+        ))),
+    }
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, LeyCoreError> {
@@ -1608,6 +1724,13 @@ mod tests {
                 .unwrap()
                 .contains("\"projectId\"")
         );
+        let capture: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(capture["schemaVersion"], CAPTURE_CONFIG_SCHEMA_VERSION);
+        assert_eq!(capture["mode"], "structured");
+        assert_eq!(capture.as_object().unwrap().len(), 2);
     }
 
     #[test]
@@ -1637,7 +1760,7 @@ mod tests {
         let lock_path = directory.path().join("config/capture-policy.lock");
 
         let capture_path = project.join(LEY_DIRECTORY).join(CAPTURE_FILE);
-        let mut customized: CapturePolicy = read_json(&capture_path).unwrap();
+        let mut customized = CapturePolicy::for_mode(CaptureMode::Structured);
         customized.approved_roots = vec!["src".to_owned()];
         customized.max_file_bytes = 2_048;
         customized.max_total_bytes = 8_192;
@@ -1718,10 +1841,112 @@ mod tests {
         )
         .unwrap();
         assert!(full.capture.store_raw_transcripts);
+        let persisted: CapturePolicy = read_json(&capture_path).unwrap();
+        assert_eq!(
+            persisted.schema_version,
+            LEGACY_CAPTURE_POLICY_SCHEMA_VERSION
+        );
+        assert_eq!(persisted.approved_roots, ["src"]);
+        assert_eq!(persisted.max_file_bytes, 2_048);
+        assert_eq!(persisted.max_total_bytes, 8_192);
         assert_eq!(
             diagnose_project(&project).unwrap().capture.mode,
             CaptureMode::FullEvidence
         );
+    }
+
+    #[test]
+    fn default_legacy_capture_policy_migrates_to_mode_only_config_on_explicit_change() {
+        let directory = tempdir().unwrap();
+        let initialized =
+            initialize_project(directory.path(), None, CaptureMode::Structured).unwrap();
+        let capture_path = directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE);
+        write_json_atomic(
+            &capture_path,
+            &CapturePolicy::for_mode(CaptureMode::Structured),
+        )
+        .unwrap();
+        let lock_path = directory.path().join("config/capture-policy.lock");
+
+        let update = update_capture_mode_with_lock(
+            directory.path(),
+            &initialized.identity.project_id,
+            CaptureMode::Structured,
+            CaptureMode::FullEvidence,
+            true,
+            &lock_path,
+        )
+        .unwrap();
+        assert!(update.changed);
+        assert_eq!(
+            update.capture,
+            CapturePolicy::for_mode(CaptureMode::FullEvidence)
+        );
+        assert!(!update.capture.store_raw_transcripts);
+
+        let persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&capture_path).unwrap()).unwrap();
+        assert_eq!(persisted["schemaVersion"], CAPTURE_CONFIG_SCHEMA_VERSION);
+        assert_eq!(persisted["mode"], "full-evidence");
+        assert_eq!(persisted.as_object().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn current_capture_config_rejects_hidden_legacy_policy_fields() {
+        let directory = tempdir().unwrap();
+        initialize_project(directory.path(), None, CaptureMode::Structured).unwrap();
+        let capture_path = directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE);
+        let mut persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&capture_path).unwrap()).unwrap();
+        persisted["approvedRoots"] = serde_json::json!(["src"]);
+        fs::write(
+            &capture_path,
+            serde_json::to_vec_pretty(&persisted).unwrap(),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            diagnose_project(directory.path()),
+            Err(LeyCoreError::Json { .. })
+        ));
+    }
+
+    #[test]
+    fn legacy_full_evidence_without_transcript_grant_keeps_legacy_consent_rule() {
+        let directory = tempdir().unwrap();
+        let initialized =
+            initialize_project(directory.path(), None, CaptureMode::FullEvidence).unwrap();
+        let capture_path = directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE);
+        let legacy_without_grant = CapturePolicy::for_mode(CaptureMode::FullEvidence);
+        write_json_atomic(&capture_path, &legacy_without_grant).unwrap();
+        let lock_path = directory.path().join("config/capture-policy.lock");
+
+        assert!(matches!(
+            update_capture_mode_with_lock(
+                directory.path(),
+                &initialized.identity.project_id,
+                CaptureMode::FullEvidence,
+                CaptureMode::FullEvidence,
+                false,
+                &lock_path,
+            ),
+            Err(LeyCoreError::InvalidCapturePolicy(message))
+                if message.contains("explicit consent")
+        ));
+
+        let update = update_capture_mode_with_lock(
+            directory.path(),
+            &initialized.identity.project_id,
+            CaptureMode::FullEvidence,
+            CaptureMode::FullEvidence,
+            true,
+            &lock_path,
+        )
+        .unwrap();
+        assert!(update.changed);
+        assert!(update.capture.store_raw_transcripts);
+        let persisted: CapturePolicy = read_json(&capture_path).unwrap();
+        assert!(persisted.store_raw_transcripts);
     }
 
     #[test]
@@ -1778,10 +2003,7 @@ mod tests {
             saved.mode,
             CaptureMode::Minimal | CaptureMode::FullEvidence
         ));
-        assert_eq!(
-            saved.store_raw_transcripts,
-            saved.mode == CaptureMode::FullEvidence
-        );
+        assert!(!saved.store_raw_transcripts);
     }
 
     #[test]
@@ -1792,12 +2014,11 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
         let diagnostic = diagnose_project(&nested).unwrap();
         assert_eq!(diagnostic.capture.mode, CaptureMode::FullEvidence);
-        assert!(diagnostic.capture.store_raw_transcripts);
+        assert!(!diagnostic.capture.store_raw_transcripts);
 
         let capture_path = directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE);
-        let mut capture: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&capture_path).unwrap()).unwrap();
-        capture["approvedRoots"] = serde_json::json!(["../outside"]);
+        let mut capture = CapturePolicy::for_mode(CaptureMode::FullEvidence);
+        capture.approved_roots = vec!["../outside".to_owned()];
         fs::write(&capture_path, serde_json::to_vec_pretty(&capture).unwrap()).unwrap();
         assert!(matches!(
             diagnose_project(&nested),
@@ -1810,9 +2031,8 @@ mod tests {
         let directory = tempdir().unwrap();
         initialize_project(directory.path(), None, CaptureMode::Structured).unwrap();
         let capture_path = directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE);
-        let mut capture: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(&capture_path).unwrap()).unwrap();
-        capture["approvedRoots"] = serde_json::json!([".", "."]);
+        let mut capture = CapturePolicy::for_mode(CaptureMode::Structured);
+        capture.approved_roots = vec![".".to_owned(), ".".to_owned()];
         fs::write(&capture_path, serde_json::to_vec_pretty(&capture).unwrap()).unwrap();
         assert!(matches!(
             diagnose_project(directory.path()),
@@ -1907,7 +2127,7 @@ mod tests {
         fs::write(directory.path().join(".gitignore"), b"src/ignored.txt\n").unwrap();
 
         let capture_path = directory.path().join(LEY_DIRECTORY).join(CAPTURE_FILE);
-        let mut capture: CapturePolicy = read_json(&capture_path).unwrap();
+        let mut capture = CapturePolicy::for_mode(CaptureMode::Structured);
         capture.approved_roots = vec!["src".to_owned()];
         capture.max_file_bytes = 4;
         capture.max_total_bytes = 4;

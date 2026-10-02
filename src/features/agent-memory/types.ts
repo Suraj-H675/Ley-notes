@@ -491,7 +491,6 @@ export interface AgentCaptureSettings {
   respectGitignore: boolean;
   maxFileBytes: number;
   maxTotalBytes: number;
-  storeRawTranscripts: boolean;
   ignoreFilePresent: boolean;
   captureFingerprint: string;
   eligibleFiles: number;

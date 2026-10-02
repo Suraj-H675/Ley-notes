@@ -570,7 +570,6 @@ describe("Agent Memory workspace boundaries", () => {
       respectGitignore: true,
       maxFileBytes: 1_048_576,
       maxTotalBytes: 536_870_912,
-      storeRawTranscripts: false,
       ignoreFilePresent: true,
       captureFingerprint: "sha256:capture",
       eligibleFiles: 18,

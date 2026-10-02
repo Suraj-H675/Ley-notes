@@ -3432,14 +3432,6 @@ fn doctor(arguments: &[String]) -> Result<(), CliError> {
         println!("Root: {}", result.root.display());
         println!("Capture: {}", result.capture.mode);
         println!(
-            "Raw transcripts: {}",
-            if result.capture.store_raw_transcripts {
-                "enabled"
-            } else {
-                "disabled"
-            }
-        );
-        println!(
             "Ignore rules: {}",
             if result.ignore_file_present {
                 "present"

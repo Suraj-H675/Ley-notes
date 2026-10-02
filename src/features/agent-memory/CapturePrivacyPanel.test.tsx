@@ -27,7 +27,6 @@ const settings: AgentCaptureSettings = {
   respectGitignore: true,
   maxFileBytes: 1_048_576,
   maxTotalBytes: 536_870_912,
-  storeRawTranscripts: false,
   ignoreFilePresent: true,
   captureFingerprint: "sha256:test",
   eligibleFiles: 18,
@@ -62,7 +61,7 @@ const erasedInspection: AgentProjectInspection = {
   storage: dashboard.storage,
 };
 
-describe("CapturePrivacyPanel memory erasure", () => {
+describe("CapturePrivacyPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.readSettings.mockResolvedValue(settings);
@@ -109,6 +108,46 @@ describe("CapturePrivacyPanel memory erasure", () => {
     await waitFor(() => {
       expect(api.erase).toHaveBeenCalledWith("/projects/ley");
       expect(onErased).toHaveBeenCalledWith(erasedInspection);
+    });
+  });
+
+  it("requires explicit Full Evidence consent without granting transcript capture", async () => {
+    const onUpdated = vi.fn();
+    api.updateMode.mockResolvedValue(dashboard);
+    api.readSettings
+      .mockResolvedValueOnce(settings)
+      .mockResolvedValueOnce({ ...settings, mode: "full-evidence" });
+
+    render(
+      <CapturePrivacyPanel
+        projectPath="/projects/ley"
+        dashboard={dashboard}
+        onUpdated={onUpdated}
+        onErased={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("radio", { name: /Full Evidence/i }),
+    );
+    expect(
+      screen.getByText(/does not authorize raw host transcript collection/i),
+    ).toBeVisible();
+
+    const apply = screen.getByRole("button", { name: "Apply & recapture" });
+    expect(apply).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(apply).toBeEnabled();
+    fireEvent.click(apply);
+
+    await waitFor(() => {
+      expect(api.updateMode).toHaveBeenCalledWith(
+        "/projects/ley",
+        "structured",
+        "full-evidence",
+        true,
+      );
+      expect(onUpdated).toHaveBeenCalledWith(dashboard);
     });
   });
 });

@@ -3398,8 +3398,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&snapshots).unwrap().count(), 2);
 
         let capture_path = project.join(LEY_DIRECTORY).join(crate::CAPTURE_FILE);
-        let mut capture: crate::CapturePolicy =
-            serde_json::from_str(&std::fs::read_to_string(&capture_path).unwrap()).unwrap();
+        let mut capture = crate::CapturePolicy::for_mode(CaptureMode::Structured);
         capture.max_total_bytes -= 1;
         std::fs::write(&capture_path, serde_json::to_vec_pretty(&capture).unwrap()).unwrap();
         let policy_change = ingest_project(&project, &vault).unwrap();
@@ -3462,8 +3461,7 @@ mod tests {
         )
         .unwrap();
         let capture_path = project.join(LEY_DIRECTORY).join(crate::CAPTURE_FILE);
-        let mut capture: crate::CapturePolicy =
-            serde_json::from_str(&std::fs::read_to_string(&capture_path).unwrap()).unwrap();
+        let mut capture = crate::CapturePolicy::for_mode(CaptureMode::Structured);
         capture.max_file_bytes = 4;
         capture.max_total_bytes = 4;
         std::fs::write(&capture_path, serde_json::to_vec_pretty(&capture).unwrap()).unwrap();
