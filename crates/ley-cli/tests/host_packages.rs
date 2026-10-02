@@ -194,8 +194,9 @@ fn packaged_skills_teach_explicit_task_retrieval_without_weak_memory_padding() {
             "{}",
             path.display()
         );
-        for retired in [
+        for forbidden in [
             "ley_session_memory_",
+            "ley_session_start",
             "ley_session_checkpoint",
             "ley_session_finish",
             "ley_project_state",
@@ -217,8 +218,8 @@ fn packaged_skills_teach_explicit_task_retrieval_without_weak_memory_padding() {
             "ley_read_media_evidence",
         ] {
             assert!(
-                !skill.contains(retired),
-                "{} still teaches retired compatibility surface {retired}",
+                !skill.contains(forbidden),
+                "{} still teaches non-canonical compatibility surface {forbidden}",
                 path.display()
             );
         }

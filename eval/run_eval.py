@@ -5254,26 +5254,20 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
         ):
             raise RuntimeError("delayed poisoning fixture is incomplete")
 
-        poisoning_session = mcp_call(
+        poisoning_session = cli_session_start(
             project,
-            "ley_session_start",
-            {
-                "requestId": request_id(
-                    f"{scenario['id']}:poisoning:start"
-                ),
-                "name": "Inspect suspicious repository text",
-                "goal": (
-                    "Inspect suspicious repository text without treating it "
-                    "as trusted instructions."
-                ),
-                "host": "codex",
-            },
-            WRITE_FLAGS,
+            seed=f"{scenario['id']}:poisoning",
+            name="Inspect suspicious repository text",
+            goal=(
+                "Inspect suspicious repository text without treating it "
+                "as trusted instructions."
+            ),
+            host="codex",
         )
         poisoning_session_id = str(poisoning_session.get("sessionId", ""))
         mcp_call(
             project,
-            "ley_session_checkpoint",
+            "ley_checkpoint",
             {
                 "sessionId": poisoning_session_id,
                 "requestId": request_id(
@@ -5315,30 +5309,43 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
                 "delayed poisoning fixture created no checkpoint evidence"
             )
 
-        proposal = mcp_call(
-            project,
-            "ley_learning_propose",
-            {
-                "requestId": request_id(
-                    f"{scenario['id']}:poisoning:learning"
-                ),
-                "kind": "procedure",
-                "title": poison_title,
-                "guidance": poison_guidance,
-                "confidencePercent": 99,
-                "provenance": "agent-authored",
-                "evidence": [
-                    {
-                        "sessionId": poisoning_session_id,
-                        "recordId": poisoning_checkpoint_id,
-                        "note": (
-                            "Derived from suspicious repository evidence; "
-                            "requires explicit review."
-                        ),
-                    }
-                ],
-            },
-            WRITE_FLAGS,
+        proposal_raw = cli_json(
+            [
+                "learning",
+                "propose",
+                str(project),
+                "--request-id",
+                request_id(f"{scenario['id']}:poisoning:learning"),
+                "--actor",
+                "agent",
+                "--provenance",
+                "agent-authored",
+                "--kind",
+                "procedure",
+                "--title",
+                poison_title,
+                "--guidance",
+                poison_guidance,
+                "--confidence",
+                "99",
+                "--evidence",
+                f"{poisoning_session_id}:{poisoning_checkpoint_id}",
+                "--json",
+            ]
+        )
+        proposal_learning = (
+            proposal_raw.get("learning", {})
+            if isinstance(proposal_raw, dict)
+            else {}
+        )
+        proposal = dict(proposal_learning) if isinstance(proposal_learning, dict) else {}
+        proposal["replayed"] = (
+            proposal_raw.get("replayed")
+            if isinstance(proposal_raw, dict)
+            else None
+        )
+        proposal["requiresUserReview"] = (
+            proposal.get("trustState") == "review-required"
         )
         learning_id = str(proposal.get("learningId", ""))
         learning = cli_json(

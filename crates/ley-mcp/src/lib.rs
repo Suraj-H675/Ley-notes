@@ -1224,7 +1224,6 @@ impl LeyMcpServer {
         } else if !session_writes_enabled {
             tool_router.disable_route("ley_checkpoint");
             tool_router.disable_route("ley_session_start");
-            tool_router.disable_route("ley_session_checkpoint");
             tool_router.disable_route("ley_session_finish");
         }
         if legacy_compatibility_available && !learning_proposals_enabled {
@@ -1734,7 +1733,28 @@ impl LeyMcpServer {
         &self,
         Parameters(params): Parameters<CheckpointSessionParams>,
     ) -> Result<CallToolResult, McpError> {
-        self.session_checkpoint(Parameters(params)).await
+        let (session_id, expected_event_count, input) = checkpoint_input(params);
+        Ok(
+            self.gated_transition_session_write_result(|| match expected_event_count {
+                Some(expected_event_count) => {
+                    checkpoint_session_if_current_with_continuity_transition(
+                        self.project.as_path(),
+                        self.vault.as_path(),
+                        self.continuity_store.as_ref(),
+                        &session_id,
+                        expected_event_count,
+                        input,
+                    )
+                }
+                None => checkpoint_session_with_continuity_transition(
+                    self.project.as_path(),
+                    self.vault.as_path(),
+                    self.continuity_store.as_ref(),
+                    &session_id,
+                    input,
+                ),
+            }),
+        )
     }
 
     /// Compile the smallest useful task-specific context pack, including premise/state adjudication.
@@ -2062,45 +2082,6 @@ impl LeyMcpServer {
                 },
             )
         }))
-    }
-
-    /// Append one structured checkpoint with cited artifacts and explicit idempotency.
-    #[tool(
-        name = "ley_session_checkpoint",
-        annotations(
-            title = "Checkpoint a Ley session",
-            read_only_hint = false,
-            destructive_hint = false,
-            idempotent_hint = true,
-            open_world_hint = false
-        )
-    )]
-    pub async fn session_checkpoint(
-        &self,
-        Parameters(params): Parameters<CheckpointSessionParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let (session_id, expected_event_count, input) = checkpoint_input(params);
-        Ok(
-            self.gated_transition_session_write_result(|| match expected_event_count {
-                Some(expected_event_count) => {
-                    checkpoint_session_if_current_with_continuity_transition(
-                        self.project.as_path(),
-                        self.vault.as_path(),
-                        self.continuity_store.as_ref(),
-                        &session_id,
-                        expected_event_count,
-                        input,
-                    )
-                }
-                None => checkpoint_session_with_continuity_transition(
-                    self.project.as_path(),
-                    self.vault.as_path(),
-                    self.continuity_store.as_ref(),
-                    &session_id,
-                    input,
-                ),
-            }),
-        )
     }
 
     /// Finish, pause, or abandon one active session while preserving immutable history.
@@ -2884,7 +2865,6 @@ mod tests {
                 "ley_learnings_list",
                 "ley_project_specifications",
                 "ley_search",
-                "ley_session_checkpoint",
                 "ley_session_finish",
                 "ley_session_get",
                 "ley_session_memory_compile",
@@ -2896,7 +2876,7 @@ mod tests {
         let checkpoint_schema = serde_json::to_value(
             &tools
                 .iter()
-                .find(|tool| tool.name.as_ref() == "ley_session_checkpoint")
+                .find(|tool| tool.name.as_ref() == "ley_checkpoint")
                 .unwrap()
                 .input_schema,
         )
@@ -2908,15 +2888,6 @@ mod tests {
         assert!(checkpoint_schema
             .to_string()
             .contains("evidenceArtifactPaths"));
-        let canonical_checkpoint_schema = serde_json::to_value(
-            &tools
-                .iter()
-                .find(|tool| tool.name.as_ref() == "ley_checkpoint")
-                .unwrap()
-                .input_schema,
-        )
-        .unwrap();
-        assert_eq!(canonical_checkpoint_schema, checkpoint_schema);
         let canonical_search_schema = serde_json::to_value(
             &tools
                 .iter()
@@ -2957,10 +2928,7 @@ mod tests {
             let annotations = tool.annotations.unwrap();
             let writes_session = matches!(
                 tool.name.as_ref(),
-                "ley_checkpoint"
-                    | "ley_session_start"
-                    | "ley_session_checkpoint"
-                    | "ley_session_finish"
+                "ley_checkpoint" | "ley_session_start" | "ley_session_finish"
             );
             assert_eq!(annotations.read_only_hint, Some(!writes_session));
             assert_eq!(annotations.destructive_hint, Some(false));
@@ -2980,6 +2948,9 @@ mod tests {
         assert!(!tools
             .iter()
             .any(|tool| tool.name.as_ref() == "ley_session_start"));
+        assert!(!tools
+            .iter()
+            .any(|tool| tool.name.as_ref() == "ley_session_checkpoint"));
         for tool in tools {
             let annotations = tool.annotations.unwrap();
             let proposes_learning = tool.name.as_ref() == "ley_learning_propose";
@@ -4538,19 +4509,19 @@ mod tests {
         assert_eq!(canonical["checkpointCount"], 1);
         assert_eq!(canonical["replayed"], false);
 
-        let legacy_retry = server
-            .session_checkpoint(Parameters(checkpoint_params()))
+        let canonical_retry = server
+            .checkpoint(Parameters(checkpoint_params()))
             .await
             .unwrap();
-        assert_eq!(legacy_retry.is_error, Some(false));
-        let legacy_retry = legacy_retry.structured_content.unwrap();
-        assert_eq!(legacy_retry["eventId"], canonical["eventId"]);
-        assert_eq!(legacy_retry["eventCount"], canonical["eventCount"]);
+        assert_eq!(canonical_retry.is_error, Some(false));
+        let canonical_retry = canonical_retry.structured_content.unwrap();
+        assert_eq!(canonical_retry["eventId"], canonical["eventId"]);
+        assert_eq!(canonical_retry["eventCount"], canonical["eventCount"]);
         assert_eq!(
-            legacy_retry["checkpointCount"],
+            canonical_retry["checkpointCount"],
             canonical["checkpointCount"]
         );
-        assert_eq!(legacy_retry["replayed"], true);
+        assert_eq!(canonical_retry["replayed"], true);
     }
 
     #[tokio::test]
@@ -4848,7 +4819,7 @@ mod tests {
         .unwrap();
         let write_server = LeyMcpServer::new_with_session_writes(project, vault).unwrap();
         let guarded = write_server
-            .session_checkpoint(Parameters(CheckpointSessionParams {
+            .checkpoint(Parameters(CheckpointSessionParams {
                 session_id,
                 request_id: format!("req_{}", "b".repeat(32)),
                 expected_event_count: Some(2),
@@ -5354,36 +5325,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_write_tools_complete_an_idempotent_cited_lifecycle() {
+    async fn canonical_checkpoint_and_compatibility_finish_complete_a_cited_lifecycle() {
         let (_temporary, project, vault, _read_only_server) = fixture();
         let server = LeyMcpServer::new_with_session_writes(project.clone(), vault.clone()).unwrap();
-        let start_params = || StartSessionParams {
-            request_id: format!("req_{}", "2".repeat(32)),
-            name: "MCP write lifecycle".to_owned(),
-            goal: "Capture a complete structured session through MCP".to_owned(),
-            host: Some("test-host".to_owned()),
-            agent: Some("test-agent".to_owned()),
-        };
-        let started = server
-            .session_start(Parameters(start_params()))
-            .await
-            .unwrap();
-        assert_eq!(started.is_error, Some(false));
-        let started = started.structured_content.unwrap();
-        assert_eq!(started["replayed"], false);
-        assert_eq!(started["eventCount"], 1);
-        let session_id = started["sessionId"].as_str().unwrap().to_owned();
-        let replayed = server
-            .session_start(Parameters(start_params()))
-            .await
-            .unwrap()
-            .structured_content
-            .unwrap();
-        assert_eq!(replayed["replayed"], true);
-        assert_eq!(replayed["sessionId"], session_id);
+        let started = start_session(
+            &project,
+            &vault,
+            StartSessionInput {
+                request_id: format!("req_{}", "2".repeat(32)),
+                name: "MCP write lifecycle".to_owned(),
+                goal: "Capture a complete structured session through MCP".to_owned(),
+                source: SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let session_id = started.session.session_id;
 
         let checkpoint = server
-            .session_checkpoint(Parameters(CheckpointSessionParams {
+            .checkpoint(Parameters(CheckpointSessionParams {
                 session_id: session_id.clone(),
                 request_id: format!("req_{}", "3".repeat(32)),
                 expected_event_count: None,
