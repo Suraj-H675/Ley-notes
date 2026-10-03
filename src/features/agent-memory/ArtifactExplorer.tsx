@@ -223,7 +223,7 @@ function ArtifactExplorerContent({
               className="text-primary"
               aria-hidden="true"
             />
-            Stored in your local vault · source snapshot{" "}
+            Retained locally by Ley · source snapshot{" "}
             {shortId(inventory.artifactSnapshotId)}
           </span>
           <span>Live source not checked in this view</span>

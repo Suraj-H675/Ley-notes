@@ -100,6 +100,8 @@ describe("ArtifactExplorer multimodal evidence", () => {
     render(<ArtifactExplorer projectPath="/projects/ley" />);
 
     await screen.findByText("verification.png");
+    expect(screen.getByText(/Retained locally by Ley/)).toBeVisible();
+    expect(screen.queryByText(/local vault/i)).not.toBeInTheDocument();
     expect(api.readMedia).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByText("verification.png"));
