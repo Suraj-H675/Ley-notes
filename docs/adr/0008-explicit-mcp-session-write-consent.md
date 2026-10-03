@@ -1,6 +1,6 @@
 # ADR 0008: Explicit consent for MCP session writes
 
-- Status: Accepted
+- Status: Accepted historically for ordinary session-write consent; shape-specific recovery verifiers/writers retired by ADR 0091, with persisted event replay retained.
 - Date: 2026-07-18
 
 ## Context

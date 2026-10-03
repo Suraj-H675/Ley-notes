@@ -33,7 +33,6 @@ pub struct LegacyContinuityImportSummary {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-#[allow(dead_code)]
 pub(crate) struct LegacySessionImportSummary {
     pub project_id: String,
     pub session_events: usize,
@@ -151,9 +150,6 @@ pub fn import_legacy_continuity(
     })
 }
 
-// Staged for the native session-authority cutover. Production must not call this until the
-// legacy writer fence is implemented and validated.
-#[allow(dead_code)]
 pub(crate) fn import_legacy_session_continuity(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,

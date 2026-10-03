@@ -3718,23 +3718,13 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{
-        checkpoint_session, commit_batch_memory_transition, commit_composite_memory_transition,
-        commit_observed_command_memory_transition, commit_rich_problem_memory_transition,
-        commit_unresolved_memory_transition, erase_session_memory, finish_session, ingest_project,
+        checkpoint_session, erase_session_memory, finish_session, ingest_project,
         initialize_project, project_memory_overview, read_session, record_session_prompt,
-        record_session_response, record_session_tool_observation, start_session,
-        verify_batch_memory_transition, verify_composite_memory_transition,
-        verify_observed_command_memory_transition, verify_rich_problem_memory_transition,
-        AttemptInput, AttemptOutcome, BatchMemoryCandidateClaim, BatchMemoryTransitionInput,
-        CaptureMode, CheckpointInput, CommitBatchMemoryTransitionInput,
-        CommitCompositeMemoryTransitionInput, CommitObservedCommandMemoryTransitionInput,
-        CommitRichProblemMemoryTransitionInput, CommitUnresolvedMemoryTransitionInput,
-        CompositeMemoryTransitionInput, EraseSessionMemoryInput, FinishSessionInput,
-        ObservedCommandMemoryTransitionInput, ProblemInput, ResolutionInput,
-        RichProblemAttemptCandidate, RichProblemMemoryCandidate, RichProblemMemoryTransitionInput,
-        RichProblemResolutionCandidate, SessionSource, SessionSourceKind, SessionStatus,
-        StartSessionInput, TaskStatus, ToolObservationInput, ToolObservationKind,
-        TurnEvidenceInput, TurnEvidenceOrigin,
+        record_session_response, record_session_tool_observation, start_session, AttemptInput,
+        AttemptOutcome, CaptureMode, CheckpointInput, CommandInput, DecisionInput,
+        EraseSessionMemoryInput, FinishSessionInput, ProblemInput, ResolutionInput, SessionSource,
+        SessionSourceKind, SessionStatus, StartSessionInput, TaskInput, TaskStatus,
+        ToolObservationInput, ToolObservationKind, TurnEvidenceInput, TurnEvidenceOrigin,
     };
     use std::sync::mpsc;
     use std::sync::{Arc, Barrier};
@@ -4176,129 +4166,158 @@ mod tests {
         assert!(review.contains("source-changed"));
     }
 
-    #[test]
-    fn bound_recovery_lineage_reaches_candidate_and_exact_turn_evidence() {
-        let (_base, project, vault, _session_id, _record_id) = setup_learning();
-        let started = start_session(
-            &project,
-            &vault,
+    fn recovery_test_session(
+        project: &Path,
+        vault: &Path,
+        request_digit: char,
+        name: &str,
+    ) -> crate::SessionMutation {
+        start_session(
+            project,
+            vault,
             StartSessionInput {
-                request_id: request_id('a'),
-                name: "Interrupted derivation".to_owned(),
-                goal: "Preserve recovery provenance".to_owned(),
+                request_id: request_id(request_digit),
+                name: name.to_owned(),
+                goal: "Exercise persisted recovery compatibility".to_owned(),
                 source: SessionSource {
                     kind: SessionSourceKind::HostHook,
                     host: Some("codex".to_owned()),
-                    agent: Some("gpt-5".to_owned()),
+                    agent: Some("test-agent".to_owned()),
                     source_reference: None,
                 },
             },
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    fn recovery_test_turn(request_digit: char, text: &str) -> TurnEvidenceInput {
+        TurnEvidenceInput {
+            request_id: request_id(request_digit),
+            origin: TurnEvidenceOrigin::HostHook,
+            host: Some("codex".to_owned()),
+            correlation_material: Some("fixture-turn".to_owned()),
+            text: text.to_owned(),
+        }
+    }
+
+    fn recovery_test_checkpoint(
+        request_digit: char,
+        summary: &str,
+        decisions: Vec<DecisionInput>,
+        tasks: Vec<TaskInput>,
+        problems: Vec<ProblemInput>,
+        commands: Vec<CommandInput>,
+        unresolved: Vec<String>,
+    ) -> CheckpointInput {
+        CheckpointInput {
+            request_id: request_id(request_digit),
+            summary: summary.to_owned(),
+            plan: Vec::new(),
+            decisions,
+            tasks,
+            problems,
+            touched_artifacts: Vec::new(),
+            commands,
+            verification: Vec::new(),
+            unresolved,
+        }
+    }
+
+    fn has_turn_origin(learning: &LearningRecord, record_id: &str) -> bool {
+        learning.origin_lineage.sources.iter().any(|source| {
+            matches!(source, LearningOriginSource::TurnEvidence { record_id: found, .. } if found == record_id)
+        })
+    }
+
+    fn has_recovery_origin(learning: &LearningRecord, fingerprint: &str) -> bool {
+        learning.origin_lineage.sources.iter().any(|source| {
+            matches!(source, LearningOriginSource::RecoveryCandidate { candidate_fingerprint, .. } if candidate_fingerprint == fingerprint)
+        })
+    }
+
+    #[test]
+    fn schema_v3_persisted_recovery_lineage_reaches_candidate_and_exact_turn_evidence() {
+        let (_base, project, vault, _, _) = setup_learning();
+        let started = recovery_test_session(&project, &vault, 'a', "Interrupted derivation");
+        let session_id = started.session.session_id.clone();
         let prompt = record_session_prompt(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('b'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("turn-1".to_owned()),
-                text: "Investigate the retry loop".to_owned(),
-            },
+            &session_id,
+            recovery_test_turn('b', "Investigate the retry loop"),
         )
         .unwrap();
         let prompt_id = prompt.session.prompts.last().unwrap().record_id.clone();
         let response = record_session_response(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('c'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("turn-1".to_owned()),
-                text: "The retry investigation remains unresolved".to_owned(),
-            },
+            &session_id,
+            recovery_test_turn('c', "The retry investigation remains unresolved"),
         )
         .unwrap();
         let response_id = response.session.responses.last().unwrap().record_id.clone();
-        let fingerprint = crate::memory_transition::unresolved_candidate_fingerprint(
-            &started.session.session_id,
-            3,
-            "Retry investigation",
-            "The retry investigation remains unresolved",
-            &[prompt_id.clone(), response_id.clone()],
-        );
-        let committed = commit_unresolved_memory_transition(
+        let _ordinary = checkpoint_session(
             &project,
             &vault,
-            &started.session.session_id,
-            CommitUnresolvedMemoryTransitionInput {
-                request_id: request_id('d'),
-                expected_event_count: 3,
-                candidate_fingerprint: fingerprint.clone(),
-                subject: "Retry investigation".to_owned(),
-                statement: "The retry investigation remains unresolved".to_owned(),
-                evidence_record_ids: vec![prompt_id.clone(), response_id.clone()],
-            },
+            &session_id,
+            recovery_test_checkpoint(
+                'd',
+                "Retry investigation",
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec!["The retry investigation remains unresolved".to_owned()],
+            ),
         )
         .unwrap();
-        let checkpoint_id = committed.session.checkpoints.last().unwrap().id.clone();
-        let mut input = proposal(request_id('e'), &started.session.session_id, &checkpoint_id);
+        let mut evidence = vec![prompt_id.clone(), response_id.clone()];
+        evidence.sort();
+        let replayed =
+            crate::session::recovery_fixture::replace_latest_checkpoint_with_persisted_recovery(
+                &project,
+                &vault,
+                &session_id,
+                crate::session::SESSION_RECOVERY_SCHEMA_VERSION,
+                evidence,
+                Vec::new(),
+                None,
+                None,
+            )
+            .unwrap();
+        let checkpoint = replayed.checkpoints.last().unwrap();
+        let unresolved_id = crate::session::unresolved_record_id(&checkpoint.event_id, 0);
+        let origin = crate::session::read_recovery_derivation_origin(
+            &project,
+            &vault,
+            &session_id,
+            &checkpoint.event_id,
+            &unresolved_id,
+        )
+        .unwrap()
+        .unwrap();
+        let mut input = proposal(request_id('e'), &session_id, &unresolved_id);
         input.title = "Retry investigation is unresolved".to_owned();
         input.guidance = "Do not assume the retry investigation was completed.".to_owned();
         let proposed = propose_learning(&project, &vault, input).unwrap();
-
         assert!(proposed.learning.origin_lineage.mechanically_resolved);
-        assert!(proposed.learning.origin_lineage.sources.iter().any(|source| {
-            matches!(
-                source,
-                LearningOriginSource::RecoveryCandidate {
-                    session_id,
-                    candidate_fingerprint,
-                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
-            )
-        }));
-        for evidence_id in [&prompt_id, &response_id] {
-            assert!(proposed
-                .learning
-                .origin_lineage
-                .sources
-                .iter()
-                .any(|source| {
-                    matches!(
-                        source,
-                        LearningOriginSource::TurnEvidence { session_id, record_id }
-                            if session_id == &started.session.session_id && record_id == evidence_id
-                    )
-                }));
-        }
+        assert!(has_recovery_origin(
+            &proposed.learning,
+            &origin.candidate_fingerprint
+        ));
+        assert!(has_turn_origin(&proposed.learning, &prompt_id));
+        assert!(has_turn_origin(&proposed.learning, &response_id));
     }
 
     #[test]
-    fn observed_command_recovery_lineage_preserves_exact_tool_evidence_namespace() {
-        let (_base, project, vault, _session_id, _record_id) = setup_learning();
-        let started = start_session(
-            &project,
-            &vault,
-            StartSessionInput {
-                request_id: request_id('a'),
-                name: "Observed Command derivation".to_owned(),
-                goal: "Preserve tool-origin provenance through reviewed learning".to_owned(),
-                source: SessionSource {
-                    kind: SessionSourceKind::HostHook,
-                    host: Some("codex".to_owned()),
-                    agent: Some("gpt-6-luna".to_owned()),
-                    source_reference: None,
-                },
-            },
-        )
-        .unwrap();
+    fn schema_v16_persisted_observed_command_lineage_keeps_tool_evidence_namespace() {
+        let (_base, project, vault, _, _) = setup_learning();
+        let started = recovery_test_session(&project, &vault, 'a', "Observed Command derivation");
+        let session_id = started.session.session_id.clone();
         let observed = record_session_tool_observation(
             &project,
             &vault,
-            &started.session.session_id,
+            &session_id,
             ToolObservationInput {
                 request_id: request_id('b'),
                 host: "codex".to_owned(),
@@ -4311,7 +4330,7 @@ mod tests {
             },
         )
         .unwrap();
-        let source_record_id = observed.session.tool_observations[0].record_id.clone();
+        let tool = observed.session.tool_observations[0].clone();
         let direct_tool_error = propose_learning(
             &project,
             &vault,
@@ -4319,15 +4338,14 @@ mod tests {
                 request_id: request_id('f'),
                 actor: LearningActor::Agent,
                 kind: LearningKind::Procedure,
-                title: "Do not cite raw tool evidence".to_owned(),
-                guidance: "Raw tool observations are provenance, not direct learning evidence."
-                    .to_owned(),
+                title: "Raw tool evidence".to_owned(),
+                guidance: "Raw tool observations are provenance only.".to_owned(),
                 confidence_percent: 50,
                 provenance: LearningProvenance::Inferred,
                 evidence: vec![LearningEvidenceInput {
-                    session_id: started.session.session_id.clone(),
-                    record_id: source_record_id.clone(),
-                    note: "Raw tool observation must be rejected here.".to_owned(),
+                    session_id: session_id.clone(),
+                    record_id: tool.record_id.clone(),
+                    note: "Raw tool observation is not direct learning evidence.".to_owned(),
                 }],
             },
         )
@@ -4336,721 +4354,411 @@ mod tests {
             direct_tool_error,
             LeyCoreError::InvalidLearningRequest(_)
         ));
-        let verification = verify_observed_command_memory_transition(
+        let _ordinary = checkpoint_session(
             &project,
             &vault,
-            &started.session.session_id,
-            ObservedCommandMemoryTransitionInput {
-                expected_event_count: observed.session.event_count,
-                source_record_id: source_record_id.clone(),
-            },
+            &session_id,
+            recovery_test_checkpoint(
+                'c',
+                crate::recovery_compat::OBSERVED_COMMAND_CANDIDATE_SUMMARY,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                vec![CommandInput {
+                    command: "cargo test -p ley-core lineage".to_owned(),
+                    exit_code: None,
+                    summary: crate::recovery_compat::OBSERVED_COMMAND_CANDIDATE_SUMMARY.to_owned(),
+                }],
+                Vec::new(),
+            ),
         )
         .unwrap();
-        assert!(verification.candidate_binding_allowed);
-        let candidate_fingerprint = verification.candidate_fingerprint.clone();
-        let committed = commit_observed_command_memory_transition(
+        let replayed =
+            crate::session::recovery_fixture::replace_latest_checkpoint_with_persisted_recovery(
+                &project,
+                &vault,
+                &session_id,
+                crate::session::SESSION_OBSERVED_COMMAND_RECOVERY_SCHEMA_VERSION,
+                vec![tool.record_id.clone()],
+                vec![vec![tool.record_id.clone()]],
+                Some(tool.event_id.clone()),
+                Some(ToolObservationKind::Returned),
+            )
+            .unwrap();
+        let checkpoint = replayed.checkpoints.last().unwrap();
+        let command_id = checkpoint.commands[0].id.clone();
+        let origin = crate::session::read_recovery_derivation_origin(
             &project,
             &vault,
-            &started.session.session_id,
-            CommitObservedCommandMemoryTransitionInput {
-                request_id: request_id('c'),
-                expected_event_count: observed.session.event_count,
-                candidate_fingerprint: candidate_fingerprint.clone(),
-                source_record_id: source_record_id.clone(),
-            },
+            &session_id,
+            &checkpoint.event_id,
+            &command_id,
         )
+        .unwrap()
         .unwrap();
-        let command_id = committed.session.checkpoints[0].commands[0].id.clone();
-        let mut input = proposal(request_id('d'), &started.session.session_id, &command_id);
+        let mut input = proposal(request_id('d'), &session_id, &command_id);
         input.title = "Run the focused lineage check".to_owned();
-        input.guidance = "Use the recorded focused lineage command when this exact workflow is reviewed as applicable.".to_owned();
+        input.guidance =
+            "Use the recorded focused lineage command when it remains applicable.".to_owned();
         let proposed = propose_learning(&project, &vault, input).unwrap();
-
-        assert_eq!(proposed.learning.schema_version, LEARNING_SCHEMA_VERSION);
         assert!(proposed.learning.origin_lineage.mechanically_resolved);
+        assert!(has_recovery_origin(
+            &proposed.learning,
+            &origin.candidate_fingerprint
+        ));
         assert!(proposed.learning.origin_lineage.sources.iter().any(|source| {
-            matches!(
-                source,
-                LearningOriginSource::RecoveryCandidate {
-                    session_id,
-                    candidate_fingerprint: fingerprint,
-                } if session_id == &started.session.session_id && fingerprint == &candidate_fingerprint
-            )
-        }));
-        assert!(proposed.learning.origin_lineage.sources.iter().any(|source| {
-            matches!(
-                source,
-                LearningOriginSource::ToolEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &source_record_id
-            )
+            matches!(source, LearningOriginSource::ToolEvidence { record_id, .. } if record_id == &tool.record_id)
         }));
         assert!(!proposed.learning.origin_lineage.sources.iter().any(|source| {
-            matches!(source, LearningOriginSource::TurnEvidence { record_id, .. } if record_id == &source_record_id)
+            matches!(source, LearningOriginSource::TurnEvidence { record_id, .. } if record_id == &tool.record_id)
         }));
-        let summary = LearningOriginSummary::from(&proposed.learning.origin_lineage);
-        assert_eq!(summary.tool_evidence, 1);
-        assert_eq!(summary.turn_evidence, 0);
-
-        let reread = read_learning(&project, &vault, &proposed.learning.learning_id).unwrap();
-        assert_eq!(reread.schema_version, LEARNING_SCHEMA_VERSION);
-        assert!(reread.origin_lineage.sources.iter().any(|source| matches!(
-            source,
-            LearningOriginSource::ToolEvidence { record_id, .. } if record_id == &source_record_id
-        )));
-
-        let erased = erase_session_memory(
-            &project,
-            &vault,
-            &started.session.session_id,
-            EraseSessionMemoryInput {
-                expected_event_count: committed.session.event_count,
-                expected_name: committed.session.name.clone(),
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            erased.erased_learning_ids,
-            vec![proposed.learning.learning_id.clone()]
-        );
-        assert!(matches!(
-            read_learning(&project, &vault, &proposed.learning.learning_id),
-            Err(LeyCoreError::LearningNotFound(_))
-        ));
     }
 
     #[test]
-    fn atomic_recovery_child_lineage_uses_record_specific_evidence() {
-        let (_base, project, vault, _session_id, _record_id) = setup_learning();
-        let started = start_session(
-            &project,
-            &vault,
-            StartSessionInput {
-                request_id: request_id('d'),
-                name: "Atomic interrupted derivation".to_owned(),
-                goal: "Preserve record-specific recovery provenance".to_owned(),
-                source: SessionSource {
-                    kind: SessionSourceKind::HostHook,
-                    host: Some("codex".to_owned()),
-                    agent: Some("gpt-5".to_owned()),
-                    source_reference: None,
-                },
-            },
-        )
-        .unwrap();
+    fn schema_v11_persisted_recovery_lineage_uses_record_specific_evidence() {
+        let (_base, project, vault, _, _) = setup_learning();
+        let started = recovery_test_session(&project, &vault, 'a', "Atomic interrupted derivation");
+        let session_id = started.session.session_id.clone();
         let prompt = record_session_prompt(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('e'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("atomic-turn".to_owned()),
-                text: "Use SQLite for local persistence".to_owned(),
-            },
+            &session_id,
+            recovery_test_turn('b', "Use SQLite for local persistence"),
         )
         .unwrap();
         let prompt_id = prompt.session.prompts.last().unwrap().record_id.clone();
         let response = record_session_response(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('f'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("atomic-turn".to_owned()),
-                text: "Migration task completed".to_owned(),
-            },
+            &session_id,
+            recovery_test_turn('c', "Migration task completed"),
         )
         .unwrap();
         let response_id = response.session.responses.last().unwrap().record_id.clone();
-        let candidates = vec![
-            BatchMemoryCandidateClaim::Decision {
-                title: "Storage engine".to_owned(),
-                decision: "Use SQLite".to_owned(),
-                evidence_record_ids: vec![prompt_id.clone()],
-            },
-            BatchMemoryCandidateClaim::Task {
-                title: "Migrate local state".to_owned(),
-                status: TaskStatus::Completed,
-                details: "Migration completed".to_owned(),
-                evidence_record_ids: vec![response_id.clone()],
-            },
-            BatchMemoryCandidateClaim::Unresolved {
-                text: "Confirm SQLite backup behavior".to_owned(),
-                evidence_record_ids: vec![prompt_id.clone()],
-            },
+        let _ordinary = checkpoint_session(
+            &project,
+            &vault,
+            &session_id,
+            recovery_test_checkpoint(
+                'd',
+                "Recovered persistence work",
+                vec![DecisionInput {
+                    title: "Storage engine".to_owned(),
+                    decision: "Use SQLite".to_owned(),
+                    rationale: String::new(),
+                    alternatives: Vec::new(),
+                }],
+                vec![TaskInput {
+                    title: "Migrate local state".to_owned(),
+                    status: TaskStatus::Completed,
+                    details: "Migration completed".to_owned(),
+                }],
+                Vec::new(),
+                Vec::new(),
+                vec!["Confirm SQLite backup behavior".to_owned()],
+            ),
+        )
+        .unwrap();
+        let mut evidence = vec![prompt_id.clone(), response_id.clone()];
+        evidence.sort();
+        let replayed =
+            crate::session::recovery_fixture::replace_latest_checkpoint_with_persisted_recovery(
+                &project,
+                &vault,
+                &session_id,
+                crate::session::SESSION_BATCH_RECOVERY_SCHEMA_VERSION,
+                evidence,
+                vec![
+                    vec![prompt_id.clone()],
+                    vec![response_id.clone()],
+                    vec![prompt_id.clone()],
+                ],
+                None,
+                None,
+            )
+            .unwrap();
+        let checkpoint = replayed.checkpoints.last().unwrap();
+        let ids = [
+            checkpoint.decisions[0].id.clone(),
+            checkpoint.tasks[0].id.clone(),
+            crate::session::unresolved_record_id(&checkpoint.event_id, 0),
         ];
-        let verification = verify_batch_memory_transition(
+        let mut learnings = Vec::new();
+        for (digit, record_id) in ['e', 'f', '9'].into_iter().zip(ids.iter()) {
+            let mut input = proposal(request_id(digit), &session_id, record_id);
+            input.title = format!("Evidence-backed record {digit}");
+            input.guidance =
+                "Preserve only the evidence bound to this recovered record.".to_owned();
+            learnings.push(propose_learning(&project, &vault, input).unwrap().learning);
+        }
+        let candidate_fingerprint = crate::session::read_recovery_derivation_origin(
             &project,
             &vault,
-            &started.session.session_id,
-            BatchMemoryTransitionInput {
-                expected_event_count: 3,
-                checkpoint_summary: "Recovered persistence work".to_owned(),
-                candidates: candidates.clone(),
-                deferred_evidence_record_ids: Vec::new(),
-            },
+            &session_id,
+            &checkpoint.event_id,
+            &ids[0],
         )
-        .unwrap();
-        assert_eq!(
-            verification.state,
-            crate::MemoryTransitionState::ReviewRequired
-        );
-        let fingerprint = verification.candidate_fingerprint.clone();
-        let committed = commit_batch_memory_transition(
-            &project,
-            &vault,
-            &started.session.session_id,
-            CommitBatchMemoryTransitionInput {
-                request_id: request_id('a'),
-                expected_event_count: 3,
-                candidate_fingerprint: verification.candidate_fingerprint,
-                checkpoint_summary: "Recovered persistence work".to_owned(),
-                candidates,
-            },
-        )
-        .unwrap();
-        let checkpoint = committed.session.checkpoints.last().unwrap();
-        let decision_id = checkpoint.decisions[0].id.clone();
-        let task_id = checkpoint.tasks[0].id.clone();
-        let unresolved_id = crate::session::unresolved_record_id(&checkpoint.event_id, 0);
-
-        let mut decision_input =
-            proposal(request_id('b'), &started.session.session_id, &decision_id);
-        decision_input.title = "SQLite was selected".to_owned();
-        decision_input.guidance = "Use SQLite for the local persistence path.".to_owned();
-        let decision_learning = propose_learning(&project, &vault, decision_input).unwrap();
-        assert!(decision_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::RecoveryCandidate {
-                    session_id,
-                    candidate_fingerprint,
-                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
-            )));
-        assert!(decision_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &prompt_id
-            )));
-        assert!(!decision_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &response_id
-            )));
-
-        let mut task_input = proposal(request_id('c'), &started.session.session_id, &task_id);
-        task_input.title = "Migration completed".to_owned();
-        task_input.guidance = "Treat the migration task as completed historical work.".to_owned();
-        let task_learning = propose_learning(&project, &vault, task_input).unwrap();
-        assert!(task_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::RecoveryCandidate {
-                    session_id,
-                    candidate_fingerprint,
-                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
-            )));
-        assert!(task_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &response_id
-            )));
-        assert!(!task_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &prompt_id
-            )));
-
-        let mut unresolved_input =
-            proposal(request_id('9'), &started.session.session_id, &unresolved_id);
-        unresolved_input.title = "SQLite backup behavior still needs confirmation".to_owned();
-        unresolved_input.guidance =
-            "Keep SQLite backup behavior explicitly unresolved until it is verified.".to_owned();
-        let unresolved_learning = propose_learning(&project, &vault, unresolved_input).unwrap();
-        assert_eq!(
-            unresolved_learning.learning.evidence[0].record_type,
-            "unresolved"
-        );
-        assert!(unresolved_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::RecoveryCandidate {
-                    session_id,
-                    candidate_fingerprint,
-                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
-            )));
-        assert!(unresolved_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &prompt_id
-            )));
-        assert!(!unresolved_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &response_id
-            )));
+        .unwrap()
+        .unwrap()
+        .candidate_fingerprint;
+        for learning in &learnings {
+            assert!(has_recovery_origin(learning, &candidate_fingerprint));
+        }
+        assert!(has_turn_origin(&learnings[0], &prompt_id));
+        assert!(!has_turn_origin(&learnings[0], &response_id));
+        assert!(has_turn_origin(&learnings[1], &response_id));
+        assert!(!has_turn_origin(&learnings[1], &prompt_id));
+        assert!(has_turn_origin(&learnings[2], &prompt_id));
+        assert!(!has_turn_origin(&learnings[2], &response_id));
     }
 
     #[test]
-    fn rich_problem_recovery_child_lineage_uses_component_specific_evidence() {
-        let (_base, project, vault, _session_id, _record_id) = setup_learning();
-        let started = start_session(
-            &project,
-            &vault,
-            StartSessionInput {
-                request_id: request_id('a'),
-                name: "Interrupted debugging episode".to_owned(),
-                goal: "Recover failed attempt and resolution provenance".to_owned(),
-                source: SessionSource {
-                    kind: SessionSourceKind::HostHook,
-                    host: Some("codex".to_owned()),
-                    agent: Some("gpt-5".to_owned()),
-                    source_reference: None,
-                },
-            },
-        )
-        .unwrap();
+    fn schema_v12_persisted_rich_problem_lineage_uses_component_specific_evidence() {
+        let (_base, project, vault, _, _) = setup_learning();
+        let started = recovery_test_session(&project, &vault, 'a', "Interrupted debugging episode");
+        let session_id = started.session.session_id.clone();
         let symptom = record_session_prompt(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('b'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("rich-problem-1".to_owned()),
-                text: "Refresh returns 401 although the session should survive.".to_owned(),
-            },
+            &session_id,
+            recovery_test_turn(
+                'b',
+                "Refresh returns 401 although the session should survive.",
+            ),
         )
         .unwrap();
         let symptom_id = symptom.session.prompts.last().unwrap().record_id.clone();
         let attempt = record_session_response(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('c'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("rich-problem-1".to_owned()),
-                text: "Clearing cookies had no effect; the 401 remained.".to_owned(),
-            },
+            &session_id,
+            recovery_test_turn('c', "Clearing cookies had no effect; the 401 remained."),
         )
         .unwrap();
-        let attempt_evidence_id = attempt.session.responses.last().unwrap().record_id.clone();
+        let attempt_id = attempt.session.responses.last().unwrap().record_id.clone();
         let resolution = record_session_prompt(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('d'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("rich-problem-2".to_owned()),
-                text:
-                    "The expired token was the root cause; refreshing it fixed repeated refreshes."
-                        .to_owned(),
-            },
+            &session_id,
+            recovery_test_turn(
+                'd',
+                "The expired token was the root cause; refreshing it fixed repeated refreshes.",
+            ),
         )
         .unwrap();
-        let resolution_evidence_id = resolution.session.prompts.last().unwrap().record_id.clone();
-        let candidate = RichProblemMemoryCandidate {
-            title: "Login refresh failure".to_owned(),
-            symptom: "Refreshing returns 401".to_owned(),
-            expected: "The authenticated session survives refresh".to_owned(),
-            evidence_record_ids: vec![symptom_id.clone()],
-            attempts: vec![RichProblemAttemptCandidate {
-                action: "Clear browser cookies".to_owned(),
-                outcome: AttemptOutcome::NoEffect,
-                evidence: "Refresh still returned 401".to_owned(),
-                evidence_record_ids: vec![attempt_evidence_id.clone()],
-            }],
-            resolution: Some(RichProblemResolutionCandidate {
-                root_cause: "The client reused an expired access token".to_owned(),
-                change: "Refresh the token before protected navigation".to_owned(),
-                verification: "Repeated refreshes remained authenticated".to_owned(),
-                evidence_record_ids: vec![resolution_evidence_id.clone()],
-            }),
-        };
-        let verification = verify_rich_problem_memory_transition(
+        let resolution_id = resolution.session.prompts.last().unwrap().record_id.clone();
+        let _ordinary = checkpoint_session(
             &project,
             &vault,
-            &started.session.session_id,
-            RichProblemMemoryTransitionInput {
-                expected_event_count: 4,
-                candidate: candidate.clone(),
-                deferred_evidence_record_ids: Vec::new(),
-            },
+            &session_id,
+            recovery_test_checkpoint(
+                'e',
+                "Login refresh failure",
+                Vec::new(),
+                Vec::new(),
+                vec![ProblemInput {
+                    title: "Login refresh failure".to_owned(),
+                    symptom: "Refreshing returns 401".to_owned(),
+                    expected: "The authenticated session survives refresh".to_owned(),
+                    attempts: vec![AttemptInput {
+                        action: "Clear browser cookies".to_owned(),
+                        outcome: AttemptOutcome::NoEffect,
+                        evidence: "Refresh still returned 401".to_owned(),
+                    }],
+                    resolution: Some(ResolutionInput {
+                        root_cause: "The client reused an expired access token".to_owned(),
+                        change: "Refresh the token before protected navigation".to_owned(),
+                        verification: "Repeated refreshes remained authenticated".to_owned(),
+                    }),
+                }],
+                Vec::new(),
+                Vec::new(),
+            ),
         )
         .unwrap();
-        assert_eq!(
-            verification.state,
-            crate::MemoryTransitionState::ReviewRequired
-        );
-        let fingerprint = verification.candidate_fingerprint.clone();
-        let committed = commit_rich_problem_memory_transition(
+        let mut evidence = vec![
+            symptom_id.clone(),
+            attempt_id.clone(),
+            resolution_id.clone(),
+        ];
+        evidence.sort();
+        let replayed =
+            crate::session::recovery_fixture::replace_latest_checkpoint_with_persisted_recovery(
+                &project,
+                &vault,
+                &session_id,
+                crate::session::SESSION_RICH_PROBLEM_RECOVERY_SCHEMA_VERSION,
+                evidence,
+                vec![
+                    vec![symptom_id.clone()],
+                    vec![attempt_id.clone()],
+                    vec![resolution_id.clone()],
+                ],
+                None,
+                None,
+            )
+            .unwrap();
+        let checkpoint = replayed.checkpoints.last().unwrap();
+        let problem = &checkpoint.problems[0];
+        let attempt_learning = propose_learning(
             &project,
             &vault,
-            &started.session.session_id,
-            CommitRichProblemMemoryTransitionInput {
-                request_id: request_id('e'),
-                expected_event_count: 4,
-                candidate_fingerprint: verification.candidate_fingerprint,
-                candidate,
-            },
+            proposal(request_id('f'), &session_id, &problem.attempts[0].id),
         )
-        .unwrap();
-        let problem = &committed.session.checkpoints.last().unwrap().problems[0];
-        let attempt_id = problem.attempts[0].id.clone();
-        let resolution_id = problem.resolution.as_ref().unwrap().id.clone();
-
-        let mut attempt_input = proposal(request_id('f'), &started.session.session_id, &attempt_id);
-        attempt_input.title = "Cookie clearing did not solve refresh authentication".to_owned();
-        attempt_input.guidance =
-            "Do not treat cookie clearing as the fix for this refresh failure.".to_owned();
-        let attempt_learning = propose_learning(&project, &vault, attempt_input).unwrap();
-        assert!(attempt_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::RecoveryCandidate {
-                    session_id,
-                    candidate_fingerprint,
-                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
-            )));
-        assert!(attempt_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &attempt_evidence_id
-            )));
-        for unrelated in [&symptom_id, &resolution_evidence_id] {
-            assert!(
-                !attempt_learning
-                    .learning
-                    .origin_lineage
-                    .sources
-                    .iter()
-                    .any(|source| matches!(
-                        source,
-                        LearningOriginSource::TurnEvidence { session_id, record_id }
-                            if session_id == &started.session.session_id && record_id == unrelated
-                    ))
-            );
-        }
-
-        let mut resolution_input =
-            proposal(request_id('7'), &started.session.session_id, &resolution_id);
-        resolution_input.title = "Expired token caused refresh authentication failure".to_owned();
-        resolution_input.guidance =
-            "Refresh the access token before protected navigation.".to_owned();
-        let resolution_learning = propose_learning(&project, &vault, resolution_input).unwrap();
-        assert!(resolution_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &resolution_evidence_id
-            )));
-        for unrelated in [&symptom_id, &attempt_evidence_id] {
-            assert!(!resolution_learning
-                .learning
-                .origin_lineage
-                .sources
-                .iter()
-                .any(|source| matches!(
-                    source,
-                    LearningOriginSource::TurnEvidence { session_id, record_id }
-                        if session_id == &started.session.session_id && record_id == unrelated
-                )));
-        }
+        .unwrap()
+        .learning;
+        let resolution_learning = propose_learning(
+            &project,
+            &vault,
+            proposal(
+                request_id('7'),
+                &session_id,
+                &problem.resolution.as_ref().unwrap().id,
+            ),
+        )
+        .unwrap()
+        .learning;
+        assert!(has_recovery_origin(
+            &attempt_learning,
+            &crate::session::read_recovery_derivation_origin(
+                &project,
+                &vault,
+                &session_id,
+                &checkpoint.event_id,
+                &problem.attempts[0].id
+            )
+            .unwrap()
+            .unwrap()
+            .candidate_fingerprint
+        ));
+        assert!(has_turn_origin(&attempt_learning, &attempt_id));
+        assert!(!has_turn_origin(&attempt_learning, &symptom_id));
+        assert!(has_turn_origin(&resolution_learning, &resolution_id));
+        assert!(!has_turn_origin(&resolution_learning, &attempt_id));
     }
 
     #[test]
-    fn composite_recovery_child_lineage_uses_component_specific_evidence() {
-        let (_base, project, vault, _session_id, _record_id) = setup_learning();
-        let started = start_session(
-            &project,
-            &vault,
-            StartSessionInput {
-                request_id: request_id('a'),
-                name: "Composite interrupted derivation".to_owned(),
-                goal: "Preserve rich and sibling recovery provenance".to_owned(),
-                source: SessionSource {
-                    kind: SessionSourceKind::HostHook,
-                    host: Some("codex".to_owned()),
-                    agent: Some("gpt-5".to_owned()),
-                    source_reference: None,
-                },
-            },
-        )
-        .unwrap();
+    fn schema_v13_persisted_composite_lineage_keeps_each_child_binding() {
+        let (_base, project, vault, _, _) = setup_learning();
+        let started =
+            recovery_test_session(&project, &vault, 'a', "Composite interrupted derivation");
+        let session_id = started.session.session_id.clone();
         let symptom = record_session_prompt(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('b'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("composite-problem".to_owned()),
-                text: "Refresh returns 401 although authentication should survive.".to_owned(),
-            },
+            &session_id,
+            recovery_test_turn(
+                'b',
+                "Refresh returns 401 although authentication should survive.",
+            ),
         )
         .unwrap();
         let symptom_id = symptom.session.prompts.last().unwrap().record_id.clone();
         let attempt = record_session_response(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('c'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("composite-problem".to_owned()),
-                text: "Clearing cookies had no effect; the 401 remained.".to_owned(),
-            },
+            &session_id,
+            recovery_test_turn('c', "Clearing cookies had no effect; the 401 remained."),
         )
         .unwrap();
-        let attempt_evidence_id = attempt.session.responses.last().unwrap().record_id.clone();
+        let attempt_id = attempt.session.responses.last().unwrap().record_id.clone();
         let decision = record_session_prompt(
             &project,
             &vault,
-            &started.session.session_id,
-            TurnEvidenceInput {
-                request_id: request_id('d'),
-                origin: TurnEvidenceOrigin::HostHook,
-                host: Some("codex".to_owned()),
-                correlation_material: Some("composite-policy".to_owned()),
-                text: "Adopt refresh-before-navigation for protected routes.".to_owned(),
-            },
+            &session_id,
+            recovery_test_turn('d', "Adopt refresh-before-navigation for protected routes."),
         )
         .unwrap();
         let decision_evidence_id = decision.session.prompts.last().unwrap().record_id.clone();
-        let rich_problem = RichProblemMemoryCandidate {
-            title: "Login refresh failure".to_owned(),
-            symptom: "Refreshing returns 401".to_owned(),
-            expected: "The authenticated session survives refresh".to_owned(),
-            evidence_record_ids: vec![symptom_id.clone()],
-            attempts: vec![RichProblemAttemptCandidate {
-                action: "Clear browser cookies".to_owned(),
-                outcome: AttemptOutcome::NoEffect,
-                evidence: "Refresh still returned 401".to_owned(),
-                evidence_record_ids: vec![attempt_evidence_id.clone()],
-            }],
-            resolution: None,
-        };
-        let siblings = vec![BatchMemoryCandidateClaim::Decision {
-            title: "Token refresh policy".to_owned(),
-            decision: "Refresh before protected navigation".to_owned(),
-            evidence_record_ids: vec![decision_evidence_id.clone()],
-        }];
-        let verification = verify_composite_memory_transition(
+        let _ordinary = checkpoint_session(
             &project,
             &vault,
-            &started.session.session_id,
-            CompositeMemoryTransitionInput {
-                expected_event_count: 4,
-                checkpoint_summary: "Recovered login debugging and policy".to_owned(),
-                rich_problem: rich_problem.clone(),
-                siblings: siblings.clone(),
-                deferred_evidence_record_ids: Vec::new(),
-            },
+            &session_id,
+            recovery_test_checkpoint(
+                'e',
+                "Recovered login debugging and policy",
+                vec![DecisionInput {
+                    title: "Token refresh policy".to_owned(),
+                    decision: "Refresh before protected navigation".to_owned(),
+                    rationale: String::new(),
+                    alternatives: Vec::new(),
+                }],
+                Vec::new(),
+                vec![ProblemInput {
+                    title: "Login refresh failure".to_owned(),
+                    symptom: "Refreshing returns 401".to_owned(),
+                    expected: "The authenticated session survives refresh".to_owned(),
+                    attempts: vec![AttemptInput {
+                        action: "Clear browser cookies".to_owned(),
+                        outcome: AttemptOutcome::NoEffect,
+                        evidence: "Refresh still returned 401".to_owned(),
+                    }],
+                    resolution: None,
+                }],
+                Vec::new(),
+                Vec::new(),
+            ),
         )
         .unwrap();
-        assert_eq!(
-            verification.state,
-            crate::MemoryTransitionState::ReviewRequired
-        );
-        let fingerprint = verification.candidate_fingerprint.clone();
-        let committed = commit_composite_memory_transition(
+        let mut evidence = vec![
+            symptom_id.clone(),
+            attempt_id.clone(),
+            decision_evidence_id.clone(),
+        ];
+        evidence.sort();
+        let replayed =
+            crate::session::recovery_fixture::replace_latest_checkpoint_with_persisted_recovery(
+                &project,
+                &vault,
+                &session_id,
+                crate::session::SESSION_COMPOSITE_RECOVERY_SCHEMA_VERSION,
+                evidence,
+                vec![
+                    vec![decision_evidence_id.clone()],
+                    vec![symptom_id.clone()],
+                    vec![attempt_id.clone()],
+                ],
+                None,
+                None,
+            )
+            .unwrap();
+        let checkpoint = replayed.checkpoints.last().unwrap();
+        let problem = &checkpoint.problems[0];
+        let attempt_learning = propose_learning(
             &project,
             &vault,
-            &started.session.session_id,
-            CommitCompositeMemoryTransitionInput {
-                request_id: request_id('e'),
-                expected_event_count: 4,
-                candidate_fingerprint: verification.candidate_fingerprint,
-                checkpoint_summary: "Recovered login debugging and policy".to_owned(),
-                rich_problem,
-                siblings,
-            },
+            proposal(request_id('f'), &session_id, &problem.attempts[0].id),
         )
+        .unwrap()
+        .learning;
+        let decision_learning = propose_learning(
+            &project,
+            &vault,
+            proposal(request_id('7'), &session_id, &checkpoint.decisions[0].id),
+        )
+        .unwrap()
+        .learning;
+        let checkpoint_origin = crate::session::read_recovery_derivation_origin(
+            &project,
+            &vault,
+            &session_id,
+            &checkpoint.event_id,
+            &checkpoint.id,
+        )
+        .unwrap()
         .unwrap();
-        let checkpoint = committed.session.checkpoints.last().unwrap();
-        let checkpoint_id = checkpoint.id.clone();
-        let attempt_id = checkpoint.problems[0].attempts[0].id.clone();
-        let decision_id = checkpoint.decisions[0].id.clone();
-
-        let mut checkpoint_input =
-            proposal(request_id('8'), &started.session.session_id, &checkpoint_id);
-        checkpoint_input.title = "Composite recovery window remained attributable".to_owned();
-        checkpoint_input.guidance =
-            "Treat the composite checkpoint as provenance over the complete recovery window."
-                .to_owned();
-        let checkpoint_learning = propose_learning(&project, &vault, checkpoint_input).unwrap();
-        assert!(checkpoint_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::RecoveryCandidate {
-                    session_id,
-                    candidate_fingerprint,
-                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
-            )));
-        for evidence_id in [&symptom_id, &attempt_evidence_id, &decision_evidence_id] {
-            assert!(checkpoint_learning
-                .learning
-                .origin_lineage
-                .sources
-                .iter()
-                .any(|source| matches!(
-                    source,
-                    LearningOriginSource::TurnEvidence { session_id, record_id }
-                        if session_id == &started.session.session_id && record_id == evidence_id
-                )));
-        }
-
-        let mut attempt_input = proposal(request_id('f'), &started.session.session_id, &attempt_id);
-        attempt_input.title = "Cookie clearing did not fix refresh authentication".to_owned();
-        attempt_input.guidance =
-            "Do not treat cookie clearing as the fix for this refresh failure.".to_owned();
-        let attempt_learning = propose_learning(&project, &vault, attempt_input).unwrap();
-        assert!(attempt_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::RecoveryCandidate {
-                    session_id,
-                    candidate_fingerprint,
-                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
-            )));
-        assert!(attempt_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &attempt_evidence_id
-            )));
-        for unrelated in [&symptom_id, &decision_evidence_id] {
-            assert!(
-                !attempt_learning
-                    .learning
-                    .origin_lineage
-                    .sources
-                    .iter()
-                    .any(|source| matches!(
-                        source,
-                        LearningOriginSource::TurnEvidence { session_id, record_id }
-                            if session_id == &started.session.session_id && record_id == unrelated
-                    ))
-            );
-        }
-
-        let mut decision_input =
-            proposal(request_id('7'), &started.session.session_id, &decision_id);
-        decision_input.title = "Protected routes refresh before navigation".to_owned();
-        decision_input.guidance =
-            "Refresh the access token before protected navigation.".to_owned();
-        let decision_learning = propose_learning(&project, &vault, decision_input).unwrap();
-        assert!(decision_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::RecoveryCandidate {
-                    session_id,
-                    candidate_fingerprint,
-                } if session_id == &started.session.session_id && candidate_fingerprint == &fingerprint
-            )));
-        assert!(decision_learning
-            .learning
-            .origin_lineage
-            .sources
-            .iter()
-            .any(|source| matches!(
-                source,
-                LearningOriginSource::TurnEvidence { session_id, record_id }
-                    if session_id == &started.session.session_id && record_id == &decision_evidence_id
-            )));
-        for unrelated in [&symptom_id, &attempt_evidence_id] {
-            assert!(!decision_learning
-                .learning
-                .origin_lineage
-                .sources
-                .iter()
-                .any(|source| matches!(
-                    source,
-                    LearningOriginSource::TurnEvidence { session_id, record_id }
-                        if session_id == &started.session.session_id && record_id == unrelated
-                )));
-        }
+        assert!(has_recovery_origin(
+            &attempt_learning,
+            &checkpoint_origin.candidate_fingerprint
+        ));
+        assert!(has_turn_origin(&attempt_learning, &attempt_id));
+        assert!(!has_turn_origin(&attempt_learning, &decision_evidence_id));
+        assert!(has_recovery_origin(
+            &decision_learning,
+            &checkpoint_origin.candidate_fingerprint
+        ));
+        assert!(has_turn_origin(&decision_learning, &decision_evidence_id));
+        assert!(!has_turn_origin(&decision_learning, &symptom_id));
     }
 
     #[test]

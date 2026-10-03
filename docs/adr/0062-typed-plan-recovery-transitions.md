@@ -1,6 +1,6 @@
 # ADR 0062: Typed Plan recovery transitions
 
-- Status: Accepted historically; model-facing MCP recovery wrappers retired by ADR 0091 while core typed Plan recovery compatibility remains supported.
+- Status: Accepted historically; typed Plan recovery verifier/writer retired by ADR 0091. Persisted schema-v10 replay, bindings, fingerprints, and provenance remain supported.
 - Date: 2026-09-20
 - Extends: ADR 0029, ADR 0061
 

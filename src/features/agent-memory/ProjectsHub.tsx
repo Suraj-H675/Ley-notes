@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/lib/classnames";
+import { humanize } from "./AgentMemoryPresentation";
 import { searchAgentProjects } from "./api";
 import type {
   AgentProjectCatalog,
@@ -849,10 +850,4 @@ function relativeTime(timestamp: number): string {
   if (hours < 24) return `opened ${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `opened ${days}d ago`;
-}
-
-function humanize(value: string): string {
-  return value
-    .replaceAll("-", " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
 }

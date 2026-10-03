@@ -4,7 +4,7 @@ Ley turns retained session evidence into project-level lessons without treating 
 
 ## Propose a cited lesson
 
-Use a session ID plus an eligible structured record ID from `ley session show --json`, or an exact captured `tev_` user-prompt/assistant-response record surfaced by an explicit evidence workflow such as the local Consolidation Inbox. Body-free turn observations are not valid learning evidence. Schema-v14 `toe_` host-tool observations remain supporting provenance and are not accepted as direct learning evidence. ADR 0085 adds one indirect path: when an isolated `toe_` has first been reviewed and committed through the dedicated schema-v16 observed-Command recovery route, the resulting durable Command is an ordinary structured session record that may later support a Learning proposal. Actor and provenance are required so a script cannot silently impersonate a user:
+Use a session ID plus an eligible structured record ID from `ley session show --json`, or an exact captured `tev_` user-prompt/assistant-response record surfaced by an explicit evidence workflow such as the local Consolidation Inbox. Body-free turn observations are not valid learning evidence. Schema-v14 `toe_` host-tool observations remain supporting provenance and are not accepted as direct learning evidence. Earlier Ley versions could record an isolated `toe_` in a schema-v16 observed-Command recovery checkpoint; those historical Commands remain structured session records and their stored learning provenance remains readable. The schema-v16 recovery writer is retired. Actor and provenance are required so a script cannot silently impersonate a user:
 
 ```bash
 ley learning propose /path/to/project \

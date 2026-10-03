@@ -16,6 +16,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { cn } from "@/shared/lib/classnames";
+import { humanize } from "./AgentMemoryPresentation";
 import { readAgentProjectActivity } from "./api";
 import type {
   ArtifactEvidenceReference,
@@ -774,12 +775,6 @@ function ActivitySkeleton() {
       ))}
     </div>
   );
-}
-
-function humanize(value: string): string {
-  return value
-    .replaceAll("-", " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
 function relativeTime(timestamp: number): string {

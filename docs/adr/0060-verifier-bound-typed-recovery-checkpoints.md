@@ -1,6 +1,6 @@
 # ADR 0060: Verifier-bound typed recovery checkpoints
 
-- Status: Accepted historically; model-facing MCP recovery wrappers retired by ADR 0091 while core verifier/writer semantics remain supported compatibility behavior.
+- Status: Accepted historically; core recovery verifiers and writers retired by ADR 0091. Persisted schema-v8 replay, bindings, fingerprints, and provenance remain supported.
 - Date: 2026-09-20
 - Extends: ADR 0029, ADR 0030
 

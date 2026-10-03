@@ -1,6 +1,6 @@
 # ADR 0029: Deterministic memory transition verification
 
-Status: accepted historically; model-facing MCP verifier retired by [ADR 0091](0091-retire-shape-specific-recovery-mcp-wrappers.md). Core verification semantics/tests remain compatibility authority.
+Status: accepted historically; core verifier retired by [ADR 0091](0091-retire-shape-specific-recovery-mcp-wrappers.md). Persisted schema-v3/v8-v13/v16 replay and fingerprint validation remain supported.
 
 ## Context
 

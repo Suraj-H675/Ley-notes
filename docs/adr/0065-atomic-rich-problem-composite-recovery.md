@@ -1,6 +1,6 @@
 # ADR 0065: Atomic rich-Problem composite recovery
 
-- Status: Accepted historically; model-facing MCP recovery wrappers retired by ADR 0091 while core composite recovery compatibility remains supported.
+- Status: Accepted historically; composite recovery verifier/writer retired by ADR 0091. Persisted schema-v13 replay, component bindings, fingerprints, and provenance remain supported.
 - Date: 2026-09-20
 - Extends: ADR 0029, ADR 0063, ADR 0064
 

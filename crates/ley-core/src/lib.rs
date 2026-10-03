@@ -29,12 +29,12 @@ mod knowledge_view;
 mod learning;
 mod learning_context;
 mod memory_compiler;
-mod memory_transition;
 mod policy_bundle;
 mod private_state;
 mod project_activity;
 mod project_catalog;
 mod project_memory_search;
+mod recovery_compat;
 mod resume_context;
 mod retrieval;
 mod revision;
@@ -209,46 +209,6 @@ pub use memory_compiler::{
     SessionMemoryCompilationPack, DEFAULT_MEMORY_COMPILE_CHARACTERS,
     DEFAULT_MEMORY_COMPILE_RESULTS, MAX_MEMORY_COMPILE_CHARACTERS, MAX_MEMORY_COMPILE_RESULTS,
     MIN_MEMORY_COMPILE_CHARACTERS,
-};
-pub use memory_transition::{
-    commit_batch_memory_transition, commit_batch_memory_transition_with_continuity_transition,
-    commit_composite_memory_transition,
-    commit_composite_memory_transition_with_continuity_transition,
-    commit_observed_command_memory_transition,
-    commit_observed_command_memory_transition_with_continuity_transition,
-    commit_plan_memory_transition, commit_plan_memory_transition_with_continuity_transition,
-    commit_rich_problem_memory_transition,
-    commit_rich_problem_memory_transition_with_continuity_transition,
-    commit_structured_memory_transition,
-    commit_structured_memory_transition_with_continuity_transition, commit_task_memory_transition,
-    commit_task_memory_transition_with_continuity_transition, commit_unresolved_memory_transition,
-    commit_unresolved_memory_transition_with_continuity_transition, verify_batch_memory_transition,
-    verify_batch_memory_transition_with_continuity_transition, verify_composite_memory_transition,
-    verify_composite_memory_transition_with_continuity_transition, verify_memory_transition,
-    verify_memory_transition_with_continuity_transition, verify_observed_command_memory_transition,
-    verify_observed_command_memory_transition_with_continuity_transition,
-    verify_rich_problem_memory_transition,
-    verify_rich_problem_memory_transition_with_continuity_transition,
-    verify_typed_memory_transition, verify_typed_memory_transition_with_continuity_transition,
-    BatchMemoryCandidateClaim, BatchMemoryTransitionInput, CommitBatchMemoryTransitionInput,
-    CommitCompositeMemoryTransitionInput, CommitObservedCommandMemoryTransitionInput,
-    CommitPlanMemoryTransitionInput, CommitRichProblemMemoryTransitionInput,
-    CommitStructuredMemoryTransitionInput, CommitTaskMemoryTransitionInput,
-    CommitUnresolvedMemoryTransitionInput, CompositeMemoryTransitionInput, MemoryCandidateClaim,
-    MemoryCandidateKind, MemoryEvidenceAnchorQuality, MemoryTransitionClaimCheck,
-    MemoryTransitionCoverage, MemoryTransitionInput, MemoryTransitionIssue,
-    MemoryTransitionIssueKind, MemoryTransitionOverlap, MemoryTransitionOverlapKind,
-    MemoryTransitionState, MemoryTransitionVerification, ObservedCommandMemoryTransitionInput,
-    ObservedCommandTransitionIssue, ObservedCommandTransitionIssueKind,
-    ObservedCommandTransitionState, ObservedCommandTransitionVerification,
-    RichProblemAttemptCandidate, RichProblemMemoryCandidate, RichProblemMemoryTransitionInput,
-    RichProblemResolutionCandidate, TypedMemoryCandidateClaim, TypedMemoryTransitionInput,
-    MAX_BATCH_CHECKPOINT_SUMMARY_CHARACTERS, MAX_MEMORY_TRANSITION_CLAIMS,
-    MAX_MEMORY_TRANSITION_DEFERRED_EVIDENCE, MAX_MEMORY_TRANSITION_DIAGNOSTIC_IDS,
-    MAX_MEMORY_TRANSITION_EVIDENCE_PER_CLAIM, MAX_MEMORY_TRANSITION_OVERLAPS,
-    MAX_MEMORY_TRANSITION_OVERLAP_STATEMENT_CHARACTERS, MAX_MEMORY_TRANSITION_STATEMENT_CHARACTERS,
-    MAX_MEMORY_TRANSITION_SUBJECT_CHARACTERS, MAX_RICH_PROBLEM_ATTEMPTS,
-    MAX_RICH_PROBLEM_TEXT_CHARACTERS, OBSERVED_COMMAND_CANDIDATE_SUMMARY,
 };
 pub use policy_bundle::{
     validate_policy_bundle_id, PolicyBundle, PolicyBundleAttachment, PolicyBundleAttachmentList,

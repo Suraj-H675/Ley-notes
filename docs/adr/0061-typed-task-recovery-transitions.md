@@ -1,6 +1,6 @@
 # ADR 0061: Typed Task recovery transitions
 
-- Status: Accepted historically; model-facing MCP recovery wrappers retired by ADR 0091 while core typed Task recovery compatibility remains supported.
+- Status: Accepted historically; typed Task recovery verifier/writer retired by ADR 0091. Persisted schema-v9 replay, bindings, fingerprints, and provenance remain supported.
 - Date: 2026-09-20
 - Extends: ADR 0029, ADR 0060
 

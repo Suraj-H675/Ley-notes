@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted historically; model-facing observed-Command recovery writer retired by ADR 0091 while core schema-v16 compatibility remains supported.
+Accepted historically; observed-Command recovery writer retired by ADR 0091. Persisted schema-v16 replay, source binding, fingerprint validation, and provenance remain supported.
 
 Extends ADR 0069. The read-only observed-Command verifier remains non-authoritative; this ADR adds a
 separate explicit writer only while the session is active and the recovery window contains one

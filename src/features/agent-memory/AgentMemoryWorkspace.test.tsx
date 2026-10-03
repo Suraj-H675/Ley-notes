@@ -238,12 +238,7 @@ describe("Agent Memory workspace boundaries", () => {
     );
     api.refreshAgentProject.mockResolvedValue(dashboard);
 
-    render(
-      <AgentMemoryWorkspace
-        open
-        onClose={vi.fn()}
-      />,
-    );
+    render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
       name: "Pick up any project without starting over",
     });
@@ -299,7 +294,7 @@ describe("Agent Memory workspace boundaries", () => {
     });
     api.connectAgentProject.mockResolvedValue(dashboard);
 
-    render(<AgentMemoryWorkspace open onClose={vi.fn()} />);
+    render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
       name: "Pick up any project without starting over",
     });
@@ -340,7 +335,7 @@ describe("Agent Memory workspace boundaries", () => {
     });
     api.chooseLegacyAgentVault.mockResolvedValue(null);
 
-    render(<AgentMemoryWorkspace open onClose={vi.fn()} />);
+    render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
       name: "Pick up any project without starting over",
     });
@@ -395,7 +390,7 @@ describe("Agent Memory workspace boundaries", () => {
       },
     });
 
-    render(<AgentMemoryWorkspace open onClose={vi.fn()} />);
+    render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
       name: "Pick up any project without starting over",
     });
@@ -508,7 +503,7 @@ describe("Agent Memory workspace boundaries", () => {
       },
     });
 
-    render(<AgentMemoryWorkspace open onClose={vi.fn()} />);
+    render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
       name: "Pick up any project without starting over",
     });
@@ -1175,12 +1170,7 @@ describe("Agent Memory workspace boundaries", () => {
       })),
     });
 
-    render(
-      <AgentMemoryWorkspace
-        open
-        onClose={vi.fn()}
-      />,
-    );
+    render(<AgentMemoryWorkspace />);
 
     await screen.findByRole("heading", {
       name: "Pick up any project without starting over",

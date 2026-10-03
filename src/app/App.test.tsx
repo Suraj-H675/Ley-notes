@@ -18,7 +18,7 @@ describe("desktop root", () => {
     render(<App />);
 
     expect(screen.getByTestId("agent-memory-root")).toBeVisible();
-    expect(memoryRoot.props).toMatchObject({ open: true, closable: false });
+    expect(memoryRoot.props).toEqual({});
     expect(memoryRoot.props).not.toHaveProperty("noteExport");
   });
 });

@@ -1,5 +1,4 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowLeft,
   BookCheck,
@@ -14,7 +13,6 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  X,
 } from "lucide-react";
 import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/lib/classnames";
@@ -101,15 +99,7 @@ const SpecificationsPanel = lazy(() =>
     default: module.SpecificationsPanel,
   })),
 );
-export function AgentMemoryWorkspace({
-  open,
-  onClose,
-  closable = true,
-}: {
-  open: boolean;
-  onClose: () => void;
-  closable?: boolean;
-}) {
+export function AgentMemoryWorkspace() {
   const [section, setSection] = useState<Section>("overview");
   const [projectPath, setProjectPath] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<AgentProjectCatalog | null>(null);
@@ -128,7 +118,7 @@ export function AgentMemoryWorkspace({
   );
 
   useEffect(() => {
-    if (!open || projectPath || catalog) return;
+    if (projectPath || catalog) return;
     let current = true;
     const legacyProjectPath =
       localStorage.getItem(LAST_AGENT_PROJECT_KEY) ?? undefined;
@@ -147,10 +137,10 @@ export function AgentMemoryWorkspace({
     return () => {
       current = false;
     };
-  }, [catalog, catalogRevision, open, projectPath]);
+  }, [catalog, catalogRevision, projectPath]);
 
   useEffect(() => {
-    if (!open || !projectPath || inspectedPath === projectPath) return;
+    if (!projectPath || inspectedPath === projectPath) return;
     let current = true;
     void inspectAgentProject(projectPath)
       .then((next) => {
@@ -168,7 +158,7 @@ export function AgentMemoryWorkspace({
     return () => {
       current = false;
     };
-  }, [inspectedPath, open, projectPath]);
+  }, [inspectedPath, projectPath]);
 
   async function chooseProject() {
     setError(null);
@@ -375,13 +365,8 @@ export function AgentMemoryWorkspace({
     setLearningId(null);
   }
 
-  if (!open) return null;
-
   return (
     <AgentMemoryWorkspaceView
-      open={open}
-      onClose={onClose}
-      closable={closable}
       projectPath={projectPath}
       projectLabel={projectLabel}
       catalog={catalog}
@@ -427,9 +412,6 @@ export function AgentMemoryWorkspace({
 }
 
 interface AgentMemoryWorkspaceViewProps {
-  open: boolean;
-  onClose: () => void;
-  closable: boolean;
   projectPath: string | null;
   projectLabel: string | null;
   catalog: AgentProjectCatalog | null;
@@ -468,9 +450,6 @@ interface AgentMemoryWorkspaceViewProps {
 }
 
 function AgentMemoryWorkspaceView({
-  open,
-  onClose,
-  closable,
   projectPath,
   projectLabel,
   catalog,
@@ -505,81 +484,68 @@ function AgentMemoryWorkspaceView({
   onPrivacyErased,
 }: AgentMemoryWorkspaceViewProps) {
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) onClose();
-      }}
+    <div
+      data-page="agent-memory-workspace"
+      className="flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
     >
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[59] bg-background" />
-        <Dialog.Content
-          data-page="agent-memory-workspace"
-          className="fixed inset-0 z-[60] flex min-h-0 flex-col overflow-hidden bg-background text-foreground outline-none"
-          aria-describedby={undefined}
-        >
-          <AgentMemoryHeader
-            projectPath={projectPath}
-            projectLabel={projectLabel}
-            catalog={catalog}
-            dashboard={dashboard}
-            busy={busy}
-            onReturnToProjects={onReturnToProjects}
-            onRefresh={onRefresh}
-            onClose={onClose}
-            closable={closable}
-          />
-          <AgentMemoryBody
-            projectPath={projectPath}
-            catalog={catalog}
-            catalogBusy={catalogBusy}
-            error={error}
-            busy={busy}
-            inspection={inspection}
-            section={section}
-            artifactFocus={artifactFocus}
-            onChooseProject={onChooseProject}
-            onOpenProject={onOpenProject}
-            onForgetProject={onForgetProject}
-            onReloadProjects={onReloadProjects}
-            onReturnToProjects={onReturnToProjects}
-            onMakeReady={onMakeReady}
-            onSection={onSection}
-            onMemoryResult={onMemoryResult}
-            onEvidence={onEvidence}
-            onLearning={onLearning}
-            onSession={onSession}
-            onPrivacyUpdated={onPrivacyUpdated}
-            onPrivacyErased={onPrivacyErased}
-          />
-          {dashboard && projectPath && (
-            <SessionInspector
-              key={`session-${sessionId ?? "closed"}`}
-              sessionId={sessionId}
-              projectPath={projectPath}
-              onClose={onSessionClose}
-              onEvidence={onEvidence}
-              onRenamed={onSessionRenamed}
-              onErased={onSessionErased}
-            />
-          )}
-          {dashboard && projectPath && (
-            <LearningInspector
-              key={`learning-${learningId ?? "closed"}`}
-              learningId={learningId}
-              projectPath={projectPath}
-              candidates={dashboard.allLearnings.learnings}
-              candidatesOmitted={dashboard.allLearnings.omittedLearnings}
-              onClose={onLearningClose}
-              onLearning={onLearning}
-              onSession={onLearningSession}
-              onEvidence={onEvidence}
-              onReviewed={onLearningReviewed}
-            />
-          )}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+      <AgentMemoryHeader
+        projectPath={projectPath}
+        projectLabel={projectLabel}
+        catalog={catalog}
+        dashboard={dashboard}
+        busy={busy}
+        onReturnToProjects={onReturnToProjects}
+        onRefresh={onRefresh}
+      />
+      <AgentMemoryBody
+        projectPath={projectPath}
+        catalog={catalog}
+        catalogBusy={catalogBusy}
+        error={error}
+        busy={busy}
+        inspection={inspection}
+        section={section}
+        artifactFocus={artifactFocus}
+        onChooseProject={onChooseProject}
+        onOpenProject={onOpenProject}
+        onForgetProject={onForgetProject}
+        onReloadProjects={onReloadProjects}
+        onReturnToProjects={onReturnToProjects}
+        onMakeReady={onMakeReady}
+        onSection={onSection}
+        onMemoryResult={onMemoryResult}
+        onEvidence={onEvidence}
+        onLearning={onLearning}
+        onSession={onSession}
+        onPrivacyUpdated={onPrivacyUpdated}
+        onPrivacyErased={onPrivacyErased}
+      />
+      {dashboard && projectPath && (
+        <SessionInspector
+          key={`session-${sessionId ?? "closed"}`}
+          sessionId={sessionId}
+          projectPath={projectPath}
+          onClose={onSessionClose}
+          onEvidence={onEvidence}
+          onRenamed={onSessionRenamed}
+          onErased={onSessionErased}
+        />
+      )}
+      {dashboard && projectPath && (
+        <LearningInspector
+          key={`learning-${learningId ?? "closed"}`}
+          learningId={learningId}
+          projectPath={projectPath}
+          candidates={dashboard.allLearnings.learnings}
+          candidatesOmitted={dashboard.allLearnings.omittedLearnings}
+          onClose={onLearningClose}
+          onLearning={onLearning}
+          onSession={onLearningSession}
+          onEvidence={onEvidence}
+          onReviewed={onLearningReviewed}
+        />
+      )}
+    </div>
   );
 }
 
@@ -591,8 +557,6 @@ function AgentMemoryHeader({
   busy,
   onReturnToProjects,
   onRefresh,
-  onClose,
-  closable,
 }: {
   projectPath: string | null;
   projectLabel: string | null;
@@ -601,8 +565,6 @@ function AgentMemoryHeader({
   busy: boolean;
   onReturnToProjects: () => void;
   onRefresh: () => Promise<void>;
-  onClose: () => void;
-  closable: boolean;
 }) {
   return (
     <header className="app-chrome flex h-14 shrink-0 items-center justify-between px-3 sm:px-5">
@@ -611,9 +573,9 @@ function AgentMemoryHeader({
           <BrainCircuit size={17} aria-hidden="true" />
         </div>
         <div className="min-w-0">
-          <Dialog.Title className="truncate text-body font-semibold tracking-tight">
+          <h1 className="truncate text-body font-semibold tracking-tight">
             {projectPath ? "Agent Memory" : "Projects"}
-          </Dialog.Title>
+          </h1>
           <p className="truncate text-micro text-muted-foreground">
             {projectLabel
               ? `${projectLabel} · local project memory`
@@ -650,17 +612,6 @@ function AgentMemoryHeader({
               }
             />
             <span className="hidden sm:inline">Refresh snapshot</span>
-          </Button>
-        )}
-        {closable && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onClose}
-            aria-label="Close Agent Memory"
-            title="Close Agent Memory"
-          >
-            <X size={16} />
           </Button>
         )}
       </div>

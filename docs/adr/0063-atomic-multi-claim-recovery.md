@@ -1,6 +1,6 @@
 # ADR 0063: Atomic multi-claim recovery
 
-- Status: Accepted historically; model-facing MCP recovery wrappers retired by ADR 0091 while core atomic recovery compatibility remains supported.
+- Status: Accepted historically; atomic recovery verifier/writer retired by ADR 0091. Persisted schema-v11 replay, record bindings, fingerprints, and provenance remain supported.
 - Date: 2026-09-20
 - Extends: ADR 0029, ADR 0030, ADR 0060, ADR 0061, ADR 0062
 

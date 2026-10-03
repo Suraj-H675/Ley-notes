@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/shared/components/Button";
+import { humanize } from "./AgentMemoryPresentation";
 import { previewAgentBrief } from "./api";
 import type {
   AgentBriefPreview as AgentBriefPreviewResult,
@@ -335,12 +336,6 @@ function Metric({ label, value }: { label: string; value: string }) {
       <p className="mt-1 text-body font-semibold">{value}</p>
     </div>
   );
-}
-
-function humanize(value: string): string {
-  return value
-    .replaceAll("-", " ")
-    .replace(/\b\w/g, (character) => character.toUpperCase());
 }
 
 function errorMessage(cause: unknown): string {

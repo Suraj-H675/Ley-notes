@@ -1,6 +1,6 @@
 # ADR 0030: Candidate-bound unresolved recovery writes
 
-- Status: Accepted historically; model-facing MCP writer retired by ADR 0091 while core recovery compatibility remains supported.
+- Status: Accepted historically; recovery writer retired by ADR 0091. Persisted schema-v3 replay, fingerprint validation, and learning provenance remain supported.
 - Date: 2026-09-16
 - Extended by: ADR 0060 (lossless bound Decision/Problem recovery), ADR 0061 (typed Task recovery), ADR 0062 (typed Plan recovery), ADR 0063 (atomic multi-claim recovery), ADR 0064 (typed rich Problem recovery), ADR 0065 (atomic rich-Problem composite recovery)
 

@@ -1,64 +1,49 @@
-# ADR 0091: Retire shape-specific recovery MCP wrappers
+# ADR 0091: Retire shape-specific recovery writers and verifiers
 
 Status: accepted
 
 ## Context
 
-Ley's historical recovery work built a deterministic verifier/writer family for reconstructing supported
-Decision, Task, Plan, Problem, unresolved, batch/composite, and isolated observed-Command checkpoints from exact
-post-checkpoint evidence. Those core state machines remain valuable compatibility evidence: old schema-v3/v8–v14/v16
-session histories must still replay, and the verifier/writer implementations remain heavily tested in `ley-core`.
+Ley historically built deterministic verifiers and bound writers for reconstructing Decision, Task, Plan,
+Problem, unresolved, batch/composite, and isolated observed-Command checkpoints from post-checkpoint evidence.
+The focused product later changed the current interruption workflow to read-only `ley_session_memory_compile`,
+live workspace/runtime re-verification, and an ordinary `ley_checkpoint` only for facts that remain supportable.
 
-The focused product later changed the model-facing recovery contract. Current crash recovery is read-only
-`ley_session_memory_compile`, live workspace/runtime re-verification with ordinary host tools, and a normal
-`ley_checkpoint` only for facts that are supportable now. The old shape-specific verifier/commit routes were
-therefore placed in `RETIRED_MODEL_RECOVERY_TOOLS` during R3.
-
-Repository audit confirmed that every server—including legacy-vault compatibility mode—disabled all of those
-routes after router construction. Their remaining MCP request/candidate types, method bodies, route-disable list,
-and direct MCP tests were unreachable implementation residue rather than a callable compatibility surface.
+The former MCP wrappers were already disabled on every server. A further core audit found no CLI, MCP, host, or
+Desktop production caller for the `verify_*_memory_transition*` / `commit_*_memory_transition*` APIs or the
+recovered checkpoint producers. The writer and verifier implementation therefore no longer serves a current
+product path. Persisted recovery events remain part of supported historical session data: replay, history
+validation, per-record evidence bindings, learning provenance, continuity import, and erasure depend on them.
 
 ## Decision
 
-Delete the unreachable model-facing wrapper layer for:
-
-- observed-Command verify/commit;
-- generic transition verify;
-- batch verify/commit;
-- rich-Problem composite verify/commit;
-- typed Task/Plan verify plus Task/Plan commit;
-- rich-Problem verify/commit; and
-- unresolved / minimal structured Decision-or-Problem commits.
-
-Specifically:
-
-1. Remove the corresponding MCP tool methods and wrapper-only request/candidate types/conversions.
-2. Remove `RETIRED_MODEL_RECOVERY_TOOLS` and redundant per-route disable calls for methods that no longer exist.
-3. Remove direct MCP tests that invoked already-unreachable recovery routes.
-4. Keep `ley_session_memory_compile` unchanged as the read-only interruption-evidence surface.
-5. Keep every core verifier/writer/state-machine implementation, candidate fingerprint contract, schema-v3/v8–v14/v16
-   historical event meaning, replay/validation rule, and recovery-core deterministic test.
+1. Remove the public core shape-specific recovery verifier and commit functions, their public policy/result/input
+   types, limits, and the private recovery event producers.
+2. Do not create new `RecoveryCheckpointRecorded` events. Keep ordinary checkpoint/session writes unchanged.
+3. Remove state-machine, eligibility, overlap, coverage, and write-time re-verification logic used only to decide
+   or append new recovery events.
+4. Retain exact persisted-event compatibility for schemas v3, v8-v13, and v16, including checkpoint projections,
+   event/history validation, provenance/evidence bindings, and versioned candidate/binding fingerprint checks.
+   Schema-v14 tool-observation events remain ordinary session evidence and are validated as before.
+5. Keep the Memory Compiler command-candidate projection read-only. Its guidance directs callers to inspect live
+   state and record an ordinary checkpoint only when the evidence supports it.
+6. Test historical compatibility with persisted-event fixtures and stable fingerprint contracts, not retired
+   recovery writers.
 
 ## Compatibility and data safety
 
-This is not a new live MCP behavior break. The deleted routes were already disabled on every server and absent
-from advertised tool inventories. No current packaged Skill, host workflow, release matrix, or current docs teach
-agents to call them.
+No stored event is rewritten or deleted. Existing v3, v8-v13, and v16 recovery checkpoints continue to replay and
+validate, and their learning provenance remains resolvable. Continuity import and session erasure continue to
+operate on the same persisted history. There is no migration.
 
-No stored recovery event is rewritten or deleted. Historical ledgers continue to replay through the same core
-logic, and deterministic core tests remain the authority for those old schemas. There is no migration.
-
-The removed MCP request/candidate structs and methods were public Rust items. Repository audit found no non-test
-callers, and Ley does not document `ley-mcp` as a stable embeddable Rust-library API; the current crate is version
-0.1.0. An external Rust consumer that directly imported those retired wrapper items would need to update. That is
-a source-compatibility break, distinct from the unchanged advertised MCP tool surface.
+The retired Rust APIs were public exports from `ley-core`; removing them is a source-compatibility break for
+external Rust consumers that imported them. Ley does not document `ley-core` as a stable embeddable API, and the
+crate is version 0.1.0. Ordinary checkpoint APIs remain available.
 
 ## Consequences
 
-- The MCP implementation finally matches the already-shipped read-only recovery contract.
-- Crash/interruption evidence remains inspectable without restoring model-facing structural reconstruction
-  authority.
-- Historical verifier/writer code remains isolated in core compatibility/state-machine logic rather than being
-  accidentally exposed as an agent API.
-- Reintroducing a recovery writer requires new controlled evidence that read-only interruption evidence plus live
-  re-verification and ordinary checkpointing is materially insufficient.
+- Current interruption recovery has one path: inspect bounded read-only Memory Compiler evidence, re-check live
+  state, then use an ordinary checkpoint for supportable facts.
+- Core retains only the private compatibility code needed to validate historical recovery bytes and provenance.
+- Reintroducing a recovery verifier or writer requires new controlled evidence and a separate decision; replay
+  compatibility alone does not justify restoring those APIs.

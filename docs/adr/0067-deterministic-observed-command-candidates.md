@@ -4,6 +4,9 @@ Later extensions: ADR 0069 adds exact source-bound verification; ADR 0085 adds a
 schema-v16 writer only for an isolated complete current tool-evidence window. The persistence
 boundary below records this ADR's original read-only slice.
 
+Current status: ADR 0091 retires the observed-Command verifier and writer. Persisted schema-v16
+events and their source/fingerprint/provenance validation remain supported for replay.
+
 - Status: Accepted
 - Date: 2026-09-21
 - Extends: ADR 0029, ADR 0055, ADR 0066
