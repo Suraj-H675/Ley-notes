@@ -72,7 +72,7 @@ simply records how far current evidence has moved each question.
 
 - Routine CI run `36164225888` passed on pinned Node 24.21.0 / Rust 1.98.1 after the stale consolidation-inbox schema assertion was corrected: frontend install/typecheck/lint/tests/website+desktop builds/production audit all passed, and the Ubuntu Rust job passed format, full workspace check, and full workspace tests.
 
-## Highest-value next experiments
+## Highest-value evidence work
 
 ### 1. Frontier-agent complexity ladder and narrower compiler ablations
 
@@ -101,19 +101,23 @@ benchmark. This directly informs §36 questions 1, 2,
 
 ### 2. Explicit source-selection + egress comprehension study
 
-If cross-project context is reintroduced, start with explicit per-task/session source selection rather than
-standing Mount/Scope authority. Give users several small project/reference diagrams and ask them to predict
-what a cloud vs local agent can read before/after selecting a source, applying project egress, and revoking
-that selection. Measure correctness and identify wording/control states that cause wrong mental models. A
-persistent mount/scope graph should be tested only as a competing arm after this simpler baseline exists.
+Request-scoped selected-source Search is now the current baseline: one exact already-observed project may be
+selected per request without creating persistent sharing state. The next unresolved question is human
+comprehension, not whether that mechanism exists. Give users several small project/reference diagrams and ask
+them to predict what a cloud vs explicitly asserted local agent can read before/after selecting a source,
+applying project egress, and dropping the selection. Measure correctness and identify wording/control states
+that cause wrong mental models. Compare against the focused Desktop's current project-level sharing controls
+and selected-source Search semantics. A persistent mount/scope graph should be tested only as a competing arm
+if this simpler baseline produces a concrete, measured failure.
 
-### 3. Read-only interruption-recovery sufficiency study
+### 3. Completed: read-only interruption-recovery sufficiency study
 
-Use interrupted coding tasks to compare bounded retained post-checkpoint evidence against the same Ley context with
-that evidence withheld. Measure task completion, process/oracle mismatches plus preserved model output
-for any actual false-completion claim review, recovery time, privacy, and context cost. Only if this simpler path is materially insufficient should a semantic/structured recovery
-writer become a competing arm. Do not reintroduce the v1–v16 verifier/commit state machine merely because its
-historical deterministic tests still exist.
+The planned study has now been executed. Its retained protocol remains the template for any future replication:
+compare bounded retained post-checkpoint evidence against the same Ley context with that evidence withheld,
+preserve model output for any process/oracle mismatch review, and measure task completion, recovery time,
+privacy, and context cost. A semantic/structured recovery writer should become a competing arm only if new
+controlled evidence later shows the simpler read-only path is materially insufficient. Do not reintroduce the
+v1–v16 verifier/commit state machine merely because its historical deterministic tests still exist.
 
 **Completed result on 2026-10-02:** after 60/60 evaluator tests and 12/12 deterministic fixture validations, the
 first pinned model run completed 12 Codex `0.160.0` / `gpt-6-luna` / `xhigh` attempts (three crash fixtures ×
