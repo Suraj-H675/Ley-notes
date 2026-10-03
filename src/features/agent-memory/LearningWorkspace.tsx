@@ -97,24 +97,26 @@ export function ReviewInbox({
         title="Review inbox"
         description={`Confirm useful guidance, contest uncertain claims, reject false memory, or mark guidance stale. Showing ${inbox.learnings.length} of ${inbox.totalMatching}.`}
       />
-      <div className="mt-6 space-y-3">
-        {inbox.learnings.length === 0 ? (
+      {inbox.learnings.length === 0 ? (
+        <div className="mt-6">
           <LargeEmpty
             icon={CheckCircle2}
             title="You’re all caught up"
             body="No proposed, contested, source-changed, or stale lessons need review."
           />
-        ) : (
-          inbox.learnings.map((learning) => (
+        </div>
+      ) : (
+        <div className="mt-6 divide-y divide-border border-y border-border">
+          {inbox.learnings.map((learning) => (
             <LearningCard
               key={learning.learningId}
               learning={learning}
               onClick={() => onLearning(learning.learningId)}
               wide
             />
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -1032,15 +1034,15 @@ function LearningCard({
       type="button"
       onClick={onClick}
       className={cn(
-        "group w-full rounded-md border border-border bg-surface-1 p-4 text-left shadow-panel hover:border-border-strong hover:bg-surface-2/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-        wide && "sm:p-5",
+        "group w-full px-1 py-4 text-left transition-colors hover:bg-surface-1/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+        wide && "sm:py-5",
       )}
     >
       <div className="flex items-start gap-3">
         <TrustDot learning={learning} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded bg-surface-3 px-1.5 py-0.5 text-micro font-medium text-muted-foreground-strong">
+            <span className="text-micro font-medium text-subtle-foreground">
               {humanize(learning.kind)}
             </span>
             <span className="text-micro text-muted-foreground">

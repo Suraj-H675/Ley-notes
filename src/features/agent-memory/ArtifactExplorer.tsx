@@ -127,7 +127,7 @@ function ArtifactExplorerContent({
     <section className="space-y-5" aria-labelledby="artifacts-title">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="mb-1 text-micro font-semibold uppercase tracking-[0.14em] text-primary">
+          <p className="mb-1 text-meta font-medium text-muted-foreground">
             Snapshot evidence
           </p>
           <h2
@@ -158,7 +158,7 @@ function ArtifactExplorerContent({
         </label>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-1 p-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-y border-border py-2">
         <div className="flex gap-1" role="group" aria-label="Artifact status">
           <InventoryTab
             active={view === "captured"}
@@ -216,7 +216,7 @@ function ArtifactExplorerContent({
       )}
 
       {inventory && (
-        <div className="flex flex-col gap-2 rounded-md border border-border/80 bg-surface-1 px-4 py-3 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 border-t border-border pt-3 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-2">
             <ShieldCheck
               size={14}
@@ -360,8 +360,8 @@ function CapturedArtifacts({
     );
   }
   return (
-    <div className="overflow-hidden rounded-md border border-border bg-surface-1">
-      <div className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_6rem] gap-4 border-b border-border px-4 py-2 text-micro font-semibold uppercase tracking-wider text-muted-foreground sm:grid">
+    <div className="border-y border-border">
+      <div className="hidden grid-cols-[minmax(0,1fr)_8rem_7rem_6rem] gap-4 border-b border-border px-4 py-2 text-meta font-medium text-muted-foreground sm:grid">
         <span>Artifact</span>
         <span>Kind</span>
         <span>Size</span>
@@ -415,7 +415,7 @@ function CapturedArtifacts({
                 {artifact.mediaType ? "Media" : artifact.lineCount.toLocaleString()}
               </span>
             </summary>
-            <div className="grid gap-3 bg-surface-2/60 px-4 py-3 text-micro text-muted-foreground sm:grid-cols-3">
+            <div className="grid gap-3 border-t border-border/70 px-4 py-3 text-micro text-muted-foreground sm:grid-cols-3">
               <Metric
                 label="Stored"
                 value={formatBytes(artifact.storedBytes)}
@@ -602,7 +602,7 @@ function SkippedArtifacts({
     );
   }
   return (
-    <div className="overflow-hidden rounded-md border border-border bg-surface-1">
+    <div className="border-y border-border">
       <div className="divide-y divide-border/70">
         {inventory.skipped.map((artifact) => (
           <div
@@ -653,7 +653,7 @@ function InventoryTab({
       className={cn(
         "inline-flex h-8 items-center gap-2 rounded-md px-2.5 text-meta font-medium outline-none focus-visible:ring-2 focus-visible:ring-primary",
         active
-          ? "bg-surface-3 text-foreground shadow-sm"
+          ? "bg-surface-2 text-foreground"
           : "text-muted-foreground hover:text-foreground",
       )}
     >
@@ -724,7 +724,7 @@ function ErrorState({ message }: { message: string }) {
 function ArtifactSkeleton() {
   return (
     <div
-      className="space-y-px overflow-hidden rounded-md border border-border bg-surface-1"
+      className="space-y-px border-y border-border"
       aria-label="Loading artifacts"
     >
       {[0, 1, 2, 3].map((item) => (

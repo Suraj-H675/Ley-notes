@@ -138,7 +138,7 @@ function ProjectActivityContent({
     <section className="space-y-5" aria-labelledby={`${mode}-activity-title`}>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="mb-1 text-micro font-semibold uppercase tracking-[0.14em] text-primary">
+          <p className="mb-1 text-meta font-medium text-muted-foreground">
             {isDecisions ? "Project direction" : "Evidence-backed recovery"}
           </p>
           <h2
@@ -176,7 +176,7 @@ function ProjectActivityContent({
         </label>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-1 p-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-y border-border py-2">
         {isDecisions ? (
           <p className="px-2 text-meta font-medium">Newest decisions first</p>
         ) : (
@@ -224,7 +224,7 @@ function ProjectActivityContent({
       )}
 
       {visibleActivity && (
-        <div className="flex flex-col gap-2 rounded-md border border-border/80 bg-surface-1 px-4 py-3 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-2 border-t border-border pt-3 text-micro text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span className="inline-flex items-center gap-2">
             <ShieldCheck
               size={14}
@@ -267,7 +267,7 @@ function DecisionList({
     );
   }
   return (
-    <div className="space-y-3">
+    <div className="divide-y divide-border border-y border-border">
       {activity.decisions.map((decision) => (
         <DecisionCard
           key={`${decision.sessionId}:${decision.recordId}`}
@@ -293,8 +293,8 @@ function DecisionCard({
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
 }) {
   return (
-    <article className="overflow-hidden rounded-md border border-border bg-surface-1 shadow-panel">
-      <div className="p-4 sm:p-5">
+    <article className="overflow-hidden">
+      <div className="px-1 py-4 sm:py-5">
         <ActivityMeta
           sessionName={decision.sessionName}
           sessionStatus={decision.sessionStatus}
@@ -302,7 +302,7 @@ function DecisionCard({
           onSession={() => onSession(decision.sessionId)}
         />
         <div className="mt-4 flex items-start gap-3">
-          <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center text-primary">
             <Signpost size={16} aria-hidden="true" />
           </span>
           <div className="min-w-0">
@@ -314,7 +314,7 @@ function DecisionCard({
         </div>
       </div>
       <details className="group border-t border-border/70">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-meta font-medium text-muted-foreground outline-none hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary sm:px-5">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-1 py-3 text-meta font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary">
           <span className="inline-flex items-center gap-2">
             <GitCommitHorizontal size={14} aria-hidden="true" />
             Rationale & evidence
@@ -325,7 +325,7 @@ function DecisionCard({
             className="transition-transform group-open:rotate-180"
           />
         </summary>
-        <div className="space-y-4 bg-surface-2/55 px-4 py-4 sm:px-5">
+        <div className="space-y-4 border-t border-border/70 px-1 py-4">
           {decision.rationale && (
             <DetailBlock label="Rationale" value={decision.rationale} />
           )}
@@ -398,7 +398,7 @@ function ProblemList({
     );
   }
   return (
-    <div className="space-y-3">
+    <div className="divide-y divide-border border-y border-border">
       {activity.problems.map((problem) => (
         <ProblemCard
           key={`${problem.sessionId}:${problem.recordId}`}
@@ -425,8 +425,8 @@ function ProblemCard({
 }) {
   const resolved = Boolean(problem.resolution);
   return (
-    <article className="overflow-hidden rounded-md border border-border bg-surface-1 shadow-panel">
-      <div className="p-4 sm:p-5">
+    <article className="overflow-hidden">
+      <div className="px-1 py-4 sm:py-5">
         <ActivityMeta
           sessionName={problem.sessionName}
           sessionStatus={problem.sessionStatus}
@@ -469,7 +469,7 @@ function ProblemCard({
         )}
       </div>
       <details className="group border-t border-border/70">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-meta font-medium text-muted-foreground outline-none hover:bg-surface-2 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary sm:px-5">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-1 py-3 text-meta font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary">
           <span className="inline-flex items-center gap-2">
             <Clock3 size={14} aria-hidden="true" />
             {problem.totalAttempts}{" "}
@@ -481,7 +481,7 @@ function ProblemCard({
             className="transition-transform group-open:rotate-180"
           />
         </summary>
-        <div className="space-y-4 bg-surface-2/55 px-4 py-4 sm:px-5">
+        <div className="space-y-4 border-t border-border/70 px-1 py-4">
           {problem.expected && (
             <DetailBlock label="Expected" value={problem.expected} />
           )}
