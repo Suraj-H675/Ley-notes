@@ -1667,7 +1667,7 @@ describe("Agent Memory workspace boundaries", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Project settings" }));
     await screen.findByRole("heading", {
-      name: "Decide what this project remembers",
+      name: "Capture & privacy",
     });
     expect(screen.getByText("Preview reads metadata only.")).toBeVisible();
     fireEvent.click(screen.getByRole("radio", { name: /Full Evidence/ }));

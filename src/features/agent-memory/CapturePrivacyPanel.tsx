@@ -2,11 +2,7 @@ import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Check,
-  Database,
   Download,
-  EyeOff,
-  FileSearch,
-  HardDrive,
   LockKeyhole,
   RefreshCw,
   ShieldCheck,
@@ -404,15 +400,15 @@ function CapturePrivacyContent({
 }) {
   return (
     <div className="space-y-7">
-      <section className="relative overflow-hidden rounded-sm border border-border bg-surface-1 p-5 shadow-panel sm:p-7">
-        <div className="relative max-w-3xl">
-          <p className="text-micro font-semibold uppercase tracking-[0.14em] text-primary">
+      <section className="border-t border-border pt-6">
+        <div className="max-w-3xl">
+          <h2 className="text-xl font-semibold tracking-tight">
             Capture & privacy
-          </p>
-          <h2 className="mt-1 text-2xl font-semibold tracking-[-0.035em] sm:text-3xl">
-            Decide what this project remembers
           </h2>
-          <p className="mt-3 text-body leading-6 text-muted-foreground-strong">
+          <p className="mt-2 text-body leading-6 text-muted-foreground-strong">
+            <span className="font-medium text-foreground">
+              Decide what this project remembers.
+            </span>{" "}
             The capture mode lives in this project’s small{" "}
             <span className="font-mono text-meta">.ley/capture.json</span> file;
             exclusions live in <span className="font-mono text-meta">.ley/.leyignore</span>.
@@ -444,12 +440,9 @@ function CapturePrivacyContent({
 
       <section aria-labelledby="evidence-mode-title">
         <div className="mb-3">
-          <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Project evidence
-          </p>
           <h3
             id="evidence-mode-title"
-            className="mt-1 text-lg font-semibold tracking-tight"
+            className="text-lg font-semibold tracking-tight"
           >
             Evidence retention mode
           </h3>
@@ -571,44 +564,37 @@ function CapturePrivacyContent({
 
       <section aria-labelledby="capture-boundary-title">
         <div className="mb-3">
-          <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Inspect before capture
-          </p>
           <h3
             id="capture-boundary-title"
-            className="mt-1 text-lg font-semibold tracking-tight"
+            className="text-lg font-semibold tracking-tight"
           >
             Effective capture boundary
           </h3>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <dl className="grid border-y border-border sm:grid-cols-2 xl:grid-cols-4 xl:divide-x xl:divide-border">
           <BoundaryMetric
-            icon={FileSearch}
             label="Eligible files"
             value={settings.eligibleFiles.toLocaleString()}
             detail={formatBytes(settings.eligibleBytes)}
           />
           <BoundaryMetric
-            icon={Database}
             label="Retained source"
             value={dashboard.overview.retainedSourceFiles.toLocaleString()}
             detail={`${dashboard.overview.files.toLocaleString()} captured records`}
           />
           <BoundaryMetric
-            icon={HardDrive}
             label="Capture ceiling"
             value={formatBytes(settings.maxTotalBytes)}
             detail={`${formatBytes(settings.maxFileBytes)} per file`}
           />
           <BoundaryMetric
-            icon={EyeOff}
             label="Excluded by limits"
             value={(
               settings.skippedOversized + settings.skippedTotalLimit
             ).toLocaleString()}
             detail={`${settings.skippedSymlinks} symlinks skipped`}
           />
-        </div>
+        </dl>
 
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <div className="rounded-md border border-border bg-surface-1 p-4">
@@ -1026,28 +1012,19 @@ function ContinuityExportSection({
 }
 
 function BoundaryMetric({
-  icon: Icon,
   label,
   value,
   detail,
 }: {
-  icon: typeof Database;
   label: string;
   value: string;
   detail: string;
 }) {
   return (
-    <div className="rounded-md border border-border bg-surface-1 p-4 shadow-panel">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-micro text-muted-foreground">{label}</p>
-          <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
-        </div>
-        <span className="flex size-8 items-center justify-center rounded-md bg-primary/10 text-primary">
-          <Icon size={15} aria-hidden="true" />
-        </span>
-      </div>
-      <p className="mt-2 text-micro text-muted-foreground">{detail}</p>
+    <div className="py-3 sm:px-3 xl:px-4 first:xl:pl-0 last:xl:pr-0">
+      <dt className="text-meta text-muted-foreground">{label}</dt>
+      <dd className="mt-1 text-xl font-semibold tabular-nums">{value}</dd>
+      <p className="mt-1 text-micro text-muted-foreground">{detail}</p>
     </div>
   );
 }

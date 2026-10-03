@@ -54,7 +54,7 @@ export function AgentBriefPreview({
   return (
     <div className="space-y-6">
       <header>
-        <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        <p className="text-meta font-medium text-muted-foreground">
           What the next agent gets
         </p>
         <h2 className="mt-1 text-2xl font-semibold tracking-[-0.03em]">
@@ -72,7 +72,7 @@ export function AgentBriefPreview({
 
       <form
         onSubmit={(event) => void compile(event)}
-        className="space-y-4 rounded-md border border-border bg-surface-1 p-4 shadow-panel sm:p-5"
+        className="space-y-4 border-y border-border py-4 sm:py-5"
       >
         <label className="block">
           <span className="text-meta font-semibold">Current task</span>
@@ -86,7 +86,7 @@ export function AgentBriefPreview({
               setError(null);
             }}
             placeholder="What should the next agent work on?"
-            className="mt-2 min-h-24 w-full resize-y rounded-sm border border-border bg-surface-2 px-3 py-2 text-body text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-primary"
+            className="mt-2 min-h-24 w-full resize-y rounded-sm border border-border bg-background/35 px-3 py-2 text-body text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-primary"
           />
           <span className="mt-1 block text-micro text-muted-foreground">
             {task.length}/256 characters · canonical brief defaults: 8 items,
@@ -106,7 +106,7 @@ export function AgentBriefPreview({
                 setPreview(null);
                 setError(null);
               }}
-              className="mt-2 rounded-sm border border-border bg-surface-2 px-3 py-2 text-meta font-normal text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="mt-2 rounded-sm border border-border bg-background/35 px-3 py-2 text-meta font-normal text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               <option value="cloud">Cloud (packaged default)</option>
               <option value="local">Local (explicit host assertion)</option>
@@ -177,7 +177,7 @@ function BriefResult({
   const withheld = preview.egressCoverage?.withheldDerivedResults ?? 0;
   return (
     <div className="space-y-4">
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid border-y border-border sm:grid-cols-2 xl:grid-cols-4 xl:divide-x xl:divide-border">
         <Metric label="Evidence" value={humanize(preview.evidenceState)} />
         <Metric
           label="Budget"
@@ -215,11 +215,11 @@ function BriefResult({
               Approved Specifications · {preview.specifications.length}
             </h3>
           </div>
-          <div className="space-y-2">
+          <div className="divide-y divide-border border-y border-border">
             {preview.specifications.map((specification) => (
               <div
                 key={specification.specificationId}
-                className="rounded-md border border-border bg-surface-1 p-3"
+                className="py-3"
               >
                 <p className="font-mono text-meta">
                   {specification.relativePath}
@@ -247,19 +247,19 @@ function BriefResult({
           </span>
         </div>
         {preview.items.length === 0 ? (
-          <div className="rounded-md border border-border bg-surface-1 p-4 text-meta text-muted-foreground">
+          <div className="border-y border-border py-4 text-meta text-muted-foreground">
             No continuity item fit this task and authority boundary.
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="divide-y divide-border border-y border-border">
             {preview.items.map((item) => (
               <article
                 key={item.kind + ":" + item.entityId}
-                className="rounded-md border border-border bg-surface-1 p-4"
+                className="py-4"
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <p className="text-micro font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                    <p className="text-micro font-medium text-muted-foreground">
                       {humanize(item.kind)} · {humanize(item.authority)}
                     </p>
                     <h4 className="mt-1 text-body font-semibold">{item.title}</h4>
@@ -289,7 +289,7 @@ function BriefResult({
 
       {(preview.gaps.length > 0 ||
         (preview.egressExclusions?.length ?? 0) > 0) && (
-        <section className="rounded-md border border-border bg-surface-1 p-4">
+        <section className="border-l-2 border-warning/45 pl-4">
           <div className="flex items-center gap-2">
             <ShieldCheck size={15} aria-hidden="true" />
             <h3 className="text-body font-semibold">Why content was limited</h3>
@@ -308,11 +308,11 @@ function BriefResult({
         </section>
       )}
 
-      <details className="rounded-md border border-border bg-surface-1">
-        <summary className="cursor-pointer px-4 py-3 text-meta font-semibold">
+      <details className="border-y border-border">
+        <summary className="cursor-pointer py-3 text-meta font-semibold">
           Raw canonical compiler payload
         </summary>
-        <pre className="max-h-[32rem] overflow-auto border-t border-border p-4 text-micro leading-5 text-muted-foreground">
+        <pre className="max-h-[32rem] overflow-auto border-t border-border py-4 text-micro leading-5 text-muted-foreground">
           {JSON.stringify(preview, null, 2)}
         </pre>
       </details>
@@ -329,10 +329,8 @@ function BriefResult({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-border bg-surface-1 p-4">
-      <p className="text-micro font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        {label}
-      </p>
+    <div className="px-0 py-3 sm:px-4 first:sm:pl-0 last:sm:pr-0">
+      <p className="text-micro font-medium text-muted-foreground">{label}</p>
       <p className="mt-1 text-body font-semibold">{value}</p>
     </div>
   );

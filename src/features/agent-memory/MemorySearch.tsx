@@ -113,12 +113,9 @@ function MemorySearchContent({
   return (
     <section aria-labelledby="memory-search-title" className="space-y-6">
       <div className="max-w-3xl">
-        <div className="mb-3 flex size-9 items-center justify-center rounded-sm border border-primary/30 bg-primary/8 text-primary">
-          <Sparkles size={19} aria-hidden="true" />
-        </div>
         <h1
           id="memory-search-title"
-          className="text-lg font-semibold tracking-tight text-foreground"
+          className="text-xl font-semibold tracking-tight text-foreground"
         >
           Ask your project memory
         </h1>
@@ -196,7 +193,7 @@ function MemorySearchContent({
       )}
 
       {!search && !busy && (
-        <div className="grid max-w-3xl gap-2 sm:grid-cols-2">
+        <div className="max-w-3xl divide-y divide-border border-y border-border">
           {[
             "What did we try that failed?",
             "Which decisions still shape this project?",
@@ -207,7 +204,7 @@ function MemorySearchContent({
               key={suggestion}
               type="button"
               onClick={() => setQuery(suggestion)}
-              className="rounded-md border border-border bg-surface-1 px-4 py-3 text-left text-meta text-muted-foreground transition-[background-color,color,transform] duration-150 hover:bg-surface-2 hover:text-foreground active:scale-[0.99] motion-reduce:transition-none"
+              className="block w-full px-1 py-3 text-left text-meta text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               {suggestion}
             </button>
@@ -237,14 +234,14 @@ function MemorySearchResults({
             : `${search.results.length} relevant ${search.results.length === 1 ? "memory" : "memories"}`}
         </p>
         <div className="flex items-center gap-2 text-micro text-muted-foreground">
-          <span className="rounded-sm border border-border bg-surface-1 px-1.5 py-0.5 capitalize">
-            {search.retrieval.mode}
-          </span>
+          <span className="capitalize">{search.retrieval.mode} retrieval</span>
+          <span aria-hidden="true">·</span>
           <span>captured snapshot</span>
           {search.revisionFilter && (
-            <span className="rounded-sm border border-border bg-surface-1 px-1.5 py-0.5">
-              {compatibilityLabel(search.revisionFilter)} only
-            </span>
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{compatibilityLabel(search.revisionFilter)} only</span>
+            </>
           )}
         </div>
       </div>
@@ -272,7 +269,7 @@ function MemorySearchResults({
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="divide-y divide-border border-y border-border">
         {search.results.map((result) => (
           <MemoryResult
             key={`${result.kind}:${result.entityId}`}
@@ -309,12 +306,12 @@ function MemoryResult({
       disabled={!actionable}
       onClick={onOpen}
       className={cn(
-        "group flex w-full items-start gap-3 rounded-sm border border-border bg-surface-1 p-4 transition-[border-color,background-color] duration-150 hover:border-primary/45 hover:bg-surface-2/70 motion-reduce:transition-none",
+        "group flex w-full items-start gap-3 px-1 py-4 text-left transition-colors duration-150 hover:bg-surface-1/55 motion-reduce:transition-none",
         actionable &&
-          "hover:border-primary/25 hover:bg-surface-2 hover:shadow-sm active:scale-[0.995]",
+          "hover:bg-surface-1/75",
       )}
     >
-      <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-sm bg-surface-3 text-muted-foreground group-hover:text-primary">
+      <div className="mt-0.5 flex size-6 shrink-0 items-center justify-center text-muted-foreground group-hover:text-primary">
         <Icon size={15} aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">
@@ -322,7 +319,7 @@ function MemoryResult({
           <span className="text-meta font-semibold text-foreground">
             {result.title}
           </span>
-          <span className="rounded-sm bg-surface-3/70 px-1 py-0.5 text-micro font-medium uppercase tracking-[0.08em] text-subtle-foreground">
+          <span className="text-micro font-medium text-subtle-foreground">
             {result.kind}
           </span>
           {result.trustSignal && result.trustSignal !== "direct-evidence" && (

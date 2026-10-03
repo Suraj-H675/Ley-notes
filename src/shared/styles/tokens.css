@@ -50,7 +50,5 @@
      floating surfaces retain the same depth language. */
   --material-chrome: 225 6% 10.5% / 0.86;
   --material-sidebar: 225 6% 10.5% / 0.95;
-  --material-floating: 225 6% 10.5% / 0.91;
   --material-scrim: 225 7% 4% / 0.68;
-  --material-highlight: 45 14% 100% / 0.055;
 }
