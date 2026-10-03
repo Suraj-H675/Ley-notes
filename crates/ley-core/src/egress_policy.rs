@@ -440,6 +440,24 @@ impl EgressPolicyRegistry {
         })
     }
 
+    pub fn set_project_policy_transition_if_current(
+        &self,
+        project_start: impl AsRef<Path>,
+        store: &ContinuityStore,
+        expected_project_id: &str,
+        expected_policy: AgentEgressPolicy,
+        policy: AgentEgressPolicy,
+    ) -> Result<AgentEgressPolicyMutation, LeyCoreError> {
+        self.set_project_policy_transition_with_expected_and_hook(
+            project_start.as_ref(),
+            store,
+            Some(expected_project_id),
+            Some(expected_policy),
+            policy,
+            |_| Ok(()),
+        )
+    }
+
     fn set_project_policy_transition_with_hook(
         &self,
         project_start: &Path,
@@ -447,7 +465,35 @@ impl EgressPolicyRegistry {
         policy: AgentEgressPolicy,
         mut phase_hook: impl FnMut(ProjectPolicyTransitionPhase) -> Result<(), LeyCoreError>,
     ) -> Result<AgentEgressPolicyMutation, LeyCoreError> {
+        self.set_project_policy_transition_with_expected_and_hook(
+            project_start,
+            store,
+            None,
+            None,
+            policy,
+            &mut phase_hook,
+        )
+    }
+
+    fn set_project_policy_transition_with_expected_and_hook(
+        &self,
+        project_start: &Path,
+        store: &ContinuityStore,
+        expected_project_id: Option<&str>,
+        expected_policy: Option<AgentEgressPolicy>,
+        policy: AgentEgressPolicy,
+        mut phase_hook: impl FnMut(ProjectPolicyTransitionPhase) -> Result<(), LeyCoreError>,
+    ) -> Result<AgentEgressPolicyMutation, LeyCoreError> {
         let diagnostic = diagnose_project(project_start)?;
+        if let Some(expected_project_id) = expected_project_id {
+            validate_project_id(expected_project_id)?;
+            if diagnostic.identity.project_id != expected_project_id {
+                return Err(LeyCoreError::InvalidEgressPolicyRequest(
+                    "project identity changed before the agent egress policy could be saved"
+                        .to_owned(),
+                ));
+            }
+        }
         let project_id = diagnostic.identity.project_id.clone();
         store.register_project(&diagnostic.identity)?;
 
@@ -455,13 +501,36 @@ impl EgressPolicyRegistry {
         let result = (|| {
             let mut document = self.read_document()?;
             store.with_egress_authority_lock(|| {
-                // Preflight the native row while both authority locks are held. Registration above
-                // may create the row, but it must be readable before legacy policy is changed.
-                let _ = store.project_egress_state(&project_id)?;
+                if let Some(expected_project_id) = expected_project_id {
+                    let current = diagnose_project(project_start)?;
+                    if current.identity.project_id != expected_project_id {
+                        return Err(LeyCoreError::InvalidEgressPolicyRequest(
+                            "project identity changed before the agent egress policy could be saved"
+                                .to_owned(),
+                        ));
+                    }
+                }
                 let legacy_policy = document
                     .projects
                     .get(&project_id)
                     .map_or(AgentEgressPolicy::AgentOk, |entry| entry.project_policy);
+                // Preflight the native row while both authority locks are held. Registration above
+                // may create the row, but it must be readable before legacy policy is changed.
+                let (native_policy, native_migrated) = store.project_egress_state(&project_id)?;
+                let current_policy = if native_migrated {
+                    conservative_egress_join(legacy_policy, native_policy)
+                } else {
+                    legacy_policy
+                };
+                if let Some(expected_policy) = expected_policy {
+                    if current_policy != expected_policy {
+                        return Err(LeyCoreError::AgentEgressPolicyChanged {
+                            project_id: project_id.clone(),
+                            expected: expected_policy.to_string(),
+                            current: current_policy.to_string(),
+                        });
+                    }
+                }
                 let guard_policy = conservative_egress_join(legacy_policy, policy);
 
                 if guard_policy != legacy_policy {
@@ -1352,6 +1421,77 @@ mod tests {
         assert_eq!(
             transition.specification_overrides[0].policy,
             AgentEgressPolicy::NeverSend
+        );
+    }
+
+    #[test]
+    fn transition_project_policy_expected_guard_rejects_stale_view_before_writing() {
+        let root = tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir(&project).unwrap();
+        let initialized = initialize_project(
+            &project,
+            Some("Stale egress writer"),
+            CaptureMode::Structured,
+        )
+        .unwrap();
+        let project_id = initialized.identity.project_id.clone();
+        let registry = EgressPolicyRegistry::at(root.path().join("private/egress.json"));
+        let store = ContinuityStore::at(root.path().join("private/continuity.sqlite3"));
+
+        registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::NeverSend)
+            .unwrap();
+        registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+
+        let error = registry
+            .set_project_policy_transition_if_current(
+                &project,
+                &store,
+                &project_id,
+                AgentEgressPolicy::NeverSend,
+                AgentEgressPolicy::AgentOk,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            LeyCoreError::AgentEgressPolicyChanged {
+                ref project_id,
+                ref expected,
+                ref current,
+            } if project_id == &initialized.identity.project_id
+                && expected == "never-send"
+                && current == "local-model-only"
+        ));
+        assert_eq!(
+            registry.list(&project).unwrap().project_policy,
+            AgentEgressPolicy::LocalModelOnly
+        );
+        assert_eq!(
+            store.project_egress_policy(&project_id).unwrap(),
+            AgentEgressPolicy::LocalModelOnly
+        );
+
+        let wrong_project_id = "prj_22222222222222222222222222222222";
+        let identity_error = registry
+            .set_project_policy_transition_if_current(
+                &project,
+                &store,
+                wrong_project_id,
+                AgentEgressPolicy::LocalModelOnly,
+                AgentEgressPolicy::AgentOk,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            identity_error,
+            LeyCoreError::InvalidEgressPolicyRequest(ref message)
+                if message.contains("project identity changed")
+        ));
+        assert_eq!(
+            registry.list(&project).unwrap().project_policy,
+            AgentEgressPolicy::LocalModelOnly
         );
     }
 

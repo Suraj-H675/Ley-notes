@@ -54,6 +54,13 @@ The reset keeps these principles:
 - agent-facing tools cannot silently grant themselves new human authority;
 - bounded outputs expose provenance but not unnecessary absolute machine paths.
 
+Current project-level agent-context egress is user-inspectable in Desktop **Capture & privacy** and through
+`ley egress`. `agent-ok`, `local-model-only`, `confirm-per-use`, and `never-send` remain the enforced vocabulary.
+Desktop uses the same mixed-version transition authority as the CLI and rejects stale project-identity or policy
+writes before mutation.
+`confirm-per-use` remains intentionally fail-closed until a trustworthy confirmation decision can be scoped at the
+actual retrieval boundary; Desktop does not simulate that with an unrelated settings dialog.
+
 The existing detailed egress registries/Context Mount/Scope/Policy Bundle implementation is migration-era architecture. Its safety lessons survive; its exact object hierarchy does not automatically survive.
 
 ## Evidence capture

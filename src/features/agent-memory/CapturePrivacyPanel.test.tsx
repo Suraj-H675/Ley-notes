@@ -5,13 +5,16 @@ import type {
   AgentCaptureSettings,
   AgentMemoryDashboard,
   AgentProjectInspection,
+  ProjectAgentEgressPolicy,
 } from "./types";
 
 const api = vi.hoisted(() => ({
   chooseExportParent: vi.fn(),
   erase: vi.fn(),
   exportContinuity: vi.fn(),
+  readEgress: vi.fn(),
   readSettings: vi.fn(),
+  updateEgress: vi.fn(),
   updateMode: vi.fn(),
 }));
 
@@ -19,7 +22,9 @@ vi.mock("./api", () => ({
   chooseAgentContinuityExportParent: api.chooseExportParent,
   eraseAgentProjectMemory: api.erase,
   exportAgentProjectContinuity: api.exportContinuity,
+  readAgentEgressPolicy: api.readEgress,
   readAgentCaptureSettings: api.readSettings,
+  updateAgentEgressPolicy: api.updateEgress,
   updateAgentCaptureMode: api.updateMode,
 }));
 
@@ -57,6 +62,15 @@ const dashboard = {
   },
 } as AgentMemoryDashboard;
 
+const egressPolicy: ProjectAgentEgressPolicy = {
+  projectId: "prj_test",
+  projectPolicy: "agent-ok",
+  specificationOverrides: [],
+  mountOverrides: [],
+  connectorOverrides: [],
+  privacyNotice: "OS-private sharing authority.",
+};
+
 const erasedInspection: AgentProjectInspection = {
   status: "needs-capture",
   projectId: "prj_test",
@@ -70,6 +84,7 @@ describe("CapturePrivacyPanel", () => {
     vi.clearAllMocks();
     api.chooseExportParent.mockResolvedValue(null);
     api.readSettings.mockResolvedValue(settings);
+    api.readEgress.mockResolvedValue(egressPolicy);
     api.erase.mockResolvedValue(erasedInspection);
   });
 
@@ -203,5 +218,143 @@ describe("CapturePrivacyPanel", () => {
       expect(api.chooseExportParent).toHaveBeenCalledTimes(1);
     });
     expect(api.exportContinuity).not.toHaveBeenCalled();
+  });
+
+  it("updates project agent sharing while keeping confirm-per-use fail-closed", async () => {
+    api.readEgress.mockResolvedValueOnce({
+      ...egressPolicy,
+      projectPolicy: "confirm-per-use",
+      specificationOverrides: [
+        {
+          scopeKind: "specification",
+          scopeId: "spec_11111111111111111111111111111111",
+          policy: "never-send",
+        },
+      ],
+    });
+    api.updateEgress.mockResolvedValue({
+      ...egressPolicy,
+      projectPolicy: "local-model-only",
+      specificationOverrides: [
+        {
+          scopeKind: "specification",
+          scopeId: "spec_11111111111111111111111111111111",
+          policy: "never-send",
+        },
+      ],
+    });
+
+    render(
+      <CapturePrivacyPanel
+        projectPath="/projects/ley"
+        dashboard={dashboard}
+        onUpdated={vi.fn()}
+        onErased={vi.fn()}
+      />,
+    );
+
+    expect(
+      await screen.findByText(/No confirmation prompt exists yet/i),
+    ).toBeVisible();
+    expect(
+      screen.getByText("spec_11111111111111111111111111111111"),
+    ).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Agent context sharing policy"), {
+      target: { value: "local-model-only" },
+    });
+    expect(
+      screen.getByText(
+        /does not verify that the downstream provider or runtime is actually local/i,
+      ),
+    ).toBeVisible();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Apply sharing policy" }),
+    );
+
+    await waitFor(() => {
+      expect(api.updateEgress).toHaveBeenCalledWith(
+        "/projects/ley",
+        "prj_test",
+        "confirm-per-use",
+        "local-model-only",
+      );
+    });
+  });
+
+  it("refreshes the visible sharing policy after a stale update is rejected", async () => {
+    api.readEgress
+      .mockResolvedValueOnce(egressPolicy)
+      .mockResolvedValueOnce({
+        ...egressPolicy,
+        projectPolicy: "never-send",
+      });
+    api.updateEgress.mockRejectedValue(
+      new Error(
+        "Ley agent egress policy changed from expected 'agent-ok' to 'never-send'.",
+      ),
+    );
+
+    render(
+      <CapturePrivacyPanel
+        projectPath="/projects/ley"
+        dashboard={dashboard}
+        onUpdated={vi.fn()}
+        onErased={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(
+      await screen.findByLabelText("Agent context sharing policy"),
+      {
+        target: { value: "local-model-only" },
+      },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Apply sharing policy" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /changed from expected 'agent-ok' to 'never-send'/i,
+      ),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText("Agent context sharing policy"),
+      ).toHaveValue("never-send");
+    });
+    expect(api.readEgress).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the policy view if a failed update cannot be refreshed safely", async () => {
+    api.readEgress
+      .mockResolvedValueOnce(egressPolicy)
+      .mockRejectedValueOnce(new Error("egress authority unavailable"));
+    api.updateEgress.mockRejectedValue(new Error("transition interrupted"));
+
+    render(
+      <CapturePrivacyPanel
+        projectPath="/projects/ley"
+        dashboard={dashboard}
+        onUpdated={vi.fn()}
+        onErased={vi.fn()}
+      />,
+    );
+
+    fireEvent.change(
+      await screen.findByLabelText("Agent context sharing policy"),
+      { target: { value: "never-send" } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Apply sharing policy" }),
+    );
+
+    expect(await screen.findByText(/transition interrupted/i)).toBeVisible();
+    expect(
+      await screen.findByText("Agent sharing policy is unavailable."),
+    ).toBeVisible();
+    expect(
+      screen.queryByLabelText("Agent context sharing policy"),
+    ).not.toBeInTheDocument();
   });
 });

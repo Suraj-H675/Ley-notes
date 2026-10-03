@@ -50,6 +50,26 @@ The Artifact surface can also open retained original image evidence. Browsing th
 
 Ley never uploads captured data independently. A cloud agent such as Claude or Codex may receive bounded context only when the user or host asks that agent to retrieve it. Capture mode controls local retention; it does not override the connected provider's handling of deliberately retrieved context.
 
+The same Desktop **Capture & privacy** panel also exposes the separate project-level **Agent context sharing policy**.
+This is OS-private authority, not repository configuration. The four current states are:
+
+- `agent-ok` — Ley context may be supplied to the configured agent target when the other authority/privacy checks pass;
+- `local-model-only` — allowed only when the integration explicitly starts Ley with a local egress target. That target
+  is an explicit configuration assertion; Ley does not attest that the downstream provider/runtime is actually local;
+- `confirm-per-use` — currently fail-closed for both cloud and local targets because Ley has no trustworthy
+  per-retrieval confirmation prompt yet; and
+- `never-send` — Ley context is blocked for every agent target.
+
+Desktop reads and writes the same transition-safe project egress authority as `ley egress project`. An update includes
+the project identity and policy the panel previously observed; if the selected path now resolves to a different Ley
+project or another local client changed policy meanwhile, Ley rejects the stale write before mutation and refreshes
+the visible value rather than overwriting newer authority. Historical
+Specification/Context-Mount/External-Connector restrictions remain enforced and are shown read-only in Desktop; new
+restrictions are project-level only.
+
+This policy controls only context emitted by Ley. It does not reconfigure the coding agent's provider, network,
+account, or other non-Ley traffic.
+
 ## Export portable continuity
 
 The Desktop **Capture & privacy** panel can export this project's Ley-owned continuity into a user-selected local

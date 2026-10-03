@@ -509,6 +509,27 @@ export interface AgentCaptureSettings {
   privacyNotice: string;
 }
 
+export type AgentEgressPolicy =
+  | "agent-ok"
+  | "confirm-per-use"
+  | "local-model-only"
+  | "never-send";
+
+export interface AgentEgressScopePolicy {
+  scopeKind: "project" | "specification" | "context-mount" | "external-connector";
+  scopeId: string;
+  policy: AgentEgressPolicy;
+}
+
+export interface ProjectAgentEgressPolicy {
+  projectId: string;
+  projectPolicy: AgentEgressPolicy;
+  specificationOverrides: AgentEgressScopePolicy[];
+  mountOverrides: AgentEgressScopePolicy[];
+  connectorOverrides: AgentEgressScopePolicy[];
+  privacyNotice: string;
+}
+
 export interface AgentInitialCaptureSkippedPath {
   path: string;
   reason: "oversized" | "total-limit" | "symlink";

@@ -19,14 +19,18 @@ import {
   chooseAgentContinuityExportParent,
   exportAgentProjectContinuity,
   readAgentCaptureSettings,
+  readAgentEgressPolicy,
+  updateAgentEgressPolicy,
   updateAgentCaptureMode,
 } from "./api";
 import type {
   AgentCaptureSettings,
   AgentContinuityExport,
+  AgentEgressPolicy,
   AgentMemoryDashboard,
   AgentProjectInspection,
   CaptureMode,
+  ProjectAgentEgressPolicy,
 } from "./types";
 
 const modes: Array<{
@@ -69,6 +73,37 @@ const modes: Array<{
   },
 ];
 
+const egressPolicies: Array<{
+  id: AgentEgressPolicy;
+  name: string;
+  description: string;
+}> = [
+  {
+    id: "agent-ok",
+    name: "Agent OK",
+    description:
+      "Ley context may be supplied to the configured agent target when all other authority and privacy checks allow it.",
+  },
+  {
+    id: "local-model-only",
+    name: "Local model only",
+    description:
+      "Ley context is allowed only when the integration explicitly starts Ley with a local egress target.",
+  },
+  {
+    id: "confirm-per-use",
+    name: "Confirm per use",
+    description:
+      "Currently blocks every Ley agent-context request. Ley does not yet show a trustworthy per-use confirmation prompt.",
+  },
+  {
+    id: "never-send",
+    name: "Never send",
+    description:
+      "Ley never supplies this project’s retained context to an agent target.",
+  },
+];
+
 export function CapturePrivacyPanel({
   projectPath,
   dashboard,
@@ -81,12 +116,21 @@ export function CapturePrivacyPanel({
   onErased: (inspection: AgentProjectInspection) => void;
 }) {
   const [settings, setSettings] = useState<AgentCaptureSettings | null>(null);
+  const [egressPolicy, setEgressPolicy] =
+    useState<ProjectAgentEgressPolicy | null>(null);
+  const [selectedEgress, setSelectedEgress] =
+    useState<AgentEgressPolicy>("agent-ok");
   const [selected, setSelected] = useState<CaptureMode>(
     dashboard.overview.captureMode,
   );
   const [fullConsent, setFullConsent] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [egressProjectPath, setEgressProjectPath] = useState<string | null>(
+    null,
+  );
+  const [egressSaving, setEgressSaving] = useState(false);
+  const [egressError, setEgressError] = useState<string | null>(null);
   const [eraseArmed, setEraseArmed] = useState(false);
   const [eraseConfirmation, setEraseConfirmation] = useState("");
   const [erasing, setErasing] = useState(false);
@@ -111,6 +155,27 @@ export function CapturePrivacyPanel({
         if (!current) return;
         setError(errorMessage(cause));
         setLoading(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [projectPath]);
+
+  useEffect(() => {
+    let current = true;
+    void readAgentEgressPolicy(projectPath)
+      .then((next) => {
+        if (!current) return;
+        setEgressProjectPath(projectPath);
+        setEgressPolicy(next);
+        setSelectedEgress(next.projectPolicy);
+        setEgressError(null);
+      })
+      .catch((cause) => {
+        if (!current) return;
+        setEgressProjectPath(projectPath);
+        setEgressPolicy(null);
+        setEgressError(errorMessage(cause));
       });
     return () => {
       current = false;
@@ -151,6 +216,39 @@ export function CapturePrivacyPanel({
     } catch (cause) {
       setEraseError(errorMessage(cause));
       setErasing(false);
+    }
+  }
+
+  async function applyEgressPolicy() {
+    if (
+      !egressPolicy ||
+      selectedEgress === egressPolicy.projectPolicy ||
+      egressSaving
+    ) {
+      return;
+    }
+    setEgressSaving(true);
+    setEgressError(null);
+    try {
+      const next = await updateAgentEgressPolicy(
+        projectPath,
+        egressPolicy.projectId,
+        egressPolicy.projectPolicy,
+        selectedEgress,
+      );
+      setEgressPolicy(next);
+      setSelectedEgress(next.projectPolicy);
+    } catch (cause) {
+      setEgressError(errorMessage(cause));
+      try {
+        const latest = await readAgentEgressPolicy(projectPath);
+        setEgressPolicy(latest);
+        setSelectedEgress(latest.projectPolicy);
+      } catch {
+        setEgressPolicy(null);
+      }
+    } finally {
+      setEgressSaving(false);
     }
   }
 
@@ -199,6 +297,9 @@ export function CapturePrivacyPanel({
     selected === "full-evidence" &&
     settings.mode !== "full-evidence" &&
     !fullConsent;
+  const egressLoading = egressProjectPath !== projectPath;
+  const visibleEgressPolicy = egressLoading ? null : egressPolicy;
+  const visibleEgressError = egressLoading ? null : egressError;
 
   return (
     <CapturePrivacyContent
@@ -213,6 +314,13 @@ export function CapturePrivacyPanel({
       changed={changed}
       fullNeedsConsent={fullNeedsConsent}
       applyMode={applyMode}
+      egressPolicy={visibleEgressPolicy}
+      selectedEgress={selectedEgress}
+      setSelectedEgress={setSelectedEgress}
+      egressLoading={egressLoading}
+      egressSaving={egressSaving}
+      egressError={visibleEgressError}
+      applyEgressPolicy={applyEgressPolicy}
       eraseArmed={eraseArmed}
       onPrepareErase={() => {
         setEraseArmed((current) => !current);
@@ -244,6 +352,13 @@ function CapturePrivacyContent({
   changed,
   fullNeedsConsent,
   applyMode,
+  egressPolicy,
+  selectedEgress,
+  setSelectedEgress,
+  egressLoading,
+  egressSaving,
+  egressError,
+  applyEgressPolicy,
   eraseArmed,
   onPrepareErase,
   eraseConfirmation,
@@ -267,6 +382,13 @@ function CapturePrivacyContent({
   changed: boolean;
   fullNeedsConsent: boolean;
   applyMode: () => Promise<void>;
+  egressPolicy: ProjectAgentEgressPolicy | null;
+  selectedEgress: AgentEgressPolicy;
+  setSelectedEgress: (policy: AgentEgressPolicy) => void;
+  egressLoading: boolean;
+  egressSaving: boolean;
+  egressError: string | null;
+  applyEgressPolicy: () => Promise<void>;
   eraseArmed: boolean;
   onPrepareErase: () => void;
   eraseConfirmation: string;
@@ -531,6 +653,16 @@ function CapturePrivacyContent({
         </div>
       </section>
 
+      <AgentEgressSection
+        policy={egressPolicy}
+        selected={selectedEgress}
+        setSelected={setSelectedEgress}
+        loading={egressLoading}
+        saving={egressSaving}
+        error={egressError}
+        applyPolicy={applyEgressPolicy}
+      />
+
       <ContinuityExportSection
         saving={saving}
         erasing={erasing}
@@ -639,6 +771,178 @@ function CapturePrivacyContent({
         </div>
       </section>
     </div>
+  );
+}
+
+function AgentEgressSection({
+  policy,
+  selected,
+  setSelected,
+  loading,
+  saving,
+  error,
+  applyPolicy,
+}: {
+  policy: ProjectAgentEgressPolicy | null;
+  selected: AgentEgressPolicy;
+  setSelected: (policy: AgentEgressPolicy) => void;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  applyPolicy: () => Promise<void>;
+}) {
+  const retainedOverrides = policy
+    ? [
+        ...policy.specificationOverrides,
+        ...policy.mountOverrides,
+        ...policy.connectorOverrides,
+      ]
+    : [];
+  const changed = Boolean(policy && selected !== policy.projectPolicy);
+  const selectedOption =
+    egressPolicies.find((option) => option.id === selected) ?? egressPolicies[0];
+
+  return (
+    <section aria-labelledby="agent-egress-title">
+      <div className="mb-3">
+        <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Agent sharing
+        </p>
+        <h3
+          id="agent-egress-title"
+          className="mt-1 text-lg font-semibold tracking-tight"
+        >
+          Control where Ley context may go
+        </h3>
+        <p className="mt-2 max-w-3xl text-meta leading-5 text-muted-foreground">
+          This policy governs context supplied by Ley. It does not change your
+          coding agent’s own provider, network, or account configuration.
+        </p>
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="mb-3 flex items-start gap-3 rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta"
+        >
+          <AlertTriangle
+            size={17}
+            className="mt-0.5 shrink-0 text-destructive"
+            aria-hidden="true"
+          />
+          <div>
+            <p className="font-semibold">Agent sharing error</p>
+            <p className="mt-0.5 text-muted-foreground">{error}</p>
+          </div>
+        </div>
+      )}
+
+      {loading && !policy ? (
+        <div className="rounded-md border border-border bg-surface-1 p-4 text-meta text-muted-foreground">
+          <RefreshCw
+            size={14}
+            className="mr-2 inline animate-spin motion-reduce:animate-none"
+            aria-hidden="true"
+          />
+          Reading agent sharing policy…
+        </div>
+      ) : policy ? (
+        <div className="space-y-3 rounded-md border border-border bg-surface-1 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <label className="min-w-0 flex-1 text-meta font-semibold">
+              <span className="block">Agent context sharing policy</span>
+              <select
+                aria-label="Agent context sharing policy"
+                value={selected}
+                disabled={saving}
+                onChange={(event) =>
+                  setSelected(event.target.value as AgentEgressPolicy)
+                }
+                className="mt-2 w-full rounded-sm border border-border bg-surface-2 px-3 py-2 text-meta font-normal text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {egressPolicies.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              variant="primary"
+              disabled={!changed || saving}
+              onClick={() => void applyPolicy()}
+            >
+              {saving ? (
+                <RefreshCw
+                  size={14}
+                  className="animate-spin motion-reduce:animate-none"
+                />
+              ) : (
+                <ShieldCheck size={14} />
+              )}
+              {saving ? "Applying policy" : "Apply sharing policy"}
+            </Button>
+          </div>
+
+          <p className="text-meta leading-5 text-muted-foreground">
+            {selectedOption.description}
+          </p>
+
+          {selected === "local-model-only" && (
+            <p className="text-micro leading-4 text-muted-foreground-strong">
+              “Local” is an explicit integration assertion; Ley does not verify
+              that the downstream provider or runtime is actually local.
+            </p>
+          )}
+          {selected === "confirm-per-use" && (
+            <p className="text-micro leading-4 text-warning">
+              No confirmation prompt exists yet. This remains fail-closed for
+              both cloud and local agent targets.
+            </p>
+          )}
+
+          <p className="text-micro leading-4 text-subtle-foreground">
+            {changed
+              ? "Current: " + humanize(policy.projectPolicy) + "."
+              : "This is the current project policy."}{" "}
+            Updates reject a stale Desktop view if the project identity or
+            policy changed instead of overwriting newer authority.
+          </p>
+
+          <div className="border-t border-border pt-3">
+            <p className="text-meta font-semibold">Retained source restrictions</p>
+            <p className="mt-1 text-micro leading-4 text-muted-foreground">
+              {retainedOverrides.length === 0
+                ? "None."
+                : "Older source-specific restrictions remain enforced and read-only here; new restrictions are project-level."}
+            </p>
+            {retainedOverrides.length > 0 && (
+              <ul className="mt-2 space-y-1 text-micro">
+                {retainedOverrides.map((override) => (
+                  <li
+                    key={override.scopeKind + ":" + override.scopeId}
+                    className="flex min-w-0 justify-between gap-3"
+                  >
+                    <span className="truncate font-mono">{override.scopeId}</span>
+                    <span className="shrink-0 text-muted-foreground">
+                      {humanize(override.policy)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <p className="text-micro leading-4 text-subtle-foreground">
+            {policy.privacyNotice}
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-md border border-destructive/25 bg-destructive/8 p-4 text-meta">
+          Agent sharing policy is unavailable.
+        </div>
+      )}
+    </section>
   );
 }
 

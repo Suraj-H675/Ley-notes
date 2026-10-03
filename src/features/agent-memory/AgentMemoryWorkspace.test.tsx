@@ -21,6 +21,7 @@ const api = vi.hoisted(() => ({
   readAgentArtifacts: vi.fn(),
   readAgentMediaEvidence: vi.fn(),
   readAgentCaptureSettings: vi.fn(),
+  readAgentEgressPolicy: vi.fn(),
   readAgentLearning: vi.fn(),
   readAgentSession: vi.fn(),
   refreshAgentProject: vi.fn(),
@@ -28,6 +29,7 @@ const api = vi.hoisted(() => ({
   searchAgentProjects: vi.fn(),
   searchAgentProjectMemory: vi.fn(),
   updateAgentCaptureMode: vi.fn(),
+  updateAgentEgressPolicy: vi.fn(),
   reviewAgentLearning: vi.fn(),
 }));
 
@@ -49,12 +51,14 @@ vi.mock("./api", () => ({
   readAgentArtifacts: api.readAgentArtifacts,
   readAgentMediaEvidence: api.readAgentMediaEvidence,
   readAgentCaptureSettings: api.readAgentCaptureSettings,
+  readAgentEgressPolicy: api.readAgentEgressPolicy,
   readAgentLearning: api.readAgentLearning,
   readAgentSession: api.readAgentSession,
   renameAgentSession: api.renameAgentSession,
   searchAgentProjects: api.searchAgentProjects,
   searchAgentProjectMemory: api.searchAgentProjectMemory,
   updateAgentCaptureMode: api.updateAgentCaptureMode,
+  updateAgentEgressPolicy: api.updateAgentEgressPolicy,
   refreshAgentProject: api.refreshAgentProject,
   reviewAgentLearning: api.reviewAgentLearning,
 }));
@@ -169,6 +173,14 @@ describe("Agent Memory workspace boundaries", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+    api.readAgentEgressPolicy.mockResolvedValue({
+      projectId: "prj_test",
+      projectPolicy: "agent-ok",
+      specificationOverrides: [],
+      mountOverrides: [],
+      connectorOverrides: [],
+      privacyNotice: "OS-private sharing authority.",
+    });
   });
 
   it("keeps a partially initialized project on native continuity after capture drift", async () => {

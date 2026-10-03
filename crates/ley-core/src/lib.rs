@@ -657,6 +657,12 @@ pub enum LeyCoreError {
     AgentEgressDenied { policy: String, target: String },
     #[error("Ley agent egress policy migration is incomplete for project {project_id}")]
     AgentEgressPolicyMigrationPending { project_id: String },
+    #[error("Ley agent egress policy for project {project_id} changed from expected '{expected}' to '{current}'. Refresh the policy before retrying.")]
+    AgentEgressPolicyChanged {
+        project_id: String,
+        expected: String,
+        current: String,
+    },
     #[error("Ley agent egress authority cannot be re-entered from a protected operation")]
     AgentEgressAuthorityReentrant,
     #[error("Ley agent egress project-policy update for {project_id} may be partially applied after {stage} while requesting '{requested}': {detail}. Retry the same command and inspect `ley egress list`.")]

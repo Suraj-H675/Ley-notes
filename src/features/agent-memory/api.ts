@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AgentCaptureSettings,
+  AgentEgressPolicy,
   AgentContinuityExport,
   AgentMediaEvidence,
   AgentMemoryDashboard,
@@ -15,6 +16,7 @@ import type {
   ProjectActivityView,
   ProjectArtifactInventory,
   ProjectEvidenceExcerpt,
+  ProjectAgentEgressPolicy,
   GraphCitation,
   ProjectProblemScope,
   ProjectMemorySearch,
@@ -84,6 +86,26 @@ export function readAgentCaptureSettings(
   projectPath: string,
 ): Promise<AgentCaptureSettings> {
   return invoke("read_agent_capture_settings", { projectPath });
+}
+
+export function readAgentEgressPolicy(
+  projectPath: string,
+): Promise<ProjectAgentEgressPolicy> {
+  return invoke("read_agent_egress_policy", { projectPath });
+}
+
+export function updateAgentEgressPolicy(
+  projectPath: string,
+  expectedProjectId: string,
+  expectedPolicy: AgentEgressPolicy,
+  policy: AgentEgressPolicy,
+): Promise<ProjectAgentEgressPolicy> {
+  return invoke("update_agent_egress_policy", {
+    projectPath,
+    expectedProjectId,
+    expectedPolicy,
+    policy,
+  });
 }
 
 export function updateAgentCaptureMode(

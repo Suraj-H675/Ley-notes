@@ -177,6 +177,10 @@ verification of that export path remains in repository history and ADR 0021, but
 Desktop acceptance gate. User-owned Markdown/Canvas copies created by older versions remain independent files
 and must not be deleted by continuity erasure or migration cleanup.
 
+## Agent Memory privacy controls
+
+- In **Capture & privacy → Agent sharing**, change the project policy and verify `ley egress list` reports the same value. Set `confirm-per-use` and verify the UI states that it blocks both cloud and local targets rather than showing a fake confirmation prompt. Change the policy from another local client while the panel is open, then apply the stale Desktop selection: the write must be rejected and the panel must refresh to the newer policy without weakening retained source-specific restrictions.
+
 ## Agent Memory graph history
 
 This section records historical verification for the retired Desktop Project Graph UI. The underlying captured

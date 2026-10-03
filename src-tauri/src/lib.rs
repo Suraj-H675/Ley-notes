@@ -27,16 +27,17 @@ use ley_core::{
     read_session_turns_context_with_continuity_transition, register_native_born_project,
     rename_session_with_continuity_transition, review_learning_with_continuity_transition,
     search_observed_projects, search_project_memory_with_continuity_transition,
-    update_capture_mode, validate_project_memory, ApprovedSourceAuthorityList, ApprovedSourceKind,
-    ApprovedSourceRegistry, ArtifactMediaType, BindingRegistry, BindingSource, CaptureFile,
-    CaptureMode, CapturePolicy, ContinuityStore, CorrectLearningInput, CrossProjectSearch,
-    EraseSessionMemoryInput, EvidenceExcerpt, GraphCitation, IngestionResult, LearningActor,
-    LearningContextPack, LearningEvidenceInput, LearningFeedbackAction, LearningList,
-    LearningListScope, LeyCoreError, MemoryOverview, ProjectActivityView, ProjectArtifactInventory,
-    ProjectCatalog, ProjectDiagnostic, ProjectMemorySearch, ProjectMemorySearchLimits,
-    ProjectProblemScope, ProjectResumePack, ProjectVaultBinding, RenameSessionInput,
-    ReviewLearningInput, RevisionCompatibility, SessionContextPack, SessionMemoryErasure,
-    SessionSummary, SessionTurnsContextPack, SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS,
+    update_capture_mode, validate_project_memory, AgentEgressPolicy, ApprovedSourceAuthorityList,
+    ApprovedSourceKind, ApprovedSourceRegistry, ArtifactMediaType, BindingRegistry, BindingSource,
+    CaptureFile, CaptureMode, CapturePolicy, ContinuityStore, CorrectLearningInput,
+    CrossProjectSearch, EgressPolicyRegistry, EraseSessionMemoryInput, EvidenceExcerpt,
+    GraphCitation, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
+    LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
+    ProjectActivityView, ProjectAgentEgressPolicy, ProjectArtifactInventory, ProjectCatalog,
+    ProjectDiagnostic, ProjectMemorySearch, ProjectMemorySearchLimits, ProjectProblemScope,
+    ProjectResumePack, ProjectVaultBinding, RenameSessionInput, ReviewLearningInput,
+    RevisionCompatibility, SessionContextPack, SessionMemoryErasure, SessionSummary,
+    SessionTurnsContextPack, SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS,
     DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
     DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
     DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
@@ -851,6 +852,60 @@ fn read_agent_capture_settings(project_path: String) -> Result<AgentCaptureSetti
         })
     })()
         .map_err(|error| error.to_string())
+}
+
+fn read_agent_egress_policy_with(
+    project_path: &Path,
+    registry: &EgressPolicyRegistry,
+    store: &ContinuityStore,
+) -> Result<ProjectAgentEgressPolicy, LeyCoreError> {
+    registry.list_transition(project_path, store)
+}
+
+#[tauri::command]
+fn read_agent_egress_policy(project_path: String) -> Result<ProjectAgentEgressPolicy, String> {
+    let registry = EgressPolicyRegistry::system_default().map_err(|error| error.to_string())?;
+    let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
+    read_agent_egress_policy_with(Path::new(&project_path), &registry, &store)
+        .map_err(|error| error.to_string())
+}
+
+fn update_agent_egress_policy_with(
+    project_path: &Path,
+    registry: &EgressPolicyRegistry,
+    store: &ContinuityStore,
+    expected_project_id: &str,
+    expected_policy: AgentEgressPolicy,
+    policy: AgentEgressPolicy,
+) -> Result<ProjectAgentEgressPolicy, LeyCoreError> {
+    registry.set_project_policy_transition_if_current(
+        project_path,
+        store,
+        expected_project_id,
+        expected_policy,
+        policy,
+    )?;
+    registry.list_transition(project_path, store)
+}
+
+#[tauri::command]
+fn update_agent_egress_policy(
+    project_path: String,
+    expected_project_id: String,
+    expected_policy: AgentEgressPolicy,
+    policy: AgentEgressPolicy,
+) -> Result<ProjectAgentEgressPolicy, String> {
+    let registry = EgressPolicyRegistry::system_default().map_err(|error| error.to_string())?;
+    let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
+    update_agent_egress_policy_with(
+        Path::new(&project_path),
+        &registry,
+        &store,
+        &expected_project_id,
+        expected_policy,
+        policy,
+    )
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1979,6 +2034,8 @@ pub fn run() {
             list_agent_projects,
             forget_agent_project,
             read_agent_capture_settings,
+            read_agent_egress_policy,
+            update_agent_egress_policy,
             update_agent_capture_mode,
             erase_agent_project_memory,
             search_agent_projects,
@@ -2012,6 +2069,77 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_project_egress_reads_updates_and_rejects_stale_policy() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-desktop-project-egress-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        initialize_project(&project, Some("Desktop egress"), CaptureMode::Structured).unwrap();
+        let registry = EgressPolicyRegistry::at(root.join("private/egress.json"));
+        let store = ContinuityStore::at(root.join("private/continuity.sqlite3"));
+        let specification_id = "spec_11111111111111111111111111111111";
+        registry
+            .set_specification_policy(&project, specification_id, AgentEgressPolicy::NeverSend)
+            .unwrap();
+
+        let initial = read_agent_egress_policy_with(&project, &registry, &store).unwrap();
+        assert_eq!(initial.project_policy, AgentEgressPolicy::AgentOk);
+        assert_eq!(initial.specification_overrides.len(), 1);
+
+        let updated = update_agent_egress_policy_with(
+            &project,
+            &registry,
+            &store,
+            &initial.project_id,
+            AgentEgressPolicy::AgentOk,
+            AgentEgressPolicy::ConfirmPerUse,
+        )
+        .unwrap();
+        assert_eq!(updated.project_policy, AgentEgressPolicy::ConfirmPerUse);
+        assert_eq!(updated.specification_overrides.len(), 1);
+        assert_eq!(
+            updated.specification_overrides[0].policy,
+            AgentEgressPolicy::NeverSend
+        );
+
+        registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+        let stale = update_agent_egress_policy_with(
+            &project,
+            &registry,
+            &store,
+            &updated.project_id,
+            AgentEgressPolicy::ConfirmPerUse,
+            AgentEgressPolicy::AgentOk,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            stale,
+            LeyCoreError::AgentEgressPolicyChanged {
+                ref expected,
+                ref current,
+                ..
+            } if expected == "confirm-per-use" && current == "local-model-only"
+        ));
+        assert_eq!(
+            read_agent_egress_policy_with(&project, &registry, &store)
+                .unwrap()
+                .project_policy,
+            AgentEgressPolicy::LocalModelOnly
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn desktop_session_reads_use_proven_native_snapshot_after_vault_disappears() {
