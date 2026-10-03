@@ -73,7 +73,8 @@ pub struct SessionContextUnobservedUtilityBinding {
     pub recorded_at_unix_ms: u64,
     pub context_pack_id: String,
     pub artifact_snapshot_id: String,
-    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub egress_target: Option<AgentEgressTarget>,
     pub max_results: usize,
@@ -98,7 +99,8 @@ pub struct SessionContextUtilityObservation {
     pub context_pack_id: String,
     pub task_excerpt: String,
     pub artifact_snapshot_id: String,
-    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub egress_target: Option<AgentEgressTarget>,
     pub max_results: usize,

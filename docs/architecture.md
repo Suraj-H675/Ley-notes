@@ -66,6 +66,10 @@ Current capture modes are:
 
 Captured evidence is historical. Ley does not silently relabel it as a live-source check.
 
+Fresh/native capture persists artifact snapshots, captured bytes where consent allows them, capture time, and
+bounded Git revision metadata. It does not build or persist a source-code graph. The remaining graph parser,
+snapshots, and history belong to finite legacy-vault compatibility and are not part of canonical native authority.
+
 ## Continuity model
 
 Ley preserves the facts that change a later engineering decision: goals/handoffs, decisions, constraints, attempts

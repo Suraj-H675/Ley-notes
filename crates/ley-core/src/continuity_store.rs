@@ -147,7 +147,7 @@ pub(crate) struct ContinuityArtifactAuthoritySnapshot {
     pub project_id: String,
     pub snapshot_id: String,
     pub generated_at_unix_ms: u64,
-    pub legacy_graph_snapshot_id: String,
+    pub legacy_graph_snapshot_id: Option<String>,
     pub captured_git: Option<crate::GitState>,
     pub files: Vec<ContinuityArtifactAuthorityFile>,
 }
@@ -1853,7 +1853,7 @@ impl ContinuityStore {
         self.with_artifact_authority_lock(|| {
             validate_project_id(project_id)?;
             let connection = self.open_connection()?;
-            let state: Option<(String, i64, String, Option<String>)> = connection
+            let state: Option<(String, i64, Option<String>, Option<String>)> = connection
                 .query_row(
                     "SELECT s.snapshot_id, st.captured_at_unix_ms,
                             st.legacy_graph_snapshot_id, st.captured_git_json
@@ -1861,8 +1861,7 @@ impl ContinuityStore {
                      JOIN artifact_snapshots s
                        ON s.project_id = st.project_id
                       AND s.snapshot_id = st.current_snapshot_id
-                     WHERE st.project_id = ?1
-                       AND st.legacy_graph_snapshot_id IS NOT NULL",
+                     WHERE st.project_id = ?1",
                     [project_id],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                 )
@@ -1877,6 +1876,14 @@ impl ContinuityStore {
             else {
                 return Ok(None);
             };
+            if legacy_graph_snapshot_id
+                .as_deref()
+                .is_some_and(|value| !valid_graph_snapshot_id(value))
+            {
+                return Err(LeyCoreError::InvalidContinuityStore(
+                    "legacy graph snapshot ID is invalid".to_owned(),
+                ));
+            }
             let captured_git = captured_git_json
                 .map(|json| {
                     serde_json::from_str(&json).map_err(|error| {
@@ -1914,6 +1921,13 @@ impl ContinuityStore {
                     line_count: artifact_i64_to_u64(line_count, "artifact line count")?,
                     content_hash,
                 });
+            }
+            if let Some(git) = &captured_git {
+                crate::graph::validate_git_state(git).map_err(|error| {
+                    LeyCoreError::InvalidContinuityStore(format!(
+                        "captured Git state is invalid: {error}"
+                    ))
+                })?;
             }
             Ok(Some(ContinuityArtifactAuthoritySnapshot {
                 project_id: project_id.to_owned(),
@@ -1977,21 +1991,28 @@ impl ContinuityStore {
     ) -> Result<bool, LeyCoreError> {
         validate_project_id(project_id)?;
         let connection = self.open_connection()?;
-        connection
+        let graph_snapshot_id: Option<Option<String>> = connection
             .query_row(
-                "SELECT EXISTS(
-                    SELECT 1
-                    FROM project_artifact_state st
-                    JOIN artifact_snapshots s
-                      ON s.project_id = st.project_id
-                     AND s.snapshot_id = st.current_snapshot_id
-                    WHERE st.project_id = ?1
-                      AND st.legacy_graph_snapshot_id IS NOT NULL
-                 )",
+                "SELECT st.legacy_graph_snapshot_id
+                 FROM project_artifact_state st
+                 JOIN artifact_snapshots s
+                   ON s.project_id = st.project_id
+                  AND s.snapshot_id = st.current_snapshot_id
+                 WHERE st.project_id = ?1",
                 [project_id],
                 |row| row.get(0),
             )
-            .map_err(|error| self.database_error(error))
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+        match graph_snapshot_id {
+            None => Ok(false),
+            Some(Some(value)) if !valid_graph_snapshot_id(&value) => {
+                Err(LeyCoreError::InvalidContinuityStore(
+                    "legacy graph snapshot ID is invalid".to_owned(),
+                ))
+            }
+            Some(_) => Ok(true),
+        }
     }
 
     pub(crate) fn artifact_write_authority_ready(
@@ -2185,6 +2206,14 @@ impl ContinuityStore {
             Some((snapshot_id, graph_snapshot_id)) => (Some(snapshot_id), graph_snapshot_id),
             None => (None, None),
         };
+        if legacy_graph_snapshot_id
+            .as_deref()
+            .is_some_and(|value| !valid_graph_snapshot_id(value))
+        {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "legacy graph snapshot ID is invalid".to_owned(),
+            ));
+        }
         let mut content_hashes = BTreeMap::new();
         if let Some(snapshot_id) = &current_snapshot_id {
             let mut statement = connection
@@ -2263,6 +2292,14 @@ impl ContinuityStore {
         else {
             return Ok(None);
         };
+        if legacy_graph_snapshot_id
+            .as_deref()
+            .is_some_and(|value| !valid_graph_snapshot_id(value))
+        {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "legacy graph snapshot ID is invalid".to_owned(),
+            ));
+        }
         let capture_mode = crate::CaptureMode::parse(&capture_mode).map_err(|_| {
             LeyCoreError::InvalidContinuityStore(
                 "native artifact snapshot has an invalid capture mode".to_owned(),
@@ -2285,6 +2322,13 @@ impl ContinuityStore {
                 })
             })
             .transpose()?;
+        if let Some(git) = &captured_git {
+            crate::graph::validate_git_state(git).map_err(|error| {
+                LeyCoreError::InvalidContinuityStore(format!(
+                    "captured Git state is invalid: {error}"
+                ))
+            })?;
+        }
         let mut statement = connection
             .prepare(
                 "SELECT artifact_path, kind, language, media_type, source_bytes, stored_bytes,
@@ -7205,6 +7249,7 @@ mod tests {
                 let prepared = crate::ingestion::prepare_artifact_capture(
                     &diagnostic,
                     None,
+                    true,
                     |_name, content_hash, bytes| {
                         store.install_artifact_blob(
                             &initialized.identity.project_id,

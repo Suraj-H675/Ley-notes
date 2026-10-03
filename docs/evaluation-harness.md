@@ -123,8 +123,9 @@ host capability, so its executable acceptance proof lives in the native Tauri te
 same registry-resolved helper used by the `erase_agent_project_memory` Tauri command against a temporary
 initialized project and bound vault.
 
-The fixture creates real captured artifacts/graph state, a structured session, and an evidence-backed
-learning containing a private-memory canary. It also creates independent user-owned Markdown and JSON
+The fixture creates real captured artifact state, a structured session, and an evidence-backed
+learning containing a private-memory canary. Legacy graph state is not required for the native erasure contract.
+It also creates independent user-owned Markdown and JSON
 Canvas copies plus ordinary project source. Erasure must return the project to `needs-capture`, remove
 the complete per-project Agent Memory namespace so ordinary memory inspection becomes unavailable, and
 preserve the project source, repository-local `.ley/project.json`, private vault binding, Markdown note,

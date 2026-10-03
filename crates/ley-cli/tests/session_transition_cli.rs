@@ -285,11 +285,9 @@ fn session_continuity_uses_proven_native_authority_after_vault_loss() {
             .as_str()
             .is_some_and(|value| !value.is_empty())
     );
-    assert!(
-        shown["checkpoints"][0]["projectRevision"]["graphSnapshotId"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty())
-    );
+    assert!(shown["checkpoints"][0]["projectRevision"]
+        .as_object()
+        .is_some_and(|revision| !revision.contains_key("graphSnapshotId")));
     assert!(shown["revisionFreshness"]["capturedHead"].is_null());
 
     let never_imported_project = base.path().join("never-imported-project");

@@ -338,7 +338,8 @@ pub struct CompiledContextPack {
     pub project_id: String,
     pub project_name: String,
     pub artifact_snapshot_id: String,
-    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
     pub captured_at_unix_ms: u64,
     pub freshness: &'static str,
     pub task: String,
@@ -1165,7 +1166,7 @@ fn finalize_context_pack_with_specification_projections(
     finalize_context_pack(pack)
 }
 
-fn finalize_context_pack(mut pack: CompiledContextPack) -> CompiledContextPack {
+pub(crate) fn finalize_context_pack(mut pack: CompiledContextPack) -> CompiledContextPack {
     if pack.created_at_unix_ms == 0 {
         pack.created_at_unix_ms = crate::unix_time_ms();
     }
@@ -2099,7 +2100,7 @@ mod tests {
             project_id: "prj_0123456789abcdef0123456789abcdef".to_owned(),
             project_name: "Compiler fixture".to_owned(),
             artifact_snapshot_id: format!("snp_{}", "0".repeat(64)),
-            graph_snapshot_id: format!("grf_{}", "1".repeat(64)),
+            graph_snapshot_id: Some(format!("grf_{}", "1".repeat(64))),
             captured_at_unix_ms: 1,
             query: "task".to_owned(),
             revision_filter: None,

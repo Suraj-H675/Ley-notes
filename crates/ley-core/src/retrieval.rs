@@ -119,7 +119,8 @@ pub struct ContextPack {
     pub project_id: String,
     pub project_name: String,
     pub artifact_snapshot_id: String,
-    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
     pub captured_at_unix_ms: u64,
     pub query: String,
     pub max_tokens: usize,
@@ -463,21 +464,9 @@ pub fn find_project_hybrid_context_with_continuity_transition(
     let Some(snapshot) = store.current_artifact_snapshot(&diagnostic.identity.project_id)? else {
         return find_project_hybrid_context(project_start, legacy_vault, query, limits);
     };
-    let graph_snapshot_id = snapshot.legacy_graph_snapshot_id.clone().ok_or_else(|| {
-        LeyCoreError::InvalidContinuityStore(
-            "native artifact snapshot is missing its captured graph provenance; recapture the project before using canonical search"
-                .to_owned(),
-        )
-    })?;
     let candidates = collect_native_lexical_candidates(&snapshot, query)?;
     Ok(HybridContextPack {
-        context: context_pack_from_native_snapshot(
-            &snapshot,
-            &graph_snapshot_id,
-            query,
-            limits,
-            candidates,
-        ),
+        context: context_pack_from_native_snapshot(&snapshot, query, limits, candidates),
         retrieval: HybridRetrievalMetadata {
             mode: RetrievalMode::Lexical,
             conflict_projection: HybridConflictProjection::NotParticipating,
@@ -503,21 +492,9 @@ pub(crate) fn find_native_project_hybrid_context_for_project_id(
                 "canonical native artifact continuity is unavailable".to_owned(),
             )
         })?;
-    let graph_snapshot_id = snapshot.legacy_graph_snapshot_id.clone().ok_or_else(|| {
-        LeyCoreError::InvalidContinuityStore(
-            "native artifact snapshot is missing its captured graph provenance; recapture the project before using canonical search"
-                .to_owned(),
-        )
-    })?;
     let candidates = collect_native_lexical_candidates(&snapshot, query)?;
     Ok(HybridContextPack {
-        context: context_pack_from_native_snapshot(
-            &snapshot,
-            &graph_snapshot_id,
-            query,
-            limits,
-            candidates,
-        ),
+        context: context_pack_from_native_snapshot(&snapshot, query, limits, candidates),
         retrieval: HybridRetrievalMetadata {
             mode: RetrievalMode::Lexical,
             conflict_projection: HybridConflictProjection::NotParticipating,
@@ -1140,7 +1117,6 @@ fn collect_native_lexical_candidates(
 
 fn context_pack_from_native_snapshot(
     snapshot: &crate::continuity_store::ContinuityCurrentArtifactSnapshot,
-    graph_snapshot_id: &str,
     query: &str,
     limits: RetrievalLimits,
     candidates: Vec<ContextItem>,
@@ -1183,7 +1159,7 @@ fn context_pack_from_native_snapshot(
         project_id: snapshot.project_id.clone(),
         project_name: snapshot.project_name.clone(),
         artifact_snapshot_id: snapshot.snapshot_id.clone(),
-        graph_snapshot_id: graph_snapshot_id.to_owned(),
+        graph_snapshot_id: snapshot.legacy_graph_snapshot_id.clone(),
         captured_at_unix_ms: snapshot.generated_at_unix_ms,
         query: query.trim().to_owned(),
         max_tokens: limits.max_tokens,
@@ -1256,7 +1232,7 @@ fn context_pack_from_candidates(
         project_id: memory.manifest.project_id.clone(),
         project_name: memory.manifest.project_name.clone(),
         artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
-        graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
+        graph_snapshot_id: Some(memory.graph.graph_snapshot_id.clone()),
         captured_at_unix_ms: memory.manifest.generated_at_unix_ms,
         query: query.trim().to_owned(),
         max_tokens: limits.max_tokens,
@@ -1647,7 +1623,8 @@ mod tests {
             native.context.artifact_snapshot_id,
             legacy.artifact_snapshot_id
         );
-        assert_eq!(native.context.graph_snapshot_id, legacy.graph_snapshot_id);
+        assert!(legacy.graph_snapshot_id.is_some());
+        assert!(native.context.graph_snapshot_id.is_none());
         assert_eq!(native.context.project_id, legacy.project_id);
         assert_eq!(native.retrieval.mode, RetrievalMode::Lexical);
         let native_memory = native
@@ -1658,6 +1635,106 @@ mod tests {
             .unwrap();
         assert_eq!(native_memory.citation, legacy_memory.citation);
         assert_eq!(native_memory.snippet, legacy_memory.snippet);
+    }
+
+    #[test]
+    fn fresh_graphless_native_capture_supports_text_search_and_text_media_evidence() {
+        let base = tempdir().unwrap();
+        let project = base.path().join("graphless-project");
+        let vault = base.path().join("unused-legacy-vault");
+        let private = base.path().join("private");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        initialize_project(
+            &project,
+            Some("Graphless evidence"),
+            CaptureMode::FullEvidence,
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("README.md"),
+            "The captured text evidence contains a graphless needle.\n",
+        )
+        .unwrap();
+        let image = png_fixture(7);
+        std::fs::write(project.join("diagram.png"), &image).unwrap();
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+
+        let ingested = crate::ingest_project_with_native_authority(&project, &store).unwrap();
+        assert!(ingested.graph_snapshot_id.is_none());
+        assert!(ingested.graph_nodes.is_none());
+        assert!(ingested.graph_edges.is_none());
+        let identity = crate::diagnose_project(&project).unwrap().identity;
+        assert!(store
+            .artifact_read_authority_ready(&identity.project_id)
+            .unwrap());
+        assert!(store
+            .current_artifact_snapshot(&identity.project_id)
+            .unwrap()
+            .unwrap()
+            .legacy_graph_snapshot_id
+            .is_none());
+
+        let search = crate::search_native_project_memory_for_expected_project(
+            &project,
+            &store,
+            &identity.project_id,
+            "graphless needle",
+            crate::ProjectMemorySearchLimits::default(),
+            None,
+        )
+        .unwrap();
+        assert!(search.graph_snapshot_id.is_none());
+        let text_citation = search
+            .results
+            .iter()
+            .find_map(|result| result.citation.as_ref())
+            .unwrap();
+        let text = read_project_cited_evidence_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            text_citation,
+            0,
+            2_000,
+        )
+        .unwrap();
+        assert!(text.text.contains("graphless needle"));
+
+        let media_context = find_project_hybrid_context_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            "diagram",
+            RetrievalLimits::default(),
+        )
+        .unwrap();
+        assert!(media_context.context.graph_snapshot_id.is_none());
+        let media_citation = media_context
+            .context
+            .items
+            .iter()
+            .find(|item| item.path.as_deref() == Some("diagram.png"))
+            .unwrap()
+            .citation
+            .clone();
+        let media = read_project_cited_media_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &media_citation.artifact_path,
+            &media_citation.artifact_snapshot_id,
+            &media_citation.content_hash,
+            crate::MAX_MEDIA_EVIDENCE_BYTES,
+        )
+        .unwrap();
+        assert_eq!(media.data, image);
+        assert!(!vault.exists());
     }
 
     #[test]

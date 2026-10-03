@@ -179,6 +179,7 @@ struct TaggedFact {
     citation_node: tree_sitter::Range,
 }
 
+#[cfg(test)]
 pub(crate) fn build_project_graph(
     project_root: &Path,
     project_id: &str,
@@ -186,6 +187,29 @@ pub(crate) fn build_project_graph(
     artifact_snapshot_id: &str,
     sources: &[GraphSource],
     generated_at_unix_ms: u64,
+) -> Result<ProjectGraph, LeyCoreError> {
+    let text_source_paths = sources
+        .iter()
+        .map(|source| source.artifact.path.clone())
+        .collect::<BTreeSet<_>>();
+    let git = capture_filtered_git_state(project_root, &text_source_paths)?;
+    build_project_graph_with_git(
+        project_id,
+        project_name,
+        artifact_snapshot_id,
+        sources,
+        generated_at_unix_ms,
+        git,
+    )
+}
+
+pub(crate) fn build_project_graph_with_git(
+    project_id: &str,
+    project_name: &str,
+    artifact_snapshot_id: &str,
+    sources: &[GraphSource],
+    generated_at_unix_ms: u64,
+    git: Option<GitState>,
 ) -> Result<ProjectGraph, LeyCoreError> {
     validate_project_id(project_id)?;
     let project_node_id = stable_id("prj", &[project_id]);
@@ -355,20 +379,6 @@ pub(crate) fn build_project_graph(
         ))
     });
     diagnostics.dedup();
-    let allowed_paths = sources
-        .iter()
-        .map(|source| source.artifact.path.as_str())
-        .collect::<BTreeSet<_>>();
-    let git = capture_git_state(project_root)?.map(|mut git| {
-        git.changes.retain(|change| {
-            allowed_paths.contains(change.path.as_str())
-                || change
-                    .original_path
-                    .as_deref()
-                    .is_some_and(|path| allowed_paths.contains(path))
-        });
-        git
-    });
     let mut graph = ProjectGraph {
         schema_version: PROJECT_GRAPH_SCHEMA_VERSION,
         project_id: project_id.to_owned(),
@@ -1840,31 +1850,54 @@ pub(crate) fn validate_project_graph(
         }
     }
     if let Some(git) = &graph.git {
-        if git.head.as_ref().is_some_and(|head| {
-            !matches!(head.len(), 40 | 64) || !head.bytes().all(|byte| byte.is_ascii_hexdigit())
-        }) || git
-            .branch
-            .as_ref()
-            .is_some_and(|branch| branch.is_empty() || branch.chars().count() > 1024)
-            || git
-                .upstream
+        validate_git_state(git).map_err(LeyCoreError::InvalidProjectGraph)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn capture_filtered_git_state(
+    project_root: &Path,
+    text_source_paths: &BTreeSet<String>,
+) -> Result<Option<GitState>, LeyCoreError> {
+    let Some(mut git) = capture_git_state(project_root)? else {
+        return Ok(None);
+    };
+    filter_git_state_changes(&mut git, text_source_paths);
+    validate_git_state(&git).map_err(LeyCoreError::InvalidProjectGraph)?;
+    Ok(Some(git))
+}
+
+fn filter_git_state_changes(git: &mut GitState, text_source_paths: &BTreeSet<String>) {
+    git.changes.retain(|change| {
+        text_source_paths.contains(&change.path)
+            || change
+                .original_path
                 .as_ref()
-                .is_some_and(|upstream| upstream.is_empty() || upstream.chars().count() > 1024)
-        {
-            return Err(LeyCoreError::InvalidProjectGraph(
-                "graph Git identity is invalid".to_owned(),
-            ));
+                .is_some_and(|path| text_source_paths.contains(path))
+    });
+}
+
+pub(crate) fn validate_git_state(git: &GitState) -> Result<(), String> {
+    if git.head.as_ref().is_some_and(|head| {
+        !matches!(head.len(), 40 | 64) || !head.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) || git
+        .branch
+        .as_ref()
+        .is_some_and(|branch| branch.is_empty() || branch.chars().count() > 1024)
+        || git
+            .upstream
+            .as_ref()
+            .is_some_and(|upstream| upstream.is_empty() || upstream.chars().count() > 1024)
+    {
+        return Err("graph Git identity is invalid".to_owned());
+    }
+    for change in &git.changes {
+        validate_graph_path(&change.path).map_err(|error| error.to_string())?;
+        if let Some(path) = &change.original_path {
+            validate_graph_path(path).map_err(|error| error.to_string())?;
         }
-        for change in &git.changes {
-            validate_graph_path(&change.path)?;
-            if let Some(path) = &change.original_path {
-                validate_graph_path(path)?;
-            }
-            if change.status.is_empty() || change.status.len() > 8 {
-                return Err(LeyCoreError::InvalidProjectGraph(
-                    "graph Git change status is invalid".to_owned(),
-                ));
-            }
+        if change.status.is_empty() || change.status.len() > 8 {
+            return Err("graph Git change status is invalid".to_owned());
         }
     }
     Ok(())
@@ -2554,6 +2587,45 @@ mod tests {
         assert_eq!(state.behind, 1);
         assert_eq!(state.changes[0].path, "new.rs");
         assert_eq!(state.changes[0].original_path.as_deref(), Some("old.rs"));
+    }
+
+    #[test]
+    fn git_filter_keeps_text_sources_and_rename_originals_only() {
+        let mut git = GitState {
+            head: Some("a".repeat(40)),
+            branch: Some("main".to_owned()),
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            changes: vec![
+                GitChange {
+                    status: "M.".to_owned(),
+                    path: "README.md".to_owned(),
+                    original_path: None,
+                },
+                GitChange {
+                    status: "R.".to_owned(),
+                    path: "assets/icon.png".to_owned(),
+                    original_path: Some("src/old.rs".to_owned()),
+                },
+                GitChange {
+                    status: "M.".to_owned(),
+                    path: "assets/archive.bin".to_owned(),
+                    original_path: None,
+                },
+            ],
+        };
+        let text_source_paths = BTreeSet::from(["README.md".to_owned(), "src/old.rs".to_owned()]);
+
+        filter_git_state_changes(&mut git, &text_source_paths);
+
+        assert_eq!(git.changes.len(), 2);
+        assert!(git.changes.iter().any(|change| change.path == "README.md"));
+        assert!(git.changes.iter().any(|change| {
+            change.path == "assets/icon.png"
+                && change.original_path.as_deref() == Some("src/old.rs")
+        }));
+        assert!(validate_git_state(&git).is_ok());
     }
 
     #[test]

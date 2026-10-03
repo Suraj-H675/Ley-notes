@@ -436,7 +436,8 @@ pub struct SessionArtifactCitation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionProjectRevision {
-    pub graph_snapshot_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
     pub artifact_snapshot_id: String,
     pub captured_at_unix_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -608,7 +609,8 @@ pub struct ContextUtilityBinding {
     pub context_pack_id: String,
     pub task_excerpt: String,
     pub artifact_snapshot_id: String,
-    pub graph_snapshot_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub egress_target: Option<AgentEgressTarget>,
     pub max_results: usize,
@@ -1441,7 +1443,7 @@ struct CheckpointArtifactFile {
 #[derive(Debug, Clone)]
 struct CheckpointArtifactAuthority {
     artifact_snapshot_id: String,
-    graph_snapshot_id: String,
+    graph_snapshot_id: Option<String>,
     generated_at_unix_ms: u64,
     captured_git: Option<crate::GitState>,
     files: Vec<CheckpointArtifactFile>,
@@ -1451,7 +1453,7 @@ impl CheckpointArtifactAuthority {
     fn from_legacy(memory: &crate::ingestion::LoadedProjectMemory) -> Self {
         Self {
             artifact_snapshot_id: memory.manifest.snapshot_id.clone(),
-            graph_snapshot_id: memory.graph.graph_snapshot_id.clone(),
+            graph_snapshot_id: Some(memory.graph.graph_snapshot_id.clone()),
             generated_at_unix_ms: memory.graph.generated_at_unix_ms,
             captured_git: memory.graph.git.clone(),
             files: memory
@@ -1705,7 +1707,7 @@ pub fn bind_context_utility_pack(
     let project_start = project_start.as_ref();
     let vault = vault.as_ref();
     let (identity, pending) =
-        prepare_context_utility_binding(project_start, vault, session_id, input, pack)?;
+        prepare_context_utility_binding(project_start, vault, None, session_id, input, pack)?;
     mutate_session(&identity.project_id, session_id, pending, vault)
 }
 
@@ -1719,8 +1721,14 @@ pub fn bind_context_utility_pack_with_continuity_transition(
 ) -> Result<SessionWriteResult, LeyCoreError> {
     let project_start = project_start.as_ref();
     let legacy_vault = legacy_vault.as_ref();
-    let (identity, pending) =
-        prepare_context_utility_binding(project_start, legacy_vault, session_id, input, pack)?;
+    let (identity, pending) = prepare_context_utility_binding(
+        project_start,
+        legacy_vault,
+        Some(store),
+        session_id,
+        input,
+        pack,
+    )?;
     mutate_session_with_continuity_transition(
         project_start,
         legacy_vault,
@@ -1734,6 +1742,7 @@ pub fn bind_context_utility_pack_with_continuity_transition(
 fn prepare_context_utility_binding(
     project_start: &Path,
     vault: &Path,
+    continuity_store: Option<&crate::ContinuityStore>,
     session_id: &str,
     input: ContextUtilityBindingInput,
     pack: &CompiledContextPack,
@@ -1778,19 +1787,28 @@ fn prepare_context_utility_binding(
         ));
     }
     let diagnostic = diagnose_project(project_start)?;
-    validate_project_memory(&diagnostic.root, vault)?;
     if pack.project_id != diagnostic.identity.project_id {
         return Err(LeyCoreError::InvalidSessionRequest(
             "context utility pack belongs to a different project".to_owned(),
         ));
     }
     if !valid_prefixed_hex(&pack.artifact_snapshot_id, "snp_", 64)
-        || !valid_prefixed_hex(&pack.graph_snapshot_id, "grf_", 64)
+        || pack
+            .graph_snapshot_id
+            .as_deref()
+            .is_some_and(|value| !valid_prefixed_hex(value, "grf_", 64))
     {
         return Err(LeyCoreError::InvalidSessionRequest(
             "context utility pack snapshot identity is invalid".to_owned(),
         ));
     }
+    validate_context_pack_artifact_authority(
+        &diagnostic.root,
+        vault,
+        continuity_store,
+        &diagnostic.identity.project_id,
+        pack,
+    )?;
 
     let event_id = deterministic_id(
         "evt",
@@ -1837,6 +1855,59 @@ fn prepare_context_utility_binding(
             expected_event_count: Some(input.expected_event_count),
         },
     ))
+}
+
+fn validate_context_pack_artifact_authority(
+    project_root: &Path,
+    legacy_vault: &Path,
+    continuity_store: Option<&crate::ContinuityStore>,
+    project_id: &str,
+    pack: &CompiledContextPack,
+) -> Result<(), LeyCoreError> {
+    if let Some(store) = continuity_store {
+        if store.artifact_write_authority_ready(project_id)? {
+            let snapshot = store
+                .current_artifact_snapshot(project_id)?
+                .ok_or_else(|| {
+                    LeyCoreError::InvalidContinuityStore(
+                        "native artifact write authority has no current snapshot".to_owned(),
+                    )
+                })?;
+            if snapshot.snapshot_id != pack.artifact_snapshot_id
+                || snapshot.legacy_graph_snapshot_id != pack.graph_snapshot_id
+            {
+                return Err(LeyCoreError::InvalidSessionRequest(
+                    "context pack does not match the current native artifact authority".to_owned(),
+                ));
+            }
+            return Ok(());
+        }
+    }
+
+    validate_project_memory(project_root, legacy_vault)?;
+    if pack.graph_snapshot_id.is_none() {
+        return Err(LeyCoreError::InvalidSessionRequest(
+            "graphless context packs require native artifact authority".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_transition_artifact_authority_readable(
+    project_root: &Path,
+    legacy_vault: &Path,
+    store: &crate::ContinuityStore,
+    project_id: &str,
+) -> Result<(), LeyCoreError> {
+    if store.artifact_write_authority_ready(project_id)? {
+        if store.current_artifact_snapshot(project_id)?.is_none() {
+            return Err(LeyCoreError::InvalidContinuityStore(
+                "native artifact write authority has no current snapshot".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
+    validate_project_memory(project_root, legacy_vault)
 }
 
 pub fn replay_context_utility_binding_if_present(
@@ -1962,7 +2033,12 @@ pub fn replay_context_utility_binding_if_present_with_continuity_transition(
     let project_start = project_start.as_ref();
     let legacy_vault = legacy_vault.as_ref();
     let diagnostic = diagnose_project(project_start)?;
-    validate_project_memory(&diagnostic.root, legacy_vault)?;
+    validate_transition_artifact_authority_readable(
+        &diagnostic.root,
+        legacy_vault,
+        store,
+        &diagnostic.identity.project_id,
+    )?;
     let project_id = sync_legacy_continuity_for_session_read(project_start, legacy_vault, store)?;
     if project_id != diagnostic.identity.project_id {
         return Err(LeyCoreError::InvalidProjectIdentity(
@@ -5545,7 +5621,10 @@ fn validate_context_utility_binding(
     }
     if !valid_prefixed_hex(&binding.context_pack_id, "cpk_", 64)
         || !valid_prefixed_hex(&binding.artifact_snapshot_id, "snp_", 64)
-        || !valid_prefixed_hex(&binding.graph_snapshot_id, "grf_", 64)
+        || binding
+            .graph_snapshot_id
+            .as_deref()
+            .is_some_and(|value| !valid_prefixed_hex(value, "grf_", 64))
     {
         return invalid_session_store("context utility pack identity is invalid");
     }
@@ -6296,7 +6375,10 @@ fn validate_project_revision(revision: &SessionProjectRevision) -> Result<(), Le
         .branch
         .as_ref()
         .is_none_or(|branch| !branch.is_empty() && branch.chars().count() <= 1024);
-    if !valid_prefixed_hex(&revision.graph_snapshot_id, "grf_", 64)
+    if revision
+        .graph_snapshot_id
+        .as_deref()
+        .is_some_and(|value| !valid_prefixed_hex(value, "grf_", 64))
         || !valid_prefixed_hex(&revision.artifact_snapshot_id, "snp_", 64)
         || revision.captured_at_unix_ms == 0
         || !valid_head
@@ -7903,9 +7985,11 @@ fn render_session_markdown(session: &AgentSession) -> String {
             if let Some(branch) = &revision.branch {
                 output.push_str(&format!("- Branch: `{}`\n", markdown_inline(branch)));
             }
+            if let Some(graph_snapshot_id) = &revision.graph_snapshot_id {
+                output.push_str(&format!("- Graph snapshot: `{graph_snapshot_id}`\n"));
+            }
             output.push_str(&format!(
-                "- Graph snapshot: `{}`\n- Artifact snapshot: `{}`\n- Captured at: `{}`\n- Tracked changes: `{}`\n",
-                revision.graph_snapshot_id,
+                "- Artifact snapshot: `{}`\n- Captured at: `{}`\n- Tracked changes: `{}`\n",
                 revision.artifact_snapshot_id,
                 revision.captured_at_unix_ms,
                 revision.tracked_changes
@@ -9788,6 +9872,87 @@ mod tests {
     }
 
     #[test]
+    fn imported_graph_revision_replays_with_a_new_graphless_native_checkpoint() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('a'))).unwrap();
+        let legacy_checkpoint = checkpoint_session(
+            &project,
+            &vault,
+            &started.session.session_id,
+            checkpoint_input(request_id('b'), "Historical graph-bearing checkpoint"),
+        )
+        .unwrap();
+        let historical_revision = legacy_checkpoint.session.checkpoints[0]
+            .project_revision
+            .as_ref()
+            .unwrap();
+        assert!(historical_revision
+            .graph_snapshot_id
+            .as_deref()
+            .is_some_and(|id| valid_prefixed_hex(id, "grf_", 64)));
+
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let native_ingestion =
+            crate::ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        assert!(native_ingestion.graph_snapshot_id.is_none());
+        let project_id = diagnose_project(&project).unwrap().identity.project_id;
+        assert!(store
+            .current_artifact_snapshot(&project_id)
+            .unwrap()
+            .unwrap()
+            .legacy_graph_snapshot_id
+            .is_none());
+
+        let next_input = checkpoint_input(request_id('c'), "Graphless native checkpoint");
+        let native_checkpoint = checkpoint_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            next_input.clone(),
+        )
+        .unwrap();
+        assert!(native_checkpoint.session.checkpoints[1]
+            .project_revision
+            .as_ref()
+            .unwrap()
+            .graph_snapshot_id
+            .is_none());
+        let replayed = checkpoint_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            next_input,
+        )
+        .unwrap();
+        assert!(replayed.replayed);
+
+        let replayed_session = read_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+        )
+        .unwrap();
+        assert_eq!(replayed_session.checkpoints.len(), 2);
+        assert_eq!(
+            replayed_session.checkpoints[0]
+                .project_revision
+                .as_ref()
+                .unwrap()
+                .graph_snapshot_id,
+            historical_revision.graph_snapshot_id
+        );
+        assert!(replayed_session.checkpoints[1]
+            .project_revision
+            .as_ref()
+            .unwrap()
+            .graph_snapshot_id
+            .is_none());
+    }
+
+    #[test]
     fn transition_session_lifecycle_survives_vault_loss_after_cutover() {
         let (base, project, vault) = setup_memory();
         let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
@@ -10367,6 +10532,92 @@ mod tests {
             observation.observation_kind,
             ToolObservationKind::ExplicitFailure
         );
+    }
+
+    #[test]
+    fn graphless_compiled_pack_has_a_deterministic_id_and_binds_to_native_authority() {
+        let (base, project, vault) = setup_memory();
+        let mut unfinalized = compile_test_pack(
+            &base,
+            &project,
+            &vault,
+            "durable checkpoint target structured memory",
+        );
+        unfinalized.graph_snapshot_id = None;
+        unfinalized.context_pack_id.clear();
+        unfinalized.created_at_unix_ms = 0;
+        let pack = crate::context_compiler::finalize_context_pack(unfinalized.clone());
+        let repeated = crate::context_compiler::finalize_context_pack(unfinalized);
+        assert_eq!(pack.context_pack_id, repeated.context_pack_id);
+        assert!(pack.graph_snapshot_id.is_none());
+        assert!(serde_json::to_value(&pack)
+            .unwrap()
+            .get("graphSnapshotId")
+            .is_none());
+
+        let store = crate::ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        crate::ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
+        let project_id = diagnose_project(&project).unwrap().identity.project_id;
+        let snapshot = store
+            .current_artifact_snapshot(&project_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot.snapshot_id, pack.artifact_snapshot_id);
+        assert!(snapshot.legacy_graph_snapshot_id.is_none());
+
+        let started = start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            start_input(request_id('6')),
+        )
+        .unwrap();
+        let input = ContextUtilityBindingInput {
+            request_id: request_id('7'),
+            expected_event_count: 1,
+            expected_context_pack_id: pack.context_pack_id.clone(),
+            task: pack.task.clone(),
+            max_results: 8,
+            max_tokens: pack.max_tokens,
+        };
+        let binding = bind_context_utility_pack_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            input.clone(),
+            &pack,
+        )
+        .unwrap();
+        assert!(binding.session.context_utility_bindings[0]
+            .graph_snapshot_id
+            .is_none());
+        let replayed = replay_context_utility_binding_if_present_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            &input,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(replayed.replayed);
+        assert!(replayed.session.context_utility_bindings[0]
+            .graph_snapshot_id
+            .is_none());
+        let context = crate::session_context::read_session_context_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            crate::session_context::DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+            crate::session_context::DEFAULT_SESSION_CONTEXT_CHARACTERS,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(context).unwrap();
+        assert!(serialized["unobservedContextUtilityBindings"][0]
+            .get("graphSnapshotId")
+            .is_none());
     }
 
     #[test]
@@ -11306,7 +11557,10 @@ mod tests {
             revision.artifact_snapshot_id,
             checkpoint.session.checkpoints[0].touched_artifacts[0].artifact_snapshot_id
         );
-        assert!(valid_prefixed_hex(&revision.graph_snapshot_id, "grf_", 64));
+        assert!(revision
+            .graph_snapshot_id
+            .as_deref()
+            .is_some_and(|value| valid_prefixed_hex(value, "grf_", 64)));
         assert!(revision.head.is_none());
         assert!(revision.branch.is_none());
         let cited_graph_snapshot = revision.graph_snapshot_id.clone();

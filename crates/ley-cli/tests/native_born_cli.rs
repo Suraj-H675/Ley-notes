@@ -85,6 +85,15 @@ fn fresh_cli_project_stays_native_without_a_vault_binding() {
     assert_eq!(ingested["storage"], "native-continuity");
     assert!(ingested["ingestion"]["manifestPath"].is_null());
     assert!(ingested["ingestion"]["graphPath"].is_null());
+    let ingestion = ingested["ingestion"].as_object().unwrap();
+    for field in [
+        "graphSnapshotId",
+        "graphChanged",
+        "graphNodes",
+        "graphEdges",
+    ] {
+        assert!(!ingestion.contains_key(field), "unexpected {field}");
+    }
 
     let started = json_stdout(ley(
         &config,
@@ -128,6 +137,9 @@ fn fresh_cli_project_stays_native_without_a_vault_binding() {
         ],
     ));
     let checkpoint_id = shown["checkpoints"][0]["checkpointId"].as_str().unwrap();
+    assert!(shown["checkpoints"][0]["projectRevision"]
+        .as_object()
+        .is_some_and(|revision| !revision.contains_key("graphSnapshotId")));
     let evidence = format!("{session_id}:{checkpoint_id}");
 
     let proposed = json_stdout(ley(

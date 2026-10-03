@@ -190,7 +190,7 @@ export interface SessionContextUnobservedUtilityBinding {
   recordedAtUnixMs: number;
   contextPackId: string;
   artifactSnapshotId: string;
-  graphSnapshotId: string;
+  graphSnapshotId?: string;
   egressTarget?: "cloud" | "local";
   maxResults: number;
   maxTokens: number;
@@ -211,7 +211,7 @@ export interface SessionContextUtilityObservation {
   contextPackId: string;
   taskExcerpt: string;
   artifactSnapshotId: string;
-  graphSnapshotId: string;
+  graphSnapshotId?: string;
   egressTarget?: "cloud" | "local";
   maxResults: number;
   maxTokens: number;
@@ -271,7 +271,7 @@ export interface SessionContext {
     recordedAtUnixMs: number;
     summary: string;
     projectRevision?: {
-      graphSnapshotId: string;
+      graphSnapshotId?: string;
       artifactSnapshotId: string;
       capturedAtUnixMs: number;
       head?: string;
@@ -721,7 +721,7 @@ export interface ProjectMemorySearch {
   projectId: string;
   projectName: string;
   artifactSnapshotId: string;
-  graphSnapshotId: string;
+  graphSnapshotId?: string;
   capturedAtUnixMs: number;
   query: string;
   revisionFilter?: RevisionCompatibility;

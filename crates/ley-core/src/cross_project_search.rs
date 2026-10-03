@@ -142,7 +142,7 @@ pub fn search_observed_projects(
                 let fields = [
                     revision.head.as_deref().unwrap_or_default(),
                     revision.branch.as_deref().unwrap_or_default(),
-                    revision.graph_snapshot_id.as_str(),
+                    revision.graph_snapshot_id.as_deref().unwrap_or_default(),
                     revision.artifact_snapshot_id.as_str(),
                 ];
                 let Some(score) = relevance(&normalized, &terms, fields) else {
@@ -168,7 +168,10 @@ pub fn search_observed_projects(
                         title,
                         excerpt: format!(
                             "{} · {} tracked change{} · checkpoint in {}",
-                            revision.graph_snapshot_id,
+                            revision
+                                .graph_snapshot_id
+                                .as_deref()
+                                .unwrap_or(&revision.artifact_snapshot_id),
                             revision.tracked_changes,
                             if revision.tracked_changes == 1 {
                                 ""
@@ -552,7 +555,9 @@ mod tests {
                     .project_revision
                     .as_ref()
                     .unwrap()
-                    .graph_snapshot_id[4..20]
+                    .graph_snapshot_id
+                    .as_deref()
+                    .unwrap()[4..20]
                     .to_owned();
             }
         }

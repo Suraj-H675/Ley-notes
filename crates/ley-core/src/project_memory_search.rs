@@ -197,7 +197,8 @@ pub struct ProjectMemorySearch {
     pub project_id: String,
     pub project_name: String,
     pub artifact_snapshot_id: String,
-    pub graph_snapshot_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
     pub captured_at_unix_ms: u64,
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -732,7 +733,7 @@ fn collect_session_candidates(
                 title,
                 excerpt,
                 join_bounded_fields([
-                    revision.graph_snapshot_id.as_str(),
+                    revision.graph_snapshot_id.as_deref().unwrap_or_default(),
                     revision.artifact_snapshot_id.as_str(),
                     revision.head.as_deref().unwrap_or_default(),
                     revision.branch.as_deref().unwrap_or_default(),
@@ -2264,7 +2265,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.artifact_snapshot_id, ingested.snapshot_id);
-        assert!(result.graph_snapshot_id.starts_with("grf_"));
+        assert!(result.graph_snapshot_id.is_none());
         assert_eq!(result.retrieval.mode, RetrievalMode::Lexical);
         let artifact = result
             .results
@@ -2279,9 +2280,9 @@ mod tests {
             .unwrap();
         let citation = artifact.citation.as_ref().unwrap();
         assert_eq!(citation.artifact_snapshot_id, ingested.snapshot_id);
-        assert!(!serde_json::to_string(&result)
-            .unwrap()
-            .contains(project.to_string_lossy().as_ref()));
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(!serialized.contains("graphSnapshotId"));
+        assert!(!serialized.contains(project.to_string_lossy().as_ref()));
     }
 
     #[test]

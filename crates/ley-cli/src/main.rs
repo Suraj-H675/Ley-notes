@@ -3205,17 +3205,24 @@ fn ingest(arguments: &[String]) -> Result<(), CliError> {
             result.redacted_files,
             result.skipped.len()
         );
-        println!(
-            "Graph: {} nodes / {} edges / {}",
+        if let (Some(nodes), Some(edges), Some(graph_changed), Some(graph_snapshot_id)) = (
             result.graph_nodes,
             result.graph_edges,
-            if result.graph_changed {
-                "updated"
-            } else {
-                "unchanged"
-            }
-        );
-        println!("Graph snapshot: {}", result.graph_snapshot_id);
+            result.graph_changed,
+            result.graph_snapshot_id.as_deref(),
+        ) {
+            println!(
+                "Graph: {nodes} nodes / {edges} edges / {}",
+                if graph_changed {
+                    "updated"
+                } else {
+                    "unchanged"
+                }
+            );
+            println!("Graph snapshot: {graph_snapshot_id}");
+        } else {
+            println!("Graph: not applicable for native artifact capture");
+        }
         if result.changed {
             println!(
                 "Changes: {} added / {} modified / {} renamed / {} deleted",

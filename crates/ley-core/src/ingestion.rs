@@ -1,6 +1,6 @@
 use crate::graph::{
-    build_project_graph, graph_body, validate_project_graph, GraphSource, ProjectGraph,
-    PROJECT_GRAPH_LIMIT_BYTES,
+    build_project_graph_with_git, capture_filtered_git_state, graph_body, validate_project_graph,
+    GitState, GraphSource, ProjectGraph, PROJECT_GRAPH_LIMIT_BYTES,
 };
 use crate::{
     diagnose_project, preview_capture, validate_project_id, CaptureMode, ContinuityStore,
@@ -126,10 +126,14 @@ pub struct IngestionResult {
     pub project_id: String,
     pub snapshot_id: String,
     pub changed: bool,
-    pub graph_snapshot_id: String,
-    pub graph_changed: bool,
-    pub graph_nodes: usize,
-    pub graph_edges: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_snapshot_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_changed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_nodes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_edges: Option<usize>,
     pub files: usize,
     pub stored_files: usize,
     pub redacted_files: usize,
@@ -780,6 +784,7 @@ fn ingest_project_with_native_authority_inner(
         let prepared = match prepare_artifact_capture(
             &diagnostic,
             expected_plan_fingerprint,
+            false,
             |_name, content_hash, bytes| {
                 store.install_artifact_blob(
                     &diagnostic.identity.project_id,
@@ -795,15 +800,19 @@ fn ingest_project_with_native_authority_inner(
                 return Err(error);
             }
         };
-        let PreparedArtifactCapture { manifest, graph } = prepared;
+        let PreparedArtifactCapture {
+            manifest,
+            graph: _,
+            captured_git,
+        } = prepared;
         let changes = calculate_changes_from_hashes(&baseline.content_hashes, &manifest);
         let commit = (|| {
             store.stage_artifact_snapshot_metadata(&diagnostic.identity, &manifest)?;
             store.activate_initial_artifact_write_authority(
                 &manifest,
-                graph.generated_at_unix_ms,
-                Some(&graph.graph_snapshot_id),
-                graph.git.as_ref(),
+                manifest.generated_at_unix_ms,
+                None,
+                captured_git.as_ref(),
                 crate::continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn,
             )?;
             store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)
@@ -813,7 +822,11 @@ fn ingest_project_with_native_authority_inner(
             return Err(error);
         }
 
-        Ok(native_ingestion_result(manifest, graph, true, true, changes))
+        Ok(native_ingestion_result(
+            manifest,
+            true,
+            changes,
+        ))
     })
 }
 
@@ -893,6 +906,7 @@ fn ingest_project_native_after_authority_under_lock(
     let prepared = match prepare_artifact_capture(
         diagnostic,
         expected_plan_fingerprint,
+        false,
         |_name, content_hash, bytes| {
             store.install_artifact_blob(
                 &diagnostic.identity.project_id,
@@ -908,10 +922,12 @@ fn ingest_project_native_after_authority_under_lock(
             return Err(error);
         }
     };
-    let PreparedArtifactCapture { manifest, graph } = prepared;
+    let PreparedArtifactCapture {
+        manifest,
+        graph: _,
+        captured_git,
+    } = prepared;
     let changed = baseline.current_snapshot_id.as_deref() != Some(manifest.snapshot_id.as_str());
-    let graph_changed =
-        baseline.legacy_graph_snapshot_id.as_deref() != Some(graph.graph_snapshot_id.as_str());
     let changes = calculate_changes_from_hashes(&baseline.content_hashes, &manifest);
 
     let commit = (|| {
@@ -919,9 +935,9 @@ fn ingest_project_native_after_authority_under_lock(
         store.activate_artifact_snapshot(
             &diagnostic.identity.project_id,
             &manifest.snapshot_id,
-            graph.generated_at_unix_ms,
-            Some(&graph.graph_snapshot_id),
-            graph.git.as_ref(),
+            manifest.generated_at_unix_ms,
+            None,
+            captured_git.as_ref(),
         )?;
         store.garbage_collect_artifact_state_under_lock(&diagnostic.identity.project_id)
     })();
@@ -930,30 +946,22 @@ fn ingest_project_native_after_authority_under_lock(
         return Err(error);
     }
 
-    Ok(native_ingestion_result(
-        manifest,
-        graph,
-        changed,
-        graph_changed,
-        changes,
-    ))
+    Ok(native_ingestion_result(manifest, changed, changes))
 }
 
 fn native_ingestion_result(
     manifest: ArtifactManifest,
-    graph: ProjectGraph,
     changed: bool,
-    graph_changed: bool,
     changes: ArtifactChanges,
 ) -> IngestionResult {
     IngestionResult {
         project_id: manifest.project_id,
         snapshot_id: manifest.snapshot_id,
         changed,
-        graph_snapshot_id: graph.graph_snapshot_id,
-        graph_changed,
-        graph_nodes: graph.nodes.len(),
-        graph_edges: graph.edges.len(),
+        graph_snapshot_id: None,
+        graph_changed: None,
+        graph_nodes: None,
+        graph_edges: None,
         files: manifest.files.len(),
         stored_files: manifest
             .files
@@ -989,12 +997,14 @@ pub fn ingest_project_with_expected_capture_plan(
 
 pub(crate) struct PreparedArtifactCapture {
     pub(crate) manifest: ArtifactManifest,
-    pub(crate) graph: ProjectGraph,
+    pub(crate) graph: Option<ProjectGraph>,
+    pub(crate) captured_git: Option<GitState>,
 }
 
 pub(crate) fn prepare_artifact_capture(
     diagnostic: &crate::ProjectDiagnostic,
     expected_plan_fingerprint: Option<&str>,
+    build_graph: bool,
     mut retain_blob: impl FnMut(&str, &str, &[u8]) -> Result<(), LeyCoreError>,
 ) -> Result<PreparedArtifactCapture, LeyCoreError> {
     let preview = preview_capture(&diagnostic.root)?;
@@ -1011,6 +1021,7 @@ pub(crate) fn prepare_artifact_capture(
         })?;
     let mut files = Vec::new();
     let mut graph_sources = Vec::new();
+    let mut text_source_paths = BTreeSet::new();
     let mut skipped = preview
         .skipped_oversized
         .iter()
@@ -1125,10 +1136,13 @@ pub(crate) fn prepare_artifact_capture(
             content_blob,
             redactions,
         };
-        graph_sources.push(GraphSource {
-            artifact: artifact.clone(),
-            text: redacted,
-        });
+        text_source_paths.insert(artifact.path.clone());
+        if build_graph {
+            graph_sources.push(GraphSource {
+                artifact: artifact.clone(),
+                text: redacted,
+            });
+        }
         files.push(artifact);
     }
     skipped.sort_by(|left, right| left.path.cmp(&right.path));
@@ -1147,14 +1161,19 @@ pub(crate) fn prepare_artifact_capture(
     );
     let snapshot_id = format!("snp_{snapshot_hash}");
     let captured_at_unix_ms = unix_time_ms();
-    let graph = build_project_graph(
-        &diagnostic.root,
-        &diagnostic.identity.project_id,
-        &diagnostic.identity.name,
-        &snapshot_id,
-        &graph_sources,
-        captured_at_unix_ms,
-    )?;
+    let captured_git = capture_filtered_git_state(&diagnostic.root, &text_source_paths)?;
+    let graph = build_graph
+        .then(|| {
+            build_project_graph_with_git(
+                &diagnostic.identity.project_id,
+                &diagnostic.identity.name,
+                &snapshot_id,
+                &graph_sources,
+                captured_at_unix_ms,
+                captured_git.clone(),
+            )
+        })
+        .transpose()?;
     let manifest = ArtifactManifest {
         schema_version: ARTIFACT_MANIFEST_SCHEMA_VERSION,
         project_id: diagnostic.identity.project_id.clone(),
@@ -1168,7 +1187,11 @@ pub(crate) fn prepare_artifact_capture(
         skipped,
     };
     validate_manifest(&manifest, &diagnostic.identity.project_id)?;
-    Ok(PreparedArtifactCapture { manifest, graph })
+    Ok(PreparedArtifactCapture {
+        manifest,
+        graph,
+        captured_git,
+    })
 }
 
 fn ingest_project_inner(
@@ -1211,11 +1234,15 @@ fn ingest_project_inner(
         store.verify_graph_snapshot(graph)?;
     }
 
-    let PreparedArtifactCapture { manifest, graph } = prepare_artifact_capture(
+    let PreparedArtifactCapture {
+        manifest, graph, ..
+    } = prepare_artifact_capture(
         &diagnostic,
         expected_plan_fingerprint,
+        true,
         |name, _content_hash, bytes| store.write_blob_if_absent(name, bytes),
     )?;
+    let graph = graph.expect("legacy artifact ingestion prepares a graph");
     if previous
         .as_ref()
         .is_some_and(|previous| previous.snapshot_id == manifest.snapshot_id)
@@ -1226,10 +1253,10 @@ fn ingest_project_inner(
             project_id: old.project_id,
             snapshot_id: old.snapshot_id,
             changed: false,
-            graph_snapshot_id: graph.graph_snapshot_id,
-            graph_changed,
-            graph_nodes: graph.nodes.len(),
-            graph_edges: graph.edges.len(),
+            graph_snapshot_id: Some(graph.graph_snapshot_id),
+            graph_changed: Some(graph_changed),
+            graph_nodes: Some(graph.nodes.len()),
+            graph_edges: Some(graph.edges.len()),
             files: old.files.len(),
             stored_files: old
                 .files
@@ -1261,10 +1288,10 @@ fn ingest_project_inner(
         project_id: manifest.project_id,
         snapshot_id: manifest.snapshot_id,
         changed: true,
-        graph_snapshot_id: graph.graph_snapshot_id,
-        graph_changed,
-        graph_nodes: graph.nodes.len(),
-        graph_edges: graph.edges.len(),
+        graph_snapshot_id: Some(graph.graph_snapshot_id),
+        graph_changed: Some(graph_changed),
+        graph_nodes: Some(graph.nodes.len()),
+        graph_edges: Some(graph.edges.len()),
         files: manifest.files.len(),
         stored_files: manifest
             .files
@@ -2842,6 +2869,7 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::{initialize_project, CaptureMode, LEY_DIRECTORY};
+    use std::process::Command;
     use std::sync::{mpsc, Arc, Barrier};
     use std::time::Duration;
     use tempfile::tempdir;
@@ -2889,6 +2917,21 @@ mod tests {
         bytes.extend_from_slice(b"IEND");
         bytes.extend_from_slice(&[0xae, 0x42, 0x60, 0x82]);
         bytes
+    }
+
+    fn run_git(project: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(project)
+            .args(args)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
@@ -3000,6 +3043,10 @@ mod tests {
         )
         .unwrap();
         assert!(first.changed);
+        assert!(first.graph_snapshot_id.is_none());
+        assert!(first.graph_changed.is_none());
+        assert!(first.graph_nodes.is_none());
+        assert!(first.graph_edges.is_none());
         assert!(first.manifest_path.is_none());
         assert!(first.graph_path.is_none());
         assert!(!vault.exists());
@@ -3014,14 +3061,15 @@ mod tests {
                 .unwrap(),
             Some(crate::continuity_store::ArtifactWriteAuthorityOrigin::NativeBorn)
         );
-        assert_eq!(
-            store
-                .current_artifact_snapshot(&identity.project_id)
-                .unwrap()
-                .unwrap()
-                .snapshot_id,
-            first.snapshot_id
-        );
+        let first_snapshot = store
+            .current_artifact_snapshot(&identity.project_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_snapshot.snapshot_id, first.snapshot_id);
+        assert!(first_snapshot.legacy_graph_snapshot_id.is_none());
+        assert!(store
+            .artifact_read_authority_ready(&identity.project_id)
+            .unwrap());
         crate::establish_native_born_project_authorities(&project, &store).unwrap();
         crate::establish_native_born_project_authorities(&project, &store).unwrap();
         assert!(crate::native_canonical_read_authority_available(&project, &store).unwrap());
@@ -3075,6 +3123,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(started.session.event_count, 1);
+        let checkpoint_input = crate::CheckpointInput {
+            request_id: crate::generate_request_id(),
+            summary: "Checkpoint graphless native evidence".to_owned(),
+            plan: Vec::new(),
+            decisions: Vec::new(),
+            tasks: Vec::new(),
+            problems: Vec::new(),
+            touched_artifacts: vec!["README.md".to_owned()],
+            commands: Vec::new(),
+            verification: Vec::new(),
+            unresolved: Vec::new(),
+        };
+        let checkpoint = crate::checkpoint_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            checkpoint_input.clone(),
+        )
+        .unwrap();
+        assert_eq!(checkpoint.session.event_count, 2);
+        assert!(checkpoint.session.checkpoints[0]
+            .project_revision
+            .as_ref()
+            .unwrap()
+            .graph_snapshot_id
+            .is_none());
+        let replayed_checkpoint = crate::checkpoint_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            checkpoint_input,
+        )
+        .unwrap();
+        assert!(replayed_checkpoint.replayed);
+        assert_eq!(replayed_checkpoint.event_id, checkpoint.event_id);
         assert_eq!(
             crate::list_sessions_with_continuity_transition(&project, &vault, &store)
                 .unwrap()
@@ -3151,6 +3236,85 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_native_recapture_refreshes_git_capture_time_and_checkpoint_revision() {
+        let (base, project, vault) = setup_project(CaptureMode::Structured);
+        std::fs::remove_dir_all(&vault).unwrap();
+        std::fs::write(project.join("README.md"), "Stable artifact snapshot\n").unwrap();
+        run_git(&project, &["init", "-b", "main"]);
+        run_git(&project, &["config", "user.name", "Ley test"]);
+        run_git(&project, &["config", "user.email", "ley@example.invalid"]);
+        run_git(&project, &["add", "README.md"]);
+        run_git(&project, &["commit", "-m", "initial snapshot"]);
+
+        let store = ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
+        let first = ingest_project_with_native_authority(&project, &store).unwrap();
+        let first_snapshot = store
+            .current_artifact_snapshot(&first.project_id)
+            .unwrap()
+            .unwrap();
+        let first_git = first_snapshot.captured_git.unwrap();
+        let first_head = first_git.head.unwrap();
+        assert_eq!(first_git.branch.as_deref(), Some("main"));
+
+        std::thread::sleep(Duration::from_millis(5));
+        run_git(&project, &["switch", "-c", "captured-branch"]);
+        run_git(&project, &["commit", "--allow-empty", "-m", "advance HEAD"]);
+
+        let second = ingest_project_with_native_authority(&project, &store).unwrap();
+        let second_snapshot = store
+            .current_artifact_snapshot(&first.project_id)
+            .unwrap()
+            .unwrap();
+        let second_git = second_snapshot.captured_git.as_ref().unwrap();
+        assert_eq!(second.snapshot_id, first.snapshot_id);
+        assert!(!second.changed);
+        assert!(second.graph_snapshot_id.is_none());
+        assert_ne!(second_git.head.as_deref(), Some(first_head.as_str()));
+        assert_eq!(second_git.branch.as_deref(), Some("captured-branch"));
+        assert!(second_snapshot.generated_at_unix_ms > first_snapshot.generated_at_unix_ms);
+
+        crate::establish_native_born_project_authorities(&project, &store).unwrap();
+        let started = crate::start_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            crate::StartSessionInput {
+                request_id: crate::generate_request_id(),
+                name: "Refreshed revision".to_owned(),
+                goal: "Record the latest captured Git provenance".to_owned(),
+                source: crate::SessionSource::default(),
+            },
+        )
+        .unwrap();
+        let checkpoint = crate::checkpoint_session_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &started.session.session_id,
+            crate::CheckpointInput {
+                request_id: crate::generate_request_id(),
+                summary: "Use the refreshed native revision".to_owned(),
+                plan: Vec::new(),
+                decisions: Vec::new(),
+                tasks: Vec::new(),
+                problems: Vec::new(),
+                touched_artifacts: Vec::new(),
+                commands: Vec::new(),
+                verification: Vec::new(),
+                unresolved: Vec::new(),
+            },
+        )
+        .unwrap();
+        let revision = checkpoint.session.checkpoints[0]
+            .project_revision
+            .as_ref()
+            .unwrap();
+        assert!(revision.graph_snapshot_id.is_none());
+        assert_eq!(revision.head.as_deref(), second_git.head.as_deref());
+        assert_eq!(revision.branch.as_deref(), Some("captured-branch"));
+    }
+
+    #[test]
     fn legacy_transition_imports_existing_snapshot_without_recapturing_live_source_into_vault() {
         let (base, project, vault) = setup_project(CaptureMode::Structured);
         std::fs::write(
@@ -3164,10 +3328,30 @@ mod tests {
         let store = ContinuityStore::at(base.path().join("private/continuity.sqlite3"));
 
         std::fs::write(project.join("README.md"), "# Current source\nnew body\n").unwrap();
+        fence_legacy_artifact_writes(&project, &vault).unwrap();
+        finalize_legacy_artifact_authority_cutover(&project, &vault, &store).unwrap();
+        let imported_snapshot = store
+            .current_artifact_snapshot(&legacy.project_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(imported_snapshot.snapshot_id, legacy.snapshot_id);
+        assert_eq!(
+            imported_snapshot.legacy_graph_snapshot_id,
+            legacy.graph_snapshot_id
+        );
+        assert!(imported_snapshot.legacy_graph_snapshot_id.is_some());
+
         let migrated = ingest_project_with_continuity_transition(&project, &vault, &store).unwrap();
 
         assert_ne!(migrated.snapshot_id, legacy.snapshot_id);
         assert!(migrated.changed);
+        assert!(migrated.graph_snapshot_id.is_none());
+        assert!(store
+            .current_artifact_snapshot(&legacy.project_id)
+            .unwrap()
+            .unwrap()
+            .legacy_graph_snapshot_id
+            .is_none());
         assert_eq!(
             std::fs::read(&legacy_manifest_path).unwrap(),
             legacy_manifest
@@ -3380,7 +3564,7 @@ mod tests {
         assert!(first.changed);
         let unchanged = ingest_project(&project, &vault).unwrap();
         assert!(!unchanged.changed);
-        assert!(!unchanged.graph_changed);
+        assert_eq!(unchanged.graph_changed, Some(false));
         assert_eq!(unchanged.snapshot_id, first.snapshot_id);
         let snapshots = manifest_path(&project, &vault)
             .parent()
@@ -3449,7 +3633,7 @@ mod tests {
         let result = ingest_project(&project, &vault).unwrap();
         assert_eq!(result.files, 1);
         assert_eq!(result.stored_files, 0);
-        assert!(result.graph_nodes >= 3);
+        assert!(result.graph_nodes.is_some_and(|nodes| nodes >= 3));
         let manifest: ArtifactManifest = serde_json::from_str(
             &std::fs::read_to_string(manifest_path(&project, &vault)).unwrap(),
         )
