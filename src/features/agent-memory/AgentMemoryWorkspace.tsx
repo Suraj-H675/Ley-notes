@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   BookCheck,
   BrainCircuit,
+  Cable,
   FileCheck2,
   Files,
   History,
@@ -67,6 +68,46 @@ type Section =
   | "artifacts"
   | "review"
   | "privacy";
+
+type PrimarySection =
+  | "continue"
+  | "recall"
+  | "evidence"
+  | "review"
+  | "settings";
+
+function primarySectionFor(section: Section): PrimarySection {
+  if (section === "overview") return "continue";
+  if (
+    section === "search" ||
+    section === "sessions" ||
+    section === "decisions" ||
+    section === "problems" ||
+    section === "lessons"
+  ) {
+    return "recall";
+  }
+  if (section === "artifacts" || section === "specifications") {
+    return "evidence";
+  }
+  if (section === "review") return "review";
+  return "settings";
+}
+
+function defaultSectionFor(primary: PrimarySection): Section {
+  switch (primary) {
+    case "continue":
+      return "overview";
+    case "recall":
+      return "search";
+    case "evidence":
+      return "artifacts";
+    case "review":
+      return "review";
+    case "settings":
+      return "privacy";
+  }
+}
 
 type ArtifactFocus = {
   path: string;
@@ -755,13 +796,17 @@ function AgentMemoryReadyContent({
       />
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
+          <AgentMemorySubnav
+            section={section}
+            dashboard={dashboard}
+            onSection={onSection}
+          />
           <AgentMemorySectionContent
             section={section}
             projectPath={projectPath}
             dashboard={dashboard}
             error={error}
             artifactFocus={artifactFocus}
-            onSection={onSection}
             onMemoryResult={onMemoryResult}
             onEvidence={onEvidence}
             onLearning={onLearning}
@@ -781,7 +826,6 @@ function AgentMemorySectionContent({
   dashboard,
   error,
   artifactFocus,
-  onSection,
   onMemoryResult,
   onEvidence,
   onLearning,
@@ -794,7 +838,6 @@ function AgentMemorySectionContent({
   dashboard: AgentMemoryDashboard;
   error: string | null;
   artifactFocus: ArtifactFocus | null;
-  onSection: (section: Section) => void;
   onMemoryResult: (result: ProjectMemorySearchResult) => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
   onLearning: (id: string) => void;
@@ -809,10 +852,7 @@ function AgentMemorySectionContent({
         <ProjectOverview
           projectPath={projectPath}
           dashboard={dashboard}
-          onOpenSession={() => onSection("sessions")}
-          onOpenReview={() => onSection("review")}
           onEvidence={onEvidence}
-          onLearning={onLearning}
           onSession={onSession}
         />
       )}
@@ -859,18 +899,193 @@ function AgentMemorySectionContent({
         <ReviewInbox dashboard={dashboard} onLearning={onLearning} />
       )}
       {section === "privacy" && (
-        <Suspense fallback={<KnowledgeSurfaceFallback />}>
-          <CapturePrivacyPanel
-            key={projectPath}
-            projectPath={projectPath}
-            dashboard={dashboard}
-            onUpdated={onPrivacyUpdated}
-            onErased={onPrivacyErased}
-          />
-        </Suspense>
+        <ProjectSettings
+          projectPath={projectPath}
+          dashboard={dashboard}
+          onPrivacyUpdated={onPrivacyUpdated}
+          onPrivacyErased={onPrivacyErased}
+        />
       )}
     </>
   );
+}
+
+function ProjectSettings({
+  projectPath,
+  dashboard,
+  onPrivacyUpdated,
+  onPrivacyErased,
+}: {
+  projectPath: string;
+  dashboard: AgentMemoryDashboard;
+  onPrivacyUpdated: (dashboard: AgentMemoryDashboard) => void;
+  onPrivacyErased: (inspection: AgentProjectInspection) => void;
+}) {
+  const activity = observedIntegrationActivity(dashboard.sessions);
+  return (
+    <div className="space-y-8">
+      <div>
+        <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Project settings
+        </p>
+        <p className="mt-1 max-w-3xl text-meta leading-6 text-muted-foreground">
+          Inspect recorded integration provenance and control what this project
+          captures, can send to agents, exports, or erases.
+        </p>
+      </div>
+
+      <section aria-labelledby="integration-activity-title">
+        <div className="mb-3 flex items-end justify-between gap-4">
+          <div>
+            <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Recorded provenance
+            </p>
+            <h2
+              id="integration-activity-title"
+              className="mt-1 text-lg font-semibold tracking-tight"
+            >
+              Recorded agent activity
+            </h2>
+          </div>
+          <span className="text-micro text-muted-foreground">
+            Retained Ley sessions only
+          </span>
+        </div>
+        <div className="border-y border-border py-3">
+          {activity.length === 0 ? (
+            <div className="flex items-start gap-3">
+              <Cable
+                size={16}
+                className="mt-0.5 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <div>
+                <p className="text-meta font-semibold">
+                  No recorded integration activity yet
+                </p>
+                <p className="mt-1 max-w-3xl text-micro leading-5 text-muted-foreground">
+                  Ley has no retained host-hook or MCP-origin session for this
+                  project. This does not mean Codex, Claude Code, or another MCP
+                  client is not installed or configured; verify live integration
+                  state in the host itself.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {activity.map((item) => (
+                <div
+                  key={item.key}
+                  className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex items-center gap-2">
+                    <Cable
+                      size={13}
+                      className="shrink-0 text-secondary"
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <p className="text-meta font-semibold">{item.label}</p>
+                      <p className="text-micro text-muted-foreground">
+                        {item.detail}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-micro text-muted-foreground">
+                    Latest retained session started{" "}
+                    {relativeTime(item.latestStartedAtUnixMs)}
+                  </p>
+                </div>
+              ))}
+              <p className="text-micro leading-5 text-muted-foreground">
+                Recorded activity proves only that Ley previously received
+                session provenance through that path. It does not attest that
+                the package is currently installed, trusted, connected, or
+                healthy.
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <Suspense fallback={<KnowledgeSurfaceFallback />}>
+        <CapturePrivacyPanel
+          key={projectPath}
+          projectPath={projectPath}
+          dashboard={dashboard}
+          onUpdated={onPrivacyUpdated}
+          onErased={onPrivacyErased}
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+type IntegrationActivity = {
+  key: string;
+  label: string;
+  detail: string;
+  latestStartedAtUnixMs: number;
+};
+
+function observedIntegrationActivity(
+  sessions: SessionSummary[],
+): IntegrationActivity[] {
+  const observed = new Map<
+    string,
+    { label: string; count: number; latestStartedAtUnixMs: number }
+  >();
+
+  for (const session of sessions) {
+    if (session.sourceKind === "host-hook") {
+      const host = session.sourceHost?.trim();
+      const normalizedHost = host?.toLowerCase() ?? "unknown";
+      const recognizedHost =
+        normalizedHost === "codex" || normalizedHost === "claude-code";
+      const key = recognizedHost
+        ? `host-hook:${normalizedHost}`
+        : "host-hook:other";
+      const label =
+        normalizedHost === "codex"
+          ? "Codex host hooks"
+          : normalizedHost === "claude-code"
+            ? "Claude Code host hooks"
+            : "Host-hook sessions";
+      const current = observed.get(key);
+      observed.set(key, {
+        label,
+        count: (current?.count ?? 0) + 1,
+        latestStartedAtUnixMs: Math.max(
+          current?.latestStartedAtUnixMs ?? 0,
+          session.startedAtUnixMs,
+        ),
+      });
+      continue;
+    }
+    if (session.sourceKind === "mcp") {
+      const key = "mcp";
+      const current = observed.get(key);
+      observed.set(key, {
+        label: "MCP-origin sessions",
+        count: (current?.count ?? 0) + 1,
+        latestStartedAtUnixMs: Math.max(
+          current?.latestStartedAtUnixMs ?? 0,
+          session.startedAtUnixMs,
+        ),
+      });
+    }
+  }
+
+  return Array.from(observed.entries())
+    .map(([key, value]) => ({
+      key,
+      label: value.label,
+      detail: `${value.count} retained ${value.count === 1 ? "session" : "sessions"}`,
+      latestStartedAtUnixMs: value.latestStartedAtUnixMs,
+    }))
+    .sort(
+      (left, right) => right.latestStartedAtUnixMs - left.latestStartedAtUnixMs,
+    );
 }
 
 function AgentMemoryNav({
@@ -887,89 +1102,58 @@ function AgentMemoryNav({
   onChangeProject: () => void;
 }) {
   const items: Array<{
-    id: Section;
+    id: PrimarySection;
     label: string;
     icon: typeof Sparkles;
     count?: number;
   }> = [
-    { id: "overview", label: "Overview", icon: Sparkles },
-    { id: "search", label: "Search memory", icon: Search },
-    {
-      id: "sessions",
-      label: "Sessions",
-      icon: History,
-      count: dashboard.sessions.length,
-    },
-    {
-      id: "decisions",
-      label: "Decisions",
-      icon: Scale,
-    },
-    {
-      id: "problems",
-      label: "Problems & outcomes",
-      icon: MessageSquareWarning,
-    },
-    {
-      id: "lessons",
-      label: "Lessons",
-      icon: BookCheck,
-      count: dashboard.allLearnings.totalMatching,
-    },
-    {
-      id: "specifications",
-      label: "Specifications",
-      icon: FileCheck2,
-    },
-    {
-      id: "artifacts",
-      label: "Artifacts",
-      icon: Files,
-      count: dashboard.overview.files,
-    },
+    { id: "continue", label: "Continue", icon: Sparkles },
+    { id: "recall", label: "Recall", icon: Search },
+    { id: "evidence", label: "Evidence", icon: Files },
     {
       id: "review",
       label: "Review",
       icon: Inbox,
-      count: dashboard.reviewInbox.totalMatching,
+      count:
+        dashboard.reviewInbox.totalMatching > 0
+          ? dashboard.reviewInbox.totalMatching
+          : undefined,
     },
-    {
-      id: "privacy",
-      label: "Capture & privacy",
-      icon: ShieldCheck,
-    },
+    { id: "settings", label: "Project settings", icon: ShieldCheck },
   ];
+  const activePrimary = primarySectionFor(section);
   return (
     <aside className="app-sidebar shrink-0 border-b border-border md:flex md:w-56 md:flex-col md:border-b-0 md:border-r">
       <nav
         className="flex gap-1 overflow-x-auto p-2 md:flex-col md:overflow-visible md:p-3"
-        aria-label="Agent Memory sections"
+        aria-label="Project areas"
       >
         {items.map((item) => {
           const Icon = item.icon;
+          const active = activePrimary === item.id;
           return (
             <button
               key={item.id}
               type="button"
-              onClick={() => onSection(item.id)}
-              aria-current={section === item.id ? "page" : undefined}
+              onClick={() => onSection(defaultSectionFor(item.id))}
+              aria-current={active ? "page" : undefined}
               className={cn(
                 "flex h-9 shrink-0 items-center gap-2 rounded-md px-2.5 text-meta font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-                section === item.id
+                active
                   ? "bg-primary/12 text-foreground"
                   : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
               )}
             >
               <Icon
                 size={14}
-                className={section === item.id ? "text-primary" : undefined}
+                className={active ? "text-primary" : undefined}
               />
               {item.label}
               {item.count !== undefined && (
                 <span
                   className={cn(
                     "ml-auto rounded-sm px-1.5 text-micro tabular-nums",
-                    section === item.id
+                    active
                       ? "bg-primary/15 text-primary"
                       : "bg-surface-3 text-muted-foreground",
                   )}
@@ -998,6 +1182,97 @@ function AgentMemoryNav({
         </button>
       </div>
     </aside>
+  );
+}
+
+function AgentMemorySubnav({
+  section,
+  dashboard,
+  onSection,
+}: {
+  section: Section;
+  dashboard: AgentMemoryDashboard;
+  onSection: (section: Section) => void;
+}) {
+  const primary = primarySectionFor(section);
+  if (primary === "continue" || primary === "review" || primary === "settings") {
+    return null;
+  }
+
+  const items: Array<{
+    id: Section;
+    label: string;
+    icon: typeof Search;
+    count?: number;
+  }> =
+    primary === "recall"
+      ? [
+          { id: "search", label: "Search memory", icon: Search },
+          {
+            id: "sessions",
+            label: "Sessions",
+            icon: History,
+            count: dashboard.sessions.length,
+          },
+          { id: "decisions", label: "Decisions", icon: Scale },
+          {
+            id: "problems",
+            label: "Problems & outcomes",
+            icon: MessageSquareWarning,
+          },
+          {
+            id: "lessons",
+            label: "Lessons",
+            icon: BookCheck,
+            count: dashboard.allLearnings.totalMatching,
+          },
+        ]
+      : [
+          {
+            id: "artifacts",
+            label: "Files & evidence",
+            icon: Files,
+            count: dashboard.overview.files,
+          },
+          {
+            id: "specifications",
+            label: "Specifications",
+            icon: FileCheck2,
+          },
+        ];
+
+  return (
+    <nav
+      aria-label={`${primary === "recall" ? "Recall" : "Evidence"} views`}
+      className="mb-6 flex flex-wrap gap-1 border-b border-border pb-2"
+    >
+      {items.map((item) => {
+        const Icon = item.icon;
+        const active = section === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSection(item.id)}
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-micro font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary",
+              active
+                ? "bg-surface-3 text-foreground"
+                : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+            )}
+          >
+            <Icon size={12} aria-hidden="true" />
+            {item.label}
+            {item.count !== undefined && item.count > 0 && (
+              <span className="rounded-sm bg-background/70 px-1.5 tabular-nums text-muted-foreground">
+                {item.count}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 

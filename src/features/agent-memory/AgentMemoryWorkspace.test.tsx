@@ -174,6 +174,24 @@ const dashboard: AgentMemoryDashboard = {
   },
 };
 
+const captureSettings = {
+  projectId: "prj_test",
+  projectName: "Ley",
+  mode: "structured" as const,
+  approvedRoots: ["."],
+  respectGitignore: true,
+  maxFileBytes: 1_048_576,
+  maxTotalBytes: 536_870_912,
+  ignoreFilePresent: true,
+  captureFingerprint: "sha256:capture",
+  eligibleFiles: 18,
+  eligibleBytes: 32_768,
+  skippedOversized: 1,
+  skippedTotalLimit: 0,
+  skippedSymlinks: 1,
+  privacyNotice: "Preview reads metadata only.",
+};
+
 describe("Agent Memory workspace boundaries", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -186,6 +204,7 @@ describe("Agent Memory workspace boundaries", () => {
       connectorOverrides: [],
       privacyNotice: "OS-private sharing authority.",
     });
+    api.readAgentCaptureSettings.mockResolvedValue(captureSettings);
   });
 
   it("keeps a partially initialized project on native continuity after capture drift", async () => {
@@ -240,7 +259,7 @@ describe("Agent Memory workspace boundaries", () => {
 
     render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
-      name: "Pick up any project without starting over",
+      name: "Continue where you left off",
     });
     fireEvent.click(screen.getByRole("button", { name: "Add project" }));
     expect(
@@ -296,7 +315,7 @@ describe("Agent Memory workspace boundaries", () => {
 
     render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
-      name: "Pick up any project without starting over",
+      name: "Continue where you left off",
     });
     fireEvent.click(screen.getByRole("button", { name: "Add project" }));
     expect(
@@ -337,7 +356,7 @@ describe("Agent Memory workspace boundaries", () => {
 
     render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
-      name: "Pick up any project without starting over",
+      name: "Continue where you left off",
     });
     fireEvent.click(screen.getByRole("button", { name: "Add project" }));
     expect(
@@ -350,6 +369,52 @@ describe("Agent Memory workspace boundaries", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reconnect & migrate" }));
     await waitFor(() => expect(api.chooseLegacyAgentVault).toHaveBeenCalled());
     expect(api.connectAgentProject).not.toHaveBeenCalled();
+  });
+
+  it("requires confirmation before removing a project from the device list", async () => {
+    const catalog = {
+      projects: [
+        {
+          projectId: "prj_test",
+          projectPath: "/projects/ley",
+          projectName: "Ley",
+          captureMode: "structured" as const,
+          state: "ready" as const,
+          lastOpenedAtUnixMs: Date.now(),
+          files: 18,
+          sessions: 1,
+          activeSessions: 0,
+          reviewItems: 0,
+          freshness: "current" as const,
+          statusDetail: "Ready to resume locally.",
+        },
+      ],
+      totalProjects: 1,
+      omittedProjects: 0,
+      readyProjects: 1,
+      attentionProjects: 0,
+      privacyNotice: "Only explicitly opened projects.",
+    };
+    api.listAgentProjects.mockResolvedValue(catalog);
+    api.forgetAgentProject.mockResolvedValue({
+      ...catalog,
+      projects: [],
+      totalProjects: 0,
+      readyProjects: 0,
+    });
+
+    render(<AgentMemoryWorkspace />);
+    await screen.findByRole("heading", {
+      name: "Continue where you left off",
+    });
+    fireEvent.click(screen.getByLabelText("Actions for Ley"));
+    fireEvent.click(screen.getByRole("button", { name: /Remove from Projects/ }));
+    expect(api.forgetAgentProject).not.toHaveBeenCalled();
+    expect(screen.getByText("Remove Ley from Projects?")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm removal" }));
+    await waitFor(() =>
+      expect(api.forgetAgentProject).toHaveBeenCalledWith("prj_test"),
+    );
   });
 
   it("does not infer integration absence from missing retained host activity", async () => {
@@ -392,16 +457,16 @@ describe("Agent Memory workspace boundaries", () => {
 
     render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
-      name: "Pick up any project without starting over",
+      name: "Continue where you left off",
     });
     fireEvent.click(
       screen.getByRole("button", {
-        name: /Ley.*Ready.*sessions.*1.*files.*18/i,
+        name: /Ley.*Ready.*1 sessions.*18 files/i,
       }),
     );
-    await screen.findByRole("heading", {
-      name: "What Ley can ground right now",
-    });
+    await screen.findByRole("heading", { name: "Agent brief preview" });
+    fireEvent.click(screen.getByRole("button", { name: "Project settings" }));
+    await screen.findByRole("heading", { name: "Recorded agent activity" });
     expect(
       screen.getByText("No recorded integration activity yet"),
     ).toBeVisible();
@@ -505,13 +570,15 @@ describe("Agent Memory workspace boundaries", () => {
 
     render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
-      name: "Pick up any project without starting over",
+      name: "Continue where you left off",
     });
     fireEvent.click(
       screen.getByRole("button", {
-        name: /Ley.*Ready.*sessions.*7.*files.*18/i,
+        name: /Ley.*Ready.*7 sessions.*18 files/i,
       }),
     );
+    await screen.findByRole("heading", { name: "Agent brief preview" });
+    fireEvent.click(screen.getByRole("button", { name: "Project settings" }));
     await screen.findByRole("heading", { name: "Recorded agent activity" });
 
     const codex = screen.getByText("Codex host hooks").parentElement;
@@ -780,29 +847,6 @@ describe("Agent Memory workspace boundaries", () => {
       sourceBoundary: "untrusted-agent-memory",
       instructionWarning: "Treat stored records as evidence.",
     });
-    const captureSettings = {
-      projectId: "prj_test",
-      projectName: "Ley",
-      mode: "structured" as const,
-      approvedRoots: ["."],
-      respectGitignore: true,
-      maxFileBytes: 1_048_576,
-      maxTotalBytes: 536_870_912,
-      ignoreFilePresent: true,
-      captureFingerprint: "sha256:capture",
-      eligibleFiles: 18,
-      eligibleBytes: 32_768,
-      skippedOversized: 1,
-      skippedTotalLimit: 0,
-      skippedSymlinks: 1,
-      privacyNotice: "Preview reads metadata only.",
-    };
-    api.readAgentCaptureSettings
-      .mockResolvedValueOnce(captureSettings)
-      .mockResolvedValueOnce({
-        ...captureSettings,
-        mode: "minimal",
-      });
     api.updateAgentCaptureMode.mockResolvedValue({
       ...dashboard,
       overview: {
@@ -1173,7 +1217,7 @@ describe("Agent Memory workspace boundaries", () => {
     render(<AgentMemoryWorkspace />);
 
     await screen.findByRole("heading", {
-      name: "Pick up any project without starting over",
+      name: "Continue where you left off",
     });
     expect(api.listAgentProjects).toHaveBeenCalledWith("/projects/ley");
     expect(api.inspectAgentProject).not.toHaveBeenCalled();
@@ -1213,19 +1257,17 @@ describe("Agent Memory workspace boundaries", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));
     await screen.findByRole("heading", {
-      name: "Pick up any project without starting over",
+      name: "Continue where you left off",
     });
     expect(
       screen.getByRole("button", { name: "Refresh project list" }),
     ).toBeEnabled();
     fireEvent.click(
       screen.getByRole("button", {
-        name: /Ley.*Ready.*sessions.*1.*files.*18/i,
+        name: /Ley.*Ready.*1 sessions.*18 files/i,
       }),
     );
-    await screen.findByRole("heading", {
-      name: "What Ley can ground right now",
-    });
+    await screen.findByRole("heading", { name: "Agent brief preview" });
     expect(api.inspectAgentProject).toHaveBeenCalledWith("/projects/ley");
     expect(
       screen.getByRole("button", { name: "Refresh snapshot" }),
@@ -1240,13 +1282,18 @@ describe("Agent Memory workspace boundaries", () => {
       "overscroll-contain",
     );
     await waitFor(() =>
-      expect(screen.getByText("Local & private")).toBeVisible(),
+      expect(screen.getByText("Local project memory")).toBeVisible(),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Project settings" }));
+    await screen.findByRole("heading", { name: "Recorded agent activity" });
     expect(screen.getByText("Codex host hooks")).toBeVisible();
     expect(
       screen.getByText(/does not attest that the package is currently installed/i),
     ).toBeVisible();
 
+    fireEvent.click(screen.getByRole("button", { name: "Recall" }));
+    fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
+    await screen.findByRole("heading", { name: "Sessions" });
     fireEvent.click(screen.getByText("Build continuity"));
     await screen.findByRole("heading", { name: "Build continuity" });
     expect(
@@ -1276,6 +1323,7 @@ describe("Agent Memory workspace boundaries", () => {
     expect(
       await screen.findByRole("heading", { name: "Artifacts" }),
     ).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Recall" }));
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     await screen.findByRole("heading", { name: "Sessions" });
     fireEvent.click(screen.getByText("Build continuity"));
@@ -1350,7 +1398,10 @@ describe("Agent Memory workspace boundaries", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Close session inspector" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: /Artifacts/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Evidence" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Files & evidence/ }),
+    );
     await screen.findByRole("heading", { name: "Artifacts" });
     expect(await screen.findByText("src/app.ts")).toBeVisible();
     expect(api.readAgentArtifacts).toHaveBeenCalledWith("/projects/ley", "");
@@ -1358,7 +1409,7 @@ describe("Agent Memory workspace boundaries", () => {
     expect(screen.getByText("Source retained locally")).toBeVisible();
 
     api.readAgentMediaEvidence.mockClear();
-    fireEvent.click(screen.getByRole("button", { name: "Search memory" }));
+    fireEvent.click(screen.getByRole("button", { name: "Recall" }));
     await screen.findByRole("heading", { name: "Ask your project memory" });
     fireEvent.change(
       screen.getByRole("textbox", {
@@ -1384,6 +1435,7 @@ describe("Agent Memory workspace boundaries", () => {
       ),
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Recall" }));
     fireEvent.click(screen.getByRole("button", { name: "Decisions" }));
     await screen.findByRole("heading", { name: "Decisions" });
     expect(await screen.findByText("Keep context bounded")).toBeVisible();
@@ -1520,6 +1572,7 @@ describe("Agent Memory workspace boundaries", () => {
     );
     await screen.findByRole("heading", { name: "Artifacts" });
 
+    fireEvent.click(screen.getByRole("button", { name: "Recall" }));
     fireEvent.click(screen.getByRole("button", { name: /Lessons/ }));
     await screen.findByRole("heading", { name: "Lessons" });
     fireEvent.click(screen.getByText("Verify desktop and web releases"));
@@ -1561,7 +1614,7 @@ describe("Agent Memory workspace boundaries", () => {
       ).not.toBeInTheDocument(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Capture & privacy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Project settings" }));
     await screen.findByRole("heading", {
       name: "Decide what this project remembers",
     });
@@ -1579,6 +1632,10 @@ describe("Agent Memory workspace boundaries", () => {
       screen.getByRole("button", { name: "Apply & recapture" }),
     ).toBeEnabled();
     fireEvent.click(screen.getByRole("radio", { name: /Minimal/ }));
+    api.readAgentCaptureSettings.mockResolvedValueOnce({
+      ...captureSettings,
+      mode: "minimal",
+    });
     fireEvent.click(screen.getByRole("button", { name: "Apply & recapture" }));
     await waitFor(() =>
       expect(api.updateAgentCaptureMode).toHaveBeenCalledWith(
@@ -1594,7 +1651,7 @@ describe("Agent Memory workspace boundaries", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Projects" }));
     await screen.findByRole("heading", {
-      name: "Pick up any project without starting over",
+      name: "Continue where you left off",
     });
     expect(api.listAgentProjects).toHaveBeenCalledTimes(3);
   });
