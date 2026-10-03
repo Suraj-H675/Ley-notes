@@ -6,6 +6,7 @@ import {
   ArrowRight,
   BookCheck,
   BrainCircuit,
+  Cable,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -1122,6 +1123,7 @@ function Overview({
   const active = resume.sessions.filter(
     (session) => session.status === "active" || session.status === "paused",
   );
+  const integrationActivity = observedIntegrationActivity(dashboard.sessions);
   return (
     <div className="space-y-8">
       <section className="relative overflow-hidden rounded-sm border border-border bg-surface-1 p-5 shadow-panel sm:p-7">
@@ -1156,6 +1158,80 @@ function Overview({
             <Clock3 size={14} />
             Captured {relativeTime(overview.artifactGeneratedAtUnixMs)}
           </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="integration-activity-title">
+        <div className="mb-3 flex items-end justify-between gap-4">
+          <div>
+            <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Integration activity
+            </p>
+            <h3
+              id="integration-activity-title"
+              className="mt-1 text-lg font-semibold tracking-tight"
+            >
+              Recorded agent activity
+            </h3>
+          </div>
+          <span className="text-micro text-muted-foreground">
+            Evidence from retained Ley sessions
+          </span>
+        </div>
+        <div className="rounded-md border border-border bg-surface-1 p-4 shadow-panel sm:p-5">
+          {integrationActivity.length === 0 ? (
+            <div className="flex items-start gap-3">
+              <Cable
+                size={17}
+                className="mt-0.5 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <div>
+                <p className="text-meta font-semibold">
+                  No recorded integration activity yet
+                </p>
+                <p className="mt-1 max-w-3xl text-micro leading-5 text-muted-foreground">
+                  Ley has no retained host-hook or MCP-origin session for this
+                  project. This does not mean Codex, Claude Code, or another
+                  MCP client is not installed or configured; verify live
+                  integration state in the host itself.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {integrationActivity.map((activity) => (
+                <div
+                  key={activity.key}
+                  className="flex flex-col gap-1 rounded-sm border border-border bg-background/35 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="flex items-center gap-2">
+                    <Cable
+                      size={14}
+                      className="shrink-0 text-secondary"
+                      aria-hidden="true"
+                    />
+                    <div>
+                      <p className="text-meta font-semibold">{activity.label}</p>
+                      <p className="text-micro text-muted-foreground">
+                        {activity.detail}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-micro text-muted-foreground">
+                    Latest retained session started{" "}
+                    {relativeTime(activity.latestStartedAtUnixMs)}
+                  </p>
+                </div>
+              ))}
+              <p className="text-micro leading-5 text-muted-foreground">
+                Recorded activity proves only that Ley previously received
+                session provenance through that path. It does not attest that
+                the package is currently installed, trusted, connected, or
+                healthy.
+              </p>
+            </div>
+          )}
         </div>
       </section>
 
@@ -4136,6 +4212,73 @@ function humanize(value: string): string {
 
 function compactId(value: string): string {
   return value.length <= 16 ? value : `${value.slice(0, 12)}…`;
+}
+
+type IntegrationActivity = {
+  key: string;
+  label: string;
+  detail: string;
+  latestStartedAtUnixMs: number;
+};
+
+function observedIntegrationActivity(
+  sessions: SessionSummary[],
+): IntegrationActivity[] {
+  const observed = new Map<
+    string,
+    { label: string; count: number; latestStartedAtUnixMs: number }
+  >();
+
+  for (const session of sessions) {
+    if (session.sourceKind === "host-hook") {
+      const host = session.sourceHost?.trim();
+      const normalizedHost = host?.toLowerCase() ?? "unknown";
+      const recognizedHost =
+        normalizedHost === "codex" || normalizedHost === "claude-code";
+      const key = recognizedHost
+        ? `host-hook:${normalizedHost}`
+        : "host-hook:other";
+      const label =
+        normalizedHost === "codex"
+          ? "Codex host hooks"
+          : normalizedHost === "claude-code"
+            ? "Claude Code host hooks"
+            : "Host-hook sessions";
+      const current = observed.get(key);
+      observed.set(key, {
+        label,
+        count: (current?.count ?? 0) + 1,
+        latestStartedAtUnixMs: Math.max(
+          current?.latestStartedAtUnixMs ?? 0,
+          session.startedAtUnixMs,
+        ),
+      });
+      continue;
+    }
+    if (session.sourceKind === "mcp") {
+      const key = "mcp";
+      const current = observed.get(key);
+      observed.set(key, {
+        label: "MCP-origin sessions",
+        count: (current?.count ?? 0) + 1,
+        latestStartedAtUnixMs: Math.max(
+          current?.latestStartedAtUnixMs ?? 0,
+          session.startedAtUnixMs,
+        ),
+      });
+    }
+  }
+
+  return Array.from(observed.entries())
+    .map(([key, value]) => ({
+      key,
+      label: value.label,
+      detail: `${value.count} retained ${value.count === 1 ? "session" : "sessions"}`,
+      latestStartedAtUnixMs: value.latestStartedAtUnixMs,
+    }))
+    .sort(
+      (left, right) => right.latestStartedAtUnixMs - left.latestStartedAtUnixMs,
+    );
 }
 
 function actionLabel(action: LearningAction): string {

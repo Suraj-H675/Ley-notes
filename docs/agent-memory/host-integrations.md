@@ -45,6 +45,20 @@ directory already on PATH. Do not continue until `ley --version` succeeds in a
 fresh terminal. The packages contain no developer home directory, vault path,
 project path, token, or other machine-specific configuration.
 
+Ley Desktop deliberately does **not** infer whether Codex, Claude Code, or an
+MCP client is currently installed, trusted, connected, or healthy. The Overview
+shows only **Recorded agent activity** from retained Ley session provenance:
+recognized Codex/Claude Code host-hook sessions, generic host-hook provenance
+when the retained host label is missing or unrecognized, and MCP-origin
+sessions. Rows show retained-session counts plus the most recent qualifying
+session start time; later session updates are not treated as host-observation
+events. Manual CLI sessions and explicit
+historical imports are not presented as integration activity. A blank activity surface
+means only that Ley has no retained matching session for that project; verify
+current plugin/hook/MCP state in the host itself. Desktop does not probe
+undocumented host config files, plugin caches, or process state to manufacture
+a stronger claim.
+
 The packaged integrations enable only the canonical session-checkpoint write capability in their local MCP process. Tentative learning proposals are not enabled by default; a deliberate compatibility workflow may still opt into `--allow-learning-proposals` while that legacy route remains available. Host permission controls still apply.
 
 Dedicated Ley graph query tools are retired. For structural impact questions, hosts should use bounded Ley continuity context and then inspect the live workspace with the coding host's normal repository tools. Retained deterministic graph history is migration/compatibility state, not live-source authority and not a reason to preserve a separate graph API.

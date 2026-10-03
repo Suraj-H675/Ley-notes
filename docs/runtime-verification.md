@@ -197,6 +197,13 @@ and must not be deleted by continuity erasure or migration cleanup.
 - After the picker was rendered, terminalize the selected replacement from another client. Supersede must fail closed under core's locked mutation even when the target learning itself has not changed.
 - After success, verify the old learning is terminal immutable history. If the replacement is in the bounded list, its title/state control must open that replacement inspector; otherwise the stable `supersededBy` ID remains visible. The replacement remains in its own existing trust/review state; supersession must not silently confirm or promote it.
 
+## Agent Memory integration activity
+
+- With retained Codex and Claude Code host-hook sessions, open Overview and verify **Recorded agent activity** reports the recognized host labels, retained-session counts, and latest qualifying session **start** time. Later session updates must not be labeled as later host observations.
+- Include missing/unknown host-hook labels and verify Desktop groups them generically instead of rendering caller-supplied host text as an asserted host identity. Include manual CLI and explicit imported-history sessions in the same project and verify they are excluded. MCP-origin sessions may appear as a separate **MCP-origin sessions** row without claiming a host identity.
+- With no retained host-hook or MCP-origin session, verify the empty state says only that no recorded integration activity exists and explicitly warns that this does not mean Codex, Claude Code, or another MCP client is absent.
+- Verify the Desktop performs no host-config/plugin-cache/process probing for this activity surface. Current install/trust/connectivity checks remain host-owned (for example Codex plugin/hooks views or the corresponding Claude Code plugin inspection).
+
 ## Agent Memory graph history
 
 This section records historical verification for the retired Desktop Project Graph UI. The underlying captured

@@ -120,6 +120,8 @@ export interface SessionSummary {
   name: string;
   goal: string;
   status: "active" | "completed" | "paused" | "abandoned";
+  sourceKind: "manual-cli" | "host-hook" | "mcp" | "import";
+  sourceHost?: string;
   startedAtUnixMs: number;
   updatedAtUnixMs: number;
   eventCount: number;

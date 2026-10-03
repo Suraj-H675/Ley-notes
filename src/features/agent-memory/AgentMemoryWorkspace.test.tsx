@@ -132,6 +132,8 @@ const dashboard: AgentMemoryDashboard = {
       name: "Build continuity",
       goal: "Make session memory inspectable.",
       status: "completed",
+      sourceKind: "host-hook",
+      sourceHost: "codex",
       startedAtUnixMs: Date.now() - 60_000,
       updatedAtUnixMs: Date.now(),
       eventCount: 3,
@@ -353,6 +355,184 @@ describe("Agent Memory workspace boundaries", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reconnect & migrate" }));
     await waitFor(() => expect(api.chooseLegacyAgentVault).toHaveBeenCalled());
     expect(api.connectAgentProject).not.toHaveBeenCalled();
+  });
+
+  it("does not infer integration absence from missing retained host activity", async () => {
+    api.listAgentProjects.mockResolvedValue({
+      projects: [
+        {
+          projectId: "prj_test",
+          projectPath: "/projects/ley",
+          projectName: "Ley",
+          captureMode: "structured",
+          state: "ready",
+          lastOpenedAtUnixMs: Date.now(),
+          vaultName: "Private vault",
+          files: 18,
+          graphNodes: 42,
+          sessions: 1,
+          activeSessions: 0,
+          reviewItems: 0,
+          freshness: "current",
+          statusDetail: "Ready to resume locally.",
+        },
+      ],
+      totalProjects: 1,
+      omittedProjects: 0,
+      readyProjects: 1,
+      attentionProjects: 0,
+      privacyNotice: "Only explicitly opened projects.",
+    });
+    api.inspectAgentProject.mockResolvedValue({
+      status: "ready",
+      dashboard: {
+        ...dashboard,
+        sessions: dashboard.sessions.map((session) => ({
+          ...session,
+          sourceKind: "manual-cli",
+          sourceHost: undefined,
+        })),
+      },
+    });
+
+    render(<AgentMemoryWorkspace open onClose={vi.fn()} />);
+    await screen.findByRole("heading", {
+      name: "Pick up any project without starting over",
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Ley.*Ready.*sessions.*1.*files.*18/i,
+      }),
+    );
+    await screen.findByRole("heading", {
+      name: "What Ley can ground right now",
+    });
+    expect(
+      screen.getByText("No recorded integration activity yet"),
+    ).toBeVisible();
+    expect(
+      screen.getByText(/does not mean Codex, Claude Code, or another MCP client is not installed/i),
+    ).toBeVisible();
+  });
+
+  it("summarizes only recorded integration provenance with conservative host labels and session-start recency", async () => {
+    const now = Date.now();
+    api.listAgentProjects.mockResolvedValue({
+      projects: [
+        {
+          projectId: "prj_test",
+          projectPath: "/projects/ley",
+          projectName: "Ley",
+          captureMode: "structured",
+          state: "ready",
+          lastOpenedAtUnixMs: now,
+          vaultName: "Private vault",
+          files: 18,
+          graphNodes: 42,
+          sessions: 7,
+          activeSessions: 0,
+          reviewItems: 0,
+          freshness: "current",
+          statusDetail: "Ready to resume locally.",
+        },
+      ],
+      totalProjects: 1,
+      omittedProjects: 0,
+      readyProjects: 1,
+      attentionProjects: 0,
+      privacyNotice: "Only explicitly opened projects.",
+    });
+    const base = dashboard.sessions[0];
+    api.inspectAgentProject.mockResolvedValue({
+      status: "ready",
+      dashboard: {
+        ...dashboard,
+        sessions: [
+          {
+            ...base,
+            sessionId: "ses_codex",
+            sourceKind: "host-hook",
+            sourceHost: "codex",
+            startedAtUnixMs: now - 2 * 60 * 60 * 1000,
+            updatedAtUnixMs: now,
+          },
+          {
+            ...base,
+            sessionId: "ses_claude",
+            sourceKind: "host-hook",
+            sourceHost: "claude-code",
+            startedAtUnixMs: now - 3 * 60 * 60 * 1000,
+            updatedAtUnixMs: now,
+          },
+          {
+            ...base,
+            sessionId: "ses_unknown",
+            sourceKind: "host-hook",
+            sourceHost: "caller-supplied-host",
+            startedAtUnixMs: now - 4 * 60 * 60 * 1000,
+            updatedAtUnixMs: now,
+          },
+          {
+            ...base,
+            sessionId: "ses_missing",
+            sourceKind: "host-hook",
+            sourceHost: undefined,
+            startedAtUnixMs: now - 5 * 60 * 60 * 1000,
+            updatedAtUnixMs: now,
+          },
+          {
+            ...base,
+            sessionId: "ses_mcp",
+            sourceKind: "mcp",
+            sourceHost: "caller-supplied-mcp-host",
+            startedAtUnixMs: now - 6 * 60 * 60 * 1000,
+            updatedAtUnixMs: now,
+          },
+          {
+            ...base,
+            sessionId: "ses_manual",
+            sourceKind: "manual-cli",
+            sourceHost: "codex",
+            startedAtUnixMs: now - 7 * 60 * 60 * 1000,
+            updatedAtUnixMs: now,
+          },
+          {
+            ...base,
+            sessionId: "ses_import",
+            sourceKind: "import",
+            sourceHost: "claude-code",
+            startedAtUnixMs: now - 8 * 60 * 60 * 1000,
+            updatedAtUnixMs: now,
+          },
+        ],
+      },
+    });
+
+    render(<AgentMemoryWorkspace open onClose={vi.fn()} />);
+    await screen.findByRole("heading", {
+      name: "Pick up any project without starting over",
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Ley.*Ready.*sessions.*7.*files.*18/i,
+      }),
+    );
+    await screen.findByRole("heading", { name: "Recorded agent activity" });
+
+    const codex = screen.getByText("Codex host hooks").parentElement;
+    const claude = screen.getByText("Claude Code host hooks").parentElement;
+    const other = screen.getByText("Host-hook sessions").parentElement;
+    const mcp = screen.getByText("MCP-origin sessions").parentElement;
+    expect(codex).toHaveTextContent("1 retained session");
+    expect(claude).toHaveTextContent("1 retained session");
+    expect(other).toHaveTextContent("2 retained sessions");
+    expect(mcp).toHaveTextContent("1 retained session");
+    expect(screen.queryByText(/caller-supplied-host/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/caller-supplied-mcp-host/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/Latest retained session started 2 hours ago/i)).toBeVisible();
+    expect(screen.queryByText(/7 retained sessions/i)).not.toBeInTheDocument();
   });
 
   it("migrates the last selection into Projects and opens a scrollable dashboard", { timeout: 10_000 }, async () => {
@@ -1074,6 +1254,10 @@ describe("Agent Memory workspace boundaries", () => {
     await waitFor(() =>
       expect(screen.getByText("Local & private")).toBeVisible(),
     );
+    expect(screen.getByText("Codex host hooks")).toBeVisible();
+    expect(
+      screen.getByText(/does not attest that the package is currently installed/i),
+    ).toBeVisible();
 
     fireEvent.click(screen.getByText("Build continuity"));
     await screen.findByRole("heading", { name: "Build continuity" });

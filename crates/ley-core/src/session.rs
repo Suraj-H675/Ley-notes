@@ -732,6 +732,8 @@ pub struct SessionSummary {
     pub goal: String,
     pub status: SessionStatus,
     pub source_kind: SessionSourceKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_host: Option<String>,
     pub started_at_unix_ms: u64,
     pub updated_at_unix_ms: u64,
     pub event_count: u64,
@@ -5045,6 +5047,7 @@ impl From<&AgentSession> for SessionSummary {
             goal: session.goal.clone(),
             status: session.status,
             source_kind: session.source.kind,
+            source_host: session.source.host.clone(),
             started_at_unix_ms: session.started_at_unix_ms,
             updated_at_unix_ms: session.updated_at_unix_ms,
             event_count: session.event_count,
@@ -10736,6 +10739,7 @@ mod tests {
             list_sessions_from_continuity_snapshot(&store, &diagnostic.identity.project_id)
                 .unwrap();
         assert_eq!(listed, vec![SessionSummary::from(&legacy)]);
+        assert_eq!(listed[0].source_host.as_deref(), Some("codex"));
 
         std::fs::remove_dir_all(&vault).unwrap();
         assert_eq!(
