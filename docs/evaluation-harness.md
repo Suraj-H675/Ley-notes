@@ -729,7 +729,14 @@ python eval/run_agent_task_eval.py \
 The report includes recovery/no-recovery task and hidden-oracle rates, mean runner time, mean supplied context
 characters, their deltas, and `completedProcessWithFailedOracleCount`. That last metric means only that the runner
 process exited normally while the hidden oracle failed; it is not evidence that the model explicitly claimed success.
-The reproducibility protocol and current no-result status are recorded in
+
+The first bounded study completed on 2026-10-02 with Codex `0.160.0`, `gpt-6-luna`, `xhigh`, three crash
+fixtures, and two repetitions per arm (12 attempts). Recovery passed 6/6 tasks and hidden oracles; the matched
+no-recovery control passed 0/6. Recovery added 382.0 mean context characters, stayed inside the 500-token context
+budget, and had no file/constraint regression. The result earns retaining bounded read-only interruption evidence for
+this tested slice; it does not justify restoring structured recovery writers or validate the compatibility Memory
+Compiler transport. Exact hashes, per-task outcomes, raw-output caveats, the operator-recorded decision rule, and its
+provenance limitation are recorded in
 [`research/interruption-recovery-study-protocol-2026-10-02.md`](research/interruption-recovery-study-protocol-2026-10-02.md).
 
 The first completed compiler-ablation study ran on 2026-10-01 with Codex `0.159.3`, `gpt-6-luna`, `xhigh`,

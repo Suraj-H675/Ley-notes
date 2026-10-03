@@ -115,15 +115,19 @@ for any actual false-completion claim review, recovery time, privacy, and contex
 writer become a competing arm. Do not reintroduce the v1–v16 verifier/commit state machine merely because its
 historical deterministic tests still exist.
 
-**Harness status on 2026-10-02:** the matched control is now implemented but has not been run against an external
-agent. `ley` and experimental `ley-no-recovery` share the same project/task/structured prior state/compiler/oracle;
-the control withholds only post-checkpoint crash evidence and asserts crash-only markers remain absent. The checked-in
-study set has three `crash-missing-checkpoint` fixtures, and `--validate` exercises both context paths without a model.
-The first planned pinned run is 12 attempts (three tasks × two arms × two repetitions). Treat
-`completedProcessWithFailedOracleCount` as a process/oracle mismatch proxy, not a semantic false-success claim.
-This harness materializes retained turn evidence through local session reads; it does **not** directly evaluate the
-compatibility `ley_session_memory_compile` transport or prove correctness of a later checkpoint. See
-`research/interruption-recovery-study-protocol-2026-10-02.md`.
+**Completed result on 2026-10-02:** after 60/60 evaluator tests and 12/12 deterministic fixture validations, the
+first pinned model run completed 12 Codex `0.160.0` / `gpt-6-luna` / `xhigh` attempts (three crash fixtures ×
+two matched arms × two repetitions). Recovery passed 6/6 tasks and 6/6 hidden oracles; `ley-no-recovery` passed
+0/6 tasks and 0/6 hidden oracles. Every fixture was recovery 2/2 vs control 0/2. Recovery added 382.0 mean context
+characters (1,145.7 vs 763.7), remained within the existing 500-token budget, and averaged 48.53 runner seconds vs
+75.33 for control. All 12 file/constraint checks passed and post-check trees were stable. The control recorded six
+completed-process/failed-oracle mismatches; preserved output review showed heterogeneous behavior, so this remains an
+objective mismatch count rather than six claimed false successes. The operator-frozen multi-fixture/cost threshold is
+therefore satisfied: retain the bounded read-only interruption-evidence path. The report itself does not carry a
+pre-run protocol/rule hash, so the chronology is recorded operator provenance rather than independently attested
+preregistration. Do **not** restore the v1-v16 structured recovery writers or treat this as validation of the
+compatibility `ley_session_memory_compile` transport. See
+`research/interruption-recovery-study-protocol-2026-10-02.md` for hashes, limits, and interpretation.
 
 ## Dated Git revision portability evidence — 2026-09-25
 

@@ -1,6 +1,6 @@
 # Read-only interruption-recovery sufficiency study protocol
 
-**Status:** deterministic harness ready; no external-agent result recorded yet.
+**Status:** completed bounded model-dependent study; current read-only interruption evidence retained.
 
 ## Question
 
@@ -89,6 +89,75 @@ python eval/run_agent_task_eval.py \
 Record the exact Codex version before the run. If the installed host/model differs from prior studies, report that
 fact rather than silently comparing across versions.
 
+## Completed run — 2026-10-02
+
+The first pinned study completed from source commit
+`a1b4ab9412b220d95ebf0c2ac71eef6ee993b1aa` with:
+
+- Codex CLI `0.160.0`;
+- model `gpt-6-luna`;
+- reasoning effort `xhigh`;
+- two repetitions across all three crash fixtures and both matched arms (12 total attempts);
+- runner command SHA-256
+  `sha256:18dda473a38b2a74bcf18879f215cfe06dbe78a311c1220cd808df8b7348b3f7`;
+- report SHA-256
+  `sha256:3038ae451f317d80b3ac7e7e11a7e7151937df24e931271642320ddf773ba664`; and
+- a 126-file local audit bundle retained for raw-output review. The audit bundle is intentionally not checked in.
+
+The runner received one read-only Codex auth-file mount and no explicitly inherited environment variables.
+
+The numeric interpretation thresholds below were written into the operator working tree before the model run was
+launched. The retained report does **not** contain a protocol hash or frozen-rule snapshot, so that chronology is
+operator-recorded provenance rather than independently attested by the report artifact. Future model-dependent
+studies that rely on outcome thresholds should persist a pre-run protocol/rule digest in the report itself.
+
+### Results
+
+| Measure | Recovery `ley` | `ley-no-recovery` control |
+| --- | ---: | ---: |
+| Task passes | 6/6 | 0/6 |
+| Hidden oracles passed / attempted | 6/6 | 0/6 |
+| Mean supplied context characters | 1,145.7 | 763.7 |
+| Mean estimated context tokens | 286.7 | 191.0 |
+| Mean runner seconds | 48.53 | 75.33 |
+| Completed process + failed oracle | 0 | 6 |
+| File/constraint checks passed | 6/6 | 6/6 |
+| Post-check tree stable | 6/6 | 6/6 |
+
+The recovery arm added 382.0 mean context characters and stayed below the existing 500-token budget on every
+attempt (maximum estimated context: 310 tokens). Recovery was also faster on this sample by 26.80 mean seconds;
+runtime remains a secondary noisy measure and is not treated as a general latency claim.
+
+Per fixture, the result was consistent in both repetitions:
+
+- `crash-slug-normalization-contract`: recovery 2/2, control 0/2;
+- `crash-retry-window-contract`: recovery 2/2, control 0/2; and
+- `crash-cache-namespace-contract`: recovery 2/2, control 0/2.
+
+The six control processes all exited normally while failing the hidden oracle. Their preserved runner output was
+reviewed before interpretation. The failures were not six equivalent semantic false-success claims: several runs
+confidently reported plausible changes or visible-test success, while the cache-namespace runs explicitly stated
+that the replacement namespace was unavailable. Keep the durable metric as the objective process/oracle mismatch
+count rather than upgrading it to a model-deception or false-completion count.
+
+### Interpretation and product decision
+
+This run clears the operator-recorded decision rule: recovery strictly outperformed the control on all three fixtures,
+added six successful attempts rather than the required minimum two, regressed on no fixture, stayed within the
+context-cost threshold, and introduced no file/constraint failure. The deterministic matched-control gate had already
+proved that crash-only markers were absent from the no-recovery context. Because the report does not independently
+attest the rule chronology, do not present this as cryptographically proven preregistration.
+
+The tested slice therefore earns **retaining the current bounded read-only post-checkpoint interruption-evidence
+path**. No implementation expansion is justified by this result: do not restore structured/semantic recovery writers,
+do not infer that the compatibility Memory Compiler transport itself was validated, and do not broaden the product
+authority boundary. Historical evidence remains untrusted and current truth still requires live repository/runtime
+verification.
+
+This is one pinned model/host, three synthetic crash-contract tasks, and two repetitions per arm. It is strong evidence
+for the tested recovery-access question, not a universal claim about all models, tasks, or interruption modes. A
+larger study should require a new concrete uncertainty rather than being run automatically.
+
 ## Measurements
 
 Primary:
@@ -115,11 +184,22 @@ checked-in fixtures contain no real secrets, but the general audit-bundle warnin
 Do not restore structured/semantic recovery writers merely because the evidence arm wins one task. Treat the study
 as evidence for whether retaining **some bounded read-only interruption-evidence access** is worthwhile:
 
-- a consistent task/oracle advantage across multiple fixtures with acceptable context/time cost supports keeping the
-  current read-only recovery path;
+- a consistent advantage means the recovery arm must strictly outperform the control on task + hidden-oracle success
+  on at least **two of the three fixtures**, must not underperform the control on any fixture, and must produce at
+  least **two additional successful attempts out of six** overall;
+- acceptable context cost means the recovery block must stay within the existing 500-token task-context budget,
+  cause no truncation/budget failure, and add no more than **500 mean characters** versus the matched control. The
+  deterministic pre-run validation observed per-task deltas of 344-418 characters, so this threshold is fixed before
+  external-agent outcomes are known;
+- runtime is secondary because six attempts per arm are noisy. Treat it as a material cost signal only if recovery is
+  both more than **25% slower on mean runner time** and more than **15 seconds slower in absolute mean time**;
+- either arm producing a privacy/marker-leakage or changed-file/allowed-file constraint regression blocks a positive
+  product conclusion until that failure is understood;
+- satisfying the multi-fixture success threshold with acceptable cost supports keeping the current read-only recovery
+  path;
 - no material advantage supports further simplification/retirement review of the retained recovery evidence/API;
   and
-- mixed results require inspecting per-task failure modes before changing product behavior.
+- any other outcome is mixed and requires per-task failure analysis before changing product behavior.
 
 An advantage does not by itself prove that Memory Compiler is the right long-term transport, because the benchmark
 does not exercise that compatibility route directly. Any product decision must preserve the current safety
