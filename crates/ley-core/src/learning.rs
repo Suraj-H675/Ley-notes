@@ -505,6 +505,7 @@ fn prepare_learning_proposal(
             event_id,
             request_id: input.request_id,
             expected_event_count: None,
+            expected_replacement_event_count: None,
             redactions,
             payload,
             allow_create: true,
@@ -608,6 +609,7 @@ fn prepare_learning_correction(
             event_id,
             request_id: input.request_id,
             expected_event_count: input.expected_event_count,
+            expected_replacement_event_count: None,
             redactions,
             payload,
             allow_create: false,
@@ -672,6 +674,7 @@ pub fn review_learning(
             event_id,
             request_id: input.request_id,
             expected_event_count: input.expected_event_count,
+            expected_replacement_event_count: None,
             redactions,
             payload,
             allow_create: false,
@@ -685,6 +688,24 @@ pub fn review_learning_with_continuity_transition(
     legacy_vault: impl AsRef<Path>,
     store: &ContinuityStore,
     learning_id: &str,
+    input: ReviewLearningInput,
+) -> Result<LearningWriteResult, LeyCoreError> {
+    review_learning_with_continuity_transition_guarded(
+        project_start,
+        legacy_vault,
+        store,
+        learning_id,
+        None,
+        input,
+    )
+}
+
+pub fn review_learning_with_continuity_transition_guarded(
+    project_start: impl AsRef<Path>,
+    legacy_vault: impl AsRef<Path>,
+    store: &ContinuityStore,
+    learning_id: &str,
+    expected_replacement_event_count: Option<u64>,
     input: ReviewLearningInput,
 ) -> Result<LearningWriteResult, LeyCoreError> {
     let project_start = project_start.as_ref();
@@ -716,9 +737,11 @@ pub fn review_learning_with_continuity_transition(
                 replacement,
             )?;
         }
-        _ if input.replacement_learning_id.is_some() => {
+        _ if input.replacement_learning_id.is_some()
+            || expected_replacement_event_count.is_some() =>
+        {
             return Err(LeyCoreError::InvalidLearningRequest(
-                "replacementLearningId is only valid for supersede".to_owned(),
+                "replacement learning guards are only valid for supersede".to_owned(),
             ));
         }
         _ => {}
@@ -749,6 +772,7 @@ pub fn review_learning_with_continuity_transition(
             event_id,
             request_id: input.request_id,
             expected_event_count: input.expected_event_count,
+            expected_replacement_event_count,
             redactions,
             payload,
             allow_create: false,
@@ -1744,6 +1768,7 @@ struct PendingLearningEvent {
     event_id: String,
     request_id: String,
     expected_event_count: Option<u64>,
+    expected_replacement_event_count: Option<u64>,
     redactions: Vec<LearningRedaction>,
     payload: LearningEventPayload,
     allow_create: bool,
@@ -1811,7 +1836,13 @@ fn prepare_learning_mutation(
     if !learning_events.is_empty() {
         let current = replay_one(events, project_id, learning_id)?;
         validate_transition(&current, &pending.payload)?;
-        validate_pending_against_ledger(events, project_id, learning_id, &pending.payload)?;
+        validate_pending_against_ledger(
+            events,
+            project_id,
+            learning_id,
+            pending.expected_replacement_event_count,
+            &pending.payload,
+        )?;
     }
     if events.len() >= LEARNING_EVENT_LIMIT {
         return Err(LeyCoreError::InvalidLearningStore(format!(
@@ -2082,6 +2113,7 @@ fn validate_pending_against_ledger(
     events: &[LearningEvent],
     project_id: &str,
     learning_id: &str,
+    expected_replacement_event_count: Option<u64>,
     payload: &LearningEventPayload,
 ) -> Result<(), LeyCoreError> {
     let LearningEventPayload::Reviewed {
@@ -2093,6 +2125,32 @@ fn validate_pending_against_ledger(
         return Ok(());
     };
     let records = replay_all(events, project_id)?;
+    let replacement_record = records
+        .iter()
+        .find(|record| record.learning_id == *replacement)
+        .ok_or_else(|| {
+            LeyCoreError::InvalidLearningRequest(
+                "replacement learning does not exist in this project".to_owned(),
+            )
+        })?;
+    if matches!(
+        replacement_record.state,
+        LearningState::Rejected | LearningState::Superseded
+    ) {
+        return Err(LeyCoreError::InvalidLearningRequest(format!(
+            "replacement learning {} is already {}",
+            replacement_record.learning_id,
+            state_label(replacement_record.state)
+        )));
+    }
+    if let Some(expected) = expected_replacement_event_count {
+        let actual = replacement_record.event_count;
+        if actual != expected {
+            return Err(LeyCoreError::InvalidLearningRequest(format!(
+                "replacement learning changed from {expected} events to {actual}; reload before saving"
+            )));
+        }
+    }
     let replacements = records
         .iter()
         .map(|record| (record.learning_id.as_str(), record.superseded_by.as_deref()))
@@ -3894,6 +3952,7 @@ mod tests {
                 event_id,
                 request_id: input.request_id,
                 expected_event_count: None,
+                expected_replacement_event_count: None,
                 redactions,
                 payload: LearningEventPayload::Proposed {
                     actor: input.actor,
@@ -3940,6 +3999,7 @@ mod tests {
             event_id,
             request_id,
             expected_event_count,
+            expected_replacement_event_count: None,
             redactions,
             payload: LearningEventPayload::Corrected {
                 actor: LearningActor::User,
@@ -5702,7 +5762,7 @@ mod tests {
     }
 
     #[test]
-    fn transition_learning_supersession_records_native_link_and_rejects_cycle() {
+    fn transition_learning_supersession_records_native_link_and_rejects_terminal_replacement() {
         let (base, project, vault, session_id, record_id) = setup_learning();
         let identity = diagnose_project(&project).unwrap().identity;
         let store = private_continuity_store(&base, "transition-learning-supersession");
@@ -5721,11 +5781,12 @@ mod tests {
         )
         .unwrap();
 
-        let superseded = review_learning_with_continuity_transition(
+        let superseded = review_learning_with_continuity_transition_guarded(
             &project,
             &vault,
             &store,
             &obsolete.learning.learning_id,
+            Some(replacement.learning.event_count),
             ReviewLearningInput {
                 request_id: request_id('7'),
                 expected_event_count: Some(1),
@@ -5761,12 +5822,128 @@ mod tests {
                     expected_event_count: Some(1),
                     actor: LearningActor::User,
                     action: LearningFeedbackAction::Supersede,
-                    note: "This would create a cycle.".to_owned(),
+                    note: "The prior learning is already terminal.".to_owned(),
                     replacement_learning_id: Some(obsolete.learning.learning_id.clone()),
                 },
             ),
             Err(LeyCoreError::InvalidLearningRequest(message))
-                if message.contains("cycle")
+                if message.contains("already superseded")
+        ));
+    }
+
+    #[test]
+    fn guarded_supersession_rejects_changed_or_terminal_replacement() {
+        let (base, project, vault, session_id, record_id) = setup_learning();
+        let store = private_continuity_store(&base, "guarded-learning-supersession");
+
+        let source = propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('1'), &session_id, &record_id),
+        )
+        .unwrap();
+        let replacement = propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('2'), &session_id, &record_id),
+        )
+        .unwrap();
+        let observed_replacement_events = replacement.learning.event_count;
+        let changed = review_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &replacement.learning.learning_id,
+            ReviewLearningInput {
+                request_id: request_id('3'),
+                expected_event_count: Some(observed_replacement_events),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Contest,
+                note: "Replacement changed after the Desktop list was read.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            changed.learning.event_count,
+            observed_replacement_events + 1
+        );
+
+        let stale_replacement = review_learning_with_continuity_transition_guarded(
+            &project,
+            &vault,
+            &store,
+            &source.learning.learning_id,
+            Some(observed_replacement_events),
+            ReviewLearningInput {
+                request_id: request_id('4'),
+                expected_event_count: Some(source.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Supersede,
+                note: "This must fail against the stale replacement view.".to_owned(),
+                replacement_learning_id: Some(replacement.learning.learning_id.clone()),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            stale_replacement,
+            LeyCoreError::InvalidLearningRequest(ref message)
+                if message.contains("replacement learning changed")
+        ));
+
+        let source_two = propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('5'), &session_id, &record_id),
+        )
+        .unwrap();
+        let terminal_replacement = propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            proposal(request_id('6'), &session_id, &record_id),
+        )
+        .unwrap();
+        let rejected = review_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &terminal_replacement.learning.learning_id,
+            ReviewLearningInput {
+                request_id: request_id('7'),
+                expected_event_count: Some(terminal_replacement.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Reject,
+                note: "This replacement is no longer reusable.".to_owned(),
+                replacement_learning_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(rejected.learning.state, LearningState::Rejected);
+
+        let terminal_error = review_learning_with_continuity_transition_guarded(
+            &project,
+            &vault,
+            &store,
+            &source_two.learning.learning_id,
+            Some(rejected.learning.event_count),
+            ReviewLearningInput {
+                request_id: request_id('8'),
+                expected_event_count: Some(source_two.learning.event_count),
+                actor: LearningActor::User,
+                action: LearningFeedbackAction::Supersede,
+                note: "Terminal replacements must fail closed.".to_owned(),
+                replacement_learning_id: Some(terminal_replacement.learning.learning_id.clone()),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            terminal_error,
+            LeyCoreError::InvalidLearningRequest(ref message)
+                if message.contains("already rejected")
         ));
     }
 

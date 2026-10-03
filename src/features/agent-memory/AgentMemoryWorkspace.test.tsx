@@ -163,6 +163,7 @@ const dashboard: AgentMemoryDashboard = {
         freshness: "current",
         corroboratingSessions: 1,
         updatedAtUnixMs: Date.now(),
+        eventCount: 2,
       },
     ],
     totalMatching: 1,
@@ -802,7 +803,18 @@ describe("Agent Memory workspace boundaries", () => {
             trustState: "review-required",
             confidencePercent: 93,
           },
+          {
+            ...dashboard.allLearnings.learnings[0],
+            learningId: "lrn_replacement",
+            title: "Use bounded continuity projections",
+            guidanceExcerpt:
+              "Use the bounded Desktop and agent projections intentionally.",
+            state: "tentative",
+            trustState: "review-required",
+            confidencePercent: 91,
+          },
         ],
+        totalMatching: 2,
       },
     });
     api.readAgentSession.mockResolvedValue({
@@ -1335,6 +1347,47 @@ describe("Agent Memory workspace boundaries", () => {
       ),
     );
     await screen.findByRole("heading", { name: "Artifacts" });
+
+    fireEvent.click(screen.getByRole("button", { name: /Lessons/ }));
+    await screen.findByRole("heading", { name: "Lessons" });
+    fireEvent.click(screen.getByText("Verify desktop and web releases"));
+    await screen.findByRole("heading", {
+      name: "Verify the complete workspace",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Supersede" }));
+    expect(
+      screen.getByRole("button", { name: "Supersede" }),
+    ).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Replacement learning"), {
+      target: { value: "lrn_replacement" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Supersede" }),
+    ).toBeDisabled();
+    fireEvent.change(screen.getByRole("textbox", { name: /Supersede/ }), {
+      target: { value: "The replacement is more precise." },
+    });
+    expect(
+      screen.getByRole("button", { name: "Supersede" }),
+    ).toBeEnabled();
+    api.reviewAgentLearning.mockResolvedValue(dashboard);
+    fireEvent.click(screen.getByRole("button", { name: "Supersede" }));
+    await waitFor(() =>
+      expect(api.reviewAgentLearning).toHaveBeenCalledWith(
+        "/projects/ley",
+        "lrn_test",
+        2,
+        "supersede",
+        "The replacement is more precise.",
+        "lrn_replacement",
+        2,
+      ),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Close learning inspector" }),
+      ).not.toBeInTheDocument(),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Capture & privacy" }));
     await screen.findByRole("heading", {

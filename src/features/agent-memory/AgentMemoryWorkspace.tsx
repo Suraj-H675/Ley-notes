@@ -608,7 +608,10 @@ function AgentMemoryWorkspaceView({
               key={`learning-${learningId ?? "closed"}`}
               learningId={learningId}
               projectPath={projectPath}
+              candidates={dashboard.allLearnings.learnings}
+              candidatesOmitted={dashboard.allLearnings.omittedLearnings}
               onClose={onLearningClose}
+              onLearning={onLearning}
               onSession={onLearningSession}
               onEvidence={onEvidence}
               onReviewed={onLearningReviewed}
@@ -2369,14 +2372,20 @@ function revisionCompatibilityLabel(value: RevisionCompatibility): string {
 function LearningInspector({
   learningId,
   projectPath,
+  candidates,
+  candidatesOmitted,
   onClose,
+  onLearning,
   onSession,
   onEvidence,
   onReviewed,
 }: {
   learningId: string | null;
   projectPath: string;
+  candidates: LearningSummary[];
+  candidatesOmitted: number;
   onClose: () => void;
+  onLearning: (learningId: string) => void;
   onSession: (sessionId: string) => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
   onReviewed: (dashboard: AgentMemoryDashboard) => void;
@@ -2384,6 +2393,7 @@ function LearningInspector({
   const [learning, setLearning] = useState<LearningContext | null>(null);
   const [action, setAction] = useState<LearningAction | null>(null);
   const [note, setNote] = useState("");
+  const [replacementLearningId, setReplacementLearningId] = useState("");
   const [correcting, setCorrecting] = useState(false);
   const [busy, setBusy] = useState(Boolean(learningId));
   const [error, setError] = useState<string | null>(null);
@@ -2407,10 +2417,28 @@ function LearningInspector({
   }, [learningId, projectPath]);
 
   const noteRequired =
-    action === "contest" || action === "reject" || action === "mark-stale";
-  const canSubmit = action && (!noteRequired || note.trim().length > 0);
+    action === "contest" ||
+    action === "reject" ||
+    action === "mark-stale" ||
+    action === "supersede";
+  const selectedReplacement =
+    action === "supersede"
+      ? candidates.find(
+          (candidate) => candidate.learningId === replacementLearningId,
+        )
+      : undefined;
+  const canSubmit =
+    action &&
+    (!noteRequired || note.trim().length > 0) &&
+    (action !== "supersede" || selectedReplacement !== undefined);
   const terminal =
     learning?.state === "rejected" || learning?.state === "superseded";
+  const replacementSummary =
+    learning?.supersededBy === undefined
+      ? undefined
+      : candidates.find(
+          (candidate) => candidate.learningId === learning.supersededBy,
+        );
 
   async function submitReview() {
     if (!learningId || !learning || !action || !canSubmit) return;
@@ -2423,6 +2451,8 @@ function LearningInspector({
         learning.eventCount,
         action,
         note.trim(),
+        action === "supersede" ? replacementLearningId : null,
+        selectedReplacement?.eventCount ?? null,
       );
       onReviewed(dashboard);
     } catch (cause) {
@@ -2436,6 +2466,7 @@ function LearningInspector({
     if (!learning) return;
     setAction(null);
     setNote("");
+    setReplacementLearningId("");
     setCorrecting(true);
     setError(null);
   }
@@ -2473,6 +2504,8 @@ function LearningInspector({
             learning={learning}
             busy={busy}
             error={error}
+            replacementSummary={replacementSummary}
+            onLearning={onLearning}
             onSession={onSession}
             onEvidence={onEvidence}
           />
@@ -2482,6 +2515,9 @@ function LearningInspector({
             correcting={correcting}
             action={action}
             note={note}
+            replacementLearningId={replacementLearningId}
+            candidates={candidates}
+            candidatesOmitted={candidatesOmitted}
             noteRequired={noteRequired}
             canSubmit={Boolean(canSubmit)}
             busy={busy}
@@ -2491,6 +2527,7 @@ function LearningInspector({
             onBeginCorrection={beginCorrection}
             onSetAction={setAction}
             onSetNote={setNote}
+            onSetReplacementLearningId={setReplacementLearningId}
             onSetError={setError}
             onSetCorrecting={setCorrecting}
             onSubmitReview={submitReview}
@@ -2505,12 +2542,16 @@ function LearningInspectorBody({
   learning,
   busy,
   error,
+  replacementSummary,
+  onLearning,
   onSession,
   onEvidence,
 }: {
   learning: LearningContext | null;
   busy: boolean;
   error: string | null;
+  replacementSummary?: LearningSummary;
+  onLearning: (learningId: string) => void;
   onSession: (sessionId: string) => void;
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
 }) {
@@ -2524,7 +2565,11 @@ function LearningInspectorBody({
         <ErrorNotice message={error} />
       ) : learning ? (
         <div className="space-y-6">
-          <LearningOverview learning={learning} />
+          <LearningOverview
+            learning={learning}
+            replacementSummary={replacementSummary}
+            onLearning={onLearning}
+          />
           <LearningOriginLineage
             learning={learning}
             onSession={onSession}
@@ -2556,7 +2601,15 @@ function LearningInspectorBody({
   );
 }
 
-function LearningOverview({ learning }: { learning: LearningContext }) {
+function LearningOverview({
+  learning,
+  replacementSummary,
+  onLearning,
+}: {
+  learning: LearningContext;
+  replacementSummary?: LearningSummary;
+  onLearning: (learningId: string) => void;
+}) {
   return (
     <>
       <div className="flex flex-wrap gap-2">
@@ -2635,6 +2688,26 @@ function LearningOverview({ learning }: { learning: LearningContext }) {
             >
               {relativeTime(learning.validUntilUnixMs)}
             </time>
+            .
+          </p>
+        )}
+        {learning.supersededBy && (
+          <p className="mt-2 text-micro text-muted-foreground">
+            Superseded by{" "}
+            {replacementSummary ? (
+              <button
+                type="button"
+                onClick={() => onLearning(replacementSummary.learningId)}
+                className="font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {replacementSummary.title} · {humanize(replacementSummary.state)} ·{" "}
+                {compactId(replacementSummary.learningId)}
+              </button>
+            ) : (
+              <span className="font-mono text-foreground">
+                {learning.supersededBy}
+              </span>
+            )}
             .
           </p>
         )}
@@ -2971,6 +3044,9 @@ function LearningInspectorFooter({
   correcting,
   action,
   note,
+  replacementLearningId,
+  candidates,
+  candidatesOmitted,
   noteRequired,
   canSubmit,
   busy,
@@ -2980,6 +3056,7 @@ function LearningInspectorFooter({
   onBeginCorrection,
   onSetAction,
   onSetNote,
+  onSetReplacementLearningId,
   onSetError,
   onSetCorrecting,
   onSubmitReview,
@@ -2989,6 +3066,9 @@ function LearningInspectorFooter({
   correcting: boolean;
   action: LearningAction | null;
   note: string;
+  replacementLearningId: string;
+  candidates: LearningSummary[];
+  candidatesOmitted: number;
   noteRequired: boolean;
   canSubmit: boolean;
   busy: boolean;
@@ -2998,11 +3078,18 @@ function LearningInspectorFooter({
   onBeginCorrection: () => void;
   onSetAction: (action: LearningAction | null) => void;
   onSetNote: (note: string) => void;
+  onSetReplacementLearningId: (learningId: string) => void;
   onSetError: (error: string | null) => void;
   onSetCorrecting: (correcting: boolean) => void;
   onSubmitReview: () => Promise<void>;
 }) {
   if (!learning) return null;
+  const replacementCandidates = candidates.filter(
+    (candidate) =>
+      candidate.learningId !== learning.learningId &&
+      candidate.state !== "rejected" &&
+      candidate.state !== "superseded",
+  );
   return (
     <div className="shrink-0 border-t border-border bg-surface-1 p-4 sm:p-5">
       {learning.claimTruncated ? (
@@ -3066,6 +3153,20 @@ function LearningInspectorFooter({
           </Button>
           <Button
             size="sm"
+            variant="outline"
+            disabled={replacementCandidates.length === 0}
+            title={
+              replacementCandidates.length === 0
+                ? "No non-terminal replacement is available in this bounded Desktop list. Use the CLI if another learning exists."
+                : undefined
+            }
+            onClick={() => onSetAction("supersede")}
+          >
+            <ArrowRight size={13} />
+            Supersede
+          </Button>
+          <Button
+            size="sm"
             variant="primary"
             onClick={() => onSetAction("confirm")}
           >
@@ -3075,6 +3176,43 @@ function LearningInspectorFooter({
         </div>
       ) : (
         <div>
+          {action === "supersede" && (
+            <label className="mb-3 block text-meta font-medium">
+              <span className="block">Replacement learning · required</span>
+              <select
+                aria-label="Replacement learning"
+                value={replacementLearningId}
+                disabled={busy}
+                onChange={(event) =>
+                  onSetReplacementLearningId(event.target.value)
+                }
+                className="mt-2 w-full rounded-md border border-border bg-background/45 px-3 py-2 text-meta text-foreground outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <option value="">Choose a replacement…</option>
+                {replacementCandidates.map((candidate) => (
+                  <option
+                    key={candidate.learningId}
+                    value={candidate.learningId}
+                  >
+                    {candidate.title} · {humanize(candidate.state)} ·{" "}
+                    {humanize(candidate.trustState)} ·{" "}
+                    {humanize(candidate.freshness)} ·{" "}
+                    {compactId(candidate.learningId)}
+                  </option>
+                ))}
+              </select>
+              <span className="mt-1 block text-micro font-normal leading-4 text-muted-foreground">
+                The old learning remains immutable history and points to the
+                selected replacement. Ley still validates existence and
+                supersession cycles before writing. This picker uses the
+                bounded Desktop learning list; use the CLI if the intended
+                replacement is not shown.
+                {candidatesOmitted > 0
+                  ? ` ${candidatesOmitted} additional ${candidatesOmitted === 1 ? "learning is" : "learnings are"} omitted from this list.`
+                  : ""}
+              </span>
+            </label>
+          )}
           <label
             htmlFor="learning-review-note"
             className="block text-meta font-medium"
@@ -3107,6 +3245,7 @@ function LearningInspectorFooter({
               onClick={() => {
                 onSetAction(null);
                 onSetNote("");
+                onSetReplacementLearningId("");
                 onSetError(null);
               }}
             >
@@ -3114,7 +3253,11 @@ function LearningInspectorFooter({
             </Button>
             <Button
               size="sm"
-              variant={action === "reject" ? "destructive" : "primary"}
+              variant={
+                action === "reject" || action === "supersede"
+                  ? "destructive"
+                  : "primary"
+              }
               disabled={busy || !canSubmit}
               onClick={() => void onSubmitReview()}
             >
@@ -3991,6 +4134,10 @@ function humanize(value: string): string {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function compactId(value: string): string {
+  return value.length <= 16 ? value : `${value.slice(0, 12)}…`;
+}
+
 function actionLabel(action: LearningAction): string {
   return action === "mark-stale" ? "Mark stale" : humanize(action);
 }
@@ -3999,6 +4146,8 @@ function reviewPlaceholder(action: LearningAction): string {
   if (action === "confirm") return "Explain why this is useful or reliable…";
   if (action === "contest") return "Describe what is uncertain or conflicting…";
   if (action === "reject") return "Explain why agents should not reuse this…";
+  if (action === "supersede")
+    return "Explain why the replacement should be used instead…";
   return "Describe what changed or became outdated…";
 }
 

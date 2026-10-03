@@ -21,7 +21,7 @@ use ley_core::{
     read_project_cited_media_with_continuity_transition,
     read_session_context_with_continuity_transition,
     read_session_turns_context_with_continuity_transition, register_native_born_project,
-    rename_session_with_continuity_transition, review_learning_with_continuity_transition,
+    rename_session_with_continuity_transition, review_learning_with_continuity_transition_guarded,
     search_observed_projects, search_project_memory_with_continuity_transition,
     update_capture_mode, validate_project_memory, AgentContextAuthorities, AgentEgressPolicy,
     AgentEgressTarget, ApprovedSourceAuthorityList, ApprovedSourceKind, ApprovedSourceRegistry,
@@ -1826,7 +1826,17 @@ fn review_agent_learning(
     expected_event_count: u64,
     action: LearningFeedbackAction,
     note: String,
+    replacement_learning_id: Option<String>,
+    expected_replacement_event_count: Option<u64>,
 ) -> Result<AgentMemoryDashboard, String> {
+    if matches!(action, LearningFeedbackAction::Supersede)
+        && expected_replacement_event_count.is_none()
+    {
+        return Err(
+            "Supersede requires the replacement learning version shown in Desktop; reload before saving."
+                .to_owned(),
+        );
+    }
     with_transition_agent_access(Path::new(&project_path), None, |access, store| {
         review_agent_learning_with_access_and_store(
             Path::new(&project_path),
@@ -1836,6 +1846,8 @@ fn review_agent_learning(
             expected_event_count,
             action,
             note,
+            replacement_learning_id,
+            expected_replacement_event_count,
         )
     })
     .map_err(|error| error.to_string())
@@ -1849,19 +1861,22 @@ fn review_agent_learning_with_access_and_store(
     expected_event_count: u64,
     action: LearningFeedbackAction,
     note: String,
+    replacement_learning_id: Option<String>,
+    expected_replacement_event_count: Option<u64>,
 ) -> Result<AgentMemoryDashboard, LeyCoreError> {
-    review_learning_with_continuity_transition(
+    review_learning_with_continuity_transition_guarded(
         project_path,
         &access.legacy_vault_path,
         store,
         learning_id,
+        expected_replacement_event_count,
         ReviewLearningInput {
             request_id: generate_learning_request_id(),
             expected_event_count: Some(expected_event_count),
             actor: LearningActor::User,
             action,
             note,
-            replacement_learning_id: None,
+            replacement_learning_id,
         },
     )?;
     load_agent_memory_dashboard_with_access(project_path, access, store)
@@ -1875,6 +1890,7 @@ fn review_agent_learning_with_binding(
     expected_event_count: u64,
     action: LearningFeedbackAction,
     note: String,
+    replacement_learning_id: Option<String>,
 ) -> Result<AgentMemoryDashboard, LeyCoreError> {
     review_learning(
         project_path,
@@ -1886,7 +1902,7 @@ fn review_agent_learning_with_binding(
             actor: LearningActor::User,
             action,
             note,
-            replacement_learning_id: None,
+            replacement_learning_id,
         },
     )?;
     load_agent_memory_dashboard(project_path, binding)
@@ -3534,7 +3550,7 @@ mod tests {
         let confirmed = read_learning(&project, &vault, &learning.learning.learning_id).unwrap();
         let corrected = correct_agent_learning_with_binding(
             &project,
-            binding,
+            binding.clone(),
             &learning.learning.learning_id,
             AgentLearningCorrection {
                 expected_event_count: confirmed.event_count,
@@ -3557,6 +3573,44 @@ mod tests {
         assert_eq!(
             correction.evidence[0].note,
             "Captured in the dashboard implementation session."
+        );
+
+        let replacement = propose_learning(
+            &project,
+            &vault,
+            ProposeLearningInput {
+                request_id: format!("req_{}", "6".repeat(32)),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Use bounded continuity projections".into(),
+                guidance: "Use the bounded Desktop and agent projections intentionally.".into(),
+                confidence_percent: 93,
+                provenance: LearningProvenance::AgentAuthored,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: session.session.session_id.clone(),
+                    record_id: checkpoint.session.checkpoints.last().unwrap().id.clone(),
+                    note: "Replacement guidance from the same cited checkpoint.".into(),
+                }],
+            },
+        )
+        .unwrap();
+        let superseded = review_agent_learning_with_binding(
+            &project,
+            binding,
+            &learning.learning.learning_id,
+            correction.event_count,
+            LearningFeedbackAction::Supersede,
+            "The replacement is more precise.".into(),
+            Some(replacement.learning.learning_id.clone()),
+        )
+        .unwrap();
+        assert_eq!(superseded.review_inbox.total_matching, 1);
+        assert_eq!(superseded.all_learnings.total_matching, 2);
+        let old = read_learning(&project, &vault, &learning.learning.learning_id).unwrap();
+        assert_eq!(old.state, ley_core::LearningState::Superseded);
+        assert_eq!(
+            old.superseded_by.as_deref(),
+            Some(replacement.learning.learning_id.as_str())
         );
 
         fs::remove_dir_all(root).unwrap();
@@ -3645,7 +3699,7 @@ mod tests {
                 confidence_percent: 82,
                 provenance: LearningProvenance::AgentAuthored,
                 evidence: vec![LearningEvidenceInput {
-                    session_id: session.session.session_id,
+                    session_id: session.session.session_id.clone(),
                     record_id: checkpoint.session.checkpoints.last().unwrap().id.clone(),
                     note: "Desktop production-helper evidence.".into(),
                 }],
@@ -3695,6 +3749,8 @@ mod tests {
             current.event_count,
             LearningFeedbackAction::Confirm,
             "Confirmed after reading the native correction.".into(),
+            None,
+            None,
         )
         .unwrap();
         assert_eq!(reviewed.review_inbox.total_matching, 0);
@@ -3710,6 +3766,56 @@ mod tests {
         assert_eq!(
             final_learning.trust_state,
             ley_core::LearningTrustState::Trusted
+        );
+
+        let replacement = ley_core::propose_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            ProposeLearningInput {
+                request_id: format!("req_{}", "4".repeat(32)),
+                actor: LearningActor::Agent,
+                kind: LearningKind::Procedure,
+                title: "Use bounded native learning projections".into(),
+                guidance: "Prefer the bounded native learning projection in Desktop.".into(),
+                confidence_percent: 92,
+                provenance: LearningProvenance::AgentAuthored,
+                evidence: vec![LearningEvidenceInput {
+                    session_id: session.session.session_id.clone(),
+                    record_id: checkpoint.session.checkpoints.last().unwrap().id.clone(),
+                    note: "Replacement for the native Desktop helper.".into(),
+                }],
+            },
+        )
+        .unwrap();
+        let superseded = review_agent_learning_with_access_and_store(
+            &project,
+            &access,
+            &store,
+            &proposed.learning.learning_id,
+            final_learning.event_count,
+            LearningFeedbackAction::Supersede,
+            "Use the more precise bounded replacement.".into(),
+            Some(replacement.learning.learning_id.clone()),
+            Some(replacement.learning.event_count),
+        )
+        .unwrap();
+        assert_eq!(superseded.review_inbox.total_matching, 1);
+        assert_eq!(superseded.all_learnings.total_matching, 2);
+        let superseded_learning = ley_core::read_learning_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            &proposed.learning.learning_id,
+        )
+        .unwrap();
+        assert_eq!(
+            superseded_learning.state,
+            ley_core::LearningState::Superseded
+        );
+        assert_eq!(
+            superseded_learning.superseded_by.as_deref(),
+            Some(replacement.learning.learning_id.as_str())
         );
         assert!(read_learning(&project, &vault, &proposed.learning.learning_id).is_err());
 
@@ -3832,6 +3938,7 @@ mod tests {
             visible_event_count,
             LearningFeedbackAction::Confirm,
             "This stale inspector must not trust unseen text.".into(),
+            None,
         ) {
             Ok(_) => panic!("stale desktop review unexpectedly succeeded"),
             Err(error) => error,
@@ -3853,6 +3960,7 @@ mod tests {
             after_stale.event_count,
             LearningFeedbackAction::Confirm,
             "Reloaded the corrected claim before confirming it.".into(),
+            None,
         )
         .unwrap();
         assert_eq!(reviewed.review_inbox.total_matching, 0);

@@ -337,6 +337,8 @@ export function reviewAgentLearning(
   expectedEventCount: number,
   action: LearningAction,
   note: string,
+  replacementLearningId: string | null = null,
+  expectedReplacementEventCount: number | null = null,
 ): Promise<AgentMemoryDashboard> {
   return invoke("review_agent_learning", {
     projectPath,
@@ -344,6 +346,8 @@ export function reviewAgentLearning(
     expectedEventCount,
     action,
     note,
+    replacementLearningId,
+    expectedReplacementEventCount,
   });
 }
 

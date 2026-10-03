@@ -1,5 +1,10 @@
 export type CaptureMode = "minimal" | "structured" | "full-evidence";
-export type LearningAction = "confirm" | "contest" | "reject" | "mark-stale";
+export type LearningAction =
+  | "confirm"
+  | "contest"
+  | "reject"
+  | "mark-stale"
+  | "supersede";
 
 export type ApprovedSourceState = "current" | "changed" | "missing";
 export type ApprovedSourceKind = "project-file" | "imported-snapshot";
@@ -413,6 +418,8 @@ export interface LearningSummary {
   freshness: string;
   corroboratingSessions: number;
   updatedAtUnixMs: number;
+  eventCount: number;
+  supersededBy?: string;
 }
 
 export interface LearningList {

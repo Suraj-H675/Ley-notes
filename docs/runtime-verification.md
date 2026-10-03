@@ -189,6 +189,14 @@ and must not be deleted by continuity erasure or migration cleanup.
 - Replace/reinitialize the project at the selected filesystem path before submitting an already-open preview. The expected project-ID guard must reject the request instead of showing another project's continuity.
 - Open a returned citation and confirm the existing Evidence flow resolves that exact snapshot/path/hash. Previewing must not start a session, refresh capture, mutate project content, or change egress policy. Transitional compatibility-authority migration performed by the canonical compiler is not treated as a separate Desktop write path.
 
+## Agent Memory learning review
+
+- Open a non-terminal learning in **Lessons** or **Review** and verify Correct, Mark stale, Contest, Reject, Confirm, and Supersede appear only when the bounded claim is complete.
+- Supersede must remain unavailable when there is no other non-terminal replacement learning in the bounded Desktop list. When candidates exist, selecting Supersede requires both an explicit replacement learning and a reason before submit becomes enabled. Candidate labels must distinguish title/state/trust/freshness plus a stable ID, and any omitted-learning count must be disclosed with the CLI fallback.
+- Submit Supersede and verify the Desktop sends the learning's visible event count, the exact replacement ID, and the replacement's visible event count. A concurrent correction/review of either learning must cause the stale action to fail rather than applying against unseen text.
+- After the picker was rendered, terminalize the selected replacement from another client. Supersede must fail closed under core's locked mutation even when the target learning itself has not changed.
+- After success, verify the old learning is terminal immutable history. If the replacement is in the bounded list, its title/state control must open that replacement inspector; otherwise the stable `supersededBy` ID remains visible. The replacement remains in its own existing trust/review state; supersession must not silently confirm or promote it.
+
 ## Agent Memory graph history
 
 This section records historical verification for the retired Desktop Project Graph UI. The underlying captured

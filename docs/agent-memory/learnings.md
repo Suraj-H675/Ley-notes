@@ -55,11 +55,20 @@ ceiling, and stable source handles for retained session records, turns, tool evi
 candidates. Those handles contain no source bodies and do not increase authority. **Correct** edits the
 current title, guidance, and confidence, requires a reason, preserves the complete cited evidence set,
 and appends a new immutable version. It does not rewrite the old claim. The corrected version returns
-to review and must be confirmed separately.
+to review and must be confirmed separately. **Supersede** is also available to the user when another
+non-terminal learning is present in the bounded project learning list. It requires an explicit replacement and reason,
+passes the same visible-event-count stale guard as other reviews, and also submits the replacement learning's observed
+event count. Under the locked learning mutation, core rejects a replacement that changed meanwhile, became terminal,
+does not exist, points to itself, or would violate supersession consistency. The old learning remains immutable
+terminal history with its stable `supersededBy` link; the
+replacement does not become trusted merely because another learning points to it.
+The Desktop picker uses the existing bounded learning list rather than issuing another search: each option shows
+title, state, trust, freshness, and a stable short ID, and the UI discloses when additional learnings were omitted so
+the CLI remains the fallback for a replacement outside that bounded list.
 
 Corrections also preserve origin history: newly resolved origins are unioned with the prior lineage rather than replacing it. `automaticAuthorityCeiling: review-required` means the derivation/proposal path cannot self-promote its output. Explicit user confirmation can establish trusted learning state, but it does not rewrite the origin chain or turn `causalCompletenessProven: false` into a stronger claim.
 
-Every desktop correction and review decision is tied to the ledger event count visible when the inspector opened. If another agent or window changes the learning first, Ley refuses the stale action and asks the user to reload rather than applying a decision to unseen text. If the bounded inspector had to truncate the claim, review controls remain unavailable until the complete projection is inspected through the CLI. Rejected and superseded learnings remain inspectable terminal history without non-working action buttons.
+Every desktop correction and review decision is tied to the ledger event count visible when the inspector opened. If another agent or window changes the learning first, Ley refuses the stale action and asks the user to reload rather than applying a decision to unseen text. If the bounded inspector had to truncate the claim, review controls remain unavailable until the complete projection is inspected through the CLI. Rejected and superseded learnings remain inspectable terminal history without non-working action buttons; superseded history opens the replacement by title/state when it is present in the bounded list and otherwise shows the stable replacement learning ID.
 
 ## Historical procedure/application instrumentation
 
