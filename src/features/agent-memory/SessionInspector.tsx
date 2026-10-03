@@ -59,9 +59,9 @@ function SectionLabel({
   return (
     <h3
       id={id}
-      className="flex items-center gap-2 text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+      className="flex items-center gap-2 text-meta font-semibold text-muted-foreground"
     >
-      <Icon size={14} className="text-primary" />
+      <Icon size={13} className="text-secondary" />
       {label}
     </h3>
   );
@@ -79,13 +79,13 @@ function RecordGroup({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-md border border-border bg-background/30 p-3">
+    <section className="border-t border-border pt-3">
       <h4 className="flex items-center gap-2 text-micro font-medium text-muted-foreground">
         <Icon size={13} />
         {title}
         <span className="ml-auto tabular-nums">{count}</span>
       </h4>
-      <div className="mt-2 space-y-2">{children}</div>
+      <div className="mt-2 divide-y divide-border/70">{children}</div>
     </section>
   );
 }
@@ -100,7 +100,7 @@ function RecordItem({
   meta?: string;
 }) {
   return (
-    <div className="rounded-md bg-surface-2/70 px-3 py-2">
+    <div className="py-2.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="text-meta font-medium">{title}</p>
         {meta && (
@@ -124,7 +124,7 @@ function VerificationItem({
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
 }) {
   return (
-    <div className="rounded-md bg-surface-2/70 px-3 py-2">
+    <div className="py-2.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="text-meta font-medium">{humanize(verification.kind)}</p>
         <span className="text-micro text-muted-foreground">
@@ -182,7 +182,7 @@ function ProblemItem({
   problem: SessionContext["checkpoints"][number]["problems"][number];
 }) {
   return (
-    <div className="rounded-md bg-surface-2/70 px-3 py-2">
+    <div className="py-2.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="text-meta font-medium">{problem.title}</p>
         <span className="text-micro text-muted-foreground">
@@ -523,7 +523,7 @@ function SessionInspectorBody({
               this bounded view.
             </p>
           )}
-          <p className="rounded-md border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
+          <p className="border-l-2 border-secondary/45 pl-3 text-micro leading-5 text-muted-foreground">
             <MessageSquareWarning
               size={13}
               className="mr-2 inline text-secondary"
@@ -542,7 +542,7 @@ function SessionInspectorBody({
 
 function SessionOverview({ session }: { session: SessionContext }) {
   return (
-    <section className="rounded-md border border-border bg-background/35 p-4 sm:p-5">
+    <section className="border-y border-border py-4 sm:py-5">
       <div className="flex flex-wrap items-center gap-3">
         <SessionStatus status={session.status} />
         <span className="text-micro text-muted-foreground">
@@ -555,7 +555,7 @@ function SessionOverview({ session }: { session: SessionContext }) {
           }).format(session.startedAtUnixMs)}
         </span>
       </div>
-      <h3 className="mt-4 text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+      <h3 className="mt-4 text-meta font-semibold text-muted-foreground">
         Goal
       </h3>
       <p className="mt-1 whitespace-pre-wrap text-body leading-6">
@@ -584,7 +584,7 @@ function SessionUtilityMeasurement({ session }: { session: SessionContext }) {
         icon={BrainCircuit}
         label="Context utility measurement"
       />
-      <div className="mt-2 rounded-md border border-border bg-surface-1 p-4 shadow-panel sm:p-5">
+      <div className="mt-2 border-y border-border py-4 sm:py-5">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-meta">
           <span>{session.contextUtilityBindingCount} bound</span>
           <span>{session.observedContextUtilityBindingCount} observed</span>
@@ -597,11 +597,11 @@ function SessionUtilityMeasurement({ session }: { session: SessionContext }) {
         </p>
 
         {session.unobservedContextUtilityBindings.length > 0 && (
-          <div className="mt-3 space-y-2 border-t border-border pt-3">
+          <div className="mt-3 divide-y divide-border/70 border-t border-border pt-1">
             {session.unobservedContextUtilityBindings.map((binding) => (
               <article
                 key={binding.bindingId}
-                className="rounded-md border border-border bg-background/35 p-3"
+                className="py-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-mono text-micro text-muted-foreground-strong">
@@ -663,12 +663,12 @@ function SessionCapturedTurns({
         label="Captured turns"
       />
       <details
-        className="mt-2 rounded-md border border-border bg-surface-1 shadow-panel"
+        className="mt-2 border-y border-border"
         onToggle={(event) => {
           if (event.currentTarget.open) loadTurns();
         }}
       >
-        <summary className="cursor-pointer list-none rounded-md p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5">
+        <summary className="cursor-pointer list-none py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:py-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-meta font-medium">
@@ -684,7 +684,7 @@ function SessionCapturedTurns({
             </span>
           </div>
         </summary>
-        <div className="border-t border-border p-4 sm:p-5">
+        <div className="border-t border-border py-4 sm:py-5">
           <div className="rounded-md border border-warning/25 bg-warning/8 p-3 text-micro leading-5 text-muted-foreground-strong">
             <span className="font-semibold text-foreground">
               Untrusted history.
@@ -735,7 +735,7 @@ function SessionTurnsContent({
           className="rounded-md border border-border bg-background/40 p-3"
         >
           <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
-            <span className="font-semibold uppercase tracking-[0.1em] text-primary">
+            <span className="font-semibold text-primary">
               {turn.kind === "user-prompt" ? "User prompt" : "Agent response"}
             </span>
             <time>{relativeTime(turn.recordedAtUnixMs)}</time>
@@ -774,7 +774,7 @@ function SessionNamingHistory({ session }: { session: SessionContext }) {
         icon={PencilLine}
         label="Naming history"
       />
-      <div className="mt-2 rounded-md border border-border bg-surface-1 p-4 shadow-panel">
+      <div className="mt-2 border-y border-border py-4">
         <div className="border-b border-border pb-3">
           <p className="text-micro font-medium text-muted-foreground">
             Original name
@@ -821,7 +821,7 @@ function SessionOutcome({ session }: { session: SessionContext }) {
         icon={CheckCircle2}
         label="Outcome & handoff"
       />
-      <div className="mt-2 rounded-md border border-border bg-surface-1 p-4 shadow-panel">
+      <div className="mt-2 border-y border-border py-4">
         <p className="text-meta leading-5 text-muted-foreground-strong">
           {session.finish.summary}
         </p>
@@ -903,7 +903,7 @@ function SessionCheckpointTimeline({
         icon={History}
         label="Checkpoint timeline"
       />
-      <div className="mt-3 space-y-4">
+      <div className="mt-3 divide-y divide-border border-y border-border">
         {session.checkpoints.length === 0 ? (
           <CompactEmpty
             icon={History}
@@ -938,9 +938,9 @@ function SessionCheckpointCard({
   onEvidence: (evidence: ArtifactEvidenceReference) => void;
 }) {
   return (
-    <article className="relative rounded-md border border-border bg-surface-1 p-4 shadow-panel sm:p-5">
+    <article className="relative py-4 sm:py-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-micro font-semibold uppercase tracking-[0.12em] text-primary">
+        <span className="text-meta font-semibold text-primary">
           Checkpoint {index + 1}
         </span>
         <time className="text-micro text-muted-foreground">

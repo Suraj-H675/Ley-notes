@@ -337,7 +337,7 @@ function LearningInspectorBody({
               reviewing it.
             </p>
           )}
-          <p className="rounded-md border border-border bg-background/35 p-3 text-micro leading-5 text-muted-foreground">
+          <p className="border-l-2 border-secondary/45 pl-3 text-micro leading-5 text-muted-foreground">
             <MessageSquareWarning
               size={13}
               className="mr-2 inline text-secondary"
@@ -384,7 +384,7 @@ function LearningOverview({
         />
       </div>
       <section>
-        <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        <h3 className="text-meta font-semibold text-muted-foreground">
           Guidance
         </h3>
         <p className="mt-2 whitespace-pre-wrap break-words text-body leading-6 text-foreground">
@@ -392,11 +392,11 @@ function LearningOverview({
         </p>
       </section>
       <section>
-        <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        <h3 className="text-meta font-semibold text-muted-foreground">
           Version timeline
         </h3>
-        <dl className="mt-2 grid gap-2 rounded-md border border-border bg-background/35 p-3 text-meta sm:grid-cols-3">
-          <div>
+        <dl className="mt-2 grid border-y border-border text-meta sm:grid-cols-3 sm:divide-x sm:divide-border">
+          <div className="py-3 sm:px-3 sm:first:pl-0">
             <dt className="text-micro text-muted-foreground">Created</dt>
             <dd className="mt-0.5 font-medium">
               <time
@@ -407,7 +407,7 @@ function LearningOverview({
               </time>
             </dd>
           </div>
-          <div>
+          <div className="py-3 sm:px-3">
             <dt className="text-micro text-muted-foreground">
               Current version
             </dt>
@@ -420,7 +420,7 @@ function LearningOverview({
               </time>
             </dd>
           </div>
-          <div>
+          <div className="py-3 sm:px-3 sm:last:pr-0">
             <dt className="text-micro text-muted-foreground">Ledger</dt>
             <dd className="mt-0.5 font-medium">
               {learning.eventCount} immutable{" "}
@@ -477,10 +477,10 @@ function LearningEvidence({
 }) {
   return (
     <section>
-      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+      <h3 className="text-meta font-semibold text-muted-foreground">
         Evidence · {learning.evidenceCount}
       </h3>
-      <div className="mt-2 space-y-2">
+      <div className="mt-2 divide-y divide-border border-y border-border">
         {learning.evidence.length === 0 ? (
           <p className="text-meta text-muted-foreground">
             No evidence is available.
@@ -489,11 +489,11 @@ function LearningEvidence({
           learning.evidence.map((evidence) => (
             <div
               key={`${evidence.sessionId}:${evidence.recordId}`}
-              className="rounded-md border border-border bg-background/35 p-3"
+              className="py-3"
             >
               <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded bg-surface-3 px-1.5 py-0.5 font-medium text-muted-foreground-strong">
+                  <span className="font-medium text-muted-foreground-strong">
                     {humanize(evidence.recordType)}
                   </span>
                   <span>{relativeTime(evidence.sessionUpdatedAtUnixMs)}</span>
@@ -557,11 +557,11 @@ function LearningOriginLineage({
 }) {
   return (
     <section>
-      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+      <h3 className="text-meta font-semibold text-muted-foreground">
         Origin lineage · {learning.originSourceCount}
       </h3>
-      <dl className="mt-2 grid gap-2 rounded-md border border-border bg-background/35 p-3 text-meta sm:grid-cols-3">
-        <div>
+      <dl className="mt-2 grid border-y border-border text-meta sm:grid-cols-3 sm:divide-x sm:divide-border">
+        <div className="py-3 sm:px-3 sm:first:pl-0">
           <dt className="text-micro text-muted-foreground">Resolution</dt>
           <dd className="mt-0.5 font-medium">
             {learning.originLineage.mechanicallyResolved
@@ -569,7 +569,7 @@ function LearningOriginLineage({
               : "Incomplete lineage"}
           </dd>
         </div>
-        <div>
+        <div className="py-3 sm:px-3">
           <dt className="text-micro text-muted-foreground">
             Causal completeness
           </dt>
@@ -579,7 +579,7 @@ function LearningOriginLineage({
               : "Not proven"}
           </dd>
         </div>
-        <div>
+        <div className="py-3 sm:px-3 sm:last:pr-0">
           <dt className="text-micro text-muted-foreground">
             Automatic authority ceiling
           </dt>
@@ -589,13 +589,13 @@ function LearningOriginLineage({
         </div>
       </dl>
       {learning.originLineage.sources.length > 0 && (
-        <div className="mt-2 space-y-2">
+        <div className="mt-2 divide-y divide-border border-y border-border">
           {learning.originLineage.sources.map((source, index) => {
             const key = learningOriginSourceKey(source, index);
             return (
               <div
                 key={key}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-background/35 p-3 text-micro"
+                className="flex flex-wrap items-center justify-between gap-2 py-3 text-micro"
               >
                 <div className="min-w-0">
                   <span className="font-medium text-muted-foreground-strong">
@@ -681,7 +681,7 @@ function LearningHistory({ learning }: { learning: LearningContext }) {
   if (learning.history.length === 0) return null;
   return (
     <section>
-      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+      <h3 className="text-meta font-semibold text-muted-foreground">
         Review history
       </h3>
       <ol className="mt-2 space-y-2">
@@ -723,14 +723,14 @@ function LearningApplications({
 
   return (
     <section>
-      <h3 className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+      <h3 className="text-meta font-semibold text-muted-foreground">
         Procedure application history · {learning.applicationObservationCount}
       </h3>
-      <div className="mt-2 space-y-2">
+      <div className="mt-2 divide-y divide-border border-y border-border">
         {learning.applicationObservations.map((application) => (
           <article
             key={application.observationId}
-            className="rounded-md border border-border bg-background/35 p-3"
+            className="py-3"
           >
             <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-muted-foreground">
               <div className="flex flex-wrap items-center gap-2">
