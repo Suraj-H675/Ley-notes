@@ -1,6 +1,6 @@
 # Ley
 
-Ley is being rebuilt as a **local, trustworthy continuity and context layer for coding agents**.
+Ley is a **local, trustworthy continuity and context layer for coding agents**.
 
 A repository tells an agent what exists now. Ley is for the information that usually disappears between sessions: what was decided, what was attempted, what failed, what was actually verified, what remains unresolved, and where that evidence came from.
 
@@ -17,7 +17,7 @@ The previous `/app` browser workspace, PWA, browser-folder mode, and browser-loc
 
 ## Direction
 
-The target agent-facing contract is intentionally small:
+The canonical agent-facing contract is intentionally small:
 
 - **Brief** — the smallest cited continuity pack useful for the current task.
 - **Search** — explicit bounded historical recall from the active project by default or one exact
@@ -25,7 +25,7 @@ The target agent-facing contract is intentionally small:
 - **Evidence** — exact provenance/source drill-down from the project-qualified citation returned by Ley.
 - **Checkpoint** — one structured durable write path for meaningful session state.
 
-The target human-facing desktop is a focused control center for project setup/status, integrations, brief preview, recall, session/handoff history, review/correction, evidence, privacy, export, and erasure.
+The human-facing desktop is a focused control center for project setup/status, brief preview, recall, session/handoff history, review/correction, evidence, privacy, export, and integration-facing continuity controls.
 
 General-purpose note editing, backlinks, Canvas, daily notes, and the retired notebook runtime have been removed from the shipped product tree. Historical browser-local notebook data is handled only by an explicit same-origin recovery page that can inspect, export, or erase the retired IndexedDB after user action; the normal website and Desktop do not open it.
 

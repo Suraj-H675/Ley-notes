@@ -691,8 +691,8 @@ function CapturePrivacyContent({
                 Markdown notes, Canvas documents, and{" "}
                 <span className="font-mono text-micro">.ley</span> settings stay
                 in place. Any user-owned note or Canvas copy of erased Agent
-                Memory remains until you delete that copy through the normal
-                note workflow.
+                Memory remains until you delete that file separately with the
+                external tool that owns it.
               </p>
             </div>
             <Button

@@ -97,7 +97,7 @@ ley session erase ses_01234567890123456789012345678901 \
 
 Ley physically removes that structured session and every learning whose proposal or correction cited it. It also removes any learning whose supersession chain would otherwise point to one of those erased records. Unrelated sessions, unrelated learnings, captured project artifacts, graph history, source files, `.ley` policy, and the vault binding remain.
 
-Ordinary Markdown handoffs and JSON Canvas documents are user-owned copies and remain. Delete those through the normal note or Canvas workflow if they should also be forgotten. Session erasure is not a forensic wipe and cannot remove backups, filesystem snapshots, provider-retained context, storage remnants, or external copies. MCP and automatic host adapters cannot erase sessions. See [ADR 0024](../adr/0024-reviewed-session-memory-erasure.md).
+Ordinary Markdown handoffs and JSON Canvas documents are user-owned copies and remain. Delete those separately with the external file/editor workflow that owns them if they should also be forgotten. Session erasure is not a forensic wipe and cannot remove backups, filesystem snapshots, provider-retained context, storage remnants, or external copies. MCP and host adapters cannot erase sessions. See [ADR 0024](../adr/0024-reviewed-session-memory-erasure.md).
 
 ## Record decisions and problem outcomes
 

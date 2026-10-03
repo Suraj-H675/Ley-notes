@@ -236,50 +236,6 @@ button {
   }
 }
 
-/* Reading mode deliberately mirrors the quiet density of Obsidian's default
-   document view while retaining Ley's own type scale and color system. */
-.markdown-reading {
-  color: hsl(var(--foreground));
-  font-size: 15px;
-  line-height: 1.75;
-}
-
-.markdown-reading h1,
-.markdown-reading h2,
-.markdown-reading h3,
-.markdown-reading h4 {
-  margin: 1.7em 0 0.55em;
-  font-weight: 650;
-  line-height: 1.25;
-  letter-spacing: -0.025em;
-}
-.markdown-reading h1:first-child,
-.markdown-reading h2:first-child { margin-top: 0; }
-.markdown-reading h1 { font-size: 2rem; }
-.markdown-reading h2 { font-size: 1.5rem; border-bottom: 1px solid hsl(var(--border)); padding-bottom: 0.3em; }
-.markdown-reading h3 { font-size: 1.2rem; }
-.markdown-reading p { margin: 0.8em 0; }
-.markdown-reading ul,
-.markdown-reading ol { margin: 0.8em 0; padding-left: 1.6em; }
-.markdown-reading ul { list-style: disc; }
-.markdown-reading ol { list-style: decimal; }
-.markdown-reading li { margin: 0.25em 0; padding-left: 0.2em; }
-.markdown-reading blockquote { margin: 1em 0; border-left: 3px solid hsl(var(--secondary)); padding: 0.25em 1em; color: hsl(var(--muted-foreground-strong)); background: hsl(var(--surface-1)); }
-.markdown-reading code { border-radius: 4px; background: hsl(var(--surface-2)); padding: 0.12em 0.35em; color: hsl(var(--secondary)); font-family: var(--font-mono); font-size: 0.9em; }
-.markdown-reading pre { margin: 1em 0; overflow-x: auto; border: 1px solid hsl(var(--border)); border-radius: 8px; background: hsl(var(--surface-1)); padding: 1em; }
-.markdown-reading pre code { background: transparent; padding: 0; color: hsl(var(--foreground)); }
-.markdown-reading a,
-.markdown-reading .wiki-reading-link { color: hsl(var(--secondary)); text-decoration: none; }
-.markdown-reading a:hover,
-.markdown-reading .wiki-reading-link:hover { text-decoration: underline; }
-.markdown-reading .wiki-reading-link { display: inline; padding: 0; background: transparent; font-size: inherit; }
-.markdown-reading hr { margin: 2em 0; border: 0; border-top: 1px solid hsl(var(--border)); }
-.markdown-reading table { width: 100%; margin: 1em 0; border-collapse: collapse; font-size: 0.93em; }
-.markdown-reading th,
-.markdown-reading td { border: 1px solid hsl(var(--border)); padding: 0.45em 0.7em; text-align: left; }
-.markdown-reading th { background: hsl(var(--surface-2)); font-weight: 600; }
-.markdown-reading input[type='checkbox'] { margin-right: 0.45em; accent-color: hsl(var(--primary)); }
-
 /* Custom scrollbar — thin, themed. */
 *::-webkit-scrollbar {
   width: 10px;

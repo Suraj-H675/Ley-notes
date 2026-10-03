@@ -77,8 +77,9 @@ export function SessionErasureEditor({
             <li>Ordinary Markdown and Canvas copies</li>
           </ul>
           <p className="mt-3 border-t border-border pt-3 text-micro leading-5 text-muted-foreground">
-            Delete linked notes or Canvas files separately if those user-owned
-            copies should also be forgotten. Backups, filesystem snapshots,
+            Delete linked notes or Canvas files separately with the external
+            tool that owns them if those user-owned copies should also be
+            forgotten. Backups, filesystem snapshots,
             provider-retained context, and device remnants are outside Ley’s
             control.
           </p>

@@ -23,7 +23,9 @@ history and useful experiments. They are **not automatically current product req
 
 Documents that are clearly superseded but still useful as evidence live under `archive/` rather than in
 the current documentation path. The archive contains the pre-reset product-surface/acceptance work plus
-the earlier Markdown/second-brain research that informed the legacy product. Those documents explain
+the earlier Markdown/second-brain research that informed the legacy product. The former notebook/PWA
+runtime-verification diary is archived there as `runtime-verification-notebook-legacy.md`; the top-level
+`runtime-verification.md` now describes only the focused continuity product. Those documents explain
 historical decisions but no longer describe Ley's intended product surface.
 
 `adr/` remains historical implementation rationale during the migration because many entries document

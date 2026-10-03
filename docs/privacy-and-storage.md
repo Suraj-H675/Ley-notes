@@ -79,9 +79,9 @@ Retained core semantic/index code is compatibility/research machinery rather tha
 
 ## External network connectors
 
-The current public-GitHub connector uses an explicit fixed-origin, bounded fetch path and stores no authentication token. It is safe as implemented within its stated boundary, but provider-specific connectors are no longer assumed to be core product functionality because coding hosts already provide strong GitHub integrations.
+The in-repository public-GitHub fetcher has been removed. Retained connector authorities and snapshots remain compatibility/privacy state; they do not provide a current provider-specific fetch path.
 
-If the connector is retired, existing stored connector evidence must be migrated/exported or explicitly erased; it must not be silently orphaned.
+Existing stored connector evidence must be migrated/exported or explicitly erased; it must not be silently orphaned.
 
 ## Erasure and migration
 

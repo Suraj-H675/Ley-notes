@@ -82,7 +82,7 @@ export function LandingPage() {
                   See how Ley works <ArrowRight size={15} />
                 </a>
                 <a href="https://github.com/Suraj-H675/Ley-notes" className="flex h-11 items-center justify-center gap-2 border border-white/10 px-5 text-sm font-medium text-[#d8d5cd] transition-colors hover:border-white/18 hover:bg-white/4">
-                  <Terminal size={15} /> Follow development
+                  <Terminal size={15} /> Browse source
                 </a>
               </div>
               <div className="mt-7 flex flex-wrap gap-x-5 gap-y-2 border-t border-white/6 pt-5 text-xs text-[#807d76]">
@@ -113,7 +113,7 @@ export function LandingPage() {
             <div className="max-w-2xl">
               <p className="font-medium uppercase tracking-[0.15em] text-micro text-[#8a877f]">Continuity, not another transcript archive</p>
               <h2 className="mt-4 font-serif text-4xl leading-[1.05] tracking-[-0.025em]">Remember what changes the next decision.</h2>
-              <p className="mt-4 text-[#b4b1a9]">Ley is being rebuilt around a smaller contract: brief the task, search historical memory, inspect exact evidence, and checkpoint meaningful state.</p>
+              <p className="mt-4 text-[#b4b1a9]">Ley is built around a small contract: brief the task, search historical memory, inspect exact evidence, and checkpoint meaningful state.</p>
             </div>
             <div role="list" className="mt-12 grid border-t border-white/7 md:grid-cols-2">
               {FEATURES.map((feature) => (

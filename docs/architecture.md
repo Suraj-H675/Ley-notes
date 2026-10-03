@@ -18,7 +18,7 @@ There is no supported browser Ley application. The former PWA, `/app` route, bro
 The website and desktop may share components/styles, but they do not share a runtime entrypoint or deployment artifact.
 
 - `index.html` + `src/website-main.tsx` + `vite.config.ts` build the public website into `dist/`.
-- `desktop/index.html` + `src/desktop-main.tsx` + `vite.desktop.config.ts` build the Tauri webview into `dist-desktop/`.
+- `desktop/index.html` + `desktop/desktop-main.tsx` + `vite.desktop.config.ts` build the Tauri webview into `dist-desktop/`.
 - `src-tauri/tauri.conf.json` points only at the desktop build.
 
 This prevents a website deployment from accidentally exposing the desktop runtime and lets each surface evolve without compatibility branches for the other.
@@ -35,7 +35,8 @@ Keep a tiny repo-local `.ley/` identity/config so a project can retain a stable 
 
 Move machine-managed metadata toward one owner-private SQLite database, initially device-wide and partitioned by project.
 
-Phase-1 deliberately starts smaller than the legacy ontology. Schema v2 currently uses:
+The current continuity store is schema v11. Its durable core remains intentionally smaller than the legacy
+ontology and centers on:
 
 - `projects` keeps stable portable project identity;
 - `events` is the append-only continuity envelope for session activity, handoffs, verification, evidence,
@@ -71,7 +72,10 @@ Use a generic event envelope with `kind` + `payload_version` rather than version
 
 ### Retrieval
 
-The target historical retrieval path uses independent candidate generators:
+The current canonical historical retrieval path uses deterministic lexical candidate generation plus explicit
+metadata/revision/authority filtering. Optional semantic retrieval remains deferred and confined to legacy
+compatibility/research paths until a native-state ablation earns it. The longer-term architecture can still admit
+independent candidate generators when evidence justifies them, for example:
 
 - SQLite FTS lexical retrieval;
 - optional vector retrieval if ablation earns it;

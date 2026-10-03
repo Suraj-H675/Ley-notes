@@ -1,542 +1,131 @@
 # Runtime verification contract
 
-Builds and unit tests do not prove that Ley is usable. Every release-oriented UI pass must verify these runtime invariants with a real browser at representative desktop, mobile, and short-window sizes.
-
-## Public website
-
-- The website opts the shared document into native page flow; the workspace route alone owns the fixed viewport lock.
-- At 1440×900, 390×844, and 320×568, document `scrollHeight > innerHeight`, `scrollY` can change through ordinary page scrolling, and `scrollWidth === clientWidth`.
-- Hero, premise, features, desktop, and footer regions are reachable.
-- `#why`, `#features`, and `#desktop` links move the website scroll root to a visible target.
-- Both web-app calls to action reach `/app`.
-- Browser console contains no application error after a fresh load and full-page traversal.
-
-## Vault onboarding
-
-- Browser and native launchers own `h-full overflow-y-auto` roots; they must not rely on document scrolling.
-- At 320×568, the heading, both browser vault choices, errors, and privacy statement are reachable.
-- Oversized content starts at a reachable top rather than being vertically centered above the scroll origin.
-- Leaving an active web vault exposes a return action; returning restores the same vault and opens a valid note.
-- Browser-local → folder → browser-local transitions preserve local pages, attachments, revisions, and deleted notes while folder data is active only as a disposable projection.
-- Rescanning the same folder preserves page IDs; changing folders does not preserve IDs or cache-only revision state.
-- A native external `.md` create/edit/delete emits a vault-change event; hidden files, unrelated extensions, and Ley's own atomic writes do not produce a user-visible refresh.
-- An externally deleted open note remains in its saved tab as a recovery projection after reload; restoring or discarding it is explicit, and a pending debounced save flushes on window unload before the projection changes.
-- In desktop and browser-folder vaults, trashing a note preserves its relative folder under `.trash`, and Settings lists Markdown notes there. Restoring one moves it to its original folder (adding ` 2`, ` 3`, … only when that exact path is occupied), refreshes the projection and links, and never exposes files outside the selected folder. If the original record is already active, restore creates an independent recovered note instead of overwriting or merging identities.
-- Selecting browser-local compatibility mode requests persistent browser storage without blocking startup when the browser declines or lacks the API. Settings describes persistent versus best-effort storage honestly and keeps ZIP backup controls visible.
-
-## Workspace
-
-- The document itself remains fixed to the viewport with no page-level horizontal overflow.
-- The sidebar, note body, settings body, graph controls, and canvas list scroll independently where their content exceeds available space.
-- At 320×568, the title retains useful width, secondary note actions collapse to labeled icons, and the formatting toolbelt remains visible while the CodeMirror document scrolls.
-- Every modal moves focus inside, traps Tab navigation, closes on Escape, and restores focus to its launcher.
-- A failure in editor, graph, canvas, or settings is contained by a feature recovery boundary and never invalidates vault data.
-
-## JSON Canvas
-
-- Create a canvas with a named group, two text cards, a note card, and an HTTP(S) link card. Rename/edit each applicable card and confirm note/link activation reaches the intended destination.
-- Connect two distinct handles with the two-click flow and with a drag gesture. The connection uses the chosen sides, renders an arrow, accepts a label and JSON Canvas preset color, remains keyboard-selectable, and deletes from its inspector.
-- Resize a card and group. Width and height never fall below the type-specific minimum or become non-finite, and connection endpoints continue to follow the document geometry.
-- Save, close, reload, and reopen: card types/content, positions, dimensions, group label, edge label/sides/endpoints/color, and array order remain unchanged. An imported JSON Canvas 1.0 file with `subpath`, group background metadata, and custom colors survives a save round-trip.
-- At 390×844, canvas tabs are horizontally reachable, the tool shelf scrolls independently, the graph area retains useful height, Fit View can zoom below 0.5×, every card is reachable, and the document has no horizontal overflow.
-
-## Authoring story
-
-- Live Preview is the default editing style. Inactive heading, emphasis, inline-code, wiki-link, Markdown-link, task, quote, and horizontal-rule syntax renders as readable content; the active line reveals its exact Markdown source.
-- Inactive Markdown tasks become accessible checkboxes. Toggling one updates authoritative `[ ]`/`[x]` text immediately; Source exposes the exact change, and both the Markdown and selected editing style survive reload.
-- Live Preview, Source, and Reading remain distinct at desktop and 390 px widths. The narrow workspace has no horizontal document overflow and the editor remains vertically scrollable.
-- Formatting buttons preserve the editor selection; Ctrl/Cmd+B, Ctrl/Cmd+I, Ctrl/Cmd+K, and Ctrl/Cmd+Shift+backtick invoke the same transactions.
-- Typing `[[` exposes recent note suggestions; typing a partial title filters them.
-- Enter and Tab accept a completion and keep the current note open.
-- `[[Note#` offers that note's real headings with level and line context; `[[Note#^` offers block IDs with source previews, excluding fenced code examples.
-- Typing `#` at a Markdown boundary offers the vault's existing flat and nested tags, ranked by match and usage count. Headings, frontmatter, inline/fenced code, URL fragments, and attribute fragments do not trigger tag completion or enter the tag index.
-- Accepting a tag replaces only the text after the existing `#`; the touch toolbelt's tag action inserts `#` and opens the same completion list. At 390px the popup and compact action remain reachable with no document overflow.
-- Normal click inside a wiki link positions the cursor; Ctrl/Cmd-click opens its target without creating an ID-named note.
-- Read-mode task clicks persist to Markdown, including tasks after an embed and tasks inside a partial-note embed.
-- Read-mode and Ctrl/Cmd-click wiki links honor both `#Heading` and `#^block-id` destinations and focus the exact source line.
-- Heading-scoped embeds stop at the next sibling heading; block embeds render only the referenced block.
-- Bookmarking a note updates the workspace button and unified Bookmarks hub immediately; the state survives reload and is also reachable through the explorer context menu and command palette. Trashing it hides the note row without discarding the preference; restoring it restores the row.
-- Bookmark a heading from Outline, move the editor elsewhere, and open the bookmark: the exact heading becomes CodeMirror's active line. Rename the bookmark to a custom title, then clear that title to recover the live note/heading label.
-- Place the cursor on a prose/list block and bookmark it: Ley appends a valid `^block-id` to authoritative Markdown, shows a text-preview label, and reuses the ID on a second capture. Opening it returns to that exact block. Blank lines, YAML, headings, and fenced code report a useful refusal without creating metadata.
-- Save a search and confirm it appears reactively in the same Bookmarks hub with open, property-table, rename, and delete actions rather than creating another sidebar panel.
-- Rename or rescan a bookmarked note and verify ID/path fallback keeps anchors usable. Trash it and verify the unavailable row can be deleted but remains non-navigable until restore.
-- At 390px, Bookmarks rows and hover-equivalent actions remain reachable, the editor toolbar fits without horizontal scrolling, the sidebar scrolls independently, and the document has no horizontal overflow.
-- `Cmd/Ctrl+F` and the editor Find button open the same focused in-note search panel; next/previous, replace, replace-all, case, regular-expression, and whole-word controls operate on source Markdown.
-- Replacements persist after the normal editor debounce and reload. Escape closes the panel without invoking browser page search.
-- At 320×568, the search panel remains fully reachable without horizontal overflow and stays beneath the mobile sidebar overlay.
-- Quick-switcher filters compose with AND: nested `tag:`, quoted `path:`, `title:`, `property:key=value`/`[key:value]`, and `-` exclusions return the expected live-index results. Filter-only searches work without free text.
-- `task:`, `task-todo:`, and `task-done:` match text only inside real Markdown task blocks, compose with the other filters and negation, ignore fenced examples, and show the matched task/state as result context when no free-text term is present. The same query filters live collection rows and survives as a saved search.
-- Filter chips insert valid syntax, the syntax guide is keyboard-accessible, Enter opens the selected result in the focused pane, and Shift+Enter opens it in split. At 390px the chip row scrolls without widening the document.
-- Save a structured query with a custom name: it appears reactively under Saved searches, reopens the exact query, supports Enter/blur rename and deletion, survives reload, and is absent after switching to a different vault identity. Duplicate query saves update one entry.
-- At 390px, saved-search rows and their rename/delete actions remain reachable while the sidebar overlay produces no horizontal document overflow.
-- Open an empty or structured query as a table: only matching live notes appear, common YAML keys become columns, numeric values sort numerically, missing values remain last in either direction, and title/split actions open the intended note.
-- Edit two property cells in quick succession and inspect the underlying note: both values persist in YAML without losing body content or one another. Enter commits; Escape restores the prior value without closing the collection.
-- Change visible columns and sort order on a saved query, close it, and reopen from the sidebar table action: the exact layout returns. Ad-hoc query tables do not silently create saved state.
-- At 390px the collection dialog and column picker stay within the viewport, the document has no horizontal overflow, and the wide table scrolls internally while the name column remains sticky.
-- Relative Markdown links between nested folders appear in outgoing links, backlinks, and the graph. Reading-mode clicks and editor Ctrl/Cmd-clicks honor heading and block anchors.
-- Renaming or moving a Markdown-link target rewrites incoming destinations; moving the source rebases its outgoing relative paths. Navigation is repeated after both changes.
-- Missing `.md` destinations remain visible as missing files and never create a title-based ghost note.
-- Open multiple tabs, close one, activate a non-final tab, and reload: exact tab order, active note, and recent order restore for that vault.
-- Open a second note from its tab or explorer context menu into a split: both panes edit independently, link navigation stays in its source pane, a destination already visible opposite receives focus, and the keyboard/pointer divider persists its width.
-- At 390px, only the focused split pane is visible, selecting the opposite pane's tab reveals it, and the document has no horizontal overflow. Reload restores both pane notes and the focused side.
-- Rename an open note and reload; its session survives by stable ID. Trash an open note and reload; the stale tab and recent entry are removed safely.
-- Enter the vault chooser and return to the current vault; the complete session restores rather than falling back to the most recently edited page.
-- Save a distraction-free single-pane workspace and a research workspace with two notes, a non-default divider width, visible sidebars, and a selected dock tab. Loading each restores that complete arrangement; saved layouts remain after reload and never appear in another vault.
-- Rename a workspace, update it from the current arrangement, and delete it through the two-step destructive action. If some referenced notes have moved or disappeared, valid notes still load by stable ID/path; an entirely stale layout reports an error without replacing the current workspace.
-- At 390px the workspace manager stays inside the viewport, all save/load/update/rename/delete controls remain reachable, its list scrolls internally, and neither it nor the underlying document widens.
-- The browser console remains free of CodeMirror plugin errors throughout completion, acceptance, and navigation.
-- Rapid consecutive autosaves are serialized per note, navigation flushes the pending edit, and the newest Markdown, backlinks, and tag rows agree after the save settles.
-- An external content update replaces a clean editor automatically. With unsaved local text, autosave pauses and both conflict actions are verified: reload preserves disk, while keep-mine explicitly persists the editor version.
-
-## Agent Memory session naming
-
-- Finish a real filesystem-backed CLI session, rename it with the inspected event count, and reopen it. The event directory gains exactly one immutable event; `originalName`, the stable session ID, citations, terminal status, reason, and prior work remain unchanged.
-- Retry the accepted request ID and confirm it replays without another event. Attempt a stale event count and the current name again under new request IDs; both fail without changing history.
-- In Ley Desktop, open a completed session, inspect its original name and prior naming revisions, then append a new name and required reason. The dashboard, resume card, inspector title, event count, and naming history update from the shared engine.
-- At desktop, short-window, and 390×844 sizes, the session body and rename fields scroll independently, while Close, Cancel, and Append Rename remain reachable. Unsaved edits require confirmation before dismissal.
-- The rendered flow produces no application console errors. MCP tool discovery remains unchanged because session naming is a local user-authority surface, not an agent write capability.
-
-## Agent Memory note links
-
-## Verified browser collections workflow
-
-- On 2026-08-25, a fresh browser-local vault was created with two notes, each given a `status: active` property. The `property:status=active` quick-switcher query opened as a live collection containing both notes.
-- Editing one property cell to `archived` committed the YAML value, removed that row immediately, and left the other active row intact.
-- The column picker added Path, and clicking its header cycled ascending/descending sort. Saving the query preserved both the query and the four-column/sorted layout after closing and reopening from Saved searches; ad-hoc table changes were not silently saved.
-
-## Verified browser revision workflow
-
-- On 2026-08-25, Project Alpha received two explicit save checkpoints after separate body edits. The History dock exposed both snapshots with relative timestamps.
-- Selecting the earlier snapshot restored it through the normal editor path: the body returned to empty while the `status` frontmatter remained intact.
-- Closing History, reloading `/app`, and reopening History preserved the same restored note content and revision timeline; no stale in-memory state was required.
-
-## Verified browser workspace layouts
-
-- On 2026-08-25, a single-pane Focus layout and a two-pane Research layout were saved in the same browser-local vault. Research retained Project Alpha as primary and Project Beta as secondary.
-- Loading Focus restored one pane; loading Research restored the split with both intended notes.
-- Closing the dialog, reloading `/app`, reopening Workspace layouts, and loading each saved layout preserved their distinct arrangements after persistence. The browser reported no page errors during the pass.
-
-## Verified 390px collections behavior
-
-- On 2026-08-25, the same live `property:status=active` collection was reopened at 390×844. The document stayed at 390px with no horizontal overflow, and the dialog content remained within 372px.
-- The column picker opened and added Path without leaving the viewport. The four-column table scrolled internally by 676px while the Name column remained sticky.
-- The browser console reported no application errors during the pass.
-
-## Verified 320px saved searches
-
-- On 2026-08-25, the saved-search row and its open, rename, and delete actions were reachable at 320×568. The sidebar overlay stayed at the 320px document width with no horizontal overflow.
-- Renaming the query inline worked immediately, and deleting it removed the row without leaving stale actions. No console errors were produced.
-
-## Verified tab session restore
-
-- On 2026-08-25, a Welcome → Project Alpha → Project Beta tab set was reduced to two tabs by closing Welcome, then Project Alpha was activated as the non-final tab.
-- Reloading `/app` restored the exact Project Alpha → Project Beta tab order, kept Project Alpha active, and preserved the matching recent-note order. The browser reported no application errors.
-
-## Verified split-pane workflow
-
-- On 2026-08-25, Project Beta was opened from its tab action into a split beside Project Alpha. Each pane accepted an independent body edit, and both values persisted after explicit save.
-- The pointer divider was dragged from x=688 to x=550. Reloading `/app` restored both pane notes, their distinct edits, the focused arrangement, and the same divider position. No console errors appeared.
-
-## Verified 390px split behavior
-
-- On 2026-08-25, the same split was viewed at 390×844. Only the focused pane was visible, selecting the opposite tab revealed that pane exclusively, and the document remained exactly 390px wide.
-- Reloading restored both pane records and the previously focused secondary pane. The browser reported no application errors.
-
-## Verified rename session survival
-
-- On 2026-08-25, Project Alpha was renamed to “Renamed Project Alpha” through Enter/blur commit. The sidebar, tab, recent row, and open pane updated immediately.
-- Reloading `/app` preserved the same open session and split by stable note identity while showing the renamed title. The first keyboard-only attempt did not blur the title field and therefore did not commit; Enter/blur is the expected commit path. No console errors appeared.
-
-## Verified open-note trash cleanup
-
-- On 2026-08-25, the renamed note was opened as the primary pane of a split and trashed from its explorer context menu. Its tab, split pane, and recent entry disappeared immediately, and the remaining Project Beta session stayed valid.
-- Reloading `/app` preserved the safe Project Beta session without resurrecting the trashed note. The browser reported no application errors.
-
-## Verified vault chooser return
-
-- On 2026-08-25, Settings exposed “Change vault or storage,” which opened the vault chooser with a direct “Return to Browser-local vault” action.
-- Returning restored the complete active session: the same Project Beta tab and primary pane, its `archived` property, and its saved body content. The browser reported no application errors.
-
-## Verified 390px workspace manager
-
-- On 2026-08-25, the Workspace layouts dialog was opened at 390×844 through the compact command palette. It stayed within the 390px document width with no horizontal overflow.
-- All nine enabled save/load/update/rename/delete controls remained fully reachable, including both saved layouts and the close action.
-
-## Verified rapid autosave agreement
-
-- On 2026-08-25, three rapid tag-bearing edits were typed consecutively into Project Beta before the save settled. The final editor content retained all three tags, and the sidebar tag index reported exactly `autosave-alpha`, `autosave-beta`, and `autosave-final`.
-- Reloading `/app` preserved the newest Markdown and the same three tag rows. The browser reported no CodeMirror plugin errors.
-
-## Verified Settings focus trap
-
-- On 2026-08-25, opening Settings moved focus inside the dialog, and twenty-five Tab presses kept focus within its focusable controls.
-- Closing with Escape returned focus to the Settings launcher. A runtime defect where focus fell back to `BODY` was fixed by wiring `onCloseAutoFocus` to the actual opener; the same behavior now works from the toolbar button and the `Ctrl/Cmd+,` hotkey. Type checking and lint pass.
-
-The former learning/session Markdown-promotion workflow was retired with the notebook surface. Historical
-verification of that export path remains in repository history and ADR 0021, but it is no longer a current
-Desktop acceptance gate. User-owned Markdown/Canvas copies created by older versions remain independent files
-and must not be deleted by continuity erasure or migration cleanup.
-
-## Agent Memory privacy controls
-
-- In **Capture & privacy → Agent sharing**, change the project policy and verify `ley egress list` reports the same value. Set `confirm-per-use` and verify the UI states that it blocks both cloud and local targets rather than showing a fake confirmation prompt. Change the policy from another local client while the panel is open, then apply the stale Desktop selection: the write must be rejected and the panel must refresh to the newer policy without weakening retained source-specific restrictions.
-
-## Agent Memory Brief preview
-
-- Open a ready project and confirm Overview renders **Agent brief preview** without invoking the compiler until a task is submitted.
-- Enter a task, leave the target on **Cloud**, and compare the returned pack with canonical `ley_brief` for the same project/task/default limits: project/task IDs, target, admitted items/Specifications, budget, premise/evidence state, gaps/egress exclusions, warnings, citations, and raw payload must agree.
-- Switch to **Local** only deliberately. With a project policy of `local-model-only`, Cloud preview must fail closed while Local preview succeeds; the UI must state that Local is an explicit host assertion rather than provider attestation.
-- Replace/reinitialize the project at the selected filesystem path before submitting an already-open preview. The expected project-ID guard must reject the request instead of showing another project's continuity.
-- Open a returned citation and confirm the existing Evidence flow resolves that exact snapshot/path/hash. Previewing must not start a session, refresh capture, mutate project content, or change egress policy. Transitional compatibility-authority migration performed by the canonical compiler is not treated as a separate Desktop write path.
-
-## Agent Memory learning review
-
-- Open a non-terminal learning in **Lessons** or **Review** and verify Correct, Mark stale, Contest, Reject, Confirm, and Supersede appear only when the bounded claim is complete.
-- Supersede must remain unavailable when there is no other non-terminal replacement learning in the bounded Desktop list. When candidates exist, selecting Supersede requires both an explicit replacement learning and a reason before submit becomes enabled. Candidate labels must distinguish title/state/trust/freshness plus a stable ID, and any omitted-learning count must be disclosed with the CLI fallback.
-- Submit Supersede and verify the Desktop sends the learning's visible event count, the exact replacement ID, and the replacement's visible event count. A concurrent correction/review of either learning must cause the stale action to fail rather than applying against unseen text.
-- After the picker was rendered, terminalize the selected replacement from another client. Supersede must fail closed under core's locked mutation even when the target learning itself has not changed.
-- After success, verify the old learning is terminal immutable history. If the replacement is in the bounded list, its title/state control must open that replacement inspector; otherwise the stable `supersededBy` ID remains visible. The replacement remains in its own existing trust/review state; supersession must not silently confirm or promote it.
-
-## Agent Memory integration activity
-
-- With retained Codex and Claude Code host-hook sessions, open Overview and verify **Recorded agent activity** reports the recognized host labels, retained-session counts, and latest qualifying session **start** time. Later session updates must not be labeled as later host observations.
-- Include missing/unknown host-hook labels and verify Desktop groups them generically instead of rendering caller-supplied host text as an asserted host identity. Include manual CLI and explicit imported-history sessions in the same project and verify they are excluded. MCP-origin sessions may appear as a separate **MCP-origin sessions** row without claiming a host identity.
-- With no retained host-hook or MCP-origin session, verify the empty state says only that no recorded integration activity exists and explicitly warns that this does not mean Codex, Claude Code, or another MCP client is absent.
-- Verify the Desktop performs no host-config/plugin-cache/process probing for this activity surface. Current install/trust/connectivity checks remain host-owned (for example Codex plugin/hooks views or the corresponding Claude Code plugin inspection).
-
-## Agent Memory graph history
-
-This section records historical verification for the retired Desktop Project Graph UI. The underlying captured
-revision/evidence metadata may remain migration input, but opening or navigating a Project Graph is no longer a
-current Desktop product requirement. Treat the UI-specific bullets below as historical evidence, not release
-gates for the focused continuity control center.
-
-- Ingest a real initialized and bound project, change a captured symbol or relationship, and ingest again. The history index gains one graph/artifact pair; an identical third ingestion does not add another entry.
-- Open the project graph in Ley Desktop. Switch from Current to the earlier capture and confirm the historical banner, counts, nodes, edges, Git identity, and capture time all come from that immutable snapshot while the working tree remains untouched.
-- Combine node-kind, relationship, provenance, and text filters. Backend-reported filtered counts agree with the rendered bounded graph, and reset restores the complete selected capture.
-- Select a node and a relationship, navigate between their endpoints, and open each citation. The excerpt has the recorded relative path, hash, line numbers, snapshot ID, and redacted captured text—even after the live source changes.
-- Open cited artifacts from a session checkpoint, project decision, and problem. Each control moves to the graph, selects the matching artifact capture when retained, highlights the recorded line range, and reads the immutable redacted excerpt. From a learning evidence row, open its full originating session and its captured artifact record.
-- Attempt a citation borrowed from another node or capture and verify that the shared engine rejects it. Open a Minimal capture and verify that the inspector explains why no source text exists instead of reading the live file.
-- In **Capture & privacy**, arm erasure and verify the permanent action stays disabled for a missing or case-mismatched project name. With an active lifecycle reader, erasure waits; after it exits, the project memory directory disappears while source files, notes, `.ley` metadata, binding, and catalog observation remain. The UI returns to **Needs capture**, and an explicit recapture produces a fresh store.
-- At desktop, short-window, and 390×844 sizes, filters scroll independently, the graph remains usable, the inspector stays reachable without document overflow, focus indicators remain visible, and reduced-motion/reduced-transparency preferences preserve the interaction.
-
-## Release evidence
-
-## Verified JSON Canvas workflow
-
-- On 2026-08-25, a new “Verification Board” canvas was created in the browser-local vault. It received a named group, a text card, a Project Beta note card, and an `https://example.com` link card.
-- The group and text card labels were edited, and a two-click connection from the text card to the link card was labeled “Verified link.” After saving, closing, reloading `/app`, and reopening the canvas, every card type, label, and the labeled connection persisted.
-
-## Verified Agent Memory browser boundary
-
-- On 2026-08-25, opening Agent Memory from the browser-local vault showed the honest desktop-only boundary rather than a broken or partially available surface. The screen explains that a web page cannot safely read coding projects or serve local agents through stdio MCP, and that browser notes remain fully usable.
-- Graph history ingestion must be verified in Ley Desktop against a real initialized and bound project; this remains desktop/platform verification work rather than a browser-verifiable slice.
-
-## Verified 390px canvas behavior
-
-- On 2026-08-25, the Verification Board canvas was opened at 390×844 through the compact command palette. The canvas tab remained horizontally reachable, the tool shelf scrolled independently, and the graph retained a useful 501px height.
-- Repeated zoom-out reached 0.16×, comfortably below 0.5×, while the document stayed exactly 390px wide with no horizontal overflow.
-
-## Verified external-conflict scope
-
-- On 2026-08-25, the external-conflict workflow was investigated in the browser-local vault. With unsaved local edits present, direct projection changes did not activate the “Reload disk” / “Keep mine” banner because browser-local mode has no filesystem watcher or focus-based external-change check.
-- The conflict mechanism is correctly scoped to desktop and browser-folder vaults where an authoritative filesystem event can occur. Browser-local conflict behavior remains a design question rather than a broken desktop path; desktop verification still requires a real external file edit.
-
-## Verified 390px graph controls
-
-- On 2026-08-25, the graph view was opened at 390×844. A runtime defect where the Communities legend overflowed below the viewport was fixed by making the controls panel scroll independently.
-- After the fix, all 26 controls remained reachable through panel scrolling while the document stayed exactly 390px wide with no horizontal overflow. Type checking and lint pass.
-
-## Verified 320px search panel
-
-- On 2026-08-25, the in-note find-and-replace panel was opened at 320×568. All five inputs and six buttons remained fully reachable, including next, previous, match case, regexp, whole word, replace, and replace-all controls.
-- The panel stayed within the 320px document width with no horizontal overflow and remained beneath the mobile sidebar overlay.
-
-## Verified 390px bookmarks
-
-- On 2026-08-25, Project Beta was bookmarked and the sidebar overlay was opened at 390×844. The bookmark row under Notes remained fully visible and reachable.
-- The sidebar overlay stayed within the 390px document width with no horizontal overflow.
-
-## Verified 320px bookmarks and toolbar
-
-- On 2026-08-25, the same bookmark row remained reachable at 320×568. The editor toolbar fit the full 320px width without horizontal scrolling, with all eight controls visible.
-- The sidebar overlay contained an independent vertical scroll container. It did not overflow at this content size, but the mechanism was present and separate from the document.
-
-## Verified 390px saved searches
-
-- On 2026-08-25, a `tag:autosave-final` query was saved as “Autosave test” and the sidebar was opened at 390×844. Both the rename and delete actions were fully visible and reachable.
-- The sidebar overlay stayed within the 390px document width with no horizontal overflow.
-
-## Verified 320px saved searches
-
-- On 2026-08-25, the same “Autosave test” row was viewed at 320×568. Its open-as-table, rename, and delete actions all remained fully visible and reachable.
-- The sidebar overlay stayed within the 320px document width with no horizontal overflow.
-
-## Verified 390px filter chips
-
-- On 2026-08-25, the quick-switcher filter chips were viewed at 390×844. All eight chips (Tag, Path, Title, Property, To do, Done, Exclude, and Table) fit within the 390px row without requiring horizontal scroll.
-- The document stayed exactly 390px wide with no horizontal overflow.
-
-## Verified 320px filter chips
-
-- On 2026-08-25, the same filter chip row was viewed at 320×568. The chips scrolled horizontally inside their own 292px row with a 619px overflow range.
-- The document stayed exactly 320px wide with no horizontal overflow, confirming the chip row scrolls without widening the page.
-
-## Verified 390px workspace manager
-
-- On 2026-08-25, the Workspace layouts dialog was opened at 390×844. It stayed within the 390px document width, and all nine enabled controls remained fully reachable.
-- The layout list had an independent internal scroll container. It did not overflow at this content size, but the mechanism was present and separate from the document.
-
-## Verified 390px collection dialog
-
-- On 2026-08-25, the `tag:autosave-final` collection was opened at 390×844. The dialog stayed within the 390px document width, and the column picker remained fully visible.
-- The three-column table scrolled internally by 452px while the Name column stayed sticky. The document had no horizontal overflow.
-
-## Verified 320px collection dialog
-
-- On 2026-08-25, the same collection was viewed at 320×568. The dialog stayed within the 320px document width, and the column picker remained fully visible.
-- The table scrolled internally by 522px while the Name column stayed sticky. The document had no horizontal overflow.
-
-## Verified 320px graph controls
-
-- On 2026-08-25, the graph view was opened at 320×568. The controls panel scrolled independently by 155px, and all 22 controls remained reachable after scrolling.
-- The document stayed exactly 320px wide with no horizontal overflow.
-
-## Verified 320px workspace manager
-
-- On 2026-08-25, the Workspace layouts dialog was opened at 320×568. It stayed within the 320px document width, and all nine enabled controls remained fully reachable.
-- The document had no horizontal overflow.
-
-## Verified 320px collection dialog and picker
-
-- On 2026-08-25, the `tag:autosave-final` collection was opened at 320×568. The dialog stayed within the 320px document width, and the column picker remained fully visible.
-- The table scrolled internally by 522px while the Name column stayed sticky. The document had no horizontal overflow.
-
-## Verified 320px canvas
-
-- On 2026-08-25, the Verification Board canvas was opened at 320×568. The canvas tab remained reachable, and the graph retained a useful 360px height.
-- Repeated zoom-out reached 0.27×, comfortably below 0.5×, while the document stayed exactly 320px wide with no horizontal overflow.
-
-## Verified 320px graph zoom
-
-- On 2026-08-25, the graph view was zoomed out repeatedly at 320×568. It reached 0.21×, comfortably below 0.5×, while the document stayed exactly 320px wide with no horizontal overflow.
-
-## Verified 320px collection dialog
-
-- On 2026-08-25, the `tag:autosave-final` collection was opened at 320×568. The dialog stayed within the 320px document width, and the column picker remained fully visible.
-- The table scrolled internally by 522px while the Name column stayed sticky. The document had no horizontal overflow.
-
-## Verified 320px canvas tabs and shelf
-
-- On 2026-08-25, the Verification Board canvas was opened at 320×568. The canvas tab remained horizontally reachable, and the tool shelf was present with an independent scroll mechanism.
-- The graph retained a useful 360px height while the document stayed exactly 320px wide with no horizontal overflow.
-
-## Verified 320px saved-search actions
-
-- On 2026-08-25, the “Autosave test” saved-search row was viewed at 320×568. Its open-as-table, rename, and delete actions all remained fully visible and reachable.
-- The sidebar overlay stayed within the 320px document width with no horizontal overflow.
-
-## Verified 320px bookmarks
-
-- On 2026-08-25, the Project Beta bookmark row was viewed at 320×568. The row remained fully visible and reachable within the sidebar overlay.
-- The sidebar overlay stayed within the 320px document width with no horizontal overflow.
-
-## Verified 320px saved-search actions
-
-- On 2026-08-25, the “Autosave test” saved-search row was viewed at 320×568 after the source move. Its open-as-table, rename, and delete actions all remained fully visible and reachable.
-- The sidebar overlay stayed within the 320px document width with no horizontal overflow.
-
-## Verified 390px saved-search actions
-
-- On 2026-08-25, the same saved-search row was viewed at 390×844 after the source move. Its open-as-table, rename, and delete actions all remained fully visible and reachable.
-- The sidebar overlay stayed within the 390px document width with no horizontal overflow.
-
-## Verified 390px bookmarks
-
-- On 2026-08-25, the Project Beta bookmark row was viewed at 390×844 after the source move. The row remained fully visible and reachable within the sidebar overlay.
-- The sidebar overlay stayed within the 390px document width with no horizontal overflow.
-
-## Verified 390px saved searches
-
-- On 2026-08-25, the “Autosave test” saved-search row was viewed at 390×844 after the source move. Its open-as-table, rename, and delete actions all remained fully visible and reachable.
-- The sidebar overlay stayed within the 390px document width with no horizontal overflow.
-
-## Verified 390px bookmark rows
-
-- On 2026-08-25, the Project Beta bookmark row was re-inspected at 390×844 after all link changes. The row remained fully visible and reachable within the sidebar overlay.
-- The sidebar overlay stayed within the 390px document width with no horizontal overflow.
-
-## Verified 390px bookmarks
-
-- On 2026-08-25, the same bookmark row was viewed at 390×844. The row remained fully visible and reachable within the sidebar overlay.
-- The sidebar overlay stayed within the 390px document width with no horizontal overflow.
-
-## Verified nested-folder Markdown links
-
-- On 2026-08-25, `docs/Link Source.md` and `guides/Link Target.md` were created in separate nested folders. Relative Markdown links with URL-encoded spaces and a heading anchor indexed correctly as two outgoing links.
-- Opening Link Target showed two linked mentions from Link Source, and clicking the outgoing-link row navigated to the intended note. Unencoded spaces in link destinations were not indexed; URL encoding is required. The browser reported no application errors.
-
-## Verified target rename link rewriting
-
-- On 2026-08-25, `guides/Link Target.md` was renamed to “Renamed Target” through the title input. Both incoming Markdown-link destinations in `docs/Link Source.md` rewrote automatically to `../guides/Renamed%20Target.md`, preserving the heading anchor.
-- The outgoing-link panel still indexed both links, and clicking one navigated to the renamed note. The browser reported no application errors.
-
-## Verified missing Markdown destinations
-
-- On 2026-08-25, a link to `../guides/Missing%20File.md` was added from `docs/Link Source.md`. The outgoing-link panel showed it as a visible “Missing File” row without creating a clickable page button.
-- No ghost note appeared in the sidebar or pages list. The missing destination stayed visible as missing rather than being auto-created.
-
-## Verified source move path rebasing
-
-- On 2026-08-25, `docs/Link Source.md` was moved to `archive/Link Source.md` through the explorer context menu. Its outgoing relative destinations rebased automatically to `../guides/…`, preserving the correct depth for the new folder.
-- All three outgoing links still indexed after the move, and clicking the Renamed Target row navigated to the intended note. The browser reported no application errors.
-
-## Verified navigation after rename and move
-
-- On 2026-08-25, both outgoing Markdown links from the moved source were clicked repeatedly after the target rename and source move. Each click resolved to “Renamed Target” as intended.
-- Navigation was repeated after both changes without stale paths or broken destinations. The browser reported no application errors.
-
-## Verified missing destination ghost prevention
-
-- On 2026-08-25, the `../guides/Missing%20File.md` destination was re-inspected after the source move. It remained visible in the outgoing-link panel as a non-clickable “Missing File” row.
-- No page button, sidebar entry, or title-based ghost note was created for the missing destination. The missing file stayed visible as missing rather than being auto-created.
-
-## Verified wiki-link completion and navigation
-
-- On 2026-08-25, typing `[[Ren` in the moved source note exposed a completion list with “Renamed Target.” Pressing Enter accepted it and wrote `[[Renamed Target]]` into the authoritative Markdown.
-- After saving, the outgoing-link panel indexed the new wiki link alongside the existing Markdown links, and clicking its row navigated to Renamed Target. The browser reported no application errors.
-
-## Verified heading completion context
-
-- On 2026-08-25, typing `[[Welcome#` in a fresh browser-local vault exposed the Welcome note’s real headings with level and line context: “Welcome to Ley” (H1 · line 1), “Start here” (H2 · line 5), “Key ideas” (H2 · line 11), “Daily notes” (H2 · line 19), and “Tag your notes” (H2 · line 23).
-- The completion popup rendered with the correct listbox/option roles and selected state. A browser relaunch interrupted the acceptance write, but the heading suggestion behavior was fully observed.
-
-## Verified 320px vault onboarding
-
-- On 2026-08-25, the vault chooser was opened at 320×568 from Settings. The return action, heading, both storage choices, and privacy statement were visible at the natural scroll origin.
-- The document remained exactly 320px wide with no horizontal overflow, and the oversized layout started from a reachable top rather than being vertically centered above it.
-
-## Verified 320px authoring layout
-
-- On 2026-08-25, the editor was viewed at 320×568. The title retained a useful 159px width, secondary actions collapsed to labeled icons, and all eight formatting toolbelt controls remained visible.
-- The CodeMirror document scrolled independently while the document stayed exactly 320px wide with no horizontal overflow.
-
-## Verified block-ID completion workflow
-
-- On 2026-08-25, a “Block Targets” note containing prose, a list item, and fenced JavaScript was linked from Welcome. Typing `[[Block Targets#^` offered only the two explicit IDs (`^alpha-id` and `^alpha-list`) with their source previews and line numbers; content inside the fence was correctly excluded.
-- Pressing Enter accepted `^alpha-id` and wrote exactly `[[Block Targets#^alpha-id]]` into Markdown. Ctrl-clicking that rendered link navigated to Block Targets and focused the start of “Alpha prose block ^alpha-id” on line 2.
-- The browser reported no application errors during completion, acceptance, or navigation.
-
-## Verified tag completion workflow
-
-- On 2026-08-25, a fresh browser-local fixture contained flat, nested, and deliberately invalid `#` syntax. The saved index exposed exactly four legitimate tags; headings, fenced code, inline code, URL fragments, unquoted HTML attributes, and quoted attribute values were excluded from the sidebar index after correction.
-- Typing `#pro` offered nested tags ranked by prefix before substring match. Typing `#project/ley/ver` filtered to Verification only, and Enter replaced just the query text to write `#project/ley/verification`.
-- The toolbelt Tag action inserted `#`, opened the same completion list in Source mode, and remained fully reachable at 390×844 with the popup inside the viewport and no document overflow.
-- Runtime inspection found that `<div class="#attribute">` was incorrectly indexed as a tag. The tag boundary now excludes quote characters, focused tests cover quoted attributes, and a real editor save rebuilt the stale projection correctly. Type checking and lint passed on the corrected tree.
-
-## Verified wiki-link click modes
-
-- On 2026-08-25, a real `[[Tag Fixture]]` link was added to Welcome and rendered as a decorated wiki link after saving. A normal click kept the editor in Live Preview and placed CodeMirror’s caret inside the bracketed source at offset 1.
-- Ctrl-clicking the same rendered link navigated directly to the existing Tag Fixture note. The pages list remained exactly Tag Fixture and Welcome, proving no ID-named ghost note was created.
-
-## Verified read-mode task persistence
-
-- On 2026-08-25, a host note embedded a heading section, a block ID, prose, and a trailing Markdown task. Clicking all five Read-mode checkboxes persisted authoritative `[x]` state to the correct host or source notes.
-- Heading-scoped tasks mapped by local order within their embed, the block-scoped task updated only its referenced line, and the direct task after both embeds remained on Task Host. Source mode confirmed every write without cross-note drift.
-- Runtime diagnosis found two root causes: checkbox handlers trusted transient DOM state instead of controlled props, and render-time counters advanced under React Strict Mode double invocation. Handlers now derive intent from authoritative checked state, while each Markdown body resolves checkbox order from its own rendered DOM scope.
-
-## Verified anchored link navigation
-
-- On 2026-08-26, Link Host contained wiki links to `#Alpha`, `#^alpha-block`, `#Beta`, plus Markdown links with the same heading/block destinations. Read-mode clicks opened Link Targets and focused the exact Alpha heading, referenced block line, sibling Beta heading, or block source line.
-- Live Preview Ctrl-click navigation produced the same exact-line results for both wiki and internal Markdown links. A stale-editor listener leak was found during diagnosis; CodeMirror cleanup now removes both follow-link listeners explicitly.
-
-## Verified formatting and mode distinctions
-
-- On 2026-08-26, a selected word in Live Preview was transformed by the Bold, Italic, Link note, and Inline code buttons into authoritative `**Alpha**`, `*Alpha*`, `[[Alpha]]`, and backtick syntax. Each button preserved the selected text as the formatting target.
-- The matching Ctrl/Cmd shortcuts invoked the same transactions for bold, italic, link, and inline code. Every transaction was reversible through normal editor undo.
-- Live Preview, Source, and Read modes remained visually distinct at desktop and 390×844; the narrow document stayed exactly 390px wide with no horizontal overflow while Source retained exact Markdown and Read rendered headings without source syntax.
-
-## Verified bookmark workflows
-
-- On 2026-08-26, note bookmarks appeared reactively in the unified Bookmarks hub with `aria-pressed` state. Heading and block anchors rendered with live previews, availability checks, custom titles, rename, delete, and exact-destination navigation wiring.
-- Renaming a heading bookmark updated its displayed title without changing its target; deletion removed only that record. Block bookmark logic appended a generated ID to authoritative Markdown, reused existing IDs, and refused blank lines or headings without creating metadata.
-- A browser automation environment reset prevented durable IndexedDB fixtures from surviving between daemon restarts. The remaining user-facing persistence behavior was therefore covered by deterministic Dexie-backed UI tests rather than claiming unobserved reload evidence.
-- In a continuous live browser session, the fixture note, two heading bookmarks, block bookmark, generated `^` Markdown ID, custom title, exact Alpha active line, and all `aria-pressed` states survived reload. Heading-line capture displayed the Outline-action refusal while preserving source.
-- Runtime inspection found that renaming controls used the automatic label even after a custom title existed, making edit/delete controls ambiguous for screen-reader users. Bookmark labels now consistently use the current title; focused tests cover this accessibility contract.
-
-## Verified task search filters
-
-- On 2026-08-26, `task-todo`, `task-done`, and `task` filters were verified against real Markdown tasks. State filtering, substring matching, filter composition with title negation, task-context snippets (`To do ·` / `Done ·`), fenced-code exclusion, prose exclusion, and live collection filtering all behaved as intended.
-- Runtime diagnosis found a real search defect: task-only queries were routed through FlexSearch even though task text is not independently searchable, so matching notes could return empty results. Task-only queries now scan the authoritative document projection directly; integration and collection coverage protect the full workflow.
-
-## Verified rapid collection edits
-
-- On 2026-08-26, two property cells were edited back-to-back with Enter commits. Each cell invoked its own row's YAML write with the intended typed value, and both note bodies remained intact. Existing validation still blocked an invalid numeric edit before any write.
-- Collection property inputs now expose stable row-scoped accessible names, making rapid multi-row editing unambiguous for users and assistive technology.
-
-## Verified workspace layout recovery
-
-- On 2026-08-26, workspace navigation recovery was verified against moved and deleted notes. A saved layout dropped unavailable references, loaded the remaining valid note, refused an entirely stale layout without replacing the current workspace, and recovered a moved source by its stable path when the original ID no longer matched.
-- Existing storage tests continue to prove rename/update/delete behavior, duplicate-name rejection, shell clamping, malformed-record filtering, and strict per-vault workspace isolation.
-
-## Verified split divider accessibility
-
-- On 2026-08-26, the keyboard-operable split divider was inspected against its existing behavior: arrow keys commit clamped two-percent changes to persistent state, pointer resizing commits the final value, and both panes use the persisted width after reload. The separator now also exposes a human-readable `aria-valuetext` such as “58 percent primary pane width” rather than only a bare numeric value.
-
-## Verified split-pane link routing
-
-- On 2026-08-26, pane-aware wiki and Markdown destination resolution was verified against a populated split session. A link opened from the active source pane updates that same pane; when the target is already visible in the opposite pane, Ley switches focus to that existing editor instead of replacing its content.
-- Relative internal Markdown links retain the originating pane as their explicit navigation context. Existing state coverage continues to protect independent split opening, closing, tab reconciliation, and reload restoration.
-
-## Verified tab session lifecycle
-
-- On 2026-08-26, exact tab ordering was verified after closing a middle tab and activating the remaining final tab. Reload preserved `[first, last]`, restored the active tab, promoted it as the sole primary pane, and retained its recent-first order.
-- Deleting a note from a split session removed it safely from open tabs, the secondary pane, and recents; reload restored the remaining primary/secondary tab set without stale references. Existing coverage continues to prove rename survival, split restoration, vault isolation, malformed records, external missing-note recovery, and workspace layout fallback.
-
-## Verified Canvas import ordering
-
-- On 2026-08-26, imported array order was verified with an unusual sequence: group first, then file and text cards, followed by a reverse-direction labeled edge carrying explicit sides, endpoints, preset color, custom color, file `subpath`, and group metadata. A save/reload preserved every node and edge in the original array order.
-- Existing source inspection confirms connections are keyboard-selectable through focus plus Enter/Space, while the inspector exposes connection labeling and deletion. The existing live workflow already proved two-click/drag creation and reload persistence.
-
-## Verified Agent Memory secret redaction
-
-- On 2026-08-26, ingestion redaction was audited against an adversarial source fixture containing private keys, named assignments, credential URLs, GitHub classic and fine-grained tokens, and AWS access keys. Every secret was replaced before durable storage while line count and citation lines remained stable.
-- Current Rust evidence continues to prove `.env`, ignored paths, binaries, oversized files, and symlinks are excluded or skipped; durable artifacts use private permissions; immutable snapshots detect corruption; concurrent ingestion is serialized; identical request IDs replay without duplicate events; MCP results are fixed-project, path-free, bounded, and marked untrusted.
-
-## Verified external editor conflicts
-
-- On 2026-08-26, browser-mode conflict behavior was regression-tested against authoritative projection updates. A clean editor replaced itself automatically with the disk version and showed “Updated from disk” without writing. With unsaved local text, autosave stayed paused, the conflict banner appeared, and “Reload disk” restored exactly the external version while preserving it from further writes.
-- Existing coverage continues to prove that “Keep mine” explicitly persists only the editor version and that missing-file recovery refuses silent write-back. Real native watcher timing remains desktop/platform verification work.
-
-## Verified local CLI memory workflow
-
-- On 2026-08-26, the current-source CLI drove a real temporary project through initialization, private vault binding, ingestion, structured session start, prompt/response capture, checkpoint with two touched artifacts, completion, and bounded hybrid retrieval. Search returned cited artifact and session evidence within its requested token budget, marked it untrusted, and disclosed coverage/truncation state.
-- A deliberate secret in project text never reached durable vault storage. Current-tree `cargo fmt --check`, `cargo check`, the complete Rust test suite (including desktop integration tests), and the production web/PWA build also passed.
-
-- Run lint, the complete test suite, the web/PWA production build, Rust formatting/tests, and the native release bundle.
-- Verify generated Debian and RPM artifacts on Linux.
-- On 2026-08-22, lint, all frontend tests, the production web build, Rust workspace tests, and a current-source Linux desktop bundle completed successfully. The generated `Ley_0.1.0_amd64.deb` and `Ley-0.1.0-1.x86_64.rpm` artifacts were inspected for expected package identity and payload structure; native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
-- On 2026-08-25, lint, all 232 frontend tests across 60 files, the production web/PWA build, `cargo check`, and the complete Rust workspace test suite passed on the current tree.
-- On 2026-08-25, a current-source Linux desktop bundle completed successfully with the latest UI fixes. The generated `Ley_0.1.0_amd64.deb` (8.9 MB) and `Ley-0.1.0-1.x86_64.rpm` (8.9 MB) artifacts were inspected for expected package formats. Native installation, signed release distribution, and cross-platform launch checks remain user/platform verification work.
-- Record any platform-specific packaging limitation honestly rather than substituting an unrelated artifact.
-
-## Verified raw MCP stdio workflow
-
-- On 2026-08-26, a real `ley mcp` process was driven with raw JSON-RPC lines over stdin/stdout against a temporary initialized and bound project. Initialize, tool/resource discovery, bounded project resume, hybrid memory search, cited evidence read, resource read, and the full append-only session lifecycle (start, checkpoint with decisions/verification/touched artifacts, finish with handoff) all succeeded.
-- The read-only default correctly omitted session write tools from discovery; they appeared only after explicit process-start opt-in. A traversal attempt to an unapproved artifact path was rejected without leaking scope paths; an overview URI for a different project ID returned the fixed-project-scope error. No absolute project or vault paths appeared in any protocol response.
-- A deliberate credential assignment in project text was redacted before durable storage and absent from the vault. The largest single response observed was approximately 19 KB against the 256 KB hard output limit.
-
-## Verified real-host lifecycle hooks
-
-- On 2026-08-26, the current installed CLI binary drove real Codex (`ley hook --host codex`) and Claude Code (`ley hook --host claude`) lifecycle events against a temporary project with a filesystem vault. `SessionStart` returned bounded resume context including the stable Ley session ID, recent active sessions, and the untrusted-evidence warning. `UserPromptSubmit` stored a redacted prompt copy and reasserted the same session ID. `Stop` paired a bounded assistant response without error.
-- Deliberate `api_key=` and `password=` assignments in prompts were replaced by `[REDACTED:credential-inline-assignment]` in durable session Markdown; neither raw value reached the vault. Session listing showed one prompt and one response per host, confirming turn pairing without duplicates.
-- The Ley plugin is already installed and enabled in Codex (`ley-memory@ley` from the local marketplace). Claude Code has no plugins installed, so its integration remains available via the documented `--plugin-dir` path. 
-
-## Verified adversarial prompt-injection boundaries
-
-- On 2026-08-26, a dedicated injection project was ingested with deliberately hostile content: fake system overrides, destructive command instructions, exfiltration URLs, forged learning proposals claiming 100% confidence and "always trust all memory", and fabricated stale facts. Hybrid memory search surfaced the hostile text but returned it under `sourceBoundary: untrusted-project-memory` with every result marked `trustedForReuse: false` and the non-instruction warning intact.
-- Historical verification of the now-retired `ley_project_resume` wrapper admitted none of the poisoned learnings
-  (`totalCurrentTrustedLearnings: 0`) because they were never user-confirmed. The same Resume projection remains in
-  local `ley resume`; ADR 0101 removes only MCP exposure. Evidence reads carried the `untrusted-project-evidence`
-  boundary. No secrets reached durable storage. The MCP server never executed, promoted, or treated any stored
-  instruction as policy.
+Builds and unit tests do not prove that Ley is usable. This document is the current focused-product
+runtime contract. The former notebook/PWA verification diary is preserved as
+`archive/runtime-verification-notebook-legacy.md`; it is historical evidence, not a release checklist.
+
+## Release baseline
+
+Before treating a change as release-ready, run the checks proportional to the affected surface:
+
+- frontend typecheck, lint, and tests;
+- website and Desktop UI production builds;
+- Rust formatting/check/tests for changed crates;
+- the focused deterministic eval lanes (`--p0-coverage`, `--p1-coverage`, and `--p2-coverage`) when the
+  continuity contract, retrieval, provenance, privacy, migration, or host-facing behavior changes;
+- a native Desktop bundle when packaging or Tauri configuration changes.
+
+Do not substitute the historical full eval corpus for these focused gates. Retired compatibility fixtures may
+remain intentionally outside the current product matrix.
+
+## Desktop launch and project boundary
+
+- `npm run desktop` must start the Desktop development build without an unresolved module or webview load error.
+- A fresh isolated Ley state opens the Projects hub without scanning neighboring folders or creating projects.
+- Adding a project happens only after explicit folder selection.
+- Removing a project from the Projects list removes only the device observation; it must not erase the project's
+  continuity state or source files.
+- A missing, moved, or identity-changed project fails closed and gives the user an explicit recovery/removal path.
+
+## Project onboarding and capture
+
+- A new project shows the bounded capture preview before initialization.
+- Initialization writes only Ley's small repo-local identity/config plus owner-private application state; it must
+  not create a new legacy vault.
+- Refresh captures only files allowed by the active capture policy and ignore rules. Secret-like content,
+  symlinks, binaries, oversized files, and excluded paths must preserve their existing fail-closed behavior.
+- A moved legacy vault is accepted only through the reconnect/migration path after validating that it belongs to
+  the exact Ley project. Migration compatibility must not silently widen capture or authority.
+
+## Brief, Search, and Evidence
+
+- Opening Overview must not compile a Brief automatically. Brief compilation starts only after the user supplies
+  a task.
+- Desktop Brief output must use the same canonical compiler contract as `ley_brief`: task/project identity,
+  target, admitted items and Specifications, budget, premise/evidence state, gaps, egress exclusions, warnings,
+  and citations must remain consistent.
+- Cloud versus Local is an explicit egress target. Local is a host/user assertion, not proof that the downstream
+  model is actually local.
+- `confirm-per-use` remains fail-closed until Ley has a real confirmation boundary; the UI must not simulate one
+  with an unrelated settings prompt.
+- Project Search remains bounded, revision-aware, and explicit about stale/conflicting/untrusted history.
+- Evidence reads must follow an exact Ley citation and revalidate project, snapshot/path/hash, and egress. Text
+  citations should resolve historical text evidence; supported image citations should return the original bounded
+  historical bytes rather than a generated description.
+
+## Sessions, decisions, problems, and lessons
+
+- Session views preserve the recorded project/revision provenance and never imply that retained history is live
+  source truth.
+- Decisions and Problems remain historical structured evidence. Divergent Git history must remain withheld where
+  the canonical admission rules require it.
+- Session rename and erasure use optimistic/current-state guards so a stale Desktop action cannot silently mutate
+  newer state.
+- Learning review/correction/supersession must preserve trust, freshness, evidence lineage, and replacement
+  identity. Concurrent mutation of either side of a supersession must fail closed.
+- Erasing Ley memory must not delete user-owned project files or unrelated Markdown/Canvas/archive copies.
+
+## Approved sources and human authority
+
+- Source approval/reapproval/revocation is a human-only authority surface.
+- A changed or unavailable source must not be silently treated as still approved for its previous revision.
+- Legacy source approvals may be migrated only through the bounded transition logic; old note-vault approvals that
+  cannot be proven equivalent remain issues rather than becoming authority.
+- Agent-facing tools cannot create privileged approved-source authority on their own.
+
+## Capture, privacy, export, and erasure
+
+- Desktop project egress policy and `ley egress list` must agree.
+- A stale project identity or stale expected policy must reject a Desktop policy mutation before weakening the
+  current boundary.
+- More restrictive retained source-specific ancestry must continue to constrain derivatives during migration.
+- Portable export contains only the selected project's continuity database plus evidence actually cited by those
+  events; unrelated project state and uncited blobs must not leak into the bundle.
+- Project-memory erasure removes Ley-controlled continuity state for the selected project without deleting the
+  source repository. Do not describe this as forensic deletion of backups, filesystem remnants, or provider copies.
+
+## Integrations and MCP
+
+- Canonical native MCP discovery exposes only `ley_brief`, `ley_search`, and `ley_evidence`, plus
+  `ley_checkpoint` when session writes were explicitly enabled.
+- An inactive ordinary workspace exposes no project-memory tools and performs no implicit initialization or scan.
+- Bootstrap Specification access for an uninitialized workspace remains explicit and read-only.
+- Host lifecycle capture must preserve stable Ley session identity, bounded/redacted prompt/response evidence, and
+  the guidance-only startup contract.
+- Desktop's recorded integration activity is historical Ley evidence only. It must not claim that Codex, Claude,
+  or another host is currently installed, trusted, connected, or healthy unless Ley actually verifies that state.
+
+## Public website and legacy browser recovery
+
+- The public website is static product information. It must not load the Desktop workspace, project-memory APIs,
+  IndexedDB continuity state, or local-agent transports.
+- The website must scroll normally at representative desktop and narrow widths without horizontal overflow.
+- The separate legacy-recovery page performs no old IndexedDB access until the user explicitly requests it.
+- Legacy browser recovery is archival inspect/export/erase only; it must not imply that the retired notebook data
+  automatically becomes current Ley continuity.
+
+## Accessibility and interaction
+
+- Primary controls must remain keyboard reachable with visible focus treatment.
+- Controls that behave as filters should use the keyboard/accessibility model for filters rather than claiming tab
+  semantics unless an associated tab panel and arrow-key behavior exist.
+- Loading and failure states that change the user's next action should be announced through appropriate status or
+  alert semantics.
+- Destructive actions must be visually and interactively subordinate to the primary continuation task and retain
+  their existing explicit confirmations where data is actually erased.
+- Reduced-motion and reduced-transparency preferences must preserve all required interactions and readability.
+
+## Native packaging
+
+- `npm run desktop:build` must produce the expected native bundle(s) for the current host platform.
+- Inspect package identity/version and payload structure rather than assuming a successful build means the package
+  is installable or signed.
+- Signed distribution, updater behavior, and cross-platform installation/launch are separate release claims and
+  must be verified before the product or website promises them.
+
+## Evidence discipline
+
+Record release evidence with the exact source revision, platform/toolchain, command or scenario, and relevant
+limitations. A passing fixture proves its bounded contract; it is not evidence for arbitrary environments or
+future host/model versions. Historical runtime evidence belongs in dated research/archival material rather than
+being accumulated indefinitely in this current checklist.
