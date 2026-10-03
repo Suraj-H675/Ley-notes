@@ -1,8 +1,3 @@
-/**
- * Button. Three variants: primary (action), ghost (low-emphasis), destructive.
- * Sizes: sm, md.
- */
-
 import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { cn } from '@/shared/lib/classnames';
 

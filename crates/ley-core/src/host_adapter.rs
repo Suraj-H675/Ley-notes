@@ -1093,6 +1093,20 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::tempdir;
 
+    fn write_owner_private_registry(path: &std::path::Path, document: &Value) {
+        fs::write(
+            path,
+            format!("{}\n", serde_json::to_string_pretty(document).unwrap()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+
     fn bootstrap_host_fixture(
         source_body: &str,
     ) -> (
@@ -2116,18 +2130,29 @@ mod tests {
         let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
         let specifications =
             SpecificationRegistry::at(config.join(crate::SPECIFICATION_REGISTRY_FILE));
-        let scope = scopes
-            .create(
-                crate::KnowledgeScopeKind::Team,
-                "Private team",
-                std::slice::from_ref(&reference),
-            )
-            .unwrap();
-        scopes.attach(&project, &scope.scope.scope_id).unwrap();
-        scopes
-            .detach(&project, &scope.scope.scope_id)
-            .unwrap()
-            .unwrap();
+        let active_project_id = diagnose_project(&project).unwrap().identity.project_id;
+        let source_project_id = diagnose_project(&reference).unwrap().identity.project_id;
+        let scope_id = "ksc_33333333333333333333333333333333";
+        write_owner_private_registry(
+            scopes.path(),
+            &json!({
+                "schemaVersion": crate::KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION,
+                "scopes": {
+                    scope_id: {
+                        "kind": "team",
+                        "name": "Private team",
+                        "sourceProjectIds": [source_project_id.clone()],
+                        "createdAtUnixMs": 1_700_000_000_000_u64
+                    }
+                },
+                "attachments": {},
+                "attachmentHistory": {
+                    active_project_id: {
+                        scope_id: [source_project_id]
+                    }
+                }
+            }),
+        );
         egress
             .set_project_policy(&reference, AgentEgressPolicy::LocalModelOnly)
             .unwrap();
@@ -2233,33 +2258,62 @@ mod tests {
         let mounts = ContextMountRegistry::at(config.join("context-mounts-v1.json"));
         let scopes = KnowledgeScopeRegistry::at(config.join("knowledge-scopes-v1.json"));
         let policy_bundles = PolicyBundleRegistry::at(config.join("policy-bundles-v1.json"));
-        let scope = scopes
-            .create(
-                crate::KnowledgeScopeKind::Organization,
-                "Release organization",
-                std::slice::from_ref(&source),
-            )
+        let active_project_id = diagnose_project(&project).unwrap().identity.project_id;
+        let source_project_id = diagnose_project(&source).unwrap().identity.project_id;
+        let scope_id = "ksc_44444444444444444444444444444444";
+        let bundle_id = "pbd_44444444444444444444444444444444";
+        let approved_source = specifications
+            .read_approved_source(&source, &source_vault, &specification_id)
             .unwrap();
-        scopes.attach(&project, &scope.scope.scope_id).unwrap();
-        let bundle = policy_bundles
-            .create(
-                &scope.scope.scope_id,
-                "Release policy",
-                &[crate::PolicyBundleSourceInput {
-                    source_project: source.clone(),
-                    specification_id: specification_id.clone(),
-                }],
-                &scopes,
-                &specifications,
-            )
-            .unwrap();
-        policy_bundles
-            .attach(&project, &bundle.bundle.bundle_id, &scopes)
-            .unwrap();
-        policy_bundles
-            .detach(&project, &bundle.bundle.bundle_id)
-            .unwrap()
-            .unwrap();
+        let bundle_sources = json!([{
+            "sourceProjectId": source_project_id.clone(),
+            "specificationId": specification_id.clone(),
+            "contentHash": approved_source.content_hash
+        }]);
+        write_owner_private_registry(
+            scopes.path(),
+            &json!({
+                "schemaVersion": crate::KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION,
+                "scopes": {
+                    scope_id: {
+                        "kind": "organization",
+                        "name": "Release organization",
+                        "sourceProjectIds": [source_project_id.clone()],
+                        "createdAtUnixMs": 1_700_000_000_000_u64
+                    }
+                },
+                "attachments": {
+                    active_project_id.clone(): {
+                        scope_id: 1_700_000_000_100_u64
+                    }
+                },
+                "attachmentHistory": {
+                    active_project_id.clone(): {
+                        scope_id: [source_project_id.clone()]
+                    }
+                }
+            }),
+        );
+        write_owner_private_registry(
+            policy_bundles.path(),
+            &json!({
+                "schemaVersion": crate::POLICY_BUNDLE_REGISTRY_SCHEMA_VERSION,
+                "bundles": {
+                    bundle_id: {
+                        "scopeId": scope_id,
+                        "name": "Release policy",
+                        "sources": bundle_sources.clone(),
+                        "createdAtUnixMs": 1_700_000_000_200_u64
+                    }
+                },
+                "attachments": {},
+                "attachmentHistory": {
+                    active_project_id: {
+                        bundle_id: bundle_sources
+                    }
+                }
+            }),
+        );
         egress
             .set_specification_policy(
                 &source,

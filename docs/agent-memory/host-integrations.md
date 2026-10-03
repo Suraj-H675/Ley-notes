@@ -61,15 +61,7 @@ a stronger claim.
 
 The packaged integrations enable only the canonical session-checkpoint write capability in their local MCP process. Tentative learning proposals are not enabled by default; a deliberate compatibility workflow may still opt into `--allow-learning-proposals` while that legacy route remains available. Host permission controls still apply.
 
-Dedicated Ley graph query tools are retired. For structural impact questions, hosts should use bounded Ley continuity context and then inspect the live workspace with the coding host's normal repository tools. Retained deterministic graph history is migration/compatibility state, not live-source authority and not a reason to preserve a separate graph API.
-
-When a host deliberately uses the explicit context-utility workflow, it should observe the bound pack
-after eligible typed checkpoint/finish outcomes exist. `ley_session_get` exposes unobserved binding
-coverage, unique observed-binding coverage, and at most five recent body-free unobserved binding
-metadata rows. For a terminal session, `finish.eventId` and the row's `terminalFinishEventId` expose
-the exact retained finish event that can be deliberately passed to the observe tool. A terminal
-An unobserved binding row is a measurement-gap record only; it is not evidence that the model used or
-ignored the context and must not alter trust/ranking automatically.
+Dedicated Ley graph query and Context Utility mutation tools are retired. For structural impact questions, hosts should use bounded Ley continuity context and then inspect the live workspace with the coding host's normal repository tools. Retained deterministic graph history and old Context Utility observation records are historical compatibility/provenance data only; they do not re-enable those model-facing workflows or prove that a model used or ignored context.
 
 ## Codex
 
@@ -127,7 +119,7 @@ Call `ley_brief` when prior continuity would materially help, `ley_search` for d
 
 Claude Code has the same fail-closed Bootstrap Specification exception as Codex: an uninitialized target with explicit bootstrap authority advertises exactly one read-only `ley_compile_context` tool and creates no normal Ley project/session history. Initializing the target retires bootstrap authority.
 
-Retained mounts/references/scopes/bundles/connectors and finer-grained egress ancestry remain compatibility/privacy state that may constrain compiled context. Claude cannot create/attach/mutate those authorities through the canonical MCP surface; local CLI cleanup routes remain available until F4 proves the retained state can be safely removed.
+Retained mounts/references/scopes/bundles/connectors and finer-grained egress ancestry remain compatibility/privacy state that may constrain compiled context. Claude cannot create/attach/mutate those authorities through the canonical MCP surface; local CLI cleanup routes remain only while real persisted records still need inspection/removal and their egress ancestry still protects historical derivatives.
 
 ## What automatic capture does
 

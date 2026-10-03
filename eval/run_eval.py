@@ -1308,10 +1308,7 @@ def context_contract_text(payload: dict[str, object]) -> str:
     return json.dumps(
         {
             "specifications": payload.get("specifications", []),
-            "policyBundlePolicies": payload.get("policyBundlePolicies", []),
             "items": payload.get("items", []),
-            "mountedReferences": payload.get("mountedReferences", []),
-            "sharedKnowledgeReferences": payload.get("sharedKnowledgeReferences", []),
             "references": payload.get("references", []),
         },
         sort_keys=True,
@@ -3419,7 +3416,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             compiled.get("evidenceState") == expected_state
             and not compiled.get("items")
             and not compiled.get("specifications")
-            and not compiled.get("mountedReferences")
             and compiled.get("liveSourceChecked") is False
             and int(compiled.get("estimatedTokens", 0))
             <= int(compiled.get("maxTokens", 0))

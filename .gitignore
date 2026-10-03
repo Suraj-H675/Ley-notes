@@ -26,8 +26,6 @@ target/
 *.njsproj
 *.sln
 *.sw?
-.DS_Store
-Thumbs.db
 
 # Logs
 *.log
@@ -52,6 +50,7 @@ __pycache__/
 # OS
 .DS_Store
 .Trashes
+Thumbs.db
 ehthumbs.db
 
 # Misc
@@ -60,11 +59,10 @@ ehthumbs.db
 *.seed
 *.pid.lock
 
-# Vite-specific
+# Vite
 dist-ssr
-.vite/
 
-# Dexie/IndexedDB dev tools (local-only)
+# Local database sidecars
 *.db
 *.db-shm
 *.db-wal

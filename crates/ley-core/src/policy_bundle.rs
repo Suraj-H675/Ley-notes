@@ -11,8 +11,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub const POLICY_BUNDLE_REGISTRY_FILE: &str = "policy-bundles-v1.json";
@@ -24,13 +22,6 @@ pub const MAX_ATTACHED_POLICY_BUNDLES_PER_PROJECT: usize = 8;
 pub const MAX_POLICY_BUNDLE_HISTORY_PER_PROJECT: usize = 256;
 
 const PRIVACY_NOTICE: &str = "Policy Bundle compatibility state is OS-private. It stores stable bundle/scope/project/approved-source identities, exact approved content hashes, explicit project attachments, and bounded attachment history only. Source content is resolved through native approved-source authority; the legacy vault/binding is consulted only once if that source project has not completed approved-source migration.";
-
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PolicyBundleSourceInput {
-    pub source_project: PathBuf,
-    pub specification_id: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -75,14 +66,6 @@ pub struct PolicyBundle {
     pub created_at_unix_ms: u64,
 }
 
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PolicyBundleMutation {
-    pub bundle: PolicyBundle,
-    pub created: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PolicyBundleList {
@@ -107,14 +90,6 @@ pub struct PolicyBundleAttachment {
     pub source_count: usize,
     pub attached_at_unix_ms: u64,
     pub state: PolicyBundleAttachmentState,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PolicyBundleAttachmentMutation {
-    pub attachment: PolicyBundleAttachment,
-    pub created: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -302,95 +277,6 @@ impl PolicyBundleRegistry {
         &self.path
     }
 
-    #[cfg(test)]
-    pub fn create(
-        &self,
-        scope_id: &str,
-        name: &str,
-        source_specs: &[PolicyBundleSourceInput],
-        scope_registry: &KnowledgeScopeRegistry,
-        specification_registry: &SpecificationRegistry,
-    ) -> Result<PolicyBundleMutation, LeyCoreError> {
-        validate_knowledge_scope_id(scope_id).map_err(LeyCoreError::InvalidPolicyBundleRequest)?;
-        let name = validate_bundle_name(name).map_err(LeyCoreError::InvalidPolicyBundleRequest)?;
-        if source_specs.is_empty() || source_specs.len() > MAX_POLICY_BUNDLE_SOURCES {
-            return Err(LeyCoreError::InvalidPolicyBundleRequest(format!(
-                "policy bundle must contain between 1 and {MAX_POLICY_BUNDLE_SOURCES} Specifications"
-            )));
-        }
-        let scope = scope_registry
-            .list()?
-            .scopes
-            .into_iter()
-            .find(|scope| scope.scope_id == scope_id)
-            .ok_or_else(|| LeyCoreError::KnowledgeScopeNotFound(scope_id.to_owned()))?;
-        let allowed_projects = scope
-            .sources
-            .iter()
-            .map(|source| source.source_project_id.as_str())
-            .collect::<BTreeSet<_>>();
-        let mut sources = Vec::with_capacity(source_specs.len());
-        let mut unique = BTreeSet::new();
-        for input in source_specs {
-            let diagnostic = diagnose_project(&input.source_project)?;
-            if !allowed_projects.contains(diagnostic.identity.project_id.as_str()) {
-                return Err(LeyCoreError::InvalidPolicyBundleRequest(format!(
-                    "source project {} is not a member of knowledge scope {scope_id}",
-                    diagnostic.identity.project_id
-                )));
-            }
-            let binding = self.binding_registry.resolve(&diagnostic.root, None)?;
-            let source = specification_registry.read_approved_source(
-                &diagnostic.root,
-                &binding.vault_path,
-                &input.specification_id,
-            )?;
-            let key = (source.project_id.clone(), source.specification_id.clone());
-            if !unique.insert(key) {
-                return Err(LeyCoreError::InvalidPolicyBundleRequest(
-                    "policy bundle Specification sources must be unique".to_owned(),
-                ));
-            }
-            sources.push(PolicyBundleSourceRef {
-                source_project_id: source.project_id,
-                specification_id: source.specification_id,
-                content_hash: source.content_hash,
-            });
-        }
-        sort_source_refs(&mut sources);
-        let created_at_unix_ms = unix_time_ms();
-        let (bundle_id, created) = self.mutate(|document| {
-            if let Some((bundle_id, _)) = document.bundles.iter().find(|(_, entry)| {
-                entry.scope_id == scope_id && entry.name == name && entry.sources == sources
-            }) {
-                return Ok((bundle_id.clone(), false));
-            }
-            if document.bundles.len() >= MAX_POLICY_BUNDLES {
-                return Err(LeyCoreError::InvalidPolicyBundleRequest(format!(
-                    "at most {MAX_POLICY_BUNDLES} policy bundles may be retained"
-                )));
-            }
-            let bundle_id = generate_bundle_id();
-            document.bundles.insert(
-                bundle_id.clone(),
-                PolicyBundleEntry {
-                    scope_id: scope_id.to_owned(),
-                    name: name.clone(),
-                    sources: sources.clone(),
-                    created_at_unix_ms,
-                },
-            );
-            Ok((bundle_id, true))
-        })?;
-        let bundle = self
-            .list(scope_registry)?
-            .bundles
-            .into_iter()
-            .find(|bundle| bundle.bundle_id == bundle_id)
-            .expect("created policy bundle remains in registry");
-        Ok(PolicyBundleMutation { bundle, created })
-    }
-
     pub fn list(
         &self,
         scope_registry: &KnowledgeScopeRegistry,
@@ -424,95 +310,6 @@ impl PolicyBundleRegistry {
         Ok(PolicyBundleList {
             bundles,
             privacy_notice: PRIVACY_NOTICE,
-        })
-    }
-
-    #[cfg(test)]
-    pub fn attach(
-        &self,
-        active_project: impl AsRef<Path>,
-        bundle_id: &str,
-        scope_registry: &KnowledgeScopeRegistry,
-    ) -> Result<PolicyBundleAttachmentMutation, LeyCoreError> {
-        validate_policy_bundle_id(bundle_id).map_err(LeyCoreError::InvalidPolicyBundleRequest)?;
-        let active = diagnose_project(active_project)?;
-        self.binding_registry.resolve(&active.root, None)?;
-        let active_project_id = active.identity.project_id;
-        let bundle = self
-            .read_locked()?
-            .bundles
-            .get(bundle_id)
-            .cloned()
-            .ok_or_else(|| LeyCoreError::PolicyBundleNotFound(bundle_id.to_owned()))?;
-        if bundle
-            .sources
-            .iter()
-            .any(|source| source.source_project_id == active_project_id)
-        {
-            return Err(LeyCoreError::InvalidPolicyBundleRequest(
-                "a project cannot attach a policy bundle that sources itself".to_owned(),
-            ));
-        }
-        scope_registry
-            .attached(&active.root)?
-            .attachments
-            .into_iter()
-            .find(|attachment| attachment.scope_id == bundle.scope_id)
-            .ok_or_else(|| {
-                LeyCoreError::InvalidPolicyBundleRequest(format!(
-                    "knowledge scope {} must be attached before policy bundle {bundle_id}",
-                    bundle.scope_id
-                ))
-            })?;
-        let now = unix_time_ms();
-        let (entry, created) = self.mutate(|document| {
-            let current = document
-                .attachments
-                .get(&active_project_id)
-                .map_or(0, BTreeMap::len);
-            if let Some(existing) = document
-                .attachments
-                .get(&active_project_id)
-                .and_then(|items| items.get(bundle_id))
-                .cloned()
-            {
-                return Ok((existing, false));
-            } else if current >= MAX_ATTACHED_POLICY_BUNDLES_PER_PROJECT {
-                return Err(LeyCoreError::InvalidPolicyBundleRequest(format!(
-                    "an active project may attach at most {MAX_ATTACHED_POLICY_BUNDLES_PER_PROJECT} policy bundles"
-                )));
-            }
-            let history = document
-                .attachment_history
-                .entry(active_project_id.clone())
-                .or_default();
-            if !history.contains_key(bundle_id)
-                && history.len() >= MAX_POLICY_BUNDLE_HISTORY_PER_PROJECT
-            {
-                return Err(LeyCoreError::InvalidPolicyBundleRequest(format!(
-                    "project reached the {MAX_POLICY_BUNDLE_HISTORY_PER_PROJECT} policy-bundle history limit"
-                )));
-            }
-            history.insert(bundle_id.to_owned(), bundle.sources.clone());
-            let entry = PolicyBundleAttachmentEntry {
-                attached_at_unix_ms: now,
-            };
-            document
-                .attachments
-                .entry(active_project_id.clone())
-                .or_default()
-                .insert(bundle_id.to_owned(), entry.clone());
-            Ok((entry, true))
-        })?;
-        Ok(PolicyBundleAttachmentMutation {
-            attachment: attachment(
-                &active_project_id,
-                bundle_id,
-                &bundle,
-                &entry,
-                PolicyBundleAttachmentState::Active,
-            ),
-            created,
         })
     }
 
@@ -1062,21 +859,6 @@ fn validate_bundle_name(value: &str) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
-#[cfg(test)]
-fn generate_bundle_id() -> String {
-    format!("pbd_{}", Uuid::new_v4().simple())
-}
-
-#[cfg(test)]
-fn sort_source_refs(values: &mut [PolicyBundleSourceRef]) {
-    values.sort_by(|left, right| {
-        left.source_project_id
-            .cmp(&right.source_project_id)
-            .then_with(|| left.specification_id.cmp(&right.specification_id))
-            .then_with(|| left.content_hash.cmp(&right.content_hash))
-    });
-}
-
 fn sort_egress_sources(values: &mut [PolicyBundleEgressSource]) {
     values.sort_by(|left, right| {
         left.bundle_id
@@ -1084,14 +866,6 @@ fn sort_egress_sources(values: &mut [PolicyBundleEgressSource]) {
             .then_with(|| left.source_project_id.cmp(&right.source_project_id))
             .then_with(|| left.specification_id.cmp(&right.specification_id))
     });
-}
-
-#[cfg(test)]
-fn unix_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is before UNIX epoch")
-        .as_millis() as u64
 }
 
 fn reject_non_regular_if_present(path: &Path) -> Result<(), LeyCoreError> {
@@ -1124,10 +898,14 @@ fn reject_non_regular_if_present(path: &Path) -> Result<(), LeyCoreError> {
 mod tests {
     use super::*;
     use crate::{
-        generate_specification_id, initialize_project, CaptureMode, KnowledgeScopeMutation,
-        SpecificationRegistry, KNOWLEDGE_SCOPE_REGISTRY_FILE,
+        generate_specification_id, initialize_project, CaptureMode, SpecificationRegistry,
+        KNOWLEDGE_SCOPE_REGISTRY_FILE, KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION,
     };
     use tempfile::tempdir;
+
+    const SCOPE_ID: &str = "ksc_11111111111111111111111111111111";
+    const BUNDLE_ID: &str = "pbd_11111111111111111111111111111111";
+    const NATIVE_BUNDLE_ID: &str = "pbd_22222222222222222222222222222222";
 
     struct Fixture {
         _base: tempfile::TempDir,
@@ -1226,97 +1004,200 @@ mod tests {
         }
     }
 
-    fn team_scope(fixture: &Fixture, include_second: bool) -> KnowledgeScopeMutation {
-        let sources = if include_second {
-            vec![fixture.source.clone(), fixture.source_two.clone()]
-        } else {
-            vec![fixture.source.clone()]
-        };
-        fixture
-            .scope_registry
-            .create(KnowledgeScopeKind::Team, "Platform team", &sources)
-            .unwrap()
-    }
-
-    fn policy_sources(fixture: &Fixture, include_second: bool) -> Vec<PolicyBundleSourceInput> {
-        let mut sources = vec![PolicyBundleSourceInput {
-            source_project: fixture.source.clone(),
-            specification_id: fixture.source_specification_id.clone(),
-        }];
-        if include_second {
-            sources.push(PolicyBundleSourceInput {
-                source_project: fixture.source_two.clone(),
-                specification_id: fixture.source_two_specification_id.clone(),
-            });
+    fn write_private_json(path: &Path, document: &serde_json::Value) {
+        fs::write(
+            path,
+            format!("{}\n", serde_json::to_string_pretty(document).unwrap()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
         }
-        sources
     }
 
-    fn active_scope_ids(fixture: &Fixture) -> BTreeSet<String> {
-        fixture
-            .scope_registry
-            .attached(&fixture.active)
+    fn seed_scope(
+        fixture: &Fixture,
+        scope_id: &str,
+        source_project_ids: &[String],
+        attached: bool,
+        retain_history: bool,
+    ) {
+        let active_id = diagnose_project(&fixture.active)
             .unwrap()
-            .attachments
-            .into_iter()
-            .map(|attachment| attachment.scope_id)
-            .collect()
+            .identity
+            .project_id;
+        let attachments = if attached {
+            serde_json::json!({ active_id.clone(): { scope_id: 1_700_000_000_100_u64 } })
+        } else {
+            serde_json::json!({})
+        };
+        let history = if retain_history {
+            serde_json::json!({ active_id: { scope_id: source_project_ids } })
+        } else {
+            serde_json::json!({})
+        };
+        write_private_json(
+            fixture.scope_registry.path(),
+            &serde_json::json!({
+                "schemaVersion": KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION,
+                "scopes": {
+                    scope_id: {
+                        "kind": "team",
+                        "name": "Platform team",
+                        "sourceProjectIds": source_project_ids,
+                        "createdAtUnixMs": 1_700_000_000_000_u64
+                    }
+                },
+                "attachments": attachments,
+                "attachmentHistory": history
+            }),
+        );
+    }
+
+    fn seed_bundle(
+        fixture: &Fixture,
+        bundle_id: &str,
+        scope_id: &str,
+        name: &str,
+        sources: &[PolicyBundleSourceRef],
+        attached: bool,
+        retain_history: bool,
+    ) {
+        let active_id = diagnose_project(&fixture.active)
+            .unwrap()
+            .identity
+            .project_id;
+        let source_values = sources
+            .iter()
+            .map(|source| {
+                serde_json::json!({
+                    "sourceProjectId": source.source_project_id,
+                    "specificationId": source.specification_id,
+                    "contentHash": source.content_hash
+                })
+            })
+            .collect::<Vec<_>>();
+        let attachments = if attached {
+            serde_json::json!({ active_id.clone(): {
+                bundle_id: { "attachedAtUnixMs": 1_700_000_000_100_u64 }
+            }})
+        } else {
+            serde_json::json!({})
+        };
+        let history = if retain_history {
+            serde_json::json!({ active_id: { bundle_id: source_values } })
+        } else {
+            serde_json::json!({})
+        };
+        write_private_json(
+            fixture.bundle_registry.path(),
+            &serde_json::json!({
+                "schemaVersion": POLICY_BUNDLE_REGISTRY_SCHEMA_VERSION,
+                "bundles": {
+                    bundle_id: {
+                        "scopeId": scope_id,
+                        "name": name,
+                        "sources": source_values,
+                        "createdAtUnixMs": 1_700_000_000_000_u64
+                    }
+                },
+                "attachments": attachments,
+                "attachmentHistory": history
+            }),
+        );
+    }
+
+    fn legacy_source_ref(
+        fixture: &Fixture,
+        project: &Path,
+        vault: &Path,
+        specification_id: &str,
+    ) -> PolicyBundleSourceRef {
+        let source = fixture
+            .specification_registry
+            .read_approved_source(project, vault, specification_id)
+            .unwrap();
+        PolicyBundleSourceRef {
+            source_project_id: source.project_id,
+            specification_id: source.specification_id,
+            content_hash: source.content_hash,
+        }
     }
 
     #[test]
-    fn bundle_compatibility_is_snapshot_stable_project_file_aware_and_path_body_safe() {
+    fn bundle_inspection_migrates_approved_sources_and_preserves_snapshot_safety() {
         let fixture = setup();
-        let scope = team_scope(&fixture, true);
-        let sources = policy_sources(&fixture, true);
-        let created = fixture
+        let source_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        let source_two_id = diagnose_project(&fixture.source_two)
+            .unwrap()
+            .identity
+            .project_id;
+        let source_refs = vec![
+            legacy_source_ref(
+                &fixture,
+                &fixture.source,
+                &fixture.source_vault,
+                &fixture.source_specification_id,
+            ),
+            legacy_source_ref(
+                &fixture,
+                &fixture.source_two,
+                &fixture.source_two_vault,
+                &fixture.source_two_specification_id,
+            ),
+        ];
+        seed_scope(
+            &fixture,
+            SCOPE_ID,
+            &[source_id.clone(), source_two_id],
+            false,
+            false,
+        );
+        seed_bundle(
+            &fixture,
+            BUNDLE_ID,
+            SCOPE_ID,
+            "Engineering policy",
+            &source_refs,
+            false,
+            false,
+        );
+
+        let listed = fixture
             .bundle_registry
-            .create(
-                &scope.scope.scope_id,
-                "Engineering policy",
-                &sources,
-                &fixture.scope_registry,
-                &fixture.specification_registry,
-            )
+            .list(&fixture.scope_registry)
             .unwrap();
-        assert!(created.created);
-        assert!(validate_policy_bundle_id(&created.bundle.bundle_id).is_ok());
-        assert_eq!(created.bundle.sources.len(), 2);
-        assert!(created
-            .bundle
+        assert_eq!(listed.bundles.len(), 1);
+        assert_eq!(listed.bundles[0].bundle_id, BUNDLE_ID);
+        assert_eq!(listed.bundles[0].sources.len(), 2);
+        assert!(listed.bundles[0]
             .sources
             .iter()
             .all(|source| source.status == PolicyBundleSourceStatus::Ready));
-
-        let retry = fixture
+        assert!(fixture
             .bundle_registry
-            .create(
-                &scope.scope.scope_id,
-                "Engineering policy",
-                &sources.iter().cloned().rev().collect::<Vec<_>>(),
-                &fixture.scope_registry,
-                &fixture.specification_registry,
+            .approved_source_registry
+            .authority_ready_for_expected_project(&fixture.source, &source_id)
+            .unwrap());
+        assert!(fixture
+            .bundle_registry
+            .approved_source_registry
+            .authority_ready_for_expected_project(
+                &fixture.source_two,
+                &diagnose_project(&fixture.source_two)
+                    .unwrap()
+                    .identity
+                    .project_id,
             )
-            .unwrap();
-        assert!(!retry.created);
-        assert_eq!(retry.bundle.bundle_id, created.bundle.bundle_id);
-        assert_eq!(
-            fixture
-                .bundle_registry
-                .list(&fixture.scope_registry)
-                .unwrap()
-                .bundles
-                .len(),
-            1
-        );
+            .unwrap());
 
         let stored = fs::read_to_string(fixture.bundle_registry.path()).unwrap();
-        let listed = serde_json::to_string(
-            &fixture
-                .bundle_registry
-                .list(&fixture.scope_registry)
-                .unwrap(),
-        )
-        .unwrap();
+        let listed_json = serde_json::to_string(&listed).unwrap();
         for private in [
             fixture.active.to_str().unwrap(),
             fixture.source.to_str().unwrap(),
@@ -1328,7 +1209,7 @@ mod tests {
             "Never commit credentials.",
         ] {
             assert!(!stored.contains(private));
-            assert!(!listed.contains(private));
+            assert!(!listed_json.contains(private));
         }
 
         fs::write(
@@ -1336,12 +1217,12 @@ mod tests {
             "# Team policy\n\nUse signed commits and two reviewers for releases.\n",
         )
         .unwrap();
-        let migrated_snapshot = fixture
+        let pinned = fixture
             .bundle_registry
             .list(&fixture.scope_registry)
             .unwrap();
         assert_eq!(
-            migrated_snapshot.bundles[0]
+            pinned.bundles[0]
                 .sources
                 .iter()
                 .find(|source| source.specification_id == fixture.source_specification_id)
@@ -1359,12 +1240,12 @@ mod tests {
                 "TeamPolicy.md",
             )
             .unwrap();
-        let still_snapshot_pinned = fixture
-            .bundle_registry
-            .list(&fixture.scope_registry)
-            .unwrap();
         assert_eq!(
-            still_snapshot_pinned.bundles[0]
+            fixture
+                .bundle_registry
+                .list(&fixture.scope_registry)
+                .unwrap()
+                .bundles[0]
                 .sources
                 .iter()
                 .find(|source| source.specification_id == fixture.source_specification_id)
@@ -1372,6 +1253,20 @@ mod tests {
                 .status,
             PolicyBundleSourceStatus::Ready
         );
+        fs::remove_file(fixture.specification_registry.path()).unwrap();
+        fs::remove_dir_all(&fixture.source_vault).unwrap();
+        fs::remove_dir_all(&fixture.source_two_vault).unwrap();
+        let migrated = fixture
+            .bundle_registry
+            .list(&fixture.scope_registry)
+            .unwrap();
+        assert!(migrated.bundles[0]
+            .sources
+            .iter()
+            .all(|source| source.status == PolicyBundleSourceStatus::Ready));
+        let migrated_json = serde_json::to_string(&migrated).unwrap();
+        assert!(!migrated_json.contains(fixture.source_vault.to_str().unwrap()));
+        assert!(!migrated_json.contains("Use signed commits"));
 
         fs::create_dir_all(fixture.source.join("docs")).unwrap();
         fs::write(
@@ -1384,30 +1279,20 @@ mod tests {
             .approved_source_registry
             .approve_project_file(&fixture.source, "docs/NativePolicy.md")
             .unwrap();
-        let native_bundle_id = generate_bundle_id();
-        let native_source_project_id = diagnose_project(&fixture.source)
-            .unwrap()
-            .identity
-            .project_id;
-        fixture
-            .bundle_registry
-            .mutate(|document| {
-                document.bundles.insert(
-                    native_bundle_id.clone(),
-                    PolicyBundleEntry {
-                        scope_id: scope.scope.scope_id.clone(),
-                        name: "Native project policy".to_owned(),
-                        sources: vec![PolicyBundleSourceRef {
-                            source_project_id: native_source_project_id,
-                            specification_id: native.source_id.clone(),
-                            content_hash: native.content_hash.clone(),
-                        }],
-                        created_at_unix_ms: unix_time_ms(),
-                    },
-                );
-                Ok(())
-            })
-            .unwrap();
+        let mut document: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(fixture.bundle_registry.path()).unwrap())
+                .unwrap();
+        document["bundles"][NATIVE_BUNDLE_ID] = serde_json::json!({
+            "scopeId": SCOPE_ID,
+            "name": "Native project policy",
+            "sources": [{
+                "sourceProjectId": source_id,
+                "specificationId": native.source_id,
+                "contentHash": native.content_hash
+            }],
+            "createdAtUnixMs": 1_700_000_000_001_u64
+        });
+        write_private_json(fixture.bundle_registry.path(), &document);
         let native_ready = fixture
             .bundle_registry
             .list(&fixture.scope_registry)
@@ -1416,7 +1301,7 @@ mod tests {
             native_ready
                 .bundles
                 .iter()
-                .find(|bundle| bundle.bundle_id == native_bundle_id)
+                .find(|bundle| bundle.bundle_id == NATIVE_BUNDLE_ID)
                 .unwrap()
                 .sources[0]
                 .status,
@@ -1435,53 +1320,50 @@ mod tests {
             native_changed
                 .bundles
                 .iter()
-                .find(|bundle| bundle.bundle_id == native_bundle_id)
+                .find(|bundle| bundle.bundle_id == NATIVE_BUNDLE_ID)
                 .unwrap()
                 .sources[0]
                 .status,
             PolicyBundleSourceStatus::SpecificationRevisionChanged
         );
-
-        let single_source_scope = team_scope(&fixture, false);
-        assert!(matches!(
-            fixture.bundle_registry.create(
-                &single_source_scope.scope.scope_id,
-                "Out of scope policy",
-                &[PolicyBundleSourceInput {
-                    source_project: fixture.source_two.clone(),
-                    specification_id: fixture.source_two_specification_id.clone(),
-                }],
-                &fixture.scope_registry,
-                &fixture.specification_registry,
-            ),
-            Err(LeyCoreError::InvalidPolicyBundleRequest(_))
-        ));
     }
 
     #[test]
-    fn bundle_activation_is_explicit_parent_scope_gated_and_history_is_retained() {
+    fn attachment_inspection_and_cleanup_preserve_parent_scope_and_source_history() {
         let fixture = setup();
-        let scope = team_scope(&fixture, false);
-        let bundle = fixture
+        let source_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        let source_ref = legacy_source_ref(
+            &fixture,
+            &fixture.source,
+            &fixture.source_vault,
+            &fixture.source_specification_id,
+        );
+        seed_scope(
+            &fixture,
+            SCOPE_ID,
+            std::slice::from_ref(&source_id),
+            false,
+            false,
+        );
+        seed_bundle(
+            &fixture,
+            BUNDLE_ID,
+            SCOPE_ID,
+            "Team rules",
+            std::slice::from_ref(&source_ref),
+            false,
+            false,
+        );
+        assert!(fixture
             .bundle_registry
-            .create(
-                &scope.scope.scope_id,
-                "Team rules",
-                &policy_sources(&fixture, false),
-                &fixture.scope_registry,
-                &fixture.specification_registry,
-            )
-            .unwrap();
-
-        assert!(matches!(
-            fixture.bundle_registry.attach(
-                &fixture.active,
-                &bundle.bundle.bundle_id,
-                &fixture.scope_registry,
-            ),
-            Err(LeyCoreError::InvalidPolicyBundleRequest(_))
-        ));
-        let no_scope_ids = active_scope_ids(&fixture);
+            .attached(&fixture.active, &fixture.scope_registry)
+            .unwrap()
+            .attachments
+            .is_empty());
+        let no_scope_ids = BTreeSet::new();
         fixture
             .bundle_registry
             .with_agent_context_sources_locked(&fixture.active, &no_scope_ids, |sources| {
@@ -1491,48 +1373,38 @@ mod tests {
             })
             .unwrap();
 
-        fixture
-            .scope_registry
-            .attach(&fixture.active, &scope.scope.scope_id)
-            .unwrap();
-        let scope_only_ids = active_scope_ids(&fixture);
-        fixture
+        seed_scope(
+            &fixture,
+            SCOPE_ID,
+            std::slice::from_ref(&source_id),
+            true,
+            true,
+        );
+        seed_bundle(
+            &fixture,
+            BUNDLE_ID,
+            SCOPE_ID,
+            "Team rules",
+            std::slice::from_ref(&source_ref),
+            true,
+            true,
+        );
+        let active_scope_ids = BTreeSet::from([SCOPE_ID.to_owned()]);
+        let active_attachment = fixture
             .bundle_registry
-            .with_agent_context_sources_locked(&fixture.active, &scope_only_ids, |sources| {
-                assert!(sources.active.is_empty());
-                assert!(sources.historical.is_empty());
-                Ok(())
-            })
+            .attached(&fixture.active, &fixture.scope_registry)
             .unwrap();
-
-        let attached = fixture
-            .bundle_registry
-            .attach(
-                &fixture.active,
-                &bundle.bundle.bundle_id,
-                &fixture.scope_registry,
-            )
-            .unwrap();
-        assert!(attached.created);
+        assert_eq!(active_attachment.attachments.len(), 1);
         assert_eq!(
-            attached.attachment.state,
+            active_attachment.attachments[0].state,
             PolicyBundleAttachmentState::Active
         );
-        let retry = fixture
-            .bundle_registry
-            .attach(
-                &fixture.active,
-                &bundle.bundle.bundle_id,
-                &fixture.scope_registry,
-            )
-            .unwrap();
-        assert!(!retry.created);
         fixture
             .bundle_registry
-            .with_agent_context_sources_locked(&fixture.active, &scope_only_ids, |sources| {
+            .with_agent_context_sources_locked(&fixture.active, &active_scope_ids, |sources| {
                 assert_eq!(sources.active.len(), 1);
                 assert_eq!(sources.historical.len(), 1);
-                assert_eq!(sources.active[0].bundle_id, bundle.bundle.bundle_id);
+                assert_eq!(sources.active[0].bundle_id, BUNDLE_ID);
                 assert_eq!(
                     sources.active[0].specification_id,
                     fixture.source_specification_id
@@ -1541,32 +1413,37 @@ mod tests {
             })
             .unwrap();
 
-        fixture
-            .scope_registry
-            .detach(&fixture.active, &scope.scope.scope_id)
-            .unwrap();
-        let detached = fixture
+        seed_scope(
+            &fixture,
+            SCOPE_ID,
+            std::slice::from_ref(&source_id),
+            false,
+            true,
+        );
+        let detached_scope = fixture
             .bundle_registry
             .attached(&fixture.active, &fixture.scope_registry)
             .unwrap();
         assert_eq!(
-            detached.attachments[0].state,
+            detached_scope.attachments[0].state,
             PolicyBundleAttachmentState::ParentScopeDetachedOrReattached
         );
-        let no_scope_ids = active_scope_ids(&fixture);
         fixture
             .bundle_registry
-            .with_agent_context_sources_locked(&fixture.active, &no_scope_ids, |sources| {
+            .with_agent_context_sources_locked(&fixture.active, &BTreeSet::new(), |sources| {
                 assert!(sources.active.is_empty());
                 assert_eq!(sources.historical.len(), 1);
                 Ok(())
             })
             .unwrap();
 
-        fixture
-            .scope_registry
-            .attach(&fixture.active, &scope.scope.scope_id)
-            .unwrap();
+        seed_scope(
+            &fixture,
+            SCOPE_ID,
+            std::slice::from_ref(&source_id),
+            true,
+            true,
+        );
         assert_eq!(
             fixture
                 .bundle_registry
@@ -1579,7 +1456,7 @@ mod tests {
 
         assert!(fixture
             .bundle_registry
-            .detach(&fixture.active, &bundle.bundle.bundle_id)
+            .detach(&fixture.active, BUNDLE_ID)
             .unwrap()
             .is_some());
         assert!(fixture
@@ -1588,13 +1465,12 @@ mod tests {
             .unwrap()
             .attachments
             .is_empty());
-        let active_scope_ids = active_scope_ids(&fixture);
         fixture
             .bundle_registry
             .with_agent_context_sources_locked(&fixture.active, &active_scope_ids, |sources| {
                 assert!(sources.active.is_empty());
                 assert_eq!(sources.historical.len(), 1);
-                assert_eq!(sources.historical[0].bundle_id, bundle.bundle.bundle_id);
+                assert_eq!(sources.historical[0].bundle_id, BUNDLE_ID);
                 Ok(())
             })
             .unwrap();
@@ -1603,16 +1479,35 @@ mod tests {
     #[test]
     fn registry_is_private_and_corruption_or_symlink_fails_closed() {
         let fixture = setup();
-        let scope = team_scope(&fixture, false);
+        let source_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        let source_ref = legacy_source_ref(
+            &fixture,
+            &fixture.source,
+            &fixture.source_vault,
+            &fixture.source_specification_id,
+        );
+        seed_scope(
+            &fixture,
+            SCOPE_ID,
+            std::slice::from_ref(&source_id),
+            false,
+            false,
+        );
+        seed_bundle(
+            &fixture,
+            BUNDLE_ID,
+            SCOPE_ID,
+            "Team rules",
+            std::slice::from_ref(&source_ref),
+            false,
+            false,
+        );
         fixture
             .bundle_registry
-            .create(
-                &scope.scope.scope_id,
-                "Team rules",
-                &policy_sources(&fixture, false),
-                &fixture.scope_registry,
-                &fixture.specification_registry,
-            )
+            .list(&fixture.scope_registry)
             .unwrap();
 
         #[cfg(unix)]
@@ -1659,20 +1554,15 @@ mod tests {
             ));
         }
 
-        fs::write(
+        write_private_json(
             fixture.bundle_registry.path(),
-            r#"{"schemaVersion":99,"bundles":{},"attachments":{},"attachmentHistory":{}}"#,
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(
-                fixture.bundle_registry.path(),
-                fs::Permissions::from_mode(0o600),
-            )
-            .unwrap();
-        }
+            &serde_json::json!({
+                "schemaVersion": 99,
+                "bundles": {},
+                "attachments": {},
+                "attachmentHistory": {}
+            }),
+        );
         assert!(matches!(
             fixture.bundle_registry.list(&fixture.scope_registry),
             Err(LeyCoreError::InvalidPolicyBundleRegistry(_))

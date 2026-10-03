@@ -759,7 +759,9 @@ fn bootstrap_reference(arguments: &[String]) -> Result<(), CliError> {
                         grant.grant_id, grant.source_project_id, grant.status
                     );
                 }
-                println!("Permission: read-only captured reference authority; no project writes");
+                println!(
+                    "Legacy record only: no current context authority; detach locally when no longer needed"
+                );
             }
             Ok(())
         }
@@ -3520,6 +3522,7 @@ fn print_help() {
     );
     println!("  ley mcp [path] [--vault EXISTING_LEGACY_VAULT] [--allow-session-writes]");
     println!("      [--allow-learning-proposals] [--egress-target cloud|local]");
+    println!("      # --allow-learning-proposals is compatibility-only for older projects");
     println!("  ley egress list [PROJECT] [--json]");
     println!("  ley egress project POLICY [PROJECT] [--json]");
     println!("  ley egress specification SPECIFICATION_ID agent-ok [PROJECT] [--json]  # clear legacy override");
@@ -3527,27 +3530,27 @@ fn print_help() {
     println!(
         "  ley egress connector CONNECTOR_ID agent-ok [PROJECT] [--json]  # clear legacy override"
     );
-    println!("  ley connector list [PROJECT] [--json]");
+    println!("  ley connector list [PROJECT] [--json]  # legacy inspect/cleanup");
     println!(
-        "  ley connector show CONNECTOR_ID [PROJECT] [--vault EXISTING_LEGACY_VAULT] [--json]"
+        "  ley connector show CONNECTOR_ID [PROJECT] [--vault EXISTING_LEGACY_VAULT] [--json]  # legacy inspect"
     );
     println!(
-        "  ley connector remove CONNECTOR_ID [PROJECT] [--vault EXISTING_LEGACY_VAULT] [--json]"
+        "  ley connector remove CONNECTOR_ID [PROJECT] [--vault EXISTING_LEGACY_VAULT] [--json]  # legacy cleanup"
     );
     println!("  ley bootstrap-spec attach SOURCE_PROJECT SPECIFICATION_ID [WORKSPACE] [--json]");
     println!("  ley bootstrap-spec list [WORKSPACE] [--json]");
     println!("  ley bootstrap-spec detach GRANT_ID [WORKSPACE] [--json]");
-    println!("  ley bootstrap-ref list [WORKSPACE] [--json]");
-    println!("  ley bootstrap-ref detach GRANT_ID [WORKSPACE] [--json]");
-    println!("  ley mount list [ACTIVE_PROJECT] [--json]");
-    println!("  ley mount remove MOUNT_ID [ACTIVE_PROJECT] [--json]");
-    println!("  ley scope list [--json]");
-    println!("  ley scope attached [ACTIVE_PROJECT] [--json]");
-    println!("  ley scope detach SCOPE_ID [ACTIVE_PROJECT] [--json]");
-    println!("  ley policy-bundle list [--json]");
-    println!("  ley policy-bundle attached [ACTIVE_PROJECT] [--json]");
-    println!("  ley policy-bundle status [ACTIVE_PROJECT] [--json]");
-    println!("  ley policy-bundle detach BUNDLE_ID [ACTIVE_PROJECT] [--json]");
+    println!("  ley bootstrap-ref list [WORKSPACE] [--json]  # legacy inspect/cleanup");
+    println!("  ley bootstrap-ref detach GRANT_ID [WORKSPACE] [--json]  # legacy cleanup");
+    println!("  ley mount list [ACTIVE_PROJECT] [--json]  # legacy inspect/cleanup");
+    println!("  ley mount remove MOUNT_ID [ACTIVE_PROJECT] [--json]  # legacy cleanup");
+    println!("  ley scope list [--json]  # legacy inspect/cleanup");
+    println!("  ley scope attached [ACTIVE_PROJECT] [--json]  # legacy inspect/cleanup");
+    println!("  ley scope detach SCOPE_ID [ACTIVE_PROJECT] [--json]  # legacy cleanup");
+    println!("  ley policy-bundle list [--json]  # legacy inspect/cleanup");
+    println!("  ley policy-bundle attached [ACTIVE_PROJECT] [--json]  # legacy inspect/cleanup");
+    println!("  ley policy-bundle status [ACTIVE_PROJECT] [--json]  # legacy inspect/cleanup");
+    println!("  ley policy-bundle detach BUNDLE_ID [ACTIVE_PROJECT] [--json]  # legacy cleanup");
     println!("  ley session start [path] --name NAME --goal GOAL [--host HOST] [--agent AGENT]");
     println!(
         "  ley session import codex-history [path] --source FILE --host-session SESSION_UUID [--vault EXISTING_LEGACY_VAULT] [--json]"

@@ -52,7 +52,6 @@ See [`LEY.md`](LEY.md) in a local development checkout for the current execution
 ├── docs/                 # Current docs plus historical ADR/research evidence
 ├── eval/                 # Deterministic and real-agent evaluation runners
 ├── integrations/         # Codex and Claude Code packages
-├── schemas/              # User-facing structured input schemas that remain current
 ├── src/
 │   ├── app/              # Native desktop React composition
 │   ├── features/         # Focused continuity desktop feature slices
@@ -92,9 +91,11 @@ typecheck/lint/tests/website+desktop-UI builds/production dependency audit and t
 format/check/tests on Ubuntu. The manual six-lane portability/security workflow remains separate because
 its Linux/macOS/Windows x64+ARM64 matrix is intentionally more expensive and evidence-oriented.
 
-## Migration status
+## Compatibility state
 
-This is an incremental reset rather than a blind rewrite. The retired notebook implementation has been removed. Remaining compatibility code is kept only where it still protects migration, recovery, privacy/erasure, or historical local data while the focused continuity surface is narrowed.
+The retired notebook implementation has been removed. Remaining compatibility code exists only where it still
+protects real migration, recovery, privacy/erasure, or historical local data; it is not a second product surface and
+must not grow new authority.
 
 Work being retained or adapted includes:
 

@@ -8,8 +8,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub const KNOWLEDGE_SCOPE_REGISTRY_FILE: &str = "knowledge-scopes-v1.json";
@@ -27,18 +25,6 @@ const PRIVACY_NOTICE: &str = "Knowledge Scope authority is OS-private. It stores
 pub enum KnowledgeScopeKind {
     Team,
     Organization,
-}
-
-impl KnowledgeScopeKind {
-    pub fn parse(value: &str) -> Result<Self, LeyCoreError> {
-        match value {
-            "team" => Ok(Self::Team),
-            "organization" | "org" => Ok(Self::Organization),
-            _ => Err(LeyCoreError::InvalidKnowledgeScopeRequest(
-                "knowledge scope kind must be team or organization".to_owned(),
-            )),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -76,14 +62,6 @@ pub struct KnowledgeScope {
     pub created_at_unix_ms: u64,
 }
 
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KnowledgeScopeMutation {
-    pub scope: KnowledgeScope,
-    pub created: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnowledgeScopeList {
@@ -101,14 +79,6 @@ pub struct KnowledgeScopeAttachment {
     pub permission: KnowledgeScopePermission,
     pub source_count: usize,
     pub attached_at_unix_ms: u64,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KnowledgeScopeAttachmentMutation {
-    pub attachment: KnowledgeScopeAttachment,
-    pub created: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -305,67 +275,6 @@ impl KnowledgeScopeRegistry {
         &self.path
     }
 
-    #[cfg(test)]
-    pub fn create(
-        &self,
-        kind: KnowledgeScopeKind,
-        name: &str,
-        source_projects: &[PathBuf],
-    ) -> Result<KnowledgeScopeMutation, LeyCoreError> {
-        let name = validate_scope_name(name).map_err(LeyCoreError::InvalidKnowledgeScopeRequest)?;
-        if source_projects.is_empty() || source_projects.len() > MAX_KNOWLEDGE_SCOPE_SOURCES {
-            return Err(LeyCoreError::InvalidKnowledgeScopeRequest(format!(
-                "knowledge scope must contain between 1 and {MAX_KNOWLEDGE_SCOPE_SOURCES} source projects"
-            )));
-        }
-        let mut source_project_ids = Vec::with_capacity(source_projects.len());
-        let mut unique = BTreeSet::new();
-        for source_project in source_projects {
-            let diagnostic = diagnose_project(source_project)?;
-            self.binding_registry.resolve(&diagnostic.root, None)?;
-            if !unique.insert(diagnostic.identity.project_id.clone()) {
-                return Err(LeyCoreError::InvalidKnowledgeScopeRequest(
-                    "knowledge scope source projects must be unique".to_owned(),
-                ));
-            }
-            source_project_ids.push(diagnostic.identity.project_id);
-        }
-        source_project_ids.sort();
-        let created_at_unix_ms = unix_time_ms();
-        let (scope_id, created) = self.mutate(|document| {
-            if let Some((scope_id, _)) = document.scopes.iter().find(|(_, entry)| {
-                entry.kind == kind
-                    && entry.name == name
-                    && entry.source_project_ids == source_project_ids
-            }) {
-                return Ok((scope_id.clone(), false));
-            }
-            if document.scopes.len() >= MAX_KNOWLEDGE_SCOPES {
-                return Err(LeyCoreError::InvalidKnowledgeScopeRequest(format!(
-                    "at most {MAX_KNOWLEDGE_SCOPES} knowledge scopes may be retained"
-                )));
-            }
-            let scope_id = generate_scope_id();
-            document.scopes.insert(
-                scope_id.clone(),
-                KnowledgeScopeEntry {
-                    kind,
-                    name: name.clone(),
-                    source_project_ids: source_project_ids.clone(),
-                    created_at_unix_ms,
-                },
-            );
-            Ok((scope_id, true))
-        })?;
-        let scope = self
-            .list()?
-            .scopes
-            .into_iter()
-            .find(|scope| scope.scope_id == scope_id)
-            .expect("created scope remains in registry");
-        Ok(KnowledgeScopeMutation { scope, created })
-    }
-
     pub fn list(&self) -> Result<KnowledgeScopeList, LeyCoreError> {
         let document = self.read_locked()?;
         let mut scopes = document
@@ -382,76 +291,6 @@ impl KnowledgeScopeRegistry {
         Ok(KnowledgeScopeList {
             scopes,
             privacy_notice: PRIVACY_NOTICE,
-        })
-    }
-
-    #[cfg(test)]
-    pub fn attach(
-        &self,
-        active_project: impl AsRef<Path>,
-        scope_id: &str,
-    ) -> Result<KnowledgeScopeAttachmentMutation, LeyCoreError> {
-        validate_knowledge_scope_id(scope_id)
-            .map_err(LeyCoreError::InvalidKnowledgeScopeRequest)?;
-        let active = diagnose_project(active_project)?;
-        self.binding_registry.resolve(&active.root, None)?;
-        let active_project_id = active.identity.project_id;
-        let now = unix_time_ms();
-        let (scope, attached_at, created) = self.mutate(|document| {
-            let scope = document
-                .scopes
-                .get(scope_id)
-                .cloned()
-                .ok_or_else(|| LeyCoreError::KnowledgeScopeNotFound(scope_id.to_owned()))?;
-            if scope
-                .source_project_ids
-                .iter()
-                .any(|project_id| project_id == &active_project_id)
-            {
-                return Err(LeyCoreError::InvalidKnowledgeScopeRequest(
-                    "a project cannot attach a knowledge scope that includes itself as a source"
-                        .to_owned(),
-                ));
-            }
-            if let Some(existing) = document
-                .attachments
-                .get(&active_project_id)
-                .and_then(|items| items.get(scope_id))
-                .copied()
-            {
-                return Ok((scope, existing, false));
-            }
-            let current = document
-                .attachments
-                .get(&active_project_id)
-                .map_or(0, BTreeMap::len);
-            if current >= MAX_ATTACHED_KNOWLEDGE_SCOPES_PER_PROJECT {
-                return Err(LeyCoreError::InvalidKnowledgeScopeRequest(format!(
-                    "an active project may attach at most {MAX_ATTACHED_KNOWLEDGE_SCOPES_PER_PROJECT} knowledge scopes"
-                )));
-            }
-            let history = document
-                .attachment_history
-                .entry(active_project_id.clone())
-                .or_default();
-            if !history.contains_key(scope_id)
-                && history.len() >= MAX_KNOWLEDGE_SCOPE_HISTORY_PER_PROJECT
-            {
-                return Err(LeyCoreError::InvalidKnowledgeScopeRequest(format!(
-                    "project reached the {MAX_KNOWLEDGE_SCOPE_HISTORY_PER_PROJECT} knowledge-scope history limit"
-                )));
-            }
-            history.insert(scope_id.to_owned(), scope.source_project_ids.clone());
-            document
-                .attachments
-                .entry(active_project_id.clone())
-                .or_default()
-                .insert(scope_id.to_owned(), now);
-            Ok((scope, now, true))
-        })?;
-        Ok(KnowledgeScopeAttachmentMutation {
-            attachment: attachment(&active_project_id, scope_id, &scope, attached_at),
-            created,
         })
     }
 
@@ -871,11 +710,6 @@ fn validate_scope_name(value: &str) -> Result<String, String> {
     Ok(value.to_owned())
 }
 
-#[cfg(test)]
-fn generate_scope_id() -> String {
-    format!("ksc_{}", Uuid::new_v4().simple())
-}
-
 pub(crate) fn validate_knowledge_scope_id(value: &str) -> Result<(), String> {
     let Some(uuid) = value.strip_prefix("ksc_") else {
         return Err("scopeId must start with ksc_".to_owned());
@@ -889,14 +723,6 @@ pub(crate) fn validate_knowledge_scope_id(value: &str) -> Result<(), String> {
         return Err("scopeId must contain a 32-character lowercase hexadecimal UUID".to_owned());
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn unix_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 fn reject_non_regular_if_present(path: &Path) -> Result<(), LeyCoreError> {
@@ -930,6 +756,8 @@ mod tests {
     use super::*;
     use crate::{initialize_project, CaptureMode};
     use tempfile::tempdir;
+
+    const SCOPE_ID: &str = "ksc_11111111111111111111111111111111";
 
     struct Fixture {
         _base: tempfile::TempDir,
@@ -989,52 +817,92 @@ mod tests {
         }
     }
 
+    fn write_private_json(path: &Path, document: &serde_json::Value) {
+        fs::write(
+            path,
+            format!("{}\n", serde_json::to_string_pretty(document).unwrap()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
+
+    fn seed_scope(
+        fixture: &Fixture,
+        scope_id: &str,
+        source_project_ids: &[String],
+        attached: bool,
+    ) {
+        let active_id = diagnose_project(&fixture.active)
+            .unwrap()
+            .identity
+            .project_id;
+        let attachments = if attached {
+            serde_json::json!({ active_id.clone(): { scope_id: 1_700_000_000_100_u64 } })
+        } else {
+            serde_json::json!({})
+        };
+        let history = if attached {
+            serde_json::json!({ active_id: { scope_id: source_project_ids } })
+        } else {
+            serde_json::json!({})
+        };
+        write_private_json(
+            fixture.registry.path(),
+            &serde_json::json!({
+                "schemaVersion": KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION,
+                "scopes": {
+                    scope_id: {
+                        "kind": "team",
+                        "name": "Platform team",
+                        "sourceProjectIds": source_project_ids,
+                        "createdAtUnixMs": 1_700_000_000_000_u64
+                    }
+                },
+                "attachments": attachments,
+                "attachmentHistory": history
+            }),
+        );
+    }
+
     #[test]
-    fn scope_authority_is_immutable_idempotent_project_scoped_and_path_safe() {
+    fn legacy_scope_can_be_inspected_detached_and_kept_in_egress_ancestry() {
         let fixture = setup();
-        let created = fixture
-            .registry
-            .create(
-                KnowledgeScopeKind::Team,
-                "Platform team",
-                &[fixture.source.clone(), fixture.source_two.clone()],
-            )
-            .unwrap();
-        assert!(created.created);
-        assert_eq!(created.scope.permission, KnowledgeScopePermission::ReadOnly);
-        assert_eq!(created.scope.sources.len(), 2);
-        assert!(created
-            .scope
+        let source_ids = vec![
+            diagnose_project(&fixture.source)
+                .unwrap()
+                .identity
+                .project_id,
+            diagnose_project(&fixture.source_two)
+                .unwrap()
+                .identity
+                .project_id,
+        ];
+        seed_scope(&fixture, SCOPE_ID, &source_ids, true);
+
+        let list = fixture.registry.list().unwrap();
+        assert_eq!(list.scopes.len(), 1);
+        assert_eq!(list.scopes[0].scope_id, SCOPE_ID);
+        assert_eq!(
+            list.scopes[0].permission,
+            KnowledgeScopePermission::ReadOnly
+        );
+        assert_eq!(list.scopes[0].sources.len(), 2);
+        assert!(list.scopes[0]
             .sources
             .iter()
             .all(|source| source.status == KnowledgeScopeSourceStatus::Ready));
-
-        let retry = fixture
-            .registry
-            .create(
-                KnowledgeScopeKind::Team,
-                "Platform team",
-                &[fixture.source_two.clone(), fixture.source.clone()],
-            )
-            .unwrap();
-        assert!(!retry.created);
-        assert_eq!(retry.scope.scope_id, created.scope.scope_id);
-        assert_eq!(fixture.registry.list().unwrap().scopes.len(), 1);
-
-        let attached = fixture
-            .registry
-            .attach(&fixture.active, &created.scope.scope_id)
-            .unwrap();
-        assert!(attached.created);
-        assert_eq!(
-            attached.attachment.permission,
-            KnowledgeScopePermission::ReadOnly
-        );
-        let retry_attach = fixture
-            .registry
-            .attach(&fixture.active, &created.scope.scope_id)
-            .unwrap();
-        assert!(!retry_attach.created);
+        let serialized = serde_json::to_string(&list).unwrap();
+        assert!(!serialized.contains(fixture.active.to_str().unwrap()));
+        assert!(!serialized.contains(fixture.source.to_str().unwrap()));
+        assert!(!serialized.contains(fixture.source_two.to_str().unwrap()));
+        assert!(!serialized.contains(fixture.source_vault.to_str().unwrap()));
+        let attached = fixture.registry.attached(&fixture.active).unwrap();
+        assert_eq!(attached.attachments.len(), 1);
+        assert_eq!(attached.attachments[0].scope_id, SCOPE_ID);
         assert!(fixture
             .registry
             .attached(&fixture.active_two)
@@ -1042,38 +910,48 @@ mod tests {
             .attachments
             .is_empty());
 
-        let serialized = serde_json::to_string(&fixture.registry.list().unwrap()).unwrap();
-        assert!(!serialized.contains(fixture.active.to_str().unwrap()));
-        assert!(!serialized.contains(fixture.source.to_str().unwrap()));
-        assert!(!serialized.contains(fixture.source_two.to_str().unwrap()));
-        assert!(!serialized.contains(fixture.source_vault.to_str().unwrap()));
-
-        assert!(matches!(
-            fixture
-                .registry
-                .create(
-                    KnowledgeScopeKind::Team,
-                    "Self source",
-                    std::slice::from_ref(&fixture.active)
-                )
-                .and_then(|scope| fixture
-                    .registry
-                    .attach(&fixture.active, &scope.scope.scope_id)),
-            Err(LeyCoreError::InvalidKnowledgeScopeRequest(_))
-        ));
+        fixture
+            .registry
+            .with_agent_context_sources_locked(&fixture.active, |sources| {
+                assert_eq!(sources.active.len(), 2);
+                assert_eq!(sources.historical.len(), 2);
+                Ok(())
+            })
+            .unwrap();
+        fixture
+            .registry
+            .detach(&fixture.active, SCOPE_ID)
+            .unwrap()
+            .unwrap();
+        assert!(fixture
+            .registry
+            .attached(&fixture.active)
+            .unwrap()
+            .attachments
+            .is_empty());
+        fixture
+            .registry
+            .with_agent_context_sources_locked(&fixture.active, |sources| {
+                assert!(sources.active.is_empty());
+                assert_eq!(sources.historical.len(), 2);
+                assert!(source_ids.iter().all(|source_id| sources
+                    .historical
+                    .iter()
+                    .any(|source| source.scope_id == SCOPE_ID
+                        && source.source_project_id == *source_id)));
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
     fn source_availability_is_disclosed_without_removing_scope_authority() {
         let fixture = setup();
-        let created = fixture
-            .registry
-            .create(
-                KnowledgeScopeKind::Organization,
-                "Architecture group",
-                std::slice::from_ref(&fixture.source),
-            )
-            .unwrap();
+        let source_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        seed_scope(&fixture, SCOPE_ID, &[source_id], false);
         fs::remove_dir_all(&fixture.source_vault).unwrap();
         let no_vault = fixture.registry.list().unwrap();
         assert_eq!(
@@ -1082,7 +960,7 @@ mod tests {
         );
         fs::remove_dir_all(&fixture.source).unwrap();
         let no_project = fixture.registry.list().unwrap();
-        assert_eq!(no_project.scopes[0].scope_id, created.scope.scope_id);
+        assert_eq!(no_project.scopes[0].scope_id, SCOPE_ID);
         assert_eq!(
             no_project.scopes[0].sources[0].status,
             KnowledgeScopeSourceStatus::SourceProjectUnavailable
@@ -1092,25 +970,48 @@ mod tests {
     #[test]
     fn registry_is_private_bounded_and_corruption_or_symlink_fails_closed() {
         let fixture = setup();
-        for index in 0..MAX_KNOWLEDGE_SCOPES {
-            fixture
-                .registry
-                .create(
-                    KnowledgeScopeKind::Team,
-                    &format!("Team {index}"),
-                    std::slice::from_ref(&fixture.source),
-                )
-                .unwrap();
+        let source_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        let mut scopes = serde_json::Map::new();
+        for index in 0..=MAX_KNOWLEDGE_SCOPES {
+            scopes.insert(
+                format!("ksc_{:032x}", index + 1),
+                serde_json::json!({
+                    "kind": "team",
+                    "name": format!("Team {index}"),
+                    "sourceProjectIds": [source_id],
+                    "createdAtUnixMs": 1
+                }),
+            );
         }
+        write_private_json(
+            fixture.registry.path(),
+            &serde_json::json!({
+                "schemaVersion": KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION,
+                "scopes": scopes
+            }),
+        );
         assert!(matches!(
-            fixture.registry.create(
-                KnowledgeScopeKind::Team,
-                "Overflow team",
-                std::slice::from_ref(&fixture.source)
-            ),
-            Err(LeyCoreError::InvalidKnowledgeScopeRequest(_))
+            fixture.registry.list(),
+            Err(LeyCoreError::InvalidKnowledgeScopeRegistry(_))
         ));
 
+        write_private_json(
+            fixture.registry.path(),
+            &serde_json::json!({
+                "schemaVersion": KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION,
+                "scopes": {
+                    SCOPE_ID: {
+                        "kind": "team",
+                        "name": "Platform team",
+                        "sourceProjectIds": [source_id],
+                        "createdAtUnixMs": 1
+                    }
+                }
+            }),
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::{symlink, PermissionsExt};
@@ -1132,17 +1033,10 @@ mod tests {
             ));
         }
 
-        fs::write(
+        write_private_json(
             fixture.registry.path(),
-            r#"{"schemaVersion":99,"scopes":{}}"#,
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(fixture.registry.path(), fs::Permissions::from_mode(0o600))
-                .unwrap();
-        }
+            &serde_json::json!({"schemaVersion": 99, "scopes": {}}),
+        );
         assert!(matches!(
             fixture.registry.list(),
             Err(LeyCoreError::InvalidKnowledgeScopeRegistry(_))
@@ -1155,20 +1049,11 @@ mod tests {
         use std::time::Duration;
 
         let fixture = setup();
-        let scope = fixture
-            .registry
-            .create(
-                KnowledgeScopeKind::Team,
-                "Platform team",
-                std::slice::from_ref(&fixture.source),
-            )
-            .unwrap();
-        fixture
-            .registry
-            .attach(&fixture.active, &scope.scope.scope_id)
-            .unwrap();
-        let source_project_id = scope.scope.sources[0].source_project_id.clone();
-        let scope_id = scope.scope.scope_id.clone();
+        let source_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        seed_scope(&fixture, SCOPE_ID, std::slice::from_ref(&source_id), true);
 
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
@@ -1189,11 +1074,8 @@ mod tests {
         let (detached_tx, detached_rx) = mpsc::channel();
         let writer_registry = fixture.registry.clone();
         let writer_active = fixture.active.clone();
-        let writer_scope_id = scope_id.clone();
         let writer = std::thread::spawn(move || {
-            writer_registry
-                .detach(writer_active, &writer_scope_id)
-                .unwrap();
+            writer_registry.detach(writer_active, SCOPE_ID).unwrap();
             detached_tx.send(()).unwrap();
         });
         assert!(detached_rx.recv_timeout(Duration::from_millis(50)).is_err());
@@ -1212,7 +1094,7 @@ mod tests {
             .with_agent_context_sources_locked(&fixture.active, |sources| {
                 assert!(sources.active.is_empty());
                 assert!(sources.historical.iter().any(|source| {
-                    source.scope_id == scope_id && source.source_project_id == source_project_id
+                    source.scope_id == SCOPE_ID && source.source_project_id == source_id
                 }));
                 Ok(())
             })

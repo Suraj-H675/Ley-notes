@@ -903,24 +903,6 @@ def render_context(pack: dict[str, object]) -> str:
         ("relativePath", "specificationId"),
     )
     append_source(
-        "Policy bundle context",
-        "policyBundlePolicies",
-        "source",
-        ("bundleName", "relativePath", "specificationId"),
-    )
-    append_source(
-        "Mounted reference context",
-        "mountedReferences",
-        "excerpt",
-        ("title", "entityId"),
-    )
-    append_source(
-        "Shared knowledge context",
-        "sharedKnowledgeReferences",
-        "excerpt",
-        ("title", "entityId"),
-    )
-    append_source(
         "Active project memory",
         "items",
         "excerpt",

@@ -3877,20 +3877,6 @@ fn context_utility_included_records(
             source_project_id: None,
         });
     }
-    for item in &pack.mounted_references {
-        records.push(ContextUtilityIncludedRecord {
-            source: ContextUtilityRecordSource::MountedReference,
-            entity_id: item.entity_id.clone(),
-            kind: Some(project_memory_result_kind_label(item.kind).to_owned()),
-            session_id: item.session_id.clone(),
-            learning_id: item.learning_id.clone(),
-            learning_kind: None,
-            learning_event_count: None,
-            specification_id: None,
-            mount_id: Some(item.mount_id.clone()),
-            source_project_id: Some(item.source_project_id.clone()),
-        });
-    }
     records.sort();
     records.dedup();
     let omitted = records
@@ -12309,6 +12295,68 @@ mod tests {
         assert_eq!(
             rebuilt.context_utility_observations,
             observed.session.context_utility_observations
+        );
+    }
+
+    #[test]
+    fn stored_mounted_reference_context_utility_records_still_validate_and_replay() {
+        let (base, project, vault) = setup_memory();
+        let started = start_session(&project, &vault, start_input(request_id('2'))).unwrap();
+        let session_id = started.session.session_id.clone();
+        let pack = compile_test_pack(&base, &project, &vault, "legacy mounted reference record");
+        let input = ContextUtilityBindingInput {
+            request_id: request_id('3'),
+            expected_event_count: 1,
+            expected_context_pack_id: pack.context_pack_id.clone(),
+            task: pack.task.clone(),
+            max_results: 8,
+            max_tokens: pack.max_tokens,
+        };
+        let bound =
+            bind_context_utility_pack(&project, &vault, &session_id, input.clone(), &pack).unwrap();
+        let event_path = session_directory(&project, &vault, &session_id)
+            .join(EVENTS_DIRECTORY)
+            .join(format!("{}.json", bound.event_id));
+        let mut event: SessionEvent =
+            serde_json::from_slice(&std::fs::read(&event_path).unwrap()).unwrap();
+        let SessionEventPayload::ContextUtilityBound(binding) = &mut event.payload else {
+            panic!("expected a context utility binding event");
+        };
+        let mounted_record = ContextUtilityIncludedRecord {
+            source: ContextUtilityRecordSource::MountedReference,
+            entity_id: "legacy-mounted-decision".to_owned(),
+            kind: Some("decision".to_owned()),
+            session_id: Some(session_id.clone()),
+            learning_id: None,
+            learning_kind: None,
+            learning_event_count: None,
+            specification_id: None,
+            mount_id: Some(format!("mnt_{}", "a".repeat(32))),
+            source_project_id: Some(format!("prj_{}", "b".repeat(32))),
+        };
+        binding.included_records = vec![mounted_record.clone()];
+        event.request_fingerprint = request_fingerprint(
+            &event.project_id,
+            &event.session_id,
+            &event.request_id,
+            &event.payload,
+        )
+        .unwrap();
+        std::fs::write(&event_path, serde_json::to_vec_pretty(&event).unwrap()).unwrap();
+
+        let rebuilt = read_session(&project, &vault, &session_id).unwrap();
+        assert_eq!(
+            rebuilt.context_utility_bindings[0].included_records,
+            [mounted_record.clone()]
+        );
+        let replayed =
+            replay_context_utility_binding_if_present(&project, &vault, &session_id, &input)
+                .unwrap()
+                .expect("stored mounted-reference record should replay");
+        assert!(replayed.replayed);
+        assert_eq!(
+            replayed.session.context_utility_bindings[0].included_records,
+            [mounted_record]
         );
     }
 

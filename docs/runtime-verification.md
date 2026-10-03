@@ -90,6 +90,9 @@ remain intentionally outside the current product matrix.
   `ley_checkpoint` when session writes were explicitly enabled.
 - An inactive ordinary workspace exposes no project-memory tools and performs no implicit initialization or scan.
 - Bootstrap Specification access for an uninitialized workspace remains explicit and read-only.
+- Retained Bootstrap Reference, Context Mount, Knowledge Scope, Policy Bundle, and External Connector state remains
+  inspect/remove/detach compatibility only. Release checks must not expose new growth paths, provider refresh/fetch,
+  or retired cross-project content compilation while those records still constrain migration/privacy ancestry.
 - Host lifecycle capture must preserve stable Ley session identity, bounded/redacted prompt/response evidence, and
   the guidance-only startup contract.
 - Desktop's recorded integration activity is historical Ley evidence only. It must not claim that Codex, Claude,

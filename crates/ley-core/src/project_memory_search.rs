@@ -624,6 +624,7 @@ fn search_project_memory_with_session_transition(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn search_project_memory_for_expected_project(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,

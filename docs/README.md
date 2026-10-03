@@ -28,12 +28,13 @@ runtime-verification diary is archived there as `runtime-verification-notebook-l
 `runtime-verification.md` now describes only the focused continuity product. Those documents explain
 historical decisions but no longer describe Ley's intended product surface.
 
-`adr/` remains historical implementation rationale during the migration because many entries document
-durable data/security semantics that must be understood before legacy state can be imported or retired.
+`adr/` remains historical implementation rationale while finite compatibility state is being retired because many
+entries document durable data/security semantics that must be understood before old local state can be imported,
+cleaned up, or safely removed.
 They should not be treated as a requirement to preserve the implementation shape that produced them.
 
-Until migration work explicitly revalidates a historical decision, treat it as evidence to consult — not
-an API or architecture that must be preserved. When a subsystem is migrated or retired, its superseded
+Unless current product/runtime evidence explicitly revalidates a historical decision, treat it as evidence to
+consult — not an API or architecture that must be preserved. When a subsystem is migrated or retired, its superseded
 documents should be moved under an explicitly historical/archive area rather than kept in the current
 navigation path.
 

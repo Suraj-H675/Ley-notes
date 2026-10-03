@@ -54,23 +54,17 @@ pub use binding::{
     default_binding_registry_path, BindingRegistry, BindingSource, ProjectVaultBinding,
     APP_IDENTIFIER, BINDING_REGISTRY_FILE, BINDING_REGISTRY_SCHEMA_VERSION,
 };
-#[cfg(test)]
-pub use bootstrap_specification::BootstrapReferenceMutation;
 pub use bootstrap_specification::{
-    compile_bootstrap_context, compile_bootstrap_context_with_registries,
-    compile_bootstrap_context_with_transition_registries, compile_bootstrap_specifications,
-    compile_bootstrap_specifications_with_registries,
+    compile_bootstrap_specifications, compile_bootstrap_specifications_with_registries,
     compile_bootstrap_specifications_with_transition_registries,
     initialize_project_retiring_bootstrap, BootstrapCompileCoverage, BootstrapCompileExclusion,
-    BootstrapCompileExclusionReason, BootstrapCompiledReference, BootstrapCompiledSpecification,
-    BootstrapContext, BootstrapReferenceCoverage, BootstrapReferenceExclusion,
-    BootstrapReferenceGrant, BootstrapReferenceList, BootstrapReferenceScope,
-    BootstrapReferenceScopeState, BootstrapReferenceStatus, BootstrapSpecificationContext,
+    BootstrapCompileExclusionReason, BootstrapCompiledSpecification, BootstrapReferenceGrant,
+    BootstrapReferenceList, BootstrapReferenceStatus, BootstrapSpecificationContext,
     BootstrapSpecificationGrant, BootstrapSpecificationList, BootstrapSpecificationMutation,
-    BootstrapSpecificationRegistry, BOOTSTRAP_CONTEXT_SCHEMA_VERSION,
-    BOOTSTRAP_SPECIFICATION_REGISTRY_FILE, BOOTSTRAP_SPECIFICATION_REGISTRY_SCHEMA_VERSION,
-    BOOTSTRAP_SPECIFICATION_SCHEMA_VERSION, MAX_BOOTSTRAP_REFERENCES_PER_WORKSPACE,
-    MAX_BOOTSTRAP_SPECIFICATIONS_PER_WORKSPACE, MAX_BOOTSTRAP_WORKSPACES,
+    BootstrapSpecificationRegistry, BOOTSTRAP_SPECIFICATION_REGISTRY_FILE,
+    BOOTSTRAP_SPECIFICATION_REGISTRY_SCHEMA_VERSION, BOOTSTRAP_SPECIFICATION_SCHEMA_VERSION,
+    MAX_BOOTSTRAP_REFERENCES_PER_WORKSPACE, MAX_BOOTSTRAP_SPECIFICATIONS_PER_WORKSPACE,
+    MAX_BOOTSTRAP_WORKSPACES,
 };
 pub use consolidation_inbox::{
     consolidation_inbox, consolidation_inbox_with_continuity_transition, ConsolidationAction,
@@ -83,17 +77,12 @@ pub use consolidation_inbox::{
 pub use context_compiler::{
     compile_project_context, compile_project_context_for_agent_with_registries,
     compile_project_context_for_agent_with_transition_registries, AgentContextAuthorities,
-    CompiledContextItem, CompiledContextPack, CompiledMountedReferenceItem,
-    CompiledPolicyBundleItem, CompiledSharedKnowledgeReference, CompiledSpecificationItem,
-    ContextAdmissionBasis, ContextAuthority, ContextCompileCoverage, ContextCompileLimits,
-    ContextEgressCoverage, ContextEgressExclusion, ContextEgressPolicyOrigin, ContextEvidenceState,
-    ContextExclusion, ContextExclusionReason, ContextExclusionStage, ContextGap, ContextGapKind,
+    CompiledContextItem, CompiledContextPack, CompiledSpecificationItem, ContextAdmissionBasis,
+    ContextAuthority, ContextCompileCoverage, ContextCompileLimits, ContextEgressCoverage,
+    ContextEgressExclusion, ContextEgressPolicyOrigin, ContextEvidenceState, ContextExclusion,
+    ContextExclusionReason, ContextExclusionStage, ContextGap, ContextGapKind,
     ContextPremiseAdjudication, ContextPremiseState, ContextPremiseWarning,
-    ContextPremiseWarningKind, MountedReferenceCoverage, MountedReferenceExclusion,
-    MountedReferenceScope, MountedReferenceScopeState, PolicyBundleCompileCoverage,
-    PolicyBundleCompileExclusion, PolicyBundleCompileExclusionReason, PolicyBundleContext,
-    SharedKnowledgeCoverage, SharedKnowledgeExclusion, SharedKnowledgeScope, SharedKnowledgeSource,
-    SharedKnowledgeSourceState, SpecificationCompileCoverage, SpecificationCompileExclusion,
+    ContextPremiseWarningKind, SpecificationCompileCoverage, SpecificationCompileExclusion,
     SpecificationCompileExclusionReason, DEFAULT_CONTEXT_COMPILE_RESULTS,
     DEFAULT_CONTEXT_COMPILE_TOKENS, MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
     MIN_CONTEXT_COMPILE_TOKENS,
@@ -102,8 +91,6 @@ pub use context_compiler::{
 pub use context_compiler::{
     compile_project_context_with_registries, compile_project_context_with_registry,
 };
-#[cfg(test)]
-pub use context_mount::ContextMountMutation;
 pub use context_mount::{
     ContextMount, ContextMountEgressSource, ContextMountEgressSources, ContextMountList,
     ContextMountPermission, ContextMountRegistry, ContextMountStatus, CONTEXT_MOUNT_REGISTRY_FILE,
@@ -140,11 +127,9 @@ pub use egress_policy::{
     EGRESS_POLICY_REGISTRY_FILE, EGRESS_POLICY_REGISTRY_SCHEMA_VERSION,
 };
 pub use external_connector::{
-    parse_public_github_reference, read_external_connector_snapshot_with_registry,
-    remove_external_connector_with_registry, store_external_connector_snapshot_with_registry,
-    ExternalConnector, ExternalConnectorList, ExternalConnectorMutation, ExternalConnectorProvider,
-    ExternalConnectorRefresh, ExternalConnectorRegistry, ExternalConnectorResourceKind,
-    ExternalConnectorSnapshot, ExternalConnectorSnapshotInput, ExternalConnectorSource,
+    read_external_connector_snapshot_with_registry, remove_external_connector_with_registry,
+    ExternalConnector, ExternalConnectorList, ExternalConnectorProvider, ExternalConnectorRegistry,
+    ExternalConnectorResourceKind, ExternalConnectorSnapshot, ExternalConnectorSource,
     ExternalConnectorState, EXTERNAL_CONNECTOR_REGISTRY_FILE,
     EXTERNAL_CONNECTOR_REGISTRY_SCHEMA_VERSION, MAX_EXTERNAL_CONNECTORS_PER_PROJECT,
 };
@@ -184,8 +169,6 @@ pub use knowledge_scope::{
     KNOWLEDGE_SCOPE_REGISTRY_SCHEMA_VERSION, MAX_ATTACHED_KNOWLEDGE_SCOPES_PER_PROJECT,
     MAX_KNOWLEDGE_SCOPES, MAX_KNOWLEDGE_SCOPE_HISTORY_PER_PROJECT, MAX_KNOWLEDGE_SCOPE_SOURCES,
 };
-#[cfg(test)]
-pub use knowledge_scope::{KnowledgeScopeAttachmentMutation, KnowledgeScopeMutation};
 pub use knowledge_view::{
     project_artifact_inventory, project_artifact_inventory_with_continuity_transition,
     ArtifactInventoryItem, ProjectArtifactInventory, SkippedArtifactInventoryItem,
@@ -274,10 +257,6 @@ pub use policy_bundle::{
     PolicyBundleSourceStatus, MAX_ATTACHED_POLICY_BUNDLES_PER_PROJECT, MAX_POLICY_BUNDLES,
     MAX_POLICY_BUNDLE_HISTORY_PER_PROJECT, MAX_POLICY_BUNDLE_SOURCES, POLICY_BUNDLE_REGISTRY_FILE,
     POLICY_BUNDLE_REGISTRY_SCHEMA_VERSION,
-};
-#[cfg(test)]
-pub use policy_bundle::{
-    PolicyBundleAttachmentMutation, PolicyBundleMutation, PolicyBundleSourceInput,
 };
 pub use private_state::EVAL_PRIVATE_ROOT_ENV;
 pub use project_activity::{

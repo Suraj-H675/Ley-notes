@@ -141,12 +141,14 @@ Cleanup must not silently orphan real local state. Current finite compatibility 
 - legacy session/learning and approved-source import where native authority is not yet complete;
 - retained Context Mount / Knowledge Scope / Policy Bundle / External Connector ancestry needed for cleanup and
   fail-closed egress;
-- existing bootstrap grants for uninitialized workspaces;
+- current Bootstrap Specification grants for uninitialized workspaces, plus retained legacy Bootstrap Reference
+  grants only until local list/detach or initialization cleanup retires them;
 - explicit historical-host import while that user-facing import workflow remains supported.
 
-Creation/growth paths for several of those historical products are already retired. Their readers should disappear
-only after persisted-state obligations are explicitly closed, not merely because the current machine happens to have
-no corresponding file.
+Creation/growth and content-contribution paths for those historical products are retired. Only bounded
+inspect/remove/detach readers plus the ancestry reads needed for fail-closed egress remain; those compatibility
+paths should disappear only after persisted-state obligations are explicitly closed, not merely because the current
+machine happens to have no corresponding file.
 
 ## Security and trust invariants
 

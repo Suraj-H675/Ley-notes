@@ -8,8 +8,6 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub const CONTEXT_MOUNT_REGISTRY_FILE: &str = "context-mounts-v1.json";
@@ -49,14 +47,6 @@ pub struct ContextMount {
     pub agent_context_enabled: bool,
     pub status: ContextMountStatus,
     pub created_at_unix_ms: u64,
-}
-
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextMountMutation {
-    pub mount: ContextMount,
-    pub created: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -283,20 +273,6 @@ impl ContextMountRegistry {
         &self.path
     }
 
-    pub fn contains_mount(
-        &self,
-        active_project: impl AsRef<Path>,
-        mount_id: &str,
-    ) -> Result<bool, LeyCoreError> {
-        validate_mount_id(mount_id).map_err(LeyCoreError::InvalidContextMountRequest)?;
-        let active_project_id = diagnose_project(active_project)?.identity.project_id;
-        let document = self.read_locked()?;
-        Ok(document
-            .mounts
-            .get(&active_project_id)
-            .is_some_and(|mounts| mounts.contains_key(mount_id)))
-    }
-
     pub fn contains_mount_or_history(
         &self,
         active_project: impl AsRef<Path>,
@@ -313,98 +289,6 @@ impl ContextMountRegistry {
                 .agent_mount_history
                 .get(&active_project_id)
                 .is_some_and(|mounts| mounts.contains_key(mount_id)))
-    }
-
-    #[cfg(test)]
-    pub fn mount_project(
-        &self,
-        active_project: impl AsRef<Path>,
-        source_project: impl AsRef<Path>,
-    ) -> Result<ContextMountMutation, LeyCoreError> {
-        let active = diagnose_project(active_project)?;
-        let source = diagnose_project(source_project)?;
-        if active.identity.project_id == source.identity.project_id {
-            return Err(LeyCoreError::InvalidContextMountRequest(
-                "a project cannot mount itself as reference context".to_owned(),
-            ));
-        }
-
-        // A mount is useful only when both sides have their durable local scope established.
-        // resolve() also refreshes the project catalog through the canonical project identity.
-        self.binding_registry.resolve(&active.root, None)?;
-        self.binding_registry.resolve(&source.root, None)?;
-
-        let active_project_id = active.identity.project_id;
-        let source_project_id = source.identity.project_id;
-        let source_project_name = source.identity.name;
-        let created_at_unix_ms = unix_time_ms();
-        let (mount_id, created, stored_at) = self.mutate(|document| {
-            let existing = document
-                .mounts
-                .get(&active_project_id)
-                .and_then(|mounts| {
-                    mounts
-                        .iter()
-                        .find(|(_, entry)| entry.source_project_id == source_project_id)
-                        .map(|(mount_id, entry)| (mount_id.clone(), entry.created_at_unix_ms))
-                });
-            if let Some((mount_id, stored_at)) = existing {
-                document.remember_agent_mount(
-                    &active_project_id,
-                    &mount_id,
-                    &source_project_id,
-                )?;
-                document
-                    .mounts
-                    .get_mut(&active_project_id)
-                    .and_then(|mounts| mounts.get_mut(&mount_id))
-                    .expect("existing mount remains present under the registry lock")
-                    .agent_context_enabled = true;
-                return Ok((mount_id, false, stored_at));
-            }
-            let mounts_len = document
-                .mounts
-                .get(&active_project_id)
-                .map_or(0, BTreeMap::len);
-            if mounts_len >= MAX_CONTEXT_MOUNTS_PER_PROJECT {
-                return Err(LeyCoreError::InvalidContextMountRequest(format!(
-                    "an active project may have at most {MAX_CONTEXT_MOUNTS_PER_PROJECT} Context Mounts"
-                )));
-            }
-            let mount_id = generate_mount_id();
-            document.remember_agent_mount(
-                &active_project_id,
-                &mount_id,
-                &source_project_id,
-            )?;
-            document
-                .mounts
-                .entry(active_project_id.clone())
-                .or_default()
-                .insert(
-                mount_id.clone(),
-                ContextMountEntry {
-                    source_project_id: source_project_id.clone(),
-                    created_at_unix_ms,
-                    agent_context_enabled: true,
-                },
-            );
-            Ok((mount_id, true, created_at_unix_ms))
-        })?;
-
-        Ok(ContextMountMutation {
-            mount: ContextMount {
-                mount_id,
-                active_project_id,
-                source_project_id,
-                source_project_name: Some(source_project_name),
-                permission: ContextMountPermission::ReadOnly,
-                agent_context_enabled: true,
-                status: ContextMountStatus::Ready,
-                created_at_unix_ms: stored_at,
-            },
-            created,
-        })
     }
 
     pub fn list(&self, active_project: impl AsRef<Path>) -> Result<ContextMountList, LeyCoreError> {
@@ -738,11 +622,6 @@ impl ContextMountRegistry {
     }
 }
 
-#[cfg(test)]
-fn generate_mount_id() -> String {
-    format!("mnt_{}", Uuid::new_v4().simple())
-}
-
 pub(crate) fn validate_mount_id(value: &str) -> Result<(), String> {
     let Some(uuid) = value.strip_prefix("mnt_") else {
         return Err("mountId must start with mnt_".to_owned());
@@ -756,14 +635,6 @@ pub(crate) fn validate_mount_id(value: &str) -> Result<(), String> {
         return Err("mountId must contain a 32-character lowercase hexadecimal UUID".to_owned());
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn unix_time_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 fn reject_non_regular_if_present(path: &Path) -> Result<(), LeyCoreError> {
@@ -798,12 +669,13 @@ mod tests {
     use crate::{initialize_project, CaptureMode};
     use tempfile::tempdir;
 
+    const MOUNT_ID: &str = "mnt_11111111111111111111111111111111";
+
     struct Fixture {
         _base: tempfile::TempDir,
         active: PathBuf,
         active_two: PathBuf,
         source: PathBuf,
-        source_two: PathBuf,
         source_vault: PathBuf,
         registry: ContextMountRegistry,
         binding_registry: BindingRegistry,
@@ -818,71 +690,97 @@ mod tests {
         let active = base.path().join("active");
         let active_two = base.path().join("active-two");
         let source = base.path().join("source");
-        let source_two = base.path().join("source-two");
         let active_vault = base.path().join("active-vault");
         let active_two_vault = base.path().join("active-two-vault");
         let source_vault = base.path().join("source-vault");
-        let source_two_vault = base.path().join("source-two-vault");
         for path in [
             &active,
             &active_two,
             &source,
-            &source_two,
             &active_vault,
             &active_two_vault,
             &source_vault,
-            &source_two_vault,
         ] {
             fs::create_dir_all(path).unwrap();
         }
         initialize_project(&active, Some("Active"), CaptureMode::Structured).unwrap();
         initialize_project(&active_two, Some("Active two"), CaptureMode::Structured).unwrap();
         initialize_project(&source, Some("Reference"), CaptureMode::Structured).unwrap();
-        initialize_project(&source_two, Some("Reference two"), CaptureMode::Structured).unwrap();
         binding_registry.bind(&active, &active_vault).unwrap();
         binding_registry
             .bind(&active_two, &active_two_vault)
             .unwrap();
         binding_registry.bind(&source, &source_vault).unwrap();
-        binding_registry
-            .bind(&source_two, &source_two_vault)
-            .unwrap();
         Fixture {
             _base: base,
             active,
             active_two,
             source,
-            source_two,
             source_vault,
             registry,
             binding_registry,
         }
     }
 
-    #[test]
-    fn project_mount_is_explicit_idempotent_scoped_and_unmountable() {
-        let fixture = setup();
-        let mounted = fixture
-            .registry
-            .mount_project(&fixture.active, &fixture.source)
-            .unwrap();
-        assert!(mounted.created);
-        assert_eq!(mounted.mount.permission, ContextMountPermission::ReadOnly);
-        assert_eq!(mounted.mount.status, ContextMountStatus::Ready);
-        assert_eq!(
-            mounted.mount.source_project_name.as_deref(),
-            Some("Reference")
-        );
+    fn write_private_json(path: &Path, document: &serde_json::Value) {
+        fs::write(
+            path,
+            format!("{}\n", serde_json::to_string_pretty(document).unwrap()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+    }
 
-        let retry = fixture
-            .registry
-            .mount_project(&fixture.active, &fixture.source)
-            .unwrap();
-        assert!(!retry.created);
-        assert_eq!(retry.mount.mount_id, mounted.mount.mount_id);
+    fn seed_current_mount(fixture: &Fixture, mount_id: &str, agent_enabled: bool) {
+        let active_id = diagnose_project(&fixture.active)
+            .unwrap()
+            .identity
+            .project_id;
+        let source_id = diagnose_project(&fixture.source)
+            .unwrap()
+            .identity
+            .project_id;
+        let mut document = serde_json::json!({
+            "schemaVersion": CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
+            "mounts": {
+                active_id.clone(): {
+                    mount_id: {
+                        "sourceProjectId": source_id.clone(),
+                        "createdAtUnixMs": 1_700_000_000_000_u64,
+                        "agentContextEnabled": agent_enabled,
+                    }
+                }
+            },
+            "agentMountHistory": {}
+        });
+        if agent_enabled {
+            document["agentMountHistory"] = serde_json::json!({
+                active_id: { mount_id: source_id }
+            });
+        }
+        write_private_json(fixture.registry.path(), &document);
+    }
+
+    #[test]
+    fn legacy_mount_can_be_listed_and_removed_without_losing_egress_ancestry() {
+        let fixture = setup();
+        seed_current_mount(&fixture, MOUNT_ID, true);
+
         let list = fixture.registry.list(&fixture.active).unwrap();
         assert_eq!(list.mounts.len(), 1);
         assert_eq!(list.ready, 1);
+        assert_eq!(list.agent_context_enabled, 1);
+        assert_eq!(list.mounts[0].mount_id, MOUNT_ID);
+        assert_eq!(list.mounts[0].permission, ContextMountPermission::ReadOnly);
+        assert_eq!(list.mounts[0].status, ContextMountStatus::Ready);
+        assert_eq!(
+            list.mounts[0].source_project_name.as_deref(),
+            Some("Reference")
+        );
         let serialized = serde_json::to_string(&list).unwrap();
         assert!(!serialized.contains(fixture.active.to_str().unwrap()));
         assert!(!serialized.contains(fixture.source.to_str().unwrap()));
@@ -894,12 +792,21 @@ mod tests {
             .mounts
             .is_empty());
 
+        let source_project_id = list.mounts[0].source_project_id.clone();
+        fixture
+            .registry
+            .with_agent_context_sources_locked(&fixture.active, |sources| {
+                assert_eq!(sources.active.len(), 1);
+                assert_eq!(sources.historical.len(), 1);
+                Ok(())
+            })
+            .unwrap();
         let removed = fixture
             .registry
-            .unmount(&fixture.active, &mounted.mount.mount_id)
+            .unmount(&fixture.active, MOUNT_ID)
             .unwrap()
             .unwrap();
-        assert_eq!(removed.source_project_id, mounted.mount.source_project_id);
+        assert_eq!(removed.source_project_id, source_project_id);
         assert!(fixture
             .registry
             .list(&fixture.active)
@@ -908,42 +815,24 @@ mod tests {
             .is_empty());
         assert!(fixture
             .registry
-            .unmount(&fixture.active, &mounted.mount.mount_id)
+            .unmount(&fixture.active, MOUNT_ID)
             .unwrap()
             .is_none());
-    }
-
-    #[test]
-    fn self_mount_is_rejected_and_duplicate_source_does_not_create_authority() {
-        let fixture = setup();
-        assert!(matches!(
-            fixture
-                .registry
-                .mount_project(&fixture.active, &fixture.active),
-            Err(LeyCoreError::InvalidContextMountRequest(_))
-        ));
-        let first = fixture
+        fixture
             .registry
-            .mount_project(&fixture.active, &fixture.source)
+            .with_agent_context_sources_locked(&fixture.active, |sources| {
+                assert!(sources.active.is_empty());
+                assert_eq!(sources.historical.len(), 1);
+                assert_eq!(sources.historical[0].source_project_id, source_project_id);
+                Ok(())
+            })
             .unwrap();
-        let second = fixture
-            .registry
-            .mount_project(&fixture.active, &fixture.source)
-            .unwrap();
-        assert_eq!(first.mount.mount_id, second.mount.mount_id);
-        assert_eq!(
-            fixture.registry.list(&fixture.active).unwrap().mounts.len(),
-            1
-        );
     }
 
     #[test]
     fn source_move_survives_reobservation_but_identity_replacement_fails_closed() {
         let fixture = setup();
-        fixture
-            .registry
-            .mount_project(&fixture.active, &fixture.source)
-            .unwrap();
+        seed_current_mount(&fixture, MOUNT_ID, true);
         let moved = fixture._base.path().join("source-moved");
         fs::rename(&fixture.source, &moved).unwrap();
         fixture.binding_registry.resolve(&moved, None).unwrap();
@@ -964,10 +853,7 @@ mod tests {
     #[test]
     fn unavailable_source_and_vault_are_disclosed_without_removing_mount() {
         let fixture = setup();
-        fixture
-            .registry
-            .mount_project(&fixture.active, &fixture.source)
-            .unwrap();
+        seed_current_mount(&fixture, MOUNT_ID, true);
         fs::remove_dir_all(&fixture.source_vault).unwrap();
         let no_vault = fixture.registry.list(&fixture.active).unwrap();
         assert_eq!(
@@ -986,10 +872,7 @@ mod tests {
     #[test]
     fn registry_files_are_private_and_symlinks_are_rejected() {
         let fixture = setup();
-        fixture
-            .registry
-            .mount_project(&fixture.active, &fixture.source)
-            .unwrap();
+        seed_current_mount(&fixture, MOUNT_ID, true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::{symlink, PermissionsExt};
@@ -1019,10 +902,7 @@ mod tests {
         use std::time::Duration;
 
         let fixture = setup();
-        let mounted = fixture
-            .registry
-            .mount_project(&fixture.active, &fixture.source)
-            .unwrap();
+        seed_current_mount(&fixture, MOUNT_ID, true);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let reader_registry = fixture.registry.clone();
@@ -1042,9 +922,8 @@ mod tests {
         let (removed_tx, removed_rx) = mpsc::channel();
         let writer_registry = fixture.registry.clone();
         let writer_active = fixture.active.clone();
-        let mount_id = mounted.mount.mount_id.clone();
         let writer = std::thread::spawn(move || {
-            writer_registry.unmount(writer_active, &mount_id).unwrap();
+            writer_registry.unmount(writer_active, MOUNT_ID).unwrap();
             removed_tx.send(()).unwrap();
         });
         assert!(removed_rx.recv_timeout(Duration::from_millis(50)).is_err());
@@ -1063,8 +942,12 @@ mod tests {
             .with_agent_context_sources_locked(&fixture.active, |sources| {
                 assert!(sources.active.is_empty());
                 assert!(sources.historical.iter().any(|source| {
-                    source.mount_id == mounted.mount.mount_id
-                        && source.source_project_id == mounted.mount.source_project_id
+                    source.mount_id == MOUNT_ID
+                        && source.source_project_id
+                            == diagnose_project(&fixture.source)
+                                .unwrap()
+                                .identity
+                                .project_id
                 }));
                 Ok(())
             })
@@ -1072,61 +955,7 @@ mod tests {
     }
 
     #[test]
-    fn mount_limit_and_corrupt_registry_fail_closed() {
-        let fixture = setup();
-        for index in 0..MAX_CONTEXT_MOUNTS_PER_PROJECT {
-            let project = fixture._base.path().join(format!("bounded-source-{index}"));
-            let vault = fixture._base.path().join(format!("bounded-vault-{index}"));
-            fs::create_dir_all(&project).unwrap();
-            fs::create_dir_all(&vault).unwrap();
-            initialize_project(&project, Some("Bounded reference"), CaptureMode::Structured)
-                .unwrap();
-            fixture.binding_registry.bind(&project, &vault).unwrap();
-            fixture
-                .registry
-                .mount_project(&fixture.active, &project)
-                .unwrap();
-        }
-        let overflow_project = fixture._base.path().join("overflow-source");
-        let overflow_vault = fixture._base.path().join("overflow-vault");
-        fs::create_dir_all(&overflow_project).unwrap();
-        fs::create_dir_all(&overflow_vault).unwrap();
-        initialize_project(
-            &overflow_project,
-            Some("Overflow reference"),
-            CaptureMode::Structured,
-        )
-        .unwrap();
-        fixture
-            .binding_registry
-            .bind(&overflow_project, &overflow_vault)
-            .unwrap();
-        assert!(matches!(
-            fixture
-                .registry
-                .mount_project(&fixture.active, &overflow_project),
-            Err(LeyCoreError::InvalidContextMountRequest(_))
-        ));
-
-        fs::write(
-            fixture.registry.path(),
-            r#"{"schemaVersion":99,"mounts":{}}"#,
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(fixture.registry.path(), fs::Permissions::from_mode(0o600))
-                .unwrap();
-        }
-        assert!(matches!(
-            fixture.registry.list(&fixture.active),
-            Err(LeyCoreError::InvalidContextMountRegistry(_))
-        ));
-    }
-
-    #[test]
-    fn legacy_mounts_remain_agent_disabled_until_explicitly_readded() {
+    fn legacy_v1_mounts_remain_agent_disabled_and_upgrade_on_removal() {
         let fixture = setup();
         let active_id = diagnose_project(&fixture.active)
             .unwrap()
@@ -1136,29 +965,20 @@ mod tests {
             .unwrap()
             .identity
             .project_id;
-        let mount_id = generate_mount_id();
-        let document = serde_json::json!({
-            "schemaVersion": LEGACY_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
-            "mounts": {
-                active_id.clone(): {
-                    mount_id.clone(): {
-                        "sourceProjectId": source_id,
-                        "createdAtUnixMs": 1
+        write_private_json(
+            fixture.registry.path(),
+            &serde_json::json!({
+                "schemaVersion": LEGACY_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
+                "mounts": {
+                    active_id.clone(): {
+                        MOUNT_ID: {
+                            "sourceProjectId": source_id.clone(),
+                            "createdAtUnixMs": 1
+                        }
                     }
                 }
-            }
-        });
-        fs::write(
-            fixture.registry.path(),
-            format!("{}\n", serde_json::to_string_pretty(&document).unwrap()),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(fixture.registry.path(), fs::Permissions::from_mode(0o600))
-                .unwrap();
-        }
+            }),
+        );
 
         let before = fixture.registry.list(&fixture.active).unwrap();
         assert_eq!(before.mounts.len(), 1);
@@ -1173,39 +993,19 @@ mod tests {
             })
             .unwrap();
 
-        let readded = fixture
-            .registry
-            .mount_project(&fixture.active, &fixture.source)
-            .unwrap();
-        assert!(!readded.created);
-        assert_eq!(readded.mount.mount_id, mount_id);
-        assert!(readded.mount.agent_context_enabled);
-        let after = fixture.registry.list(&fixture.active).unwrap();
-        assert_eq!(after.agent_context_enabled, 1);
+        fixture.registry.unmount(&fixture.active, MOUNT_ID).unwrap();
         let persisted: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(fixture.registry.path()).unwrap()).unwrap();
         assert_eq!(
             persisted["schemaVersion"],
             CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION
         );
-        assert_eq!(
-            persisted["mounts"][&active_id][&mount_id]["agentContextEnabled"],
-            true
-        );
-        assert_eq!(
-            persisted["agentMountHistory"][&active_id][&mount_id],
-            source_id
-        );
-        fixture
-            .registry
-            .with_agent_context_sources_locked(&fixture.active, |sources| {
-                assert_eq!(sources.active.len(), 1);
-                assert_eq!(sources.historical.len(), 1);
-                assert_eq!(sources.active[0].mount_id, mount_id);
-                assert_eq!(sources.active[0].source_project_id, source_id);
-                Ok(())
-            })
-            .unwrap();
+        assert!(persisted["mounts"]
+            .get(&active_id)
+            .is_none_or(serde_json::Value::is_null));
+        assert!(persisted["agentMountHistory"]
+            .get(&active_id)
+            .is_none_or(serde_json::Value::is_null));
     }
 
     #[test]
@@ -1219,34 +1019,25 @@ mod tests {
             .unwrap()
             .identity
             .project_id;
-        let mount_id = generate_mount_id();
-        let document = serde_json::json!({
-            "schemaVersion": AGENT_ENABLED_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
-            "mounts": {
-                active_id.clone(): {
-                    mount_id.clone(): {
-                        "sourceProjectId": source_id.clone(),
-                        "createdAtUnixMs": 1,
-                        "agentContextEnabled": true
+        write_private_json(
+            fixture.registry.path(),
+            &serde_json::json!({
+                "schemaVersion": AGENT_ENABLED_CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
+                "mounts": {
+                    active_id.clone(): {
+                        MOUNT_ID: {
+                            "sourceProjectId": source_id.clone(),
+                            "createdAtUnixMs": 1,
+                            "agentContextEnabled": true
+                        }
                     }
                 }
-            }
-        });
-        fs::write(
-            fixture.registry.path(),
-            format!("{}\n", serde_json::to_string_pretty(&document).unwrap()),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(fixture.registry.path(), fs::Permissions::from_mode(0o600))
-                .unwrap();
-        }
+            }),
+        );
 
         fixture
             .registry
-            .unmount(&fixture.active, &mount_id)
+            .unmount(&fixture.active, MOUNT_ID)
             .unwrap()
             .unwrap();
         let persisted: serde_json::Value =
@@ -1259,7 +1050,7 @@ mod tests {
             .get(&active_id)
             .is_none_or(serde_json::Value::is_null));
         assert_eq!(
-            persisted["agentMountHistory"][&active_id][&mount_id],
+            persisted["agentMountHistory"][&active_id][MOUNT_ID],
             source_id
         );
         fixture
@@ -1269,7 +1060,7 @@ mod tests {
                 assert_eq!(
                     sources.historical,
                     vec![ContextMountEgressSource {
-                        mount_id: mount_id.clone(),
+                        mount_id: MOUNT_ID.to_owned(),
                         source_project_id: source_id.clone(),
                     }]
                 );
@@ -1279,39 +1070,43 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_mounts_do_not_overwrite_each_other() {
+    fn mount_limit_and_corrupt_registry_fail_closed() {
         let fixture = setup();
-        let mut sources = vec![fixture.source.clone(), fixture.source_two.clone()];
-        for index in 0..4 {
-            let project = fixture._base.path().join(format!("source-extra-{index}"));
-            let vault = fixture
-                ._base
-                .path()
-                .join(format!("source-extra-vault-{index}"));
-            fs::create_dir_all(&project).unwrap();
-            fs::create_dir_all(&vault).unwrap();
-            initialize_project(
-                &project,
-                Some(&format!("Reference extra {index}")),
-                CaptureMode::Structured,
-            )
-            .unwrap();
-            fixture.binding_registry.bind(&project, &vault).unwrap();
-            sources.push(project);
+        let active_id = diagnose_project(&fixture.active)
+            .unwrap()
+            .identity
+            .project_id;
+        let mut mounts = serde_json::Map::new();
+        for index in 0..=MAX_CONTEXT_MOUNTS_PER_PROJECT {
+            mounts.insert(
+                format!("mnt_{:032x}", index + 1),
+                serde_json::json!({
+                    "sourceProjectId": format!("prj_{:032x}", index + 1),
+                    "createdAtUnixMs": 1,
+                    "agentContextEnabled": false
+                }),
+            );
         }
-        let workers = sources
-            .into_iter()
-            .map(|source| {
-                let registry = fixture.registry.clone();
-                let active = fixture.active.clone();
-                std::thread::spawn(move || registry.mount_project(active, source).unwrap())
-            })
-            .collect::<Vec<_>>();
-        for worker in workers {
-            worker.join().unwrap();
-        }
-        let list = fixture.registry.list(&fixture.active).unwrap();
-        assert_eq!(list.mounts.len(), 6);
-        assert_eq!(list.ready, 6);
+        write_private_json(
+            fixture.registry.path(),
+            &serde_json::json!({
+                "schemaVersion": CONTEXT_MOUNT_REGISTRY_SCHEMA_VERSION,
+                "mounts": { active_id.clone(): mounts },
+                "agentMountHistory": {}
+            }),
+        );
+        assert!(matches!(
+            fixture.registry.list(&fixture.active),
+            Err(LeyCoreError::InvalidContextMountRegistry(_))
+        ));
+
+        write_private_json(
+            fixture.registry.path(),
+            &serde_json::json!({"schemaVersion": 99, "mounts": {}}),
+        );
+        assert!(matches!(
+            fixture.registry.list(&fixture.active),
+            Err(LeyCoreError::InvalidContextMountRegistry(_))
+        ));
     }
 }

@@ -1,6 +1,97 @@
 import { AlertTriangle, History } from "lucide-react";
 import { cn } from "@/shared/lib/classnames";
-import type { ResumeSession } from "./types";
+import type { LearningSummary, ResumeSession } from "./types";
+
+export function PageHeading({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div>
+      <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+        {eyebrow}
+      </p>
+      <h2 className="mt-1 text-2xl font-semibold tracking-[-0.035em]">
+        {title}
+      </h2>
+      <p className="mt-2 max-w-2xl text-body leading-6 text-muted-foreground-strong">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+export function StatusPill({
+  tone,
+  label,
+  icon: Icon,
+}: {
+  tone: "success" | "warning" | "neutral";
+  label: string;
+  icon: typeof History;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5 text-micro font-medium",
+        tone === "success" && "border-success/20 bg-success/10 text-success",
+        tone === "warning" && "border-warning/20 bg-warning/10 text-warning",
+        tone === "neutral" &&
+          "border-border bg-surface-2 text-muted-foreground-strong",
+      )}
+    >
+      <Icon size={11} />
+      {label}
+    </span>
+  );
+}
+
+export function TrustDot({
+  learning,
+}: {
+  learning: Pick<LearningSummary, "trustState" | "freshness">;
+}) {
+  const trusted =
+    learning.trustState === "trusted" && learning.freshness === "current";
+  const rejected = learning.trustState === "rejected";
+  return (
+    <span
+      className={cn(
+        "mt-1.5 size-2.5 shrink-0 rounded-full ring-4",
+        trusted
+          ? "bg-success ring-success/10"
+          : rejected
+            ? "bg-destructive ring-destructive/10"
+            : "bg-warning ring-warning/10",
+      )}
+    />
+  );
+}
+
+export function LargeEmpty({
+  icon: Icon,
+  title,
+  body,
+}: {
+  icon: typeof History;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="rounded-sm border border-dashed border-border bg-surface-1/45 px-6 py-14 text-center">
+      <Icon size={22} className="mx-auto text-subtle-foreground" />
+      <h3 className="mt-3 text-meta font-semibold text-foreground">{title}</h3>
+      <p className="mx-auto mt-1 max-w-md text-meta leading-relaxed text-muted-foreground">
+        {body}
+      </p>
+    </div>
+  );
+}
 
 export function CompactEmpty({
   icon: Icon,

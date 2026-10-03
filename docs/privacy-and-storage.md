@@ -15,24 +15,25 @@ closes the last browser-data compatibility gap: the normal website never opens t
 `/legacy-recovery.html` migration page can explicitly inspect, export, or erase same-origin historical browser-local
 data without uploading it. The dead Dexie runtime/schema island is no longer needed to preserve those bytes.
 
-## Current and target storage
+## Current storage and compatibility sources
 
-During migration, two storage generations coexist:
+Current machine-managed continuity metadata lives in owner-private SQLite, partitioned by stable project ID. Large
+immutable cited evidence may use Ley-managed content-addressed private files. Rebuildable lexical indexes remain
+disposable; Ley no longer ships a semantic/vector index subsystem.
 
-### Current implementation being migrated
+The remaining non-SQLite stores are bounded compatibility or configuration surfaces rather than a second current
+memory model:
 
 - a small repository-local `.ley/` project identity/capture configuration;
-- owner-private OS configuration registries for current authority plus retained pre-cutover project bindings;
-- filesystem Agent Memory data only as an existing legacy migration source; current projects do not create new
-  bound vaults;
+- owner-private OS configuration registries for current egress/bootstrap authority plus retained pre-cutover
+  bindings and privacy ancestry;
+- filesystem Agent Memory data only as an existing legacy migration/read-cleanup source; current projects do not
+  create new bound vaults;
 - historical browser IndexedDB data may still exist in old browser profiles until the user exports/erases it through
   the migration-only recovery page; it is no longer opened by the product runtime.
 
-These stores remain supported only as long as required to preserve existing data and benchmark/migrate the current engine.
-
-### Target implementation
-
-Machine-managed continuity metadata moves toward owner-private SQLite, partitioned by project. Large immutable evidence may use content-addressed private files. Rebuildable lexical/vector indexes remain disposable.
+Compatibility stores remain readable only while they protect real migration, cleanup, or privacy obligations. They
+should not grow new product state.
 
 The repo-local `.ley/` directory stays small and portable. It must not contain conversations, generated memory, credentials, embeddings, machine-specific private paths, or raw transcripts.
 
@@ -44,7 +45,11 @@ agent memory by default.
 
 Ley does not independently upload project files, sessions, queries, or indexes.
 
-When a configured cloud coding agent receives Ley context, that selected context becomes part of the request handled by that agent provider. Automatic lifecycle/task briefing, when enabled, must therefore be visible to the user and governed by the same egress boundary as explicit retrieval. Product copy must not imply that cloud context is sent only after a per-turn manual retrieval if automatic injection is configured.
+When a configured cloud coding agent receives deliberately retrieved Ley context, that selected context becomes part
+of the request handled by that agent provider. Normal initialized-project lifecycle hooks do not automatically inject
+historical project bodies; Brief/Search/Evidence are explicit retrieval surfaces. The separate uninitialized-workspace
+Bootstrap Specification mode can return approved read-only Specification context and is governed by the same egress
+boundary.
 
 The reset keeps these principles:
 
@@ -69,7 +74,7 @@ Historical agent memory is untrusted evidence, not executable instruction. Captu
 
 The focused product should prefer compact structured continuity records and exact evidence references over whole-project duplication. Git/live project tools already provide current source. Retain immutable source snippets/blobs only where historical evidence cannot be reconstructed safely or the user explicitly chooses that retention.
 
-Image/multimodal evidence and the current Full Evidence mode remain optional migration-era capabilities and must re-earn first-class product complexity through realistic evaluation.
+Full Evidence is a current opt-in retention mode for supported original PNG/JPEG/WebP evidence. Ley can return an exact cited original image under the normal egress/output boundary, but it does not perform OCR, generate visual descriptions, or treat image interpretation as trusted memory. Any richer multimodal interpretation still has to earn its complexity through realistic evaluation.
 
 ## Retired semantic retrieval
 
@@ -84,15 +89,20 @@ the lexical baseline under the same trust, revision, egress, provenance, and bud
 
 ## External network connectors
 
-The in-repository public-GitHub fetcher has been removed. Retained connector authorities and snapshots remain compatibility/privacy state; they do not provide a current provider-specific fetch path.
+The in-repository public-GitHub fetcher, URL parser, provider refresh path, and connector creation API have been
+removed. Retained connector authorities and snapshots are compatibility/privacy state only; Ley can list/show/remove
+that already-stored state locally but cannot fetch or refresh it from a provider.
 
-Existing stored connector evidence must be migrated/exported or explicitly erased; it must not be silently orphaned.
+Existing stored connector evidence remains readable so users can inspect and explicitly remove it without silently
+orphaning retained egress ancestry. The ordinary connector cleanup path deletes its Ley-managed snapshot directory
+without deleting project memory, while separately retained connector-specific egress restrictions survive until the
+user explicitly clears them.
 
-## Erasure and migration
+## Erasure and compatibility migration
 
 Logical deletion must remove Ley-controlled continuity state for the selected project without deleting the user's source repository. It is not a forensic wipe of backups, snapshots, SSD remnants, or external model/provider copies.
 
-The SQLite migration must prove:
+Remaining compatibility migration into the canonical SQLite store must preserve:
 
 - import from the existing JSON/filesystem stores without losing retained user data;
 - transactional project/session deletion;

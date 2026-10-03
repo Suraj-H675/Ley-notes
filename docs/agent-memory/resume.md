@@ -37,7 +37,7 @@ Normal resume context does not include:
 - user-confirmed lessons with no artifact citation;
 - live filesystem claims.
 
-Use `ley_session_get`, `ley_learning_get`, project search, graph traversal, and cited evidence reads only when the task needs more detail.
+Use explicit session/learning inspection, project Search, cited Evidence, and the coding host's live workspace tools only when the task needs more detail. Dedicated graph traversal is no longer a product surface.
 
 `totalSessions` still counts retained imported sessions, while
 `excludedImportedSessions` reports how many were deliberately kept out of the bounded

@@ -138,7 +138,7 @@ A fully canonical native server advertises exactly the three read tools above, o
 
 ### Bootstrap exception
 
-An uninitialized workspace with explicit Bootstrap Specification/reference authority is a different fail-closed mode. Its server advertises exactly one read-only tool: `ley_compile_context`. It has no normal project search/evidence/checkpoint, session, learning, graph, resource, capture, or mutation surface. Initializing the workspace retires bootstrap authority and returns it to the ordinary project lifecycle.
+An uninitialized workspace with explicit Bootstrap Specification authority is a different fail-closed mode. Its server advertises exactly one read-only tool: `ley_compile_context`. It has no normal project search/evidence/checkpoint, session, learning, graph, resource, capture, or mutation surface. Legacy Bootstrap Reference grants do not activate this mode or contribute context; they are cleanup-only records. Initializing the workspace retires bootstrap authority and returns it to the ordinary project lifecycle.
 
 ### Compatibility and recovery modes
 

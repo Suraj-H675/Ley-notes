@@ -146,6 +146,7 @@ impl BindingRegistry {
         self.resolve_diagnostic(diagnostic, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_resolved_observed_locked<T>(
         &self,
         diagnostic: &crate::ProjectDiagnostic,
