@@ -58,8 +58,6 @@ const divergentSearch: ProjectMemorySearch = {
   truncated: false,
   retrieval: {
     mode: "lexical",
-    boundedRerankMode: "lexical",
-    artifactContextMode: "lexical",
   },
   revisionFreshness: {
     liveGitChecked: true,

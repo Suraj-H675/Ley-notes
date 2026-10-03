@@ -84,7 +84,7 @@ P0_CAPABILITY_COVERAGE = {
             "zero",
         ),
         "regression": (
-            "retrieval-fallback-budget-ladder",
+            "retrieval-budget-ladder",
             "retrieval_robustness",
             "truthy",
         ),
@@ -4930,11 +4930,6 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
 
             search_retrieval = search_payload.get("retrieval", {})
             compiler_retrieval = compiler_payload.get("retrieval", {})
-            compiler_semantic_gap = any(
-                isinstance(item, dict)
-                and item.get("kind") == "semantic-fallback"
-                for item in compiler_payload.get("gaps", [])
-            )
             search_text = json.dumps(
                 search_payload.get("results", []),
                 sort_keys=True,
@@ -4945,16 +4940,7 @@ def evaluate_scenario(scenario: dict[str, object], base_dir: Path) -> dict[str, 
             )
             per_budget_checks.append(
                 search_retrieval.get("mode") == "lexical"
-                and search_retrieval.get("boundedRerankMode") == "lexical"
-                and search_retrieval.get("artifactContextMode") == "lexical"
                 and compiler_retrieval.get("mode") == "lexical"
-                and compiler_retrieval.get("boundedRerankMode") == "lexical"
-                and compiler_retrieval.get("artifactContextMode") == "lexical"
-                and "boundedRerankFallbackReason" not in search_retrieval
-                and "artifactContextFallbackReason" not in search_retrieval
-                and "boundedRerankFallbackReason" not in compiler_retrieval
-                and "artifactContextFallbackReason" not in compiler_retrieval
-                and not compiler_semantic_gap
                 and required_marker in search_text
                 and task_contract_success(
                     compiler_payload,

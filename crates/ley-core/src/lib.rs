@@ -38,7 +38,6 @@ mod project_memory_search;
 mod resume_context;
 mod retrieval;
 mod revision;
-mod semantic_retrieval;
 mod session;
 mod session_context;
 mod specification;
@@ -97,7 +96,7 @@ pub use context_compiler::{
     SharedKnowledgeSourceState, SpecificationCompileCoverage, SpecificationCompileExclusion,
     SpecificationCompileExclusionReason, DEFAULT_CONTEXT_COMPILE_RESULTS,
     DEFAULT_CONTEXT_COMPILE_TOKENS, MAX_CONTEXT_COMPILE_RESULTS, MAX_CONTEXT_COMPILE_TOKENS,
-    MIN_CONTEXT_COMPILE_TOKENS, MIN_SEMANTIC_ADMISSION_SIMILARITY,
+    MIN_CONTEXT_COMPILE_TOKENS,
 };
 #[cfg(test)]
 pub use context_compiler::{
@@ -325,14 +324,6 @@ pub use retrieval::{
     MAX_MEDIA_EVIDENCE_BYTES,
 };
 pub use revision::{ProjectRevisionFreshness, RevisionApplicability, RevisionCompatibility};
-pub use semantic_retrieval::{
-    default_semantic_model_cache_path, install_semantic_model_from_staging,
-    install_semantic_model_from_staging_at, semantic_model_status, semantic_model_status_at,
-    supported_semantic_model, SemanticIndexBinding, SemanticIndexState, SemanticModelDescriptor,
-    SemanticModelFile, SemanticModelInstallation, SemanticModelStatus,
-    MAX_SEMANTIC_ENTRY_CHARACTERS, MAX_SEMANTIC_INDEX_ENTRIES, SEMANTIC_INDEX_SCHEMA_VERSION,
-    SEMANTIC_MODEL_DIMENSION, SEMANTIC_MODEL_ID, SEMANTIC_MODEL_REVISION,
-};
 pub use session::{
     bind_context_utility_pack, bind_context_utility_pack_with_continuity_transition,
     checkpoint_session, checkpoint_session_if_current,
@@ -742,10 +733,6 @@ pub enum LeyCoreError {
     ProjectMemoryUnavailable(String),
     #[error("invalid Ley retrieval request: {0}")]
     InvalidRetrievalRequest(String),
-    #[error("local semantic model installation failed: {0}")]
-    SemanticModelInstallation(String),
-    #[error("invalid local semantic index: {0}")]
-    InvalidSemanticIndex(String),
     #[error("invalid Ley session store: {0}")]
     InvalidSessionStore(String),
     #[error("invalid Ley session request: {0}")]

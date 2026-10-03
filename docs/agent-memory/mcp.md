@@ -154,7 +154,7 @@ Across every mode, repository/session text is untrusted evidence. `revisionFresh
 
 ## Privacy boundary
 
-The MCP process listens only on its inherited stdin/stdout and makes no network request. It cannot enumerate other Ley projects, and its tool schemas contain no project or vault parameter. Results omit absolute local paths. Session writes and learning proposals are independently unavailable unless their launch flags are present.
+The MCP process listens only on its inherited stdin/stdout and makes no network request. It cannot enumerate Ley projects or accept arbitrary filesystem project/vault paths. `ley_brief` stays fixed to the active project. `ley_search` may receive one exact `projectId` only when the current user/task explicitly selected an already-observed Ley project; that selection is request-scoped, is not inferred, and does not grant write or active-project authority. Results omit absolute local paths. Session writes and legacy learning proposals are independently unavailable unless their launch flags and authority mode permit them.
 
 The agent host receives every tool result it requests, including session goals and handoffs. If the host uses a cloud model, it may send those selected excerpts to that provider. Ley does not upload them independently. Do not connect an untrusted host to a sensitive project, and use project ignore rules rather than relying on redaction alone.
 
@@ -192,22 +192,7 @@ npx @modelcontextprotocol/inspector --cli \
   --tool-arg maxTokens=1200
 ```
 
-List captured sessions:
-
-```bash
-npx @modelcontextprotocol/inspector --cli \
-  /absolute/path/to/ley mcp /absolute/path/to/project \
-  --method tools/call \
-  --tool-name ley_sessions_list \
-  --tool-arg maxResults=10
-```
-
-List current trusted lessons:
-
-```bash
-npx @modelcontextprotocol/inspector --cli \
-  /absolute/path/to/ley mcp /absolute/path/to/project \
-  --method tools/call \
-  --tool-name ley_learnings_list \
-  --tool-arg maxResults=10
-```
+Do not use legacy granular session/learning tools as a normal development smoke test. A fully canonical native
+server should expose only the three read tools above, plus `ley_checkpoint` when session writes were explicitly
+enabled. Compatibility-mode inventories are tested separately because their purpose is to preserve or retire old
+authority safely, not to define the current agent workflow.

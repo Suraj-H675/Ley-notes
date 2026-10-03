@@ -4,10 +4,6 @@ use crate::ingestion::{
     ArtifactKind, ArtifactMediaType, ArtifactRecord, LoadedProjectMemory,
 };
 use crate::revision::RevisionResolver;
-use crate::semantic_retrieval::{
-    reciprocal_rank_fusion, semantic_ranked_project_context, SemanticIndexState,
-    SemanticSearchOutcome,
-};
 use crate::{CaptureMode, ContinuityStore, LeyCoreError, ProjectRevisionFreshness};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
@@ -141,8 +137,6 @@ pub struct ContextPack {
 #[serde(rename_all = "kebab-case")]
 pub enum RetrievalMode {
     Lexical,
-    Semantic,
-    Hybrid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -155,9 +149,6 @@ pub enum HybridConflictProjection {
 #[serde(rename_all = "camelCase")]
 pub struct HybridRetrievalMetadata {
     pub mode: RetrievalMode,
-    pub semantic_index: SemanticIndexState,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fallback_reason: Option<String>,
     pub conflict_projection: HybridConflictProjection,
     pub conflict_projection_note: &'static str,
 }
@@ -437,8 +428,7 @@ pub fn find_project_context(
     search_loaded_context(&memory, query, limits)
 }
 
-/// Searches the already-captured, bound project with deterministic lexical and local semantic
-/// rankings. A missing or invalid local model intentionally falls back to lexical retrieval.
+/// Searches the already-captured, bound project with deterministic lexical ranking.
 pub fn find_project_hybrid_context(
     project_start: impl AsRef<Path>,
     vault: impl AsRef<Path>,
@@ -447,44 +437,17 @@ pub fn find_project_hybrid_context(
 ) -> Result<HybridContextPack, LeyCoreError> {
     validate_query(query)?;
     validate_limits(limits)?;
-    let vault = vault.as_ref();
     let memory = load_project_memory(project_start, vault)?;
-    let lexical = collect_lexical_candidates(&memory, query)?;
-    match semantic_ranked_project_context(&memory, vault, query) {
-        SemanticSearchOutcome::Available {
-            items: semantic,
-            index_state,
-        } => {
-            let mode = if lexical.is_empty() {
-                RetrievalMode::Semantic
-            } else {
-                RetrievalMode::Hybrid
-            };
-            let candidates = reciprocal_rank_fusion(lexical, semantic);
-            Ok(HybridContextPack {
-                context: context_pack_from_candidates(&memory, query, limits, candidates),
-                retrieval: HybridRetrievalMetadata {
-                    mode,
-                    semantic_index: index_state,
-                    fallback_reason: None,
-                    conflict_projection: HybridConflictProjection::NotParticipating,
-                    conflict_projection_note:
-                        "No structured conflict projection participated in artifact, symbol, or dependency retrieval.",
-                },
-            })
-        }
-        SemanticSearchOutcome::Unavailable { reason } => Ok(HybridContextPack {
-            context: context_pack_from_candidates(&memory, query, limits, lexical),
-            retrieval: HybridRetrievalMetadata {
-                mode: RetrievalMode::Lexical,
-                semantic_index: SemanticIndexState::Unavailable,
-                fallback_reason: Some(reason),
-                conflict_projection: HybridConflictProjection::NotParticipating,
-                conflict_projection_note:
-                    "No structured conflict projection participated in artifact, symbol, or dependency retrieval.",
-            },
-        }),
-    }
+    let candidates = collect_lexical_candidates(&memory, query)?;
+    Ok(HybridContextPack {
+        context: context_pack_from_candidates(&memory, query, limits, candidates),
+        retrieval: HybridRetrievalMetadata {
+            mode: RetrievalMode::Lexical,
+            conflict_projection: HybridConflictProjection::NotParticipating,
+            conflict_projection_note:
+                "No structured conflict projection participated in artifact, symbol, or dependency retrieval.",
+        },
+    })
 }
 
 pub fn find_project_hybrid_context_with_continuity_transition(
@@ -517,8 +480,6 @@ pub fn find_project_hybrid_context_with_continuity_transition(
         ),
         retrieval: HybridRetrievalMetadata {
             mode: RetrievalMode::Lexical,
-            semantic_index: SemanticIndexState::Unavailable,
-            fallback_reason: None,
             conflict_projection: HybridConflictProjection::NotParticipating,
             conflict_projection_note:
                 "No structured conflict projection participated in artifact retrieval.",
@@ -559,8 +520,6 @@ pub(crate) fn find_native_project_hybrid_context_for_project_id(
         ),
         retrieval: HybridRetrievalMetadata {
             mode: RetrievalMode::Lexical,
-            semantic_index: SemanticIndexState::Unavailable,
-            fallback_reason: None,
             conflict_projection: HybridConflictProjection::NotParticipating,
             conflict_projection_note:
                 "No structured conflict projection participated in artifact retrieval.",
@@ -1593,6 +1552,39 @@ mod tests {
 
         assert!(project_memory_overview(&project, &vault).is_err());
         assert_eq!(std::fs::read_dir(&vault).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn transition_without_native_snapshot_uses_legacy_lexical_retrieval() {
+        let (base, project, vault) = setup_memory(CaptureMode::Structured);
+        let private = base.path().join("private");
+        std::fs::create_dir(&private).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let store = ContinuityStore::at(private.join("continuity.sqlite3"));
+
+        let legacy = find_project_context(
+            &project,
+            &vault,
+            "durable checkpoint",
+            RetrievalLimits::default(),
+        )
+        .unwrap();
+        let transitioned = find_project_hybrid_context_with_continuity_transition(
+            &project,
+            &vault,
+            &store,
+            "durable checkpoint",
+            RetrievalLimits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(transitioned.retrieval.mode, RetrievalMode::Lexical);
+        assert_eq!(transitioned.context.items, legacy.items);
+        assert!(transitioned.context.items.iter().all(|item| item.score > 0));
     }
 
     #[test]

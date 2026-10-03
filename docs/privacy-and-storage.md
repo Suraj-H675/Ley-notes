@@ -71,11 +71,16 @@ The focused product should prefer compact structured continuity records and exac
 
 Image/multimodal evidence and the current Full Evidence mode remain optional migration-era capabilities and must re-earn first-class product complexity through realistic evaluation.
 
-## Optional semantic retrieval
+## Retired semantic retrieval
 
-The bundled local Model2Vec experiment is deferred from the focused product by ADR 0094. Canonical native Search and transition cross-kind ranking now use the deterministic lexical baseline and do not inspect the optional model cache. A pre-cutover legacy artifact fallback may still exercise retained semantic compatibility internals. The Desktop and CLI no longer download or install the model.
+The former local Model2Vec experiment and semantic-index implementation have been removed. Native, transition, and
+retained legacy search now use the deterministic lexical path and do not inspect, create, or rebuild semantic indexes.
+Existing user-level public-model cache files are left untouched; existing derived semantic-index files inside an old
+project-memory directory are inert compatibility debris and remain covered by the ordinary project-memory erasure
+boundary for that directory. No semantic index is required for migration, evidence resolution, export, or recovery.
 
-Retained core semantic/index code is compatibility/research machinery rather than a current product feature. Existing cache files are derived public-model data and are left untouched. Model-assisted canonical retrieval should return only after a native-state retrieval/task ablation shows material value over the lexical baseline under the same trust, revision, egress, and budget constraints.
+Model-assisted retrieval should return only after a native-state retrieval/task ablation shows material value over
+the lexical baseline under the same trust, revision, egress, provenance, and budget constraints.
 
 ## External network connectors
 

@@ -9,10 +9,15 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/shared/lib/classnames";
-import { readAgentArtifacts, readAgentMediaEvidence } from "./api";
+import {
+  readAgentArtifacts,
+  readAgentCitedEvidence,
+  readAgentMediaEvidence,
+} from "./api";
 import type {
   AgentMediaEvidence,
   ArtifactEvidenceReference,
+  ProjectEvidenceExcerpt,
   ProjectArtifactInventory,
 } from "./types";
 
@@ -153,7 +158,7 @@ function ArtifactExplorerContent({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-surface-1 p-2">
-        <div className="flex gap-1" role="tablist" aria-label="Artifact status">
+        <div className="flex gap-1" role="group" aria-label="Artifact status">
           <InventoryTab
             active={view === "captured"}
             onClick={() => setView("captured")}
@@ -190,14 +195,7 @@ function ArtifactExplorerContent({
         </div>
       )}
 
-      {focus?.evidence?.mediaType && (
-        <MediaEvidencePreview
-          projectPath={projectPath}
-          artifactPath={focus.evidence.artifactPath}
-          artifactSnapshotId={focus.evidence.artifactSnapshotId}
-          contentHash={focus.evidence.contentHash}
-        />
-      )}
+      <FocusedEvidencePreview projectPath={projectPath} focus={focus} />
 
       {error && !loading ? (
         <ErrorState message={error} />
@@ -230,6 +228,112 @@ function ArtifactExplorerContent({
           <span>Live source not checked in this view</span>
         </div>
       )}
+    </section>
+  );
+}
+
+function FocusedEvidencePreview({
+  projectPath,
+  focus,
+}: {
+  projectPath: string;
+  focus: ArtifactFocus | null | undefined;
+}) {
+  if (!focus?.evidence) return null;
+  if (focus.evidence.mediaType) {
+    return (
+      <MediaEvidencePreview
+        projectPath={projectPath}
+        artifactPath={focus.evidence.artifactPath}
+        artifactSnapshotId={focus.evidence.artifactSnapshotId}
+        contentHash={focus.evidence.contentHash}
+      />
+    );
+  }
+  return (
+    <TextEvidencePreview projectPath={projectPath} evidence={focus.evidence} />
+  );
+}
+
+function TextEvidencePreview({
+  projectPath,
+  evidence,
+}: {
+  projectPath: string;
+  evidence: ArtifactEvidenceReference;
+}) {
+  const requestKey = `${projectPath}\u0000${evidence.artifactPath}\u0000${evidence.artifactSnapshotId}\u0000${evidence.contentHash}\u0000${evidence.startLine}\u0000${evidence.endLine}`;
+  const [load, setLoad] = useState<{
+    key: string;
+    excerpt?: ProjectEvidenceExcerpt;
+    error?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    void readAgentCitedEvidence(projectPath, {
+      artifactPath: evidence.artifactPath,
+      artifactSnapshotId: evidence.artifactSnapshotId,
+      contentHash: evidence.contentHash,
+      startLine: evidence.startLine,
+      startColumn: 0,
+      endLine: evidence.endLine,
+      endColumn: 0,
+    })
+      .then((next) => {
+        if (current) setLoad({ key: requestKey, excerpt: next });
+      })
+      .catch((cause) => {
+        if (current) setLoad({ key: requestKey, error: errorMessage(cause) });
+      });
+    return () => {
+      current = false;
+    };
+  }, [evidence, projectPath, requestKey]);
+
+  const excerpt = load?.key === requestKey ? load.excerpt : undefined;
+  const error = load?.key === requestKey ? load.error : undefined;
+
+  if (error) {
+    return (
+      <div
+        className="rounded-md border border-destructive/25 bg-destructive/8 p-3 text-meta text-destructive"
+        role="alert"
+      >
+        Could not read cited historical evidence: {error}
+      </div>
+    );
+  }
+
+  if (!excerpt) {
+    return (
+      <div
+        className="flex min-h-24 items-center justify-center rounded-md border border-border bg-background/50 text-meta text-muted-foreground"
+        aria-live="polite"
+      >
+        Reading cited historical evidence…
+      </div>
+    );
+  }
+
+  return (
+    <section className="overflow-hidden rounded-md border border-primary/20 bg-background/55">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 text-micro text-muted-foreground">
+        <span className="min-w-0 truncate font-mono text-foreground">
+          {excerpt.artifactPath}:{excerpt.citation.startLine}-
+          {excerpt.citation.endLine}
+        </span>
+        <span className="shrink-0">
+          Historical snapshot {shortId(excerpt.artifactSnapshotId)}
+        </span>
+      </div>
+      <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-micro leading-5 text-foreground">
+        {excerpt.text}
+      </pre>
+      <div className="border-t border-border px-3 py-2 text-micro text-muted-foreground">
+        Exact cited snapshot/hash evidence · live source not checked
+        {excerpt.truncated ? " · excerpt bounded" : ""}
+      </div>
     </section>
   );
 }
@@ -543,8 +647,7 @@ function InventoryTab({
   return (
     <button
       type="button"
-      role="tab"
-      aria-selected={active}
+      aria-pressed={active}
       onClick={onClick}
       className={cn(
         "inline-flex h-8 items-center gap-2 rounded-md px-2.5 text-meta font-medium outline-none focus-visible:ring-2 focus-visible:ring-primary",

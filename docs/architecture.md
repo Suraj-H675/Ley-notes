@@ -1,206 +1,174 @@
-# Current architecture direction
+# Ley architecture
 
-This document describes the architecture selected by the 2026-09-25 first-principles reset. Older ADRs and runtime reports remain historical evidence; they are not automatically constraints on the design below.
+Ley is a local-first continuity/context system for coding agents. The architecture is intentionally smaller than
+its historical notebook and experimental memory surfaces: current source, user intent, and explicit local
+authority remain primary; retained history is bounded evidence that can help a later session continue work.
 
-See [`research/first-principles-audit-2026-09-25.md`](research/first-principles-audit-2026-09-25.md) for the full rationale and subsystem-by-subsystem disposition.
+Historical ADRs and research documents explain how Ley reached this shape. They are evidence, not requirements for
+preserving old implementation structure.
 
-## Product boundary
+## Product surfaces
 
-Ley has two intended surfaces:
+Ley has two current product surfaces plus one migration utility:
 
-1. **Native desktop application** — the real product. It may access user-selected local projects, run local integrations/MCP, manage continuity state, and expose privacy/review/evidence controls.
-2. **Public website** — static product information, documentation, and project/release links. It holds no project memory and does not mount the desktop workspace.
+1. **Ley Desktop** — the native control center for explicit project selection, capture, Brief preview, historical
+   recall, session/learning inspection, approved-source authority, evidence, privacy/egress, export, and erasure.
+2. **Public website** — static product information. It has no project-memory backend and does not mount the Desktop
+   runtime.
+3. **Legacy browser recovery page** — a separate same-origin inspect/export/erase utility for retired browser-local
+   notebook data. It is not a browser edition of Ley and does not promote that data into current continuity.
 
-There is no supported browser Ley application. The former PWA, `/app` route, browser-folder File System Access mode, and browser-local IndexedDB vault were retired because they could not provide the core local-agent boundary and duplicated substantial storage/UI behavior.
+The former PWA/browser workspace, note editor, Canvas, note graph, bookmarks, and related notebook runtime are not
+current product surfaces.
 
 ## Build boundary
 
-The website and desktop may share components/styles, but they do not share a runtime entrypoint or deployment artifact.
+Website and Desktop share source where useful but have separate entrypoints and artifacts:
 
-- `index.html` + `src/website-main.tsx` + `vite.config.ts` build the public website into `dist/`.
-- `desktop/index.html` + `desktop/desktop-main.tsx` + `vite.desktop.config.ts` build the Tauri webview into `dist-desktop/`.
-- `src-tauri/tauri.conf.json` points only at the desktop build.
+- `index.html` + `src/website-main.tsx` + `vite.config.ts` -> `dist/`;
+- `desktop/index.html` + `desktop/desktop-main.tsx` + `vite.desktop.config.ts` -> `dist-desktop/`;
+- `src-tauri/tauri.conf.json` points only at the Desktop build.
 
-This prevents a website deployment from accidentally exposing the desktop runtime and lets each surface evolve without compatibility branches for the other.
+The native shell and local commands live in `src-tauri/`; the Rust continuity engine, CLI, and MCP server live under
+`crates/`.
 
-## Target continuity architecture
+## Project identity and local state
 
-The migration target is a small local continuity engine rather than a general note system.
+Each initialized project has a small repo-local `.ley/` directory. It carries stable project identity and explicit
+capture configuration only; it is not a conversation database or hidden memory folder.
 
-### Project identity
+Machine-managed continuity lives in owner-private operating-system state. The canonical store is SQLite
+(`continuity.sqlite3`), currently schema v11, partitioned by stable project ID. Its durable core is:
 
-Keep a tiny repo-local `.ley/` identity/config so a project can retain a stable Ley identity across path moves. It may contain explicit capture/retention choices, but not conversations, generated memory, credentials, embeddings, or machine-specific private paths.
+- `projects` — project identity;
+- `events` — append-only/versioned continuity events;
+- `event_links` — explicit provenance, dependency, and supersession links;
+- native approved-source, artifact-snapshot, artifact-file, project-observation, and migration state needed by the
+  current engine.
 
-### Machine-managed state
+Large immutable cited evidence may live in Ley-managed content-addressed storage. Rebuildable indexes and
+presentation projections are not independent authority.
 
-Move machine-managed metadata toward one owner-private SQLite database, initially device-wide and partitioned by project.
+Some older owner-private JSON registries and filesystem-vault data still exist as migration/privacy compatibility
+inputs. They are not a second canonical product model.
 
-The current continuity store is schema v11. Its durable core remains intentionally smaller than the legacy
-ontology and centers on:
+## Capture and evidence
 
-- `projects` keeps stable portable project identity;
-- `events` is the append-only continuity envelope for session activity, handoffs, verification, evidence,
-  corrections, and other durable facts. It carries dedicated project/session/order/request/revision columns,
-  an optional `subject_id` for durable aggregate identity (for example a learning ID), and a versioned JSON
-  payload;
-- `event_links` records explicit provenance/supersession/dependency relations between events.
+Capture is explicit and project-scoped. A new project previews the default Structured plan before initialization.
+The repo-local capture mode plus `.leyignore`, Git ignore rules, hard file/byte bounds, no-follow filesystem access,
+and credential-pattern redaction define the local evidence boundary.
 
-The store uses bundled SQLite in WAL mode with `synchronous=FULL`, foreign keys, owner-private filesystem
-permissions, `trusted_schema=OFF`, and secure deletion enabled. Schema versioning uses
-`PRAGMA user_version`.
+Current capture modes are:
 
-Large immutable evidence blobs may remain content-addressed files under owner-private application data.
-Search indexes, vectors, summaries, and presentation projections are rebuildable derivatives.
+- **Minimal** — paths/classifications/hashes without source blobs;
+- **Structured** — bounded post-redaction UTF-8 source evidence and citations;
+- **Full Evidence** — Structured plus explicitly consented original PNG/JPEG/WebP evidence.
 
-Do not create dedicated tables for every legacy record shape merely because those JSON registries exist.
-The current JSON registries and filesystem Agent Memory stores remain migration inputs, not architecture
-that must be preserved.
+Captured evidence is historical. Ley does not silently relabel it as a live-source check.
 
-### Durable memory vocabulary
+## Continuity model
 
-Prefer a small event vocabulary such as:
+Ley preserves the facts that change a later engineering decision: goals/handoffs, decisions, constraints, attempts
+and outcomes, verification, unresolved work, corrections/supersession, and exact evidence references.
 
-- goal / handoff state;
-- decision or constraint;
-- attempt + outcome;
-- verification result;
-- unresolved item;
-- correction/supersession;
-- evidence reference.
+Sessions and learnings remain evidence-bearing structured records rather than executable instructions. Human-reviewed
+or otherwise trusted state still does not outrank current user intent or current repository/runtime evidence.
 
-Use a generic event envelope with `kind` + `payload_version` rather than versioning an entire session projection every time a new feature shape appears.
+Git applicability is recomputed from bounded local Git evidence. Divergent historical state is withheld
+where the canonical admission rules require it rather than being rewritten as though branch history never happened.
 
-### Retrieval
+## Retrieval and Brief compilation
 
-The current canonical historical retrieval path uses deterministic lexical candidate generation plus explicit
-metadata/revision/authority filtering. Optional semantic retrieval remains deferred and confined to legacy
-compatibility/research paths until a native-state ablation earns it. The longer-term architecture can still admit
-independent candidate generators when evidence justifies them, for example:
+Canonical native, transition, and retained legacy Search use deterministic lexical ranking plus explicit trust,
+authority, revision, conflict, egress, and budget handling. The previously bundled Model2Vec experiment and its
+derived semantic-index implementation have been removed rather than kept as dormant product complexity. A future
+model-assisted retrieval path would need a controlled native-state ablation to earn its dependency and authority
+surface again.
 
-- SQLite FTS lexical retrieval;
-- optional vector retrieval if ablation earns it;
-- metadata/time/revision filters;
-- merged/reranked candidates;
-- compact task-conditioned final selection.
+The task-conditioned Brief is a deterministic compiler over bounded Search/authority inputs. Admission, withholding,
+provenance, budget, and egress remain inspectable rather than being delegated to an opaque model classifier.
 
-Explicit revision/supersession relations may exclude or demote historical records. Textual disagreement heuristics should disclose uncertainty rather than claim semantic truth adjudication.
+## Agent interface
 
-### Agent interface
+The canonical native MCP contract is deliberately small:
 
-The desired agent API maps to user goals instead of internal storage operations. The target is approximately:
+- `ley_brief` — task-conditioned active-project continuity;
+- `ley_search` — bounded historical recall, optionally against one exact explicitly selected already-observed project;
+- `ley_evidence` — citation-bound historical evidence;
+- `ley_checkpoint` — structured session write, only when writes were explicitly enabled at process start.
 
-- Brief
-- Search
-- Evidence
-- Checkpoint
+An inactive ordinary workspace exposes no project-memory capabilities and is not initialized implicitly. Bootstrap
+Specification access for an uninitialized workspace is a separate explicit read-only authority path.
 
-Setup/status may remain a small separate surface if real integrations require it. User-only deletion, privileged-source approval, correction, and privacy mutation should not become ambient agent authority.
+Host adapters establish/reuse session identity and capture bounded/redacted lifecycle evidence. Desktop's recorded
+integration activity is retained provenance, not proof that a host is currently installed, trusted, connected, or
+healthy.
 
-### Desktop UI
+## Human authority and egress
 
-The focused desktop should converge on:
+Privileged source approval, correction/review, deletion, export, and privacy mutation are human/local control
+surfaces rather than ambient agent authority.
 
-- projects/setup/integration status;
-- preview of the next-agent Brief;
-- historical recall/search;
-- session/handoff timeline;
-- review/correct/pin/delete workflows;
-- Evidence / Why inspection;
-- privacy/egress/retention/export/erasure.
+The current project egress vocabulary is:
 
-The legacy Markdown editor, note graph, Canvas, bookmarks, daily notes, workspace layouts, and similar notebook features are migration-era code scheduled for retirement unless realistic evaluation proves a unique continuity need.
+- `agent-ok`;
+- `local-model-only`;
+- `confirm-per-use` (fail-closed until a real retrieval-scoped confirmation flow exists);
+- `never-send`.
 
-## Current transition state
+A local egress target is an explicit host/user assertion, not provider attestation. Retained finer-grained legacy
+ancestry can still make a derivative more restrictive while migration is incomplete; historical data must not
+launder itself through a newer, broader project policy.
 
-The native Desktop now boots directly into the focused continuity control center. The retired filesystem-note
-workspace, Canvas, note graph, and related notebook UI and native filesystem engine have been removed rather
-than kept as a second product surface.
+## Portability, erasure, and recovery
 
-Canonical continuity for native-born and successfully cut-over projects lives in Ley's owner-private SQLite/CAS
-state. Older JSON/session/learning/artifact/vault data remains a compatibility and migration source only where the
-corresponding native authority has not yet been established. ADR 0098 closes new legacy-vault growth: fresh Desktop
-and CLI initialization are native-born, `bind` is reconnect-only, and explicit non-persistent overrides must already validate as
-captured memory for the exact project. A moved legacy vault can still be reconnected after cutover. Artifact
-transition fences/imports the existing historical snapshot and captures current source directly to native storage;
-it never refreshes the legacy vault from live source first.
+Portable continuity export is project-scoped. It contains the selected project's continuity database plus only the
+Ley-managed evidence actually cited by retained events. Import validates the bundle before installing runtime state.
 
-Old browser-local IndexedDB stores are not current continuity authority. ADR 0097 replaces the former dead Dexie
-schema/opening compatibility island with one migration-only same-origin recovery page. The normal website and
-Desktop never open `ley-notes`; explicit recovery reads the historical authority marker plus candidate stores in one
-readonly transaction, can export human-owned Page/Asset/Revision data without promoting it into continuity, and can
-erase the retired database only after exact confirmation. The production `dexie` dependency and notebook schema
-runtime are therefore no longer part of the focused product.
+Erasure removes Ley-controlled continuity for the selected project/session while preserving user-owned repository
+files and independent copies. Ley does not claim forensic deletion of backups, filesystem snapshots, SSD remnants,
+or downstream provider copies.
 
-The first migration slice can now snapshot the validated legacy **session and learning event ledgers** into
-SQLite. It deliberately reuses the legacy readers/replay validators instead of reimplementing the
-`session-v1`…`session-v16` formats. Each imported continuity event retains the full validated legacy event
-object, while stable session/request/revision fields are lifted into indexed columns where their legacy
-scope matches the new schema. Learning request IDs remain inside the raw learning event because legacy
-idempotency is scoped per learning, not per session/project.
+Interruption recovery is read-only evidence plus ordinary re-verification/checkpointing. The former shape-specific
+recovery-writer MCP family is retired from the canonical product.
 
-Each snapshot ends with an atomic `legacy-snapshot-imported` manifest containing a deterministic inventory
-digest and `cutover: false`. Exact reruns replay without duplicates; any conflicting event rolls back the
-whole batch. While legacy storage remains authoritative, repeating the snapshot also prunes mirrored
-`legacy-*` events and superseded snapshot manifests that no longer exist in the validated source. This
-means legacy session erasure (including its dependent-learning cascade) is reflected in SQLite without
-touching future native continuity events.
+## Compatibility boundaries still in force
 
-Native post-cutover session erasure is now relational rather than legacy-payload-aware. Learning events use
-`subject_id`; dependency links connect a learning event to the session it cites; supersession links connect
-the superseding learning to the replacement learning. Erasure is a two-step operation: a preview computes
-the exact session/dependent-subject event set and returns a deterministic confirmation digest, then erase
-recomputes that set under `BEGIN IMMEDIATE` and refuses stale digests. The cascade deletes the session,
-directly dependent learning aggregates, and transitive superseders while preserving unrelated continuity.
-Successful erasure also requires WAL truncation, and retry after a completed delete remains safe.
+Cleanup must not silently orphan real local state. Current finite compatibility obligations include:
 
-Portable continuity no longer depends on the legacy artifact vault. Export takes a consistent SQLite online
-backup in Ley's owner-private database directory, prunes every non-selected project, switches the copy to a
-standalone journal mode, and `VACUUM`s it before any database bytes enter the user-selected bundle staging
-directory. Evidence selection is then derived from that frozen project-only copy.
+- legacy binding/vault reconnect for pre-cutover projects;
+- one-time legacy project-catalog migration into native observations;
+- legacy session/learning and approved-source import where native authority is not yet complete;
+- retained Context Mount / Knowledge Scope / Policy Bundle / External Connector ancestry needed for cleanup and
+  fail-closed egress;
+- existing bootstrap grants for uninitialized workspaces;
+- explicit historical-host import while that user-facing import workflow remains supported.
 
-The portable bundle contains the project-only `continuity.sqlite3` plus **only evidence actually cited by
-those events**. Legacy artifact snapshots are fully validated while exporting, but the bundle stores a
-normalized cited-only snapshot file rather than the complete legacy manifest, so unrelated project paths /
-hashes do not cross the portability boundary. Every database, normalized snapshot, and content-addressed
-blob is hash/size validated. Import copies declared files through no-follow handles into a private staging
-directory, validates the copied tree, then atomically installs a mutable runtime database plus immutable
-evidence root. The immutable export manifest is intentionally not installed beside the runtime DB because
-opening/writing that DB legitimately changes its bytes.
+Creation/growth paths for several of those historical products are already retired. Their readers should disappear
+only after persisted-state obligations are explicitly closed, not merely because the current machine happens to have
+no corresponding file.
 
-After the original vault is unavailable, the imported runtime can read cited evidence, accept new native
-continuity events, and produce another valid portable bundle using only its SQLite database + installed
-evidence root. Graph snapshots/history, search indexes, current vault manifests, notes, and uncited artifact
-metadata/bytes are not part of the continuity bundle.
+## Security and trust invariants
 
-This closes the portable evidence/blob cutover gate for migrated session/learning continuity. It does **not**
-declare all legacy product state migrated: every remaining registry/configuration surface must still be
-explicitly migrated, rebuilt, or retired before the legacy architecture itself is removed.
+Current implementation changes must preserve these boundaries unless new evidence justifies a deliberate redesign:
 
-Do not add new capabilities to the legacy note domain merely because it still exists during migration.
-
-## Security boundaries retained through the reset
-
-- user-selected project/file boundaries;
-- no-follow/canonical containment for native filesystem access;
-- bounded/redacted evidence capture;
-- explicit project scope;
-- human intent cannot be self-authorized by an agent;
+- explicit project/file scope and stable identity;
+- owner-private machine state;
+- no-follow filesystem containment;
+- bounded/redacted capture and output;
+- historical evidence is not instruction or current truth;
 - provenance survives derivation;
-- historical memory never silently becomes current source truth;
-- privacy/egress/erasure remain inspectable and testable;
-- agent/MCP outputs stay bounded.
+- user intent and privileged human authority cannot be self-granted by an agent;
+- revision applicability and uncertainty remain visible;
+- egress and erasure fail closed;
+- no unnecessary absolute local paths or unrelated project data cross agent/portable boundaries.
 
-Where the current implementation violates one of these principles, migration does not excuse the defect; exposed legacy surfaces must be fixed or retired before release.
+## Verification
 
-## Evaluation architecture
+`docs/runtime-verification.md` is the current human/runtime release contract. Deterministic P0/P1/P2 eval lanes
+exercise the focused continuity capabilities; unit/integration tests cover lower-level correctness and retained
+migration/privacy obligations. Model-dependent studies remain separate evidence and must identify their model,
+host/version, fixture, and limits.
 
-Internal invariants are necessary but not sufficient. The primary product evidence should compare realistic external-agent tasks across:
-
-1. host-native baseline;
-2. human `HANDOFF.md` baseline;
-3. minimal redesigned Ley;
-4. current full Ley while available.
-
-Measure task correctness, stale-memory harm, repeated dead ends, evidence correctness, context tokens, latency, setup/review burden, and Ley tool-selection/intervention count.
-
-Optional features return only when their ablation materially improves a relevant outcome.
+A passing historical fixture or ADR is not a reason to preserve a subsystem. A retained subsystem should continue to
+exist only while the current product or a finite migration/security obligation still needs it.

@@ -20,14 +20,6 @@ pub(crate) fn default_private_config_dir() -> Result<PathBuf, LeyCoreError> {
     Ok(base.config_dir().to_path_buf())
 }
 
-pub(crate) fn default_private_cache_dir() -> Result<PathBuf, LeyCoreError> {
-    if let Some(root) = evaluation_private_root()? {
-        return Ok(root.join("cache"));
-    }
-    let base = BaseDirs::new().ok_or(LeyCoreError::ConfigDirectoryUnavailable)?;
-    Ok(base.cache_dir().to_path_buf())
-}
-
 fn evaluation_private_root() -> Result<Option<PathBuf>, LeyCoreError> {
     let Some(value) = env::var_os(EVAL_PRIVATE_ROOT_ENV) else {
         return Ok(None);

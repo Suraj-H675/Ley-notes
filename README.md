@@ -11,7 +11,7 @@ The 2026-09-25 first-principles reset is documented in [`docs/research/first-pri
 Ley now has exactly two intended surfaces:
 
 - **Ley Desktop** — the actual local application. It owns project access, local agent integrations, privacy controls, review, search/recall, evidence inspection, and the continuity workflow.
-- **Ley website** — a normal public marketing/showcase/documentation site. It does not run a reduced copy of Ley in the browser.
+- **Ley website** — a normal public marketing/showcase site. It does not run a reduced copy of Ley in the browser; detailed documentation lives in this repository.
 
 The previous `/app` browser workspace, PWA, browser-folder mode, and browser-local notebook mode have been retired. A web page cannot provide the same local project/MCP boundary as the native product, and maintaining a parallel notebook implementation added substantial complexity without strengthening Ley's differentiated value.
 
@@ -52,11 +52,10 @@ See [`LEY.md`](LEY.md) in a local development checkout for the current execution
 ├── docs/                 # Current docs plus historical ADR/research evidence
 ├── eval/                 # Deterministic and real-agent evaluation runners
 ├── integrations/         # Codex and Claude Code packages
-├── schemas/              # Stable public/import-export payload contracts
+├── schemas/              # User-facing structured input schemas that remain current
 ├── src/
 │   ├── app/              # Native desktop React composition
 │   ├── features/         # Focused continuity desktop feature slices
-│   ├── infrastructure/   # Historical local-data compatibility schema
 │   ├── shared/           # Reusable UI/state/utilities
 │   └── website/          # Public marketing site
 └── src-tauri/            # Native shell and local filesystem/project commands

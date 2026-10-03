@@ -1,15 +1,21 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactExplorer } from "./ArtifactExplorer";
-import type { AgentMediaEvidence, ProjectArtifactInventory } from "./types";
+import type {
+  AgentMediaEvidence,
+  ProjectArtifactInventory,
+  ProjectEvidenceExcerpt,
+} from "./types";
 
 const api = vi.hoisted(() => ({
   readArtifacts: vi.fn(),
+  readCitedEvidence: vi.fn(),
   readMedia: vi.fn(),
 }));
 
 vi.mock("./api", () => ({
   readAgentArtifacts: api.readArtifacts,
+  readAgentCitedEvidence: api.readCitedEvidence,
   readAgentMediaEvidence: api.readMedia,
 }));
 
@@ -59,11 +65,34 @@ const media: AgentMediaEvidence = {
   derivedDescriptionIncluded: false,
 };
 
+const textExcerpt: ProjectEvidenceExcerpt = {
+  projectId: "prj_test",
+  artifactSnapshotId: snapshotId,
+  artifactPath: "src/lib.rs",
+  text: "pub fn stable() -> bool { true }",
+  citation: {
+    artifactPath: "src/lib.rs",
+    artifactSnapshotId: snapshotId,
+    contentHash,
+    startLine: 4,
+    startColumn: 1,
+    endLine: 4,
+    endColumn: 33,
+  },
+  truncated: false,
+  freshness: "stored-snapshot",
+  liveSourceChecked: false,
+  sourceBoundary: "untrusted-project-evidence",
+  warning: "Historical evidence is not live source.",
+};
+
 describe("ArtifactExplorer multimodal evidence", () => {
   beforeEach(() => {
     api.readArtifacts.mockReset();
+    api.readCitedEvidence.mockReset();
     api.readMedia.mockReset();
     api.readArtifacts.mockResolvedValue(inventory);
+    api.readCitedEvidence.mockResolvedValue(textExcerpt);
     api.readMedia.mockResolvedValue(media);
   });
 
@@ -133,5 +162,51 @@ describe("ArtifactExplorer multimodal evidence", () => {
     expect(
       await screen.findByAltText("Captured original evidence: verification.png"),
     ).toBeVisible();
+  });
+
+  it("opens exact historical text evidence instead of substituting the latest artifact row", async () => {
+    const historicalSnapshot = `snp_${"e".repeat(64)}`;
+    const historicalHash = `sha256:${"f".repeat(64)}`;
+    api.readCitedEvidence.mockResolvedValue({
+      ...textExcerpt,
+      artifactSnapshotId: historicalSnapshot,
+      citation: {
+        ...textExcerpt.citation,
+        artifactSnapshotId: historicalSnapshot,
+        contentHash: historicalHash,
+      },
+    });
+
+    render(
+      <ArtifactExplorer
+        projectPath="/projects/ley"
+        focus={{
+          path: "src/lib.rs",
+          requestId: 2,
+          evidence: {
+            artifactPath: "src/lib.rs",
+            artifactSnapshotId: historicalSnapshot,
+            contentHash: historicalHash,
+            startLine: 4,
+            endLine: 4,
+          },
+        }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(api.readCitedEvidence).toHaveBeenCalledWith("/projects/ley", {
+        artifactPath: "src/lib.rs",
+        artifactSnapshotId: historicalSnapshot,
+        contentHash: historicalHash,
+        startLine: 4,
+        startColumn: 0,
+        endLine: 4,
+        endColumn: 0,
+      }),
+    );
+    expect(await screen.findByText(textExcerpt.text)).toBeVisible();
+    expect(screen.getByText(/Exact cited snapshot\/hash evidence/)).toBeVisible();
+    expect(api.readMedia).not.toHaveBeenCalled();
   });
 });

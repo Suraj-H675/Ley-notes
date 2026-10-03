@@ -2,13 +2,13 @@
 
 Ley uses three layers together:
 
-1. lifecycle hooks load a bounded continuity brief, capture bounded turn evidence plus supported Bash post-tool observations, and inject compact task-specific Context Compiler output on supported prompt events;
+1. lifecycle hooks establish/reuse the Ley session, emit guidance-only continuity/recovery context, and capture bounded turn evidence plus supported Bash post-tool observations. Initialized projects do **not** auto-inject task-specific project history on prompt submission; explicit uninitialized-workspace Bootstrap Specification authority is the narrow exception;
 2. local stdio MCP exposes the focused `ley_brief` / `ley_search` / `ley_evidence` / `ley_checkpoint` surface for canonical projects; older compatibility mode may temporarily expose specialized recovery routes so retained state is not stranded;
 3. a portable agent skill tells the host to prefer compiled task context, inspect live source when needed, and preserve meaningful structure.
 
 For ordinary agent work, prefer the four focused MCP tools: call `ley_brief` for the current task, `ley_search` when the brief needs deeper captured history, carry an exact returned citation into `ley_evidence`, and use `ley_checkpoint` only at a meaningful structured session boundary when writes are enabled. `ley_evidence` verifies the immutable snapshot/path/hash citation instead of accepting an arbitrary path. `ley_compile_context` is bootstrap-only. Remaining lower-level evidence/session lifecycle routes are compatibility/specialized surfaces during migration and should not define the normal host workflow.
 
-All three run on the user's machine. The host may send deliberately retrieved context to its model provider. Lifecycle hooks and MCP retrieval make no external-connector network request. The legacy connector provider lifecycle is now retired as well: current CLI does not create or refresh connectors and therefore performs no GitHub connector fetch; retained local connector authority/snapshots remain inspectable/removable only for compatibility. Semantic-model installation remains a separate explicit download path.
+All three run on the user's machine. The host may send deliberately retrieved context to its model provider. Lifecycle hooks and MCP retrieval make no external-connector network request. The legacy connector provider lifecycle is retired as well: current CLI does not create or refresh connectors and therefore performs no GitHub connector fetch; retained local connector authority/snapshots remain inspectable/removable only for compatibility. The former semantic-model/index subsystem is also removed; all current and retained legacy Search paths are lexical-only.
 
 ## Before connecting a host
 

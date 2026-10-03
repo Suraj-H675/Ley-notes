@@ -374,8 +374,6 @@ pub struct BootstrapReferenceExclusion {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lexical_rank: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub semantic_similarity: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub specification_ids: Vec<String>,
@@ -1915,7 +1913,6 @@ fn compile_bootstrap_references_locked(
                     stage: ContextExclusionStage::Admission,
                     reason: ContextExclusionReason::ContradictsHumanIntent,
                     lexical_rank: candidate.item.ranking.lexical_rank,
-                    semantic_similarity: candidate.item.ranking.semantic_similarity,
                     trust_signal: candidate.item.trust_signal,
                     specification_ids,
                 });
@@ -2204,7 +2201,6 @@ fn bootstrap_reference_exclusion_from_context(
         stage: exclusion.stage,
         reason: exclusion.reason,
         lexical_rank: exclusion.lexical_rank,
-        semantic_similarity: exclusion.semantic_similarity,
         trust_signal: exclusion.trust_signal,
         specification_ids: exclusion.specification_ids,
     }
@@ -2222,7 +2218,6 @@ fn bootstrap_reference_assembly_exclusion(
         stage: ContextExclusionStage::Assembly,
         reason,
         lexical_rank: candidate.candidate.item.ranking.lexical_rank,
-        semantic_similarity: candidate.candidate.item.ranking.semantic_similarity,
         trust_signal: candidate.candidate.item.trust_signal,
         specification_ids: Vec::new(),
     }

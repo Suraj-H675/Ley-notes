@@ -181,7 +181,7 @@ function ProjectActivityContent({
         ) : (
           <div
             className="flex gap-1"
-            role="tablist"
+            role="group"
             aria-label="Problem resolution state"
           >
             {(["all", "open", "resolved"] as const).map((value) => (
@@ -678,8 +678,7 @@ function ScopeTab({
   return (
     <button
       type="button"
-      role="tab"
-      aria-selected={active}
+      aria-pressed={active}
       onClick={onClick}
       className={cn(
         "h-8 rounded-md px-2.5 text-meta font-medium capitalize outline-none focus-visible:ring-2 focus-visible:ring-primary",

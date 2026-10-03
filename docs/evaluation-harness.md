@@ -63,13 +63,12 @@ no longer registered or shipped. Project-catalog behavior remains a six-lane
 Linux/macOS/Windows x64+ARM64 portability gate.
 
 Each run also owns private temporary `XDG_CONFIG_HOME` **and** `XDG_CACHE_HOME` roots. This prevents a
-developer's real Ley configuration or locally installed semantic model from silently changing which
-retrieval system an acceptance scenario exercises. Deterministic scenarios therefore start with no
-semantic model unless a future fixture explicitly stages one inside that run's private cache.
+developer's real Ley configuration/cache state from silently changing an acceptance scenario or receiving
+test artifacts. Search itself is lexical-only and no longer consults a semantic model cache.
 
 The Git revision portability runner additionally creates one temporary private-state root with
 pre-created `config/` and `cache/` children and supplies it as `LEY_EVAL_PRIVATE_ROOT`. Feature-enabled
-Ley children derive both authority registries and semantic cache from that root on every operating
+Ley children derive private configuration/cache roots from that tree on every operating
 system, while the runner points its XDG variables at the same children for its own direct fixture
 inspection. Invalid roots fail closed and never fall back to the developer/runner profile. Unix eval
 roots are mode-checked as owner-only. Windows eval roots reject reparse-point redirects and live under
@@ -94,8 +93,7 @@ The corpus contains both write-time and read/use-time checks. Current metric fam
 - deletion fidelity and forgetting-residue rate across Ley-managed raw/derived retrieval surfaces;
 - harmless behavior in uninitialized workspaces;
 - a deterministic downstream task-evidence contract and a bounded recent-resume baseline comparison;
-- explicit missing-semantic-model lexical fallback plus sparse-repository quality across strict
-  500/1,500/3,000/8,000-token budgets;
+- lexical sparse-repository quality across strict 500/1,500/3,000/8,000-token budgets;
 - immediate and delayed repository-memory poisoning resistance without hiding captured evidence;
 - cross-surface stale-write rejection plus native desktop stale learning-review protection;
 
@@ -224,9 +222,9 @@ This is a deterministic evidence-sufficiency proxy, **not** a score for model re
 that Ley has beaten an external agent benchmark. Model-dependent downstream benchmarks can be layered
 on later, but they must remain reproducible and separately reported.
 
-## Retrieval fallback and budget ladder
+## Retrieval budget ladder
 
-`retrieval-fallback-budget-ladder` is the P0 Context Compiler regression representative for retrieval
+`retrieval-budget-ladder` is the P0 Context Compiler regression representative for retrieval
 robustness. It materializes an 80-file, roughly 120-lines-per-file project where many files contain
 lower-signal migration terms and one sparse file contains the stronger task evidence. The scenario
 queries canonical `ley_search` and `ley_brief` at 500, 1,500, 3,000, and 8,000 tokens and
@@ -234,22 +232,16 @@ requires:
 
 - the sparse required marker at every budget;
 - `estimatedTokens <= maxTokens` at every layer/budget;
-- low-level and compiler retrieval metadata to report `lexical` for overall, bounded-rerank, and
-  artifact-context modes;
-- no model-cache fallback reason and no compiler `semantic-fallback` gap, because the canonical
-  lexical baseline intentionally does not attempt the deferred model;
+- retrieval metadata to report the lexical mode without model-cache fallback state;
 - no private cache/project/vault path leakage;
 - non-decreasing bounded search-result counts as budget grows; and
 - strictly more retained results at 8,000 tokens than at 500.
 
-The deterministic harness deliberately does **not** download Ley's pinned semantic model. ADR 0094 now makes
-that lexical behavior the canonical native Search baseline rather than an environment-dependent fallback:
-bounded cross-kind transition/native ranking does not inspect the optional model cache, and native artifact
-continuity remains lexical-only. A pre-cutover transition read may still use the retained legacy artifact
-semantic path as compatibility. The former opt-in `run_semantic_eval.py` lane depended on the legacy-vault
-artifact semantic-index path and was retired with ADR 0093 instead of being relabeled as evidence for canonical
-Search. Core semantic/index tests remain compatibility/research evidence. Any future model-assisted canonical
-retrieval needs a new native-state downstream ablation against this baseline before it becomes a release lane.
+The deterministic harness does not download or stage a semantic model because Ley no longer ships a semantic
+retrieval implementation. Native, transition, and retained legacy retrieval all use the same lexical baseline. The
+former opt-in `run_semantic_eval.py` lane was retired rather than relabeled as evidence for canonical Search. Any
+future model-assisted retrieval needs a new native-state downstream ablation against this baseline before it becomes
+a release lane.
 
 ## Learning mutation idempotency
 

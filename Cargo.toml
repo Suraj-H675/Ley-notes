@@ -20,7 +20,6 @@ cap-std = "4"
 cap-tempfile = "4"
 directories = "6"
 ignore = "0.4"
-model2vec-rs = { version = "=0.2.1", default-features = false, features = ["local-only", "onig"] }
 regex = "1"
 rmcp = { version = "2.2", default-features = false, features = ["macros", "server", "transport-io"] }
 rusqlite = { version = "=0.40.2", default-features = false, features = ["backup", "bundled"] }

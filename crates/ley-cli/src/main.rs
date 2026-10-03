@@ -1116,9 +1116,6 @@ fn search(arguments: &[String]) -> Result<(), CliError> {
         "Memory search: {} ({:?})",
         result.project_name, result.retrieval.mode
     );
-    if let Some(reason) = &result.retrieval.bounded_rerank_fallback_reason {
-        println!("Semantic fallback: {reason}");
-    }
     for item in &result.results {
         println!("  {:?}  {}", item.kind, item.title);
         println!("    {}", item.excerpt.replace('\n', " "));

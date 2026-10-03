@@ -710,8 +710,6 @@ export interface ProjectMemorySearchResult {
   truncated: boolean;
   ranking: {
     lexicalRank?: number;
-    semanticRank?: number;
-    artifactHybridRank?: number;
     reciprocalRankScore: number;
     temporalContribution: number;
     trustContribution: number;
@@ -748,11 +746,7 @@ export interface ProjectMemorySearch {
   };
   truncated: boolean;
   retrieval: {
-    mode: "lexical" | "semantic" | "hybrid";
-    boundedRerankMode: "lexical" | "semantic" | "hybrid";
-    artifactContextMode: "lexical" | "semantic" | "hybrid";
-    boundedRerankFallbackReason?: string;
-    artifactContextFallbackReason?: string;
+    mode: "lexical";
   };
   revisionFreshness: ProjectRevisionFreshness;
   freshness: string;

@@ -25,7 +25,6 @@ pub const MAX_CONTEXT_COMPILE_RESULTS: usize = 20;
 pub const DEFAULT_CONTEXT_COMPILE_TOKENS: usize = 1_500;
 pub const MIN_CONTEXT_COMPILE_TOKENS: usize = 500;
 pub const MAX_CONTEXT_COMPILE_TOKENS: usize = 8_000;
-pub const MIN_SEMANTIC_ADMISSION_SIMILARITY: f64 = 0.30;
 
 const BASE_CONTEXT_TOKENS: usize = 96;
 const ITEM_OVERHEAD_TOKENS: usize = 52;
@@ -169,8 +168,6 @@ pub enum ContextAuthority {
 #[serde(rename_all = "kebab-case")]
 pub enum ContextAdmissionBasis {
     Lexical,
-    Semantic,
-    LexicalAndSemantic,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -356,8 +353,6 @@ pub struct MountedReferenceExclusion {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lexical_rank: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub semantic_similarity: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub specification_ids: Vec<String>,
@@ -465,8 +460,6 @@ pub struct SharedKnowledgeExclusion {
     pub reason: ContextExclusionReason,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lexical_rank: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub semantic_similarity: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -584,8 +577,6 @@ pub struct ContextExclusion {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lexical_rank: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub semantic_similarity: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub trust_signal: Option<ProjectMemoryTrustSignal>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub specification_ids: Vec<String>,
@@ -596,7 +587,6 @@ pub struct ContextExclusion {
 pub enum ContextGapKind {
     LiveSourceUnchecked,
     RevisionDrift,
-    SemanticFallback,
     ConflictRequiresReview,
     HumanIntentConflict,
     OnlyHistoricalEvidence,
@@ -1703,17 +1693,9 @@ pub(crate) fn memory_conflicts_with_specification(specification: &str, memory: &
 }
 
 fn relevance_basis(item: &ProjectMemorySearchResult) -> Option<ContextAdmissionBasis> {
-    let lexical = item.ranking.lexical_rank.is_some();
-    let semantic = item
-        .ranking
-        .semantic_similarity
-        .is_some_and(|similarity| similarity >= MIN_SEMANTIC_ADMISSION_SIMILARITY);
-    match (lexical, semantic) {
-        (true, true) => Some(ContextAdmissionBasis::LexicalAndSemantic),
-        (true, false) => Some(ContextAdmissionBasis::Lexical),
-        (false, true) => Some(ContextAdmissionBasis::Semantic),
-        (false, false) => None,
-    }
+    item.ranking
+        .lexical_rank
+        .map(|_| ContextAdmissionBasis::Lexical)
 }
 
 fn estimate_item_tokens(item: &ProjectMemorySearchResult) -> usize {
@@ -2241,7 +2223,6 @@ fn exclusion(
         stage,
         reason,
         lexical_rank: item.ranking.lexical_rank,
-        semantic_similarity: item.ranking.semantic_similarity,
         trust_signal: item.trust_signal,
         specification_ids: Vec::new(),
     }
@@ -2351,23 +2332,6 @@ fn context_gaps(inputs: ContextGapInputs<'_>) -> Vec<ContextGap> {
             kind: ContextGapKind::RevisionDrift,
             message: "Live Git metadata differs from the captured revision or has tracked working-tree changes. Use revision applicability only as a freshness beacon and inspect live source before consequential current-state edits.".to_owned(),
         });
-    }
-    for (channel, reason) in [
-        (
-            "bounded memory reranking",
-            search.retrieval.bounded_rerank_fallback_reason.as_ref(),
-        ),
-        (
-            "artifact hybrid retrieval",
-            search.retrieval.artifact_context_fallback_reason.as_ref(),
-        ),
-    ] {
-        if let Some(reason) = reason {
-            gaps.push(ContextGap {
-                kind: ContextGapKind::SemanticFallback,
-                message: format!("Local semantic {channel} was unavailable: {reason}"),
-            });
-        }
     }
     let human_intent_conflict = exclusions
         .iter()
@@ -2500,12 +2464,9 @@ mod tests {
         git(project, &["rev-parse", "HEAD"])
     }
 
-    fn ranking(lexical: Option<u32>, similarity: Option<f64>) -> ProjectMemoryRankingSignals {
+    fn ranking(lexical: Option<u32>) -> ProjectMemoryRankingSignals {
         ProjectMemoryRankingSignals {
             lexical_rank: lexical,
-            semantic_rank: similarity.map(|_| 1),
-            semantic_similarity: similarity,
-            artifact_hybrid_rank: None,
             reciprocal_rank_score: 0.01,
             temporal_contribution: 0.0,
             trust_contribution: 0.0,
@@ -2517,7 +2478,6 @@ mod tests {
         kind: ProjectMemoryResultKind,
         id: &str,
         lexical: Option<u32>,
-        similarity: Option<f64>,
         trust_signal: Option<ProjectMemoryTrustSignal>,
     ) -> ProjectMemorySearchResult {
         ProjectMemorySearchResult {
@@ -2541,7 +2501,7 @@ mod tests {
             trusted_for_reuse: trust_signal == Some(ProjectMemoryTrustSignal::TrustedCurrent),
             content_conflicted: false,
             truncated: false,
-            ranking: ranking(lexical, similarity),
+            ranking: ranking(lexical),
         }
     }
 
@@ -2573,11 +2533,7 @@ mod tests {
             },
             truncated: false,
             retrieval: ProjectMemorySearchRetrieval {
-                mode: RetrievalMode::Hybrid,
-                bounded_rerank_mode: RetrievalMode::Hybrid,
-                artifact_context_mode: RetrievalMode::Hybrid,
-                bounded_rerank_fallback_reason: None,
-                artifact_context_fallback_reason: None,
+                mode: RetrievalMode::Lexical,
             },
             revision_freshness: ProjectRevisionFreshness {
                 live_git_checked: false,
@@ -2599,32 +2555,20 @@ mod tests {
     }
 
     #[test]
-    fn semantic_only_candidates_need_a_real_similarity_signal() {
-        let weak = result(
-            ProjectMemoryResultKind::Decision,
-            "weak",
-            None,
-            Some(0.12),
-            None,
-        );
-        let strong = result(
-            ProjectMemoryResultKind::Decision,
-            "strong",
-            None,
-            Some(0.61),
-            None,
-        );
+    fn only_lexically_ranked_candidates_are_admitted() {
+        let nonlexical = result(ProjectMemoryResultKind::Decision, "nonlexical", None, None);
+        let lexical = result(ProjectMemoryResultKind::Decision, "lexical", Some(1), None);
         assert_eq!(
-            admit_candidate(weak, &BTreeSet::new(), &[])
+            admit_candidate(nonlexical, &BTreeSet::new(), &[])
                 .unwrap_err()
                 .reason,
             ContextExclusionReason::LowRelevance
         );
         assert_eq!(
-            admit_candidate(strong, &BTreeSet::new(), &[])
+            admit_candidate(lexical, &BTreeSet::new(), &[])
                 .unwrap()
                 .admission_basis,
-            ContextAdmissionBasis::Semantic
+            ContextAdmissionBasis::Lexical
         );
     }
 
@@ -2656,7 +2600,6 @@ mod tests {
                 ProjectMemoryResultKind::Learning,
                 "learning",
                 Some(1),
-                Some(0.90),
                 Some(signal),
             );
             assert_eq!(
@@ -2681,7 +2624,6 @@ mod tests {
                 kind,
                 id,
                 Some(1),
-                Some(0.90),
                 (kind == ProjectMemoryResultKind::Learning)
                     .then_some(ProjectMemoryTrustSignal::TrustedCurrent),
             );
@@ -2717,7 +2659,6 @@ mod tests {
             ProjectMemoryResultKind::Learning,
             &format!("lrn_{}", "1".repeat(32)),
             Some(1),
-            None,
             Some(ProjectMemoryTrustSignal::Superseded),
         );
         superseded.learning_superseded_by = Some(replacement_id.clone());
@@ -2746,12 +2687,11 @@ mod tests {
     }
 
     #[test]
-    fn weak_semantic_superseded_candidate_does_not_create_a_premise_warning() {
+    fn nonlexical_superseded_candidate_does_not_create_a_premise_warning() {
         let mut superseded = result(
             ProjectMemoryResultKind::Learning,
             &format!("lrn_{}", "3".repeat(32)),
             None,
-            Some(0.12),
             Some(ProjectMemoryTrustSignal::Superseded),
         );
         superseded.learning_superseded_by = Some(format!("lrn_{}", "4".repeat(32)));
@@ -2791,13 +2731,7 @@ mod tests {
 
     #[test]
     fn conflicting_candidates_are_not_auto_injected() {
-        let candidate = result(
-            ProjectMemoryResultKind::Decision,
-            "decision",
-            Some(1),
-            Some(0.80),
-            None,
-        );
+        let candidate = result(ProjectMemoryResultKind::Decision, "decision", Some(1), None);
         let conflicts = BTreeSet::from(["decision".to_owned()]);
         assert_eq!(
             admit_candidate(candidate, &conflicts, &[])
@@ -2813,7 +2747,6 @@ mod tests {
             ProjectMemoryResultKind::Decision,
             "conflicted_without_description",
             Some(1),
-            Some(0.80),
             None,
         );
         candidate.content_conflicted = true;
@@ -2846,7 +2779,6 @@ mod tests {
             ProjectMemoryResultKind::Decision,
             "decision_conflict",
             Some(1),
-            Some(0.80),
             None,
         );
         let conflict = ProjectMemoryConflict {
@@ -2870,28 +2802,6 @@ mod tests {
         assert_eq!(pack.conflicts, vec![conflict]);
         assert_eq!(pack.coverage.omitted_conflicts, 0);
         assert!(pack.estimated_tokens <= pack.max_tokens);
-    }
-
-    #[test]
-    fn compiler_discloses_each_semantic_fallback_channel() {
-        let mut search = search_result(Vec::new(), Vec::new());
-        search.retrieval.bounded_rerank_fallback_reason = Some("model unavailable".to_owned());
-        search.retrieval.artifact_context_fallback_reason =
-            Some("snapshot index unavailable".to_owned());
-        let pack = compile_search_result(search, ContextCompileLimits::default());
-        let messages = pack
-            .gaps
-            .iter()
-            .filter(|gap| gap.kind == ContextGapKind::SemanticFallback)
-            .map(|gap| gap.message.as_str())
-            .collect::<Vec<_>>();
-        assert!(messages.iter().any(|message| {
-            message.contains("bounded memory reranking") && message.contains("model unavailable")
-        }));
-        assert!(messages.iter().any(|message| {
-            message.contains("artifact hybrid retrieval")
-                && message.contains("snapshot index unavailable")
-        }));
     }
 
     #[test]
@@ -2935,7 +2845,6 @@ mod tests {
             ProjectMemoryResultKind::Learning,
             "learn_reviewed",
             Some(1),
-            Some(0.82),
             Some(ProjectMemoryTrustSignal::TrustedCurrent),
         );
         learning.learning_state = Some(LearningState::Verified);
@@ -2996,7 +2905,6 @@ mod tests {
                     ProjectMemoryResultKind::Decision,
                     "unrelated",
                     None,
-                    Some(0.04),
                     None,
                 )],
                 Vec::new(),
@@ -3022,7 +2930,6 @@ mod tests {
                     ProjectMemoryResultKind::Decision,
                     &format!("unrelated-{index}-{}", "x".repeat(96)),
                     None,
-                    Some(0.01),
                     None,
                 )
             })
@@ -3103,7 +3010,6 @@ mod tests {
             ProjectMemoryResultKind::Decision,
             "decision_offline",
             Some(1),
-            Some(0.81),
             None,
         );
         let pack = compile_search_result_with_specifications(
@@ -3136,7 +3042,6 @@ mod tests {
             ProjectMemoryResultKind::Decision,
             "decision_redis",
             Some(1),
-            Some(0.88),
             None,
         );
         decision.title = "Use Redis cache".to_owned();
@@ -3145,7 +3050,6 @@ mod tests {
             ProjectMemoryResultKind::Artifact,
             "artifact_redis",
             Some(2),
-            Some(0.80),
             Some(ProjectMemoryTrustSignal::DirectEvidence),
         );
         artifact.title = "Use Redis cache".to_owned();
@@ -3182,7 +3086,6 @@ mod tests {
             ProjectMemoryResultKind::Decision,
             "decision_redis",
             Some(1),
-            Some(0.88),
             None,
         );
         decision.title = "Use Redis cache".to_owned();

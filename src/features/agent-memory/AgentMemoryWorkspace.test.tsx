@@ -699,8 +699,6 @@ describe("Agent Memory workspace boundaries", () => {
       truncated: false,
       retrieval: {
         mode: "lexical",
-        boundedRerankMode: "lexical",
-        artifactContextMode: "lexical",
       },
       revisionFreshness: {
         liveGitChecked: false,
