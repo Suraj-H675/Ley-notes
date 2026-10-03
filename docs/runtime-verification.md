@@ -181,6 +181,14 @@ and must not be deleted by continuity erasure or migration cleanup.
 
 - In **Capture & privacy → Agent sharing**, change the project policy and verify `ley egress list` reports the same value. Set `confirm-per-use` and verify the UI states that it blocks both cloud and local targets rather than showing a fake confirmation prompt. Change the policy from another local client while the panel is open, then apply the stale Desktop selection: the write must be rejected and the panel must refresh to the newer policy without weakening retained source-specific restrictions.
 
+## Agent Memory Brief preview
+
+- Open a ready project and confirm Overview renders **Agent brief preview** without invoking the compiler until a task is submitted.
+- Enter a task, leave the target on **Cloud**, and compare the returned pack with canonical `ley_brief` for the same project/task/default limits: project/task IDs, target, admitted items/Specifications, budget, premise/evidence state, gaps/egress exclusions, warnings, citations, and raw payload must agree.
+- Switch to **Local** only deliberately. With a project policy of `local-model-only`, Cloud preview must fail closed while Local preview succeeds; the UI must state that Local is an explicit host assertion rather than provider attestation.
+- Replace/reinitialize the project at the selected filesystem path before submitting an already-open preview. The expected project-ID guard must reject the request instead of showing another project's continuity.
+- Open a returned citation and confirm the existing Evidence flow resolves that exact snapshot/path/hash. Previewing must not start a session, refresh capture, mutate project content, or change egress policy. Transitional compatibility-authority migration performed by the canonical compiler is not treated as a separate Desktop write path.
+
 ## Agent Memory graph history
 
 This section records historical verification for the retired Desktop Project Graph UI. The underlying captured

@@ -98,6 +98,11 @@ const MemorySearch = lazy(() =>
     default: module.MemorySearch,
   })),
 );
+const AgentBriefPreview = lazy(() =>
+  import("./AgentBriefPreview").then((module) => ({
+    default: module.AgentBriefPreview,
+  })),
+);
 const ProjectActivityExplorer = lazy(() =>
   import("./ProjectActivityExplorer").then((module) => ({
     default: module.ProjectActivityExplorer,
@@ -888,9 +893,11 @@ function AgentMemorySectionContent({
       {error && <ErrorNotice message={error} />}
       {section === "overview" && (
         <Overview
+          projectPath={projectPath}
           dashboard={dashboard}
           onOpenSession={() => onSection("sessions")}
           onOpenReview={() => onSection("review")}
+          onEvidence={onEvidence}
           onLearning={onLearning}
           onSession={onSession}
         />
@@ -1092,15 +1099,19 @@ function KnowledgeSurfaceFallback() {
 }
 
 function Overview({
+  projectPath,
   dashboard,
   onOpenSession,
   onOpenReview,
+  onEvidence,
   onLearning,
   onSession,
 }: {
+  projectPath: string;
   dashboard: AgentMemoryDashboard;
   onOpenSession: () => void;
   onOpenReview: () => void;
+  onEvidence: (evidence: ArtifactEvidenceReference) => void;
   onLearning: (id: string) => void;
   onSession: (id: string) => void;
 }) {
@@ -1144,6 +1155,15 @@ function Overview({
           </div>
         </div>
       </section>
+
+      <Suspense fallback={<KnowledgeSurfaceFallback />}>
+        <AgentBriefPreview
+          key={overview.projectId}
+          projectPath={projectPath}
+          projectId={overview.projectId}
+          onEvidence={onEvidence}
+        />
+      </Suspense>
 
       <section aria-labelledby="memory-health-title">
         <div className="mb-3 flex items-end justify-between">

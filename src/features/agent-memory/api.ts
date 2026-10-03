@@ -2,7 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AgentCaptureSettings,
+  AgentBriefPreview,
   AgentEgressPolicy,
+  AgentEgressTarget,
   AgentContinuityExport,
   AgentMediaEvidence,
   AgentMemoryDashboard,
@@ -105,6 +107,20 @@ export function updateAgentEgressPolicy(
     expectedProjectId,
     expectedPolicy,
     policy,
+  });
+}
+
+export function previewAgentBrief(
+  projectPath: string,
+  expectedProjectId: string,
+  task: string,
+  target: AgentEgressTarget,
+): Promise<AgentBriefPreview> {
+  return invoke("preview_agent_brief", {
+    projectPath,
+    expectedProjectId,
+    task,
+    target,
   });
 }
 

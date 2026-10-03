@@ -13,6 +13,17 @@ The focused Ley workflow now starts with four canonical tools:
 
 These delegate to already-proven Ley internals. `ley_brief` is the only normal project MCP entry point for task-context compilation; `ley_compile_context` is reserved for the explicit uninitialized-workspace Bootstrap Context server. `ley_checkpoint` owns the model-facing structured checkpoint write path. `ley_evidence` is the only model-facing evidence reader: agents must carry forward the exact citation returned by Ley rather than constructing an uncited path read. The former `ley_read_evidence` and `ley_read_media_evidence` wrappers are retired by ADR 0100; canonical Evidence handles bounded text and supported original-image citations under the same transition/native authority checks. The former `ley_search_context`, `ley_search_memory`, and `ley_search_activity` wrappers are also retired; canonical `ley_search` owns bounded captured evidence/activity recall. ADR 0101 retires broad Project Resume from MCP while keeping local `ley resume`, ADR 0102 retires the legacy `ley_project_overview` tool plus its overview resource, and ADR 0103 retires the duplicate `ley_session_checkpoint` alias while keeping hostless legacy Start and compatibility Finish where explicit session-write capability is enabled. Remaining granular MCP tools may still be available during migration for diagnostics, recovery, compatibility, and specialized workflows, but they are not the preferred product surface.
 
+Ley Desktop exposes a deliberate **Agent brief preview** on the project Overview. It calls the same
+`compile_project_context_for_agent_with_transition_registries` path as canonical `ley_brief` with the normal
+8-result / 1,500-token defaults. The user supplies the current task and explicitly chooses Cloud or Local; Desktop
+does not infer the active agent provider or attest locality. The preview carries the currently observed project ID so
+path replacement cannot silently preview a different Ley project. Opening Overview alone does not compile anything.
+The returned pack keeps the compiler's task, target, evidence/premise state, approved Specifications, admitted items,
+gaps, egress exclusions, budget, citations, source-boundary warnings, and a raw payload available for inspection.
+This is a preview of Ley's canonical Brief payload, not the host's complete prompt. On older transitional state, the
+canonical compiler may complete existing local compatibility-authority migration; the preview does not start a
+session, refresh capture, mutate project content, or change egress policy.
+
 ## Prepare the project
 
 Build or install the `ley` executable, then initialize and ingest the project once:

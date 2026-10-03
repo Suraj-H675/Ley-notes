@@ -1,10 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-#[cfg(test)]
 use ley_core::{
-    correct_learning, erase_project_memory, ingest_project, initialize_project, read_learning,
-    rename_session, review_learning,
-};
-use ley_core::{
+    compile_project_context_for_agent_with_transition_registries,
     correct_learning_with_continuity_transition, diagnose_project,
     erase_project_memory_with_continuity_transition, erase_project_memory_with_native_authority,
     erase_session_memory_with_continuity_transition, establish_native_born_project_authorities,
@@ -27,25 +23,32 @@ use ley_core::{
     read_session_turns_context_with_continuity_transition, register_native_born_project,
     rename_session_with_continuity_transition, review_learning_with_continuity_transition,
     search_observed_projects, search_project_memory_with_continuity_transition,
-    update_capture_mode, validate_project_memory, AgentEgressPolicy, ApprovedSourceAuthorityList,
-    ApprovedSourceKind, ApprovedSourceRegistry, ArtifactMediaType, BindingRegistry, BindingSource,
-    CaptureFile, CaptureMode, CapturePolicy, ContinuityStore, CorrectLearningInput,
-    CrossProjectSearch, EgressPolicyRegistry, EraseSessionMemoryInput, EvidenceExcerpt,
-    GraphCitation, IngestionResult, LearningActor, LearningContextPack, LearningEvidenceInput,
-    LearningFeedbackAction, LearningList, LearningListScope, LeyCoreError, MemoryOverview,
-    ProjectActivityView, ProjectAgentEgressPolicy, ProjectArtifactInventory, ProjectCatalog,
-    ProjectDiagnostic, ProjectMemorySearch, ProjectMemorySearchLimits, ProjectProblemScope,
-    ProjectResumePack, ProjectVaultBinding, RenameSessionInput, ReviewLearningInput,
-    RevisionCompatibility, SessionContextPack, SessionMemoryErasure, SessionSummary,
-    SessionTurnsContextPack, SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS,
-    DEFAULT_CROSS_PROJECT_SEARCH_RESULTS, DEFAULT_LEARNING_CONTEXT_ARTIFACTS,
-    DEFAULT_LEARNING_CONTEXT_CHARACTERS, DEFAULT_LEARNING_CONTEXT_EVIDENCE,
-    DEFAULT_LEARNING_CONTEXT_HISTORY, DEFAULT_PROJECT_ACTIVITY_RESULTS,
-    DEFAULT_PROJECT_CATALOG_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS,
-    DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS, DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS,
-    DEFAULT_RESUME_SESSIONS, DEFAULT_SESSION_CONTEXT_CHARACTERS,
-    DEFAULT_SESSION_CONTEXT_CHECKPOINTS, DEFAULT_SESSION_TURN_CHARACTERS,
-    DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS, MAX_MEDIA_EVIDENCE_BYTES,
+    update_capture_mode, validate_project_memory, AgentContextAuthorities, AgentEgressPolicy,
+    AgentEgressTarget, ApprovedSourceAuthorityList, ApprovedSourceKind, ApprovedSourceRegistry,
+    ArtifactMediaType, BindingRegistry, BindingSource, CaptureFile, CaptureMode, CapturePolicy,
+    CompiledContextPack, ContextCompileLimits, ContextMountRegistry, ContinuityStore,
+    CorrectLearningInput, CrossProjectSearch, EgressPolicyRegistry, EraseSessionMemoryInput,
+    EvidenceExcerpt, GraphCitation, IngestionResult, KnowledgeScopeRegistry, LearningActor,
+    LearningContextPack, LearningEvidenceInput, LearningFeedbackAction, LearningList,
+    LearningListScope, LeyCoreError, MemoryOverview, PolicyBundleRegistry, ProjectActivityView,
+    ProjectAgentEgressPolicy, ProjectArtifactInventory, ProjectCatalog, ProjectDiagnostic,
+    ProjectMemorySearch, ProjectMemorySearchLimits, ProjectProblemScope, ProjectResumePack,
+    ProjectVaultBinding, RenameSessionInput, ReviewLearningInput, RevisionCompatibility,
+    SessionContextPack, SessionMemoryErasure, SessionSummary, SessionTurnsContextPack,
+    SpecificationRegistry, DEFAULT_ARTIFACT_RESULTS, DEFAULT_CROSS_PROJECT_SEARCH_RESULTS,
+    DEFAULT_LEARNING_CONTEXT_ARTIFACTS, DEFAULT_LEARNING_CONTEXT_CHARACTERS,
+    DEFAULT_LEARNING_CONTEXT_EVIDENCE, DEFAULT_LEARNING_CONTEXT_HISTORY,
+    DEFAULT_PROJECT_ACTIVITY_RESULTS, DEFAULT_PROJECT_CATALOG_RESULTS,
+    DEFAULT_PROJECT_MEMORY_SEARCH_RESULTS, DEFAULT_PROJECT_MEMORY_SEARCH_TOKENS,
+    DEFAULT_RESUME_CHARACTERS, DEFAULT_RESUME_LEARNINGS, DEFAULT_RESUME_SESSIONS,
+    DEFAULT_SESSION_CONTEXT_CHARACTERS, DEFAULT_SESSION_CONTEXT_CHECKPOINTS,
+    DEFAULT_SESSION_TURN_CHARACTERS, DEFAULT_SESSION_TURN_RESULTS, MAX_LEARNING_LIST_RESULTS,
+    MAX_MEDIA_EVIDENCE_BYTES, MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS,
+};
+#[cfg(test)]
+use ley_core::{
+    correct_learning, erase_project_memory, ingest_project, initialize_project, read_learning,
+    rename_session, review_learning,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -904,6 +907,90 @@ fn update_agent_egress_policy(
         &expected_project_id,
         expected_policy,
         policy,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn preview_agent_brief_with(
+    project_path: &Path,
+    expected_project_id: &str,
+    task: &str,
+    target: AgentEgressTarget,
+    binding_registry: &BindingRegistry,
+    store: &ContinuityStore,
+    authorities: AgentContextAuthorities<'_>,
+) -> Result<CompiledContextPack, LeyCoreError> {
+    if task.trim().is_empty() || task.chars().count() > MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS {
+        return Err(LeyCoreError::InvalidRetrievalRequest(format!(
+            "agent brief task must contain 1 to {MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS} visible characters"
+        )));
+    }
+    let diagnostic = diagnose_project(project_path)?;
+    if diagnostic.identity.project_id != expected_project_id {
+        return Err(LeyCoreError::InvalidRetrievalRequest(
+            "project identity changed before the agent brief could be previewed".to_owned(),
+        ));
+    }
+    with_transition_agent_access_from(
+        project_path,
+        None,
+        binding_registry,
+        store,
+        |access, store| {
+            if access.project_id != expected_project_id {
+                return Err(LeyCoreError::InvalidRetrievalRequest(
+                    "project identity changed before the agent brief could be previewed".to_owned(),
+                ));
+            }
+            compile_project_context_for_agent_with_transition_registries(
+                project_path,
+                &access.legacy_vault_path,
+                task,
+                ContextCompileLimits::default(),
+                authorities,
+                store,
+                target,
+            )
+        },
+    )
+}
+
+#[tauri::command]
+fn preview_agent_brief(
+    project_path: String,
+    expected_project_id: String,
+    task: String,
+    target: AgentEgressTarget,
+) -> Result<CompiledContextPack, String> {
+    let binding_registry = BindingRegistry::system_default().map_err(|error| error.to_string())?;
+    let store = ContinuityStore::system_default().map_err(|error| error.to_string())?;
+    let specification_registry =
+        SpecificationRegistry::system_default().map_err(|error| error.to_string())?;
+    let approved_source_registry =
+        ApprovedSourceRegistry::system_default().map_err(|error| error.to_string())?;
+    let context_mount_registry =
+        ContextMountRegistry::system_default().map_err(|error| error.to_string())?;
+    let knowledge_scope_registry =
+        KnowledgeScopeRegistry::system_default().map_err(|error| error.to_string())?;
+    let policy_bundle_registry =
+        PolicyBundleRegistry::system_default().map_err(|error| error.to_string())?;
+    let egress_policy_registry =
+        EgressPolicyRegistry::system_default().map_err(|error| error.to_string())?;
+    preview_agent_brief_with(
+        Path::new(&project_path),
+        &expected_project_id,
+        &task,
+        target,
+        &binding_registry,
+        &store,
+        AgentContextAuthorities {
+            specifications: &specification_registry,
+            approved_sources: &approved_source_registry,
+            mounts: &context_mount_registry,
+            knowledge_scopes: &knowledge_scope_registry,
+            policy_bundles: &policy_bundle_registry,
+            egress: &egress_policy_registry,
+        },
     )
     .map_err(|error| error.to_string())
 }
@@ -2036,6 +2123,7 @@ pub fn run() {
             read_agent_capture_settings,
             read_agent_egress_policy,
             update_agent_egress_policy,
+            preview_agent_brief,
             update_agent_capture_mode,
             erase_agent_project_memory,
             search_agent_projects,
@@ -2137,6 +2225,137 @@ mod tests {
                 .project_policy,
             AgentEgressPolicy::LocalModelOnly
         );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn desktop_agent_brief_preview_uses_canonical_egress_and_project_identity() {
+        let root = std::env::temp_dir().join(format!(
+            "ley-desktop-agent-brief-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let project = root.join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("README.md"),
+            "# Brief fixture\n\nstable desktop brief marker\n",
+        )
+        .unwrap();
+        let initialized =
+            initialize_project(&project, Some("Desktop brief"), CaptureMode::Structured).unwrap();
+        let private = root.join("private");
+        let store_path = private.join("continuity.sqlite3");
+        let store = ContinuityStore::at(&store_path);
+        register_native_born_project(&project, &store).unwrap();
+        ingest_project_with_native_authority(&project, &store).unwrap();
+        establish_native_born_project_authorities(&project, &store).unwrap();
+
+        let binding_registry = BindingRegistry::at(private.join("bindings.json"));
+        let specification_registry = SpecificationRegistry::at(private.join("specifications.json"));
+        let approved_source_registry = ApprovedSourceRegistry::at(ContinuityStore::at(&store_path));
+        let context_mount_registry = ContextMountRegistry::at(private.join("mounts.json"));
+        let knowledge_scope_registry = KnowledgeScopeRegistry::at(private.join("scopes.json"));
+        let policy_bundle_registry = PolicyBundleRegistry::at(private.join("policy-bundles.json"));
+        let egress_policy_registry = EgressPolicyRegistry::at(private.join("egress.json"));
+        let authorities = AgentContextAuthorities {
+            specifications: &specification_registry,
+            approved_sources: &approved_source_registry,
+            mounts: &context_mount_registry,
+            knowledge_scopes: &knowledge_scope_registry,
+            policy_bundles: &policy_bundle_registry,
+            egress: &egress_policy_registry,
+        };
+
+        let cloud = preview_agent_brief_with(
+            &project,
+            &initialized.identity.project_id,
+            "stable desktop brief marker",
+            AgentEgressTarget::Cloud,
+            &binding_registry,
+            &store,
+            authorities,
+        )
+        .unwrap();
+        assert_eq!(cloud.project_id, initialized.identity.project_id);
+        assert_eq!(cloud.task, "stable desktop brief marker");
+        assert_eq!(cloud.egress_target, Some(AgentEgressTarget::Cloud));
+        assert_eq!(cloud.max_tokens, ContextCompileLimits::default().max_tokens);
+        assert!(cloud
+            .items
+            .iter()
+            .any(|item| item.excerpt.contains("stable desktop brief marker")));
+
+        egress_policy_registry
+            .set_project_policy_transition(&project, &store, AgentEgressPolicy::LocalModelOnly)
+            .unwrap();
+        let cloud_blocked = preview_agent_brief_with(
+            &project,
+            &initialized.identity.project_id,
+            "stable desktop brief marker",
+            AgentEgressTarget::Cloud,
+            &binding_registry,
+            &store,
+            authorities,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            cloud_blocked,
+            LeyCoreError::AgentEgressDenied {
+                ref policy,
+                ref target,
+            } if policy == "local-model-only" && target == "cloud"
+        ));
+
+        let local = preview_agent_brief_with(
+            &project,
+            &initialized.identity.project_id,
+            "stable desktop brief marker",
+            AgentEgressTarget::Local,
+            &binding_registry,
+            &store,
+            authorities,
+        )
+        .unwrap();
+        assert_eq!(local.egress_target, Some(AgentEgressTarget::Local));
+
+        let wrong_identity = preview_agent_brief_with(
+            &project,
+            "prj_22222222222222222222222222222222",
+            "stable desktop brief marker",
+            AgentEgressTarget::Local,
+            &binding_registry,
+            &store,
+            authorities,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            wrong_identity,
+            LeyCoreError::InvalidRetrievalRequest(ref message)
+                if message.contains("project identity changed")
+        ));
+
+        let oversized_task = "x".repeat(MAX_PROJECT_MEMORY_SEARCH_QUERY_CHARACTERS + 1);
+        let oversized = preview_agent_brief_with(
+            &project,
+            &initialized.identity.project_id,
+            &oversized_task,
+            AgentEgressTarget::Local,
+            &binding_registry,
+            &store,
+            authorities,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            oversized,
+            LeyCoreError::InvalidRetrievalRequest(ref message)
+                if message.contains("1 to 256 visible characters")
+        ));
 
         fs::remove_dir_all(root).unwrap();
     }

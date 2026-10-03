@@ -22,6 +22,7 @@ const api = vi.hoisted(() => ({
   readAgentMediaEvidence: vi.fn(),
   readAgentCaptureSettings: vi.fn(),
   readAgentEgressPolicy: vi.fn(),
+  previewAgentBrief: vi.fn(),
   readAgentLearning: vi.fn(),
   readAgentSession: vi.fn(),
   refreshAgentProject: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock("./api", () => ({
   readAgentMediaEvidence: api.readAgentMediaEvidence,
   readAgentCaptureSettings: api.readAgentCaptureSettings,
   readAgentEgressPolicy: api.readAgentEgressPolicy,
+  previewAgentBrief: api.previewAgentBrief,
   readAgentLearning: api.readAgentLearning,
   readAgentSession: api.readAgentSession,
   renameAgentSession: api.renameAgentSession,
@@ -1010,6 +1012,7 @@ describe("Agent Memory workspace boundaries", () => {
       }),
     );
     await screen.findByRole("heading", { name: "Build continuity" });
+    expect(api.previewAgentBrief).not.toHaveBeenCalled();
     expect(screen.getByText("abcdef0123 · experiment")).toBeVisible();
     expect(screen.getByText("Divergent")).toBeVisible();
     expect(

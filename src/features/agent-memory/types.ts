@@ -514,6 +514,7 @@ export type AgentEgressPolicy =
   | "confirm-per-use"
   | "local-model-only"
   | "never-send";
+export type AgentEgressTarget = "cloud" | "local";
 
 export interface AgentEgressScopePolicy {
   scopeKind: "project" | "specification" | "context-mount" | "external-connector";
@@ -528,6 +529,82 @@ export interface ProjectAgentEgressPolicy {
   mountOverrides: AgentEgressScopePolicy[];
   connectorOverrides: AgentEgressScopePolicy[];
   privacyNotice: string;
+}
+
+export interface AgentBriefPreviewItem {
+  kind: string;
+  entityId: string;
+  title: string;
+  excerpt: string;
+  sessionId?: string;
+  learningId?: string;
+  citation?: GraphCitation;
+  authority: string;
+  trustedForReuse: boolean;
+  revisionApplicability?: string;
+  estimatedTokens: number;
+}
+
+export interface AgentBriefPreviewSpecification {
+  specificationId: string;
+  relativePath: string;
+  contentHash: string;
+  source: string;
+  relevanceScore: number;
+  exactMatch: boolean;
+  estimatedTokens: number;
+}
+
+export interface AgentBriefPreview {
+  contextPackId: string;
+  createdAtUnixMs: number;
+  projectId: string;
+  projectName: string;
+  task: string;
+  evidenceState: string;
+  premiseAdjudication: {
+    state: string;
+    warnings: Array<{ kind: string; message: string }>;
+    omittedWarnings: number;
+  };
+  egressTarget?: AgentEgressTarget;
+  egressExclusions?: Array<{
+    scopeKind: string;
+    scopeId: string;
+    policy: AgentEgressPolicy;
+    blockReason: string;
+  }>;
+  egressCoverage?: {
+    target: AgentEgressTarget;
+    blockedSpecifications: number;
+    blockedMounts: number;
+    blockedExternalConnectors: number;
+    blockedHistoricalSources: number;
+    blockedPolicyBundleSources: number;
+    historicalMemoryWithheld: boolean;
+    withheldDerivedResults: number;
+  };
+  maxTokens: number;
+  estimatedTokens: number;
+  specifications: AgentBriefPreviewSpecification[];
+  items: AgentBriefPreviewItem[];
+  gaps: Array<{ kind: string; message: string }>;
+  coverage: {
+    returnedItems: number;
+    returnedConflicts: number;
+    returnedExclusions: number;
+    returnedGaps: number;
+    omittedGaps: number;
+    omittedConflicts: number;
+    omittedExclusions: number;
+    searchTruncated: boolean;
+    sourceTruncated: boolean;
+  };
+  liveSourceChecked: boolean;
+  sourceBoundary: string;
+  instructionWarning: string;
+  privacyNotice: string;
+  [key: string]: unknown;
 }
 
 export interface AgentInitialCaptureSkippedPath {
