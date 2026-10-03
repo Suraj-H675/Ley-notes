@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   BookCheck,
@@ -106,6 +106,31 @@ function defaultSectionFor(primary: PrimarySection): Section {
       return "review";
     case "settings":
       return "privacy";
+  }
+}
+
+function sectionContentLabel(section: Section): string {
+  switch (section) {
+    case "overview":
+      return "Continue";
+    case "search":
+      return "Search memory";
+    case "sessions":
+      return "Sessions";
+    case "decisions":
+      return "Decisions";
+    case "problems":
+      return "Problems and outcomes";
+    case "lessons":
+      return "Lessons";
+    case "specifications":
+      return "Specifications";
+    case "artifacts":
+      return "Files and evidence";
+    case "review":
+      return "Review";
+    case "privacy":
+      return "Project settings";
   }
 }
 
@@ -537,6 +562,7 @@ function AgentMemoryWorkspaceView({
         busy={busy}
         onReturnToProjects={onReturnToProjects}
         onRefresh={onRefresh}
+        onSearch={() => onSection("search")}
       />
       <AgentMemoryBody
         projectPath={projectPath}
@@ -598,6 +624,7 @@ function AgentMemoryHeader({
   busy,
   onReturnToProjects,
   onRefresh,
+  onSearch,
 }: {
   projectPath: string | null;
   projectLabel: string | null;
@@ -606,6 +633,7 @@ function AgentMemoryHeader({
   busy: boolean;
   onReturnToProjects: () => void;
   onRefresh: () => Promise<void>;
+  onSearch: () => void;
 }) {
   return (
     <header className="app-chrome flex h-14 shrink-0 items-center justify-between px-3 sm:px-5">
@@ -636,6 +664,18 @@ function AgentMemoryHeader({
           >
             <ArrowLeft size={13} />
             <span className="hidden sm:inline">Projects</span>
+          </Button>
+        )}
+        {dashboard && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onSearch}
+            title="Search this project memory"
+            aria-label="Search memory"
+          >
+            <Search size={13} />
+            <span className="hidden sm:inline">Search memory</span>
           </Button>
         )}
         {dashboard && (
@@ -714,7 +754,7 @@ function AgentMemoryBody({
         error={error}
         onAdd={() => void onChooseProject()}
         onOpen={onOpenProject}
-        onForget={(projectId) => void onForgetProject(projectId)}
+        onForget={onForgetProject}
         onReload={onReloadProjects}
       />
     );
@@ -785,6 +825,15 @@ function AgentMemoryReadyContent({
   onPrivacyUpdated: (dashboard: AgentMemoryDashboard) => void;
   onPrivacyErased: (inspection: AgentProjectInspection) => void;
 }) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const previousSectionRef = useRef(section);
+
+  useEffect(() => {
+    if (previousSectionRef.current === section) return;
+    previousSectionRef.current = section;
+    contentRef.current?.focus({ preventScroll: true });
+  }, [section]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col md:flex-row">
       <AgentMemoryNav
@@ -795,7 +844,12 @@ function AgentMemoryReadyContent({
         onChangeProject={onChangeProject}
       />
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
+        <div
+          ref={contentRef}
+          tabIndex={-1}
+          aria-label={`${sectionContentLabel(section)} content`}
+          className="mx-auto w-full max-w-6xl px-4 py-6 outline-none sm:px-6 sm:py-8 lg:px-10"
+        >
           <AgentMemorySubnav
             section={section}
             dashboard={dashboard}

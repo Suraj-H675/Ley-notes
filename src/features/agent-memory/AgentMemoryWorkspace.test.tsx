@@ -415,6 +415,57 @@ describe("Agent Memory workspace boundaries", () => {
     await waitFor(() =>
       expect(api.forgetAgentProject).toHaveBeenCalledWith("prj_test"),
     );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Your projects" }),
+      ).toHaveFocus(),
+    );
+  });
+
+  it("opens project search from the app bar and moves focus into the destination", async () => {
+    api.listAgentProjects.mockResolvedValue({
+      projects: [
+        {
+          projectId: "prj_test",
+          projectPath: "/projects/ley",
+          projectName: "Ley",
+          captureMode: "structured",
+          state: "ready",
+          lastOpenedAtUnixMs: Date.now(),
+          files: 18,
+          sessions: 1,
+          activeSessions: 0,
+          reviewItems: 0,
+          freshness: "current",
+          statusDetail: "Ready to resume locally.",
+        },
+      ],
+      totalProjects: 1,
+      omittedProjects: 0,
+      readyProjects: 1,
+      attentionProjects: 0,
+      privacyNotice: "Only explicitly opened projects.",
+    });
+    api.inspectAgentProject.mockResolvedValue({ status: "ready", dashboard });
+
+    render(<AgentMemoryWorkspace />);
+    await screen.findByRole("heading", {
+      name: "Continue where you left off",
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Ley.*Ready.*1 sessions.*18 files/i,
+      }),
+    );
+    await screen.findByRole("heading", { name: "Agent brief preview" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Search memory" }));
+    await screen.findByRole("heading", { name: "Ask your project memory" });
+    expect(screen.getByRole("button", { name: "Recall" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByLabelText("Search memory content")).toHaveFocus();
   });
 
   it("does not infer integration absence from missing retained host activity", async () => {

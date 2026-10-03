@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -45,7 +45,7 @@ export function ProjectsHub({
   error: string | null;
   onAdd: () => void;
   onOpen: (projectPath: string, destination?: AgentProjectSearchResult) => void;
-  onForget: (projectId: string) => void;
+  onForget: (projectId: string) => Promise<void>;
   onReload: () => void;
 }) {
   const [filterQuery, setFilterQuery] = useState("");
@@ -130,7 +130,7 @@ function ProjectsHubContent({
   error: string | null;
   onAdd: () => void;
   onOpen: (projectPath: string, destination?: AgentProjectSearchResult) => void;
-  onForget: (projectId: string) => void;
+  onForget: (projectId: string) => Promise<void>;
   onReload: () => void;
   filterQuery: string;
   setFilterQuery: (value: string) => void;
@@ -142,6 +142,13 @@ function ProjectsHubContent({
   onSearch: () => Promise<void>;
   projects: AgentProjectCatalogItem[];
 }) {
+  const projectListHeadingRef = useRef<HTMLHeadingElement>(null);
+
+  async function forgetProject(projectId: string) {
+    await onForget(projectId);
+    projectListHeadingRef.current?.focus({ preventScroll: true });
+  }
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
@@ -178,7 +185,9 @@ function ProjectsHubContent({
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2
+                ref={projectListHeadingRef}
                 id="known-projects-title"
+                tabIndex={-1}
                 className="text-xl font-semibold tracking-tight"
               >
                 Your projects
@@ -263,7 +272,7 @@ function ProjectsHubContent({
                   project={project}
                   divided={index > 0}
                   onOpen={() => onOpen(project.projectPath)}
-                  onForget={() => onForget(project.projectId)}
+                  onForget={() => forgetProject(project.projectId)}
                 />
               ))}
             </div>
@@ -552,7 +561,7 @@ function ProjectRow({
   project: AgentProjectCatalogItem;
   divided: boolean;
   onOpen: () => void;
-  onForget: () => void;
+  onForget: () => Promise<void>;
 }) {
   const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const unavailable =
@@ -643,7 +652,7 @@ function ProjectRow({
                   type="button"
                   onClick={() => {
                     setConfirmingRemoval(false);
-                    onForget();
+                    void onForget();
                   }}
                   className="rounded bg-destructive/12 px-2 py-1.5 text-micro font-semibold text-destructive outline-none hover:bg-destructive/18 focus-visible:ring-2 focus-visible:ring-destructive"
                 >
