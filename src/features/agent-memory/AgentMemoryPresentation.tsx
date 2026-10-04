@@ -3,10 +3,12 @@ import { cn } from "@/shared/lib/classnames";
 import type { LearningSummary, ResumeSession } from "./types";
 
 export function PageHeading({
+  id,
   eyebrow,
   title,
   description,
 }: {
+  id?: string;
   eyebrow: string;
   title: string;
   description: string;
@@ -16,7 +18,7 @@ export function PageHeading({
       <p className="text-micro font-semibold uppercase tracking-[0.14em] text-muted-foreground">
         {eyebrow}
       </p>
-      <h2 className="mt-1 text-2xl font-semibold tracking-[-0.035em]">
+      <h2 id={id} className="mt-1 text-2xl font-semibold tracking-[-0.035em]">
         {title}
       </h2>
       <p className="mt-2 max-w-2xl text-body leading-6 text-muted-foreground-strong">

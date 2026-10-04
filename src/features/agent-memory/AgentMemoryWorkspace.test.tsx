@@ -459,13 +459,22 @@ describe("Agent Memory workspace boundaries", () => {
     );
     await screen.findByRole("heading", { name: "Agent brief preview" });
 
+    const scrollRoot = screen.getByRole("main");
+    scrollRoot.scrollTop = 320;
     fireEvent.click(screen.getByRole("button", { name: "Search memory" }));
     await screen.findByRole("heading", { name: "Ask your project memory" });
     expect(screen.getByRole("button", { name: "Recall" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(screen.getByLabelText("Search memory content")).toHaveFocus();
+    const content = screen.getByLabelText("Search memory content");
+    expect(content).toHaveFocus();
+    expect(content).toHaveClass(
+      "focus-visible:ring-2",
+      "focus-visible:ring-inset",
+      "focus-visible:ring-primary",
+    );
+    expect(scrollRoot.scrollTop).toBe(0);
   });
 
   it("does not infer integration absence from missing retained host activity", async () => {
@@ -1335,6 +1344,9 @@ describe("Agent Memory workspace boundaries", () => {
     await waitFor(() =>
       expect(screen.getByText("Local project memory")).toBeVisible(),
     );
+    fireEvent.click(screen.getByRole("button", { name: /Review/ }));
+    await screen.findByRole("heading", { name: "Review inbox" });
+    expect(screen.getByRole("region", { name: "Review inbox" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Project settings" }));
     await screen.findByRole("heading", { name: "Recorded agent activity" });
     expect(screen.getByText("Codex host hooks")).toBeVisible();
@@ -1345,6 +1357,7 @@ describe("Agent Memory workspace boundaries", () => {
     fireEvent.click(screen.getByRole("button", { name: "Recall" }));
     fireEvent.click(screen.getByRole("button", { name: /Sessions/ }));
     await screen.findByRole("heading", { name: "Sessions" });
+    expect(screen.getByRole("region", { name: "Sessions" })).toBeVisible();
     fireEvent.click(screen.getByText("Build continuity"));
     await screen.findByRole("heading", { name: "Build continuity" });
     expect(
@@ -1517,6 +1530,7 @@ describe("Agent Memory workspace boundaries", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Lessons/ }));
     await screen.findByRole("heading", { name: "Lessons" });
+    expect(screen.getByRole("region", { name: "Lessons" })).toBeVisible();
     fireEvent.click(screen.getByText("Verify the complete workspace"));
     await screen.findByRole("heading", {
       name: "Verify the complete workspace",

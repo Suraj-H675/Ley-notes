@@ -826,11 +826,13 @@ function AgentMemoryReadyContent({
   onPrivacyErased: (inspection: AgentProjectInspection) => void;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const previousSectionRef = useRef(section);
 
   useEffect(() => {
     if (previousSectionRef.current === section) return;
     previousSectionRef.current = section;
+    if (mainRef.current) mainRef.current.scrollTop = 0;
     contentRef.current?.focus({ preventScroll: true });
   }, [section]);
 
@@ -843,12 +845,15 @@ function AgentMemoryReadyContent({
         onSection={onSection}
         onChangeProject={onChangeProject}
       />
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain">
+      <main
+        ref={mainRef}
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain"
+      >
         <div
           ref={contentRef}
           tabIndex={-1}
           aria-label={`${sectionContentLabel(section)} content`}
-          className="mx-auto w-full max-w-6xl px-4 py-6 outline-none sm:px-6 sm:py-8 lg:px-10"
+          className="mx-auto w-full max-w-6xl px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary sm:px-6 sm:py-8 lg:px-10"
         >
           <AgentMemorySubnav
             section={section}
@@ -1341,6 +1346,7 @@ function Sessions({
   return (
     <section aria-labelledby="sessions-title">
       <PageHeading
+        id="sessions-title"
         eyebrow="Continuity timeline"
         title="Sessions"
         description={`${sessions.length} structured agent ${sessions.length === 1 ? "session" : "sessions"} captured for this project.`}

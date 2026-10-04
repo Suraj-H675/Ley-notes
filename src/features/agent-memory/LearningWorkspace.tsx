@@ -55,6 +55,7 @@ export function Lessons({
   return (
     <section aria-labelledby="lessons-title">
       <PageHeading
+        id="lessons-title"
         eyebrow="Procedural memory"
         title="Lessons"
         description={`Evidence-backed guidance remains reviewable, temporal, and separate from ordinary notes. Showing ${learnings.length} of ${dashboard.allLearnings.totalMatching}.`}
@@ -93,6 +94,7 @@ export function ReviewInbox({
   return (
     <section aria-labelledby="review-inbox-title">
       <PageHeading
+        id="review-inbox-title"
         eyebrow="Human authority"
         title="Review inbox"
         description={`Confirm useful guidance, contest uncertain claims, reject false memory, or mark guidance stale. Showing ${inbox.learnings.length} of ${inbox.totalMatching}.`}
