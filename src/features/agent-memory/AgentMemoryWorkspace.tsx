@@ -1345,23 +1345,25 @@ function Sessions({
         title="Sessions"
         description={`${sessions.length} structured agent ${sessions.length === 1 ? "session" : "sessions"} captured for this project.`}
       />
-      <div className="mt-6 space-y-3">
-        {sessions.length === 0 ? (
+      {sessions.length === 0 ? (
+        <div className="mt-6">
           <LargeEmpty
             icon={History}
             title="No sessions yet"
             body="When an agent starts a Ley session, its goal, checkpoints, decisions, verification, and handoff will appear here."
           />
-        ) : (
-          sessions.map((session) => (
+        </div>
+      ) : (
+        <div className="mt-6 divide-y divide-border border-y border-border">
+          {sessions.map((session) => (
             <SessionSummaryCard
               key={session.sessionId}
               session={session}
               onClick={() => onSession(session.sessionId)}
             />
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
@@ -1378,7 +1380,7 @@ function SessionSummaryCard({
     <button
       type="button"
       onClick={onClick}
-      className="w-full cursor-pointer rounded-md border border-border bg-surface-1 p-4 text-left shadow-panel hover:border-border-strong hover:bg-surface-2/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5"
+      className="w-full cursor-pointer px-1 py-4 text-left transition-colors hover:bg-surface-1/55 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary sm:py-5"
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
