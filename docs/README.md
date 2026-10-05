@@ -15,6 +15,11 @@ Read first:
 1. `../LEY.md` — concise current execution direction (local planning file).
 2. `research/first-principles-audit-2026-09-25.md` — detailed audit, evidence, decisions, and migration plan.
 
+Current operational references:
+
+- `agent-memory/host-integrations.md` — normal Desktop-driven Codex/Claude setup and the host trust boundaries;
+- `native-release.md` — native installers, signing/notarization, updater keys, checksums, and release procedure.
+
 ## Historical documents
 
 The existing ADRs, research notes, runtime reports, and feature documents record real implementation

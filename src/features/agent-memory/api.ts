@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AgentCaptureSettings,
+  AgentHostIntegrationStatus,
   AgentBriefPreview,
   AgentEgressPolicy,
   AgentEgressTarget,
@@ -26,6 +27,19 @@ import type {
   SessionContext,
   SessionTurnsContext,
 } from "./types";
+
+export function readAgentHostIntegrations(
+  projectPath?: string,
+): Promise<AgentHostIntegrationStatus[]> {
+  return invoke("read_agent_host_integrations", { projectPath });
+}
+
+export function connectAgentHost(
+  projectPath: string,
+  hostId: AgentHostIntegrationStatus["id"],
+): Promise<AgentHostIntegrationStatus> {
+  return invoke("connect_agent_host", { projectPath, hostId });
+}
 
 export async function chooseAgentProject(): Promise<string | null> {
   const selected = await open({

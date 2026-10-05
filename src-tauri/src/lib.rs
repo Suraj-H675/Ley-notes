@@ -1,4 +1,8 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+mod host_integrations;
+mod runtime;
+
+use host_integrations::HostIntegrationStatus;
 use ley_core::{
     compile_project_context_for_agent_with_transition_registries,
     correct_learning_with_continuity_transition, diagnose_project,
@@ -50,6 +54,7 @@ use ley_core::{
     correct_learning, erase_project_memory, ingest_project, initialize_project, read_learning,
     rename_session, review_learning,
 };
+use runtime::AgentRuntimeStatus;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -2129,10 +2134,40 @@ fn read_agent_project_activity(
     .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn prepare_agent_runtime(app: tauri::AppHandle) -> Result<AgentRuntimeStatus, String> {
+    runtime::ensure_bundled_helper(&app)
+}
+
+#[tauri::command]
+fn read_agent_host_integrations(project_path: Option<String>) -> Vec<HostIntegrationStatus> {
+    host_integrations::inspect_host_integrations(project_path.as_deref().map(Path::new))
+}
+
+#[tauri::command]
+fn connect_agent_host(
+    app: tauri::AppHandle,
+    project_path: String,
+    host_id: String,
+) -> Result<HostIntegrationStatus, String> {
+    match inspect_agent_project(project_path.clone())? {
+        AgentProjectInspection::Ready { .. } => {}
+        _ => return Err("finish Ley project setup before connecting a coding agent".to_owned()),
+    }
+    let runtime = runtime::ensure_bundled_helper(&app)?;
+    host_integrations::connect_host(
+        &app,
+        Path::new(&project_path),
+        &host_id,
+        &runtime.helper_path,
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             list_agent_projects,
             forget_agent_project,
@@ -2164,7 +2199,10 @@ pub fn run() {
             read_agent_artifacts,
             read_agent_cited_evidence,
             read_agent_media_evidence,
-            read_agent_project_activity
+            read_agent_project_activity,
+            prepare_agent_runtime,
+            read_agent_host_integrations,
+            connect_agent_host
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ley");

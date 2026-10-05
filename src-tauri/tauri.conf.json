@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "identifier": "app.leynotes.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev:desktop-ui",
+    "beforeDevCommand": "npm run dev:desktop-runtime",
     "devUrl": "http://localhost:3000",
     "beforeBuildCommand": "npm run build:desktop-ui",
+    "beforeBundleCommand": "npm run prepare:desktop-helper",
     "frontendDist": "../dist-desktop"
   },
   "app": {
@@ -28,6 +29,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": ["generated/ley-helper"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

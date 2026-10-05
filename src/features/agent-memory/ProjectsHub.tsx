@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -22,6 +22,7 @@ import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/lib/classnames";
 import { humanize } from "./AgentMemoryPresentation";
 import { searchAgentProjects } from "./api";
+import { UpdateControl } from "./UpdateControl";
 import type {
   AgentProjectCatalog,
   AgentProjectCatalogItem,
@@ -64,7 +65,6 @@ export function ProjectsHub({
         project.state,
       ].some((value) => value.toLocaleLowerCase().includes(normalized));
     }) ?? [];
-
   async function searchMemory() {
     const query = memoryQuery.trim();
     if (!query || searching) return;
@@ -144,6 +144,21 @@ function ProjectsHubContent({
 }) {
   const projectListHeadingRef = useRef<HTMLHeadingElement>(null);
 
+  if (
+    catalog &&
+    catalog.totalProjects === 0 &&
+    !loading &&
+    !error &&
+    !filterQuery.trim()
+  ) {
+    return (
+      <FirstProjectWelcome
+        onAdd={onAdd}
+        privacyNotice={catalog.privacyNotice}
+      />
+    );
+  }
+
   async function forgetProject(projectId: string) {
     await onForget(projectId);
     projectListHeadingRef.current?.focus({ preventScroll: true });
@@ -165,10 +180,13 @@ function ProjectsHubContent({
               history or continue straight into a project.
             </p>
           </div>
-          <Button variant="primary" onClick={onAdd} className="self-start sm:self-auto">
-            <FolderOpen size={14} />
-            Add project
-          </Button>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <UpdateControl />
+            <Button variant="primary" onClick={onAdd}>
+              <FolderOpen size={14} />
+              Add project
+            </Button>
+          </div>
         </header>
 
         <CrossProjectSearch
@@ -304,6 +322,55 @@ function ProjectsHubContent({
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+function FirstProjectWelcome({
+  onAdd,
+  privacyNotice,
+}: {
+  onAdd: () => void;
+  privacyNotice: string;
+}) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <main className="mx-auto flex min-h-full w-full max-w-5xl items-center px-4 py-10 sm:px-6 lg:px-10">
+        <div className="max-w-2xl py-8 sm:py-12">
+          <div className="flex size-11 items-center justify-center rounded-md border border-primary/20 bg-primary/10 text-primary">
+            <ShieldCheck size={20} aria-hidden="true" />
+          </div>
+          <h2
+            ref={headingRef}
+            tabIndex={-1}
+            className="mt-5 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl"
+          >
+            Local continuity for coding agents
+          </h2>
+          <p className="mt-3 max-w-xl text-body leading-7 text-muted-foreground-strong">
+            Choose one coding project. Before Ley writes anything, you will
+            review exactly what it can capture and what stays excluded.
+          </p>
+
+          <div className="mt-7 flex flex-wrap gap-3">
+            <Button variant="primary" onClick={onAdd}>
+              <FolderOpen size={14} aria-hidden="true" />
+              Choose a project
+            </Button>
+          </div>
+
+          <div className="mt-8 max-w-xl border-t border-border pt-5 text-meta leading-6 text-muted-foreground">
+            <p>No account. No knowledge cloud.</p>
+            <p className="mt-1">{privacyNotice}</p>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }

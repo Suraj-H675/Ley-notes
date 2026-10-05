@@ -104,9 +104,10 @@ The canonical native MCP contract is deliberately small:
 An inactive ordinary workspace exposes no project-memory capabilities and is not initialized implicitly. Bootstrap
 Specification access for an uninitialized workspace is a separate explicit read-only authority path.
 
-Host adapters establish/reuse session identity and capture bounded/redacted lifecycle evidence. Desktop's recorded
-integration activity is retained provenance, not proof that a host is currently installed, trusted, connected, or
-healthy.
+Host adapters establish/reuse session identity and capture bounded/redacted lifecycle evidence. Desktop separately
+probes documented Codex/Claude CLI/plugin state for detection and Ley-managed configuration. Those probes do not
+attest hook trust or runtime health. Recorded integration activity remains retained provenance; the explicit smoke
+check passes only when Ley actually observes a matching host-hook session for the selected project.
 
 ## Human authority and egress
 

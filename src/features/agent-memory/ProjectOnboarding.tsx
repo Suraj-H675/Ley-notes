@@ -1,12 +1,14 @@
 import {
   ArrowRight,
   BrainCircuit,
+  CheckCircle2,
   FolderOpen,
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/shared/components/Button";
 import { ErrorNotice } from "./AgentMemoryPresentation";
+import { HostIntegrationsPanel } from "./HostIntegrationsPanel";
 import type {
   AgentInitialCapturePreview,
   AgentProjectInspection,
@@ -30,8 +32,8 @@ function onboardingCopy(
   switch (inspection.status) {
     case "uninitialized":
       return {
-        title: "Review capture before enabling Agent Memory",
-        body: `Nothing has been initialized or written yet. Review what Ley would capture from “${inspection.suggestedName}”. Durable continuity will stay in Ley’s private local app storage.`,
+        title: "Review what Ley will capture",
+        body: `Nothing has been written yet. Review the proposed capture boundary for “${inspection.suggestedName}”. Durable continuity will stay in Ley’s private local app storage.`,
       };
     case "unbound":
       return {
@@ -233,7 +235,7 @@ export function ProjectOnboarding({
                   ) : (
                     <ArrowRight size={14} />
                   )}
-                  {busy ? "Preparing memory…" : primaryAction?.label}
+                  {busy ? "Preparing Ley…" : primaryAction?.label}
                 </Button>
                 <Button variant="outline" disabled={busy} onClick={onChoose}>
                   Choose another
@@ -265,7 +267,7 @@ function onboardingPrimaryAction(
 ) {
   switch (inspection.status) {
     case "uninitialized":
-      return { onClick: onInitialize, label: "Approve, initialize & capture" };
+      return { onClick: onInitialize, label: "Enable Ley for this project" };
     case "unbound":
       return { onClick: onConnect, label: "Reconnect & migrate" };
     case "vault-unavailable":
@@ -273,6 +275,47 @@ function onboardingPrimaryAction(
     default:
       return { onClick: onCapture, label: "Capture project" };
   }
+}
+
+export function ProjectSetupReady({
+  projectName,
+  projectPath,
+  onContinue,
+}: {
+  projectName: string;
+  projectPath: string;
+  onContinue: () => void;
+}) {
+  return (
+    <main className="min-h-0 flex-1 overflow-y-auto px-4 py-10 sm:px-6">
+      <div className="mx-auto flex min-h-full max-w-xl items-center justify-center">
+        <div className="w-full rounded-sm border border-border bg-surface-1 p-6 shadow-panel sm:p-8">
+          <div className="flex size-11 items-center justify-center rounded-md border border-success/25 bg-success/10 text-success">
+            <CheckCircle2 size={21} aria-hidden="true" />
+          </div>
+          <h2 className="mt-5 text-2xl font-semibold tracking-[-0.035em]">
+            Ley is ready for {projectName}
+          </h2>
+          <p className="mt-2 text-body leading-6 text-muted-foreground-strong">
+            The project is enabled and its first local continuity snapshot is
+            ready. You can open Ley now, or connect a detected coding agent
+            without leaving this setup flow.
+          </p>
+          <div className="mt-6 border-t border-border pt-5">
+            <HostIntegrationsPanel projectPath={projectPath} compact />
+          </div>
+          <Button variant="primary" className="mt-6" onClick={onContinue}>
+            Open project
+            <ArrowRight size={14} aria-hidden="true" />
+          </Button>
+          <p className="mt-6 border-t border-border pt-4 text-micro leading-5 text-muted-foreground">
+            No account · no knowledge cloud · continuity stays in Ley’s private
+            local app storage.
+          </p>
+        </div>
+      </div>
+    </main>
+  );
 }
 
 function formatOnboardingBytes(bytes: number): string {

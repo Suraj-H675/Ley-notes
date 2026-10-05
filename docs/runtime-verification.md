@@ -95,8 +95,11 @@ remain intentionally outside the current product matrix.
   or retired cross-project content compilation while those records still constrain migration/privacy ancestry.
 - Host lifecycle capture must preserve stable Ley session identity, bounded/redacted prompt/response evidence, and
   the guidance-only startup contract.
-- Desktop's recorded integration activity is historical Ley evidence only. It must not claim that Codex, Claude,
-  or another host is currently installed, trusted, connected, or healthy unless Ley actually verifies that state.
+- Desktop may report Codex/Claude executable detection and documented plugin configuration only from live host CLI
+  probes. Those states must remain distinct from restart/trust requirements and runtime activity.
+- Recorded integration activity is historical Ley evidence only. The smoke check may report success only after a
+  matching host-hook session is actually retained for the selected project; installation/configuration alone must
+  never be relabeled as healthy or connected.
 
 ## Public website and legacy browser recovery
 
@@ -125,6 +128,8 @@ remain intentionally outside the current product matrix.
   is installable or signed.
 - Signed distribution, updater behavior, and cross-platform installation/launch are separate release claims and
   must be verified before the product or website promises them.
+- Release builds must use a public updater key plus protected private signing key, platform code signing/notarization
+  where applicable, and user-initiated update checks. Development builds must not embed placeholder trust material.
 
 ## Evidence discipline
 

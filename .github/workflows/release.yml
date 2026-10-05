@@ -1,0 +1,323 @@
+name: Native release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: native-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: release preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LEY_RELEASE_TAG: ${{ github.ref_name }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify release version and public distribution prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            TAURI_SIGNING_PRIVATE_KEY
+            TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+            TAURI_UPDATER_PUBLIC_KEY
+            APPLE_CERTIFICATE
+            APPLE_CERTIFICATE_PASSWORD
+            KEYCHAIN_PASSWORD
+            APPLE_ID
+            APPLE_PASSWORD
+            APPLE_TEAM_ID
+            APPLE_SIGNING_IDENTITY
+            WINDOWS_CERTIFICATE
+            WINDOWS_CERTIFICATE_PASSWORD
+            WINDOWS_TIMESTAMP_URL
+          )
+          missing=()
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing release prerequisites: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          visibility="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .visibility)"
+          if [[ "$visibility" != "public" ]]; then
+            echo "Public Ley releases require a public GitHub release repository; current visibility is '$visibility'." >&2
+            exit 1
+          fi
+          node scripts/verify-release-version.mjs
+
+  build:
+    name: ${{ matrix.label }}
+    needs: preflight
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # tauri-action updates one shared latest.json asset for each matrix lane.
+      # Serializing release lanes avoids the documented delete/re-upload race
+      # without weakening the ordinary CI matrix.
+      max-parallel: 1
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: linux-x86_64
+            args: --bundles appimage deb rpm --config src-tauri/generated/release.conf.json
+          - os: macos-15
+            label: macos-arm64
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles dmg --config src-tauri/generated/release.conf.json
+          - os: macos-15-intel
+            label: macos-x86_64
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles dmg --config src-tauri/generated/release.conf.json
+          - os: windows-2025
+            label: windows-x86_64
+            args: --bundles nsis msi --config src-tauri/generated/release.conf.json
+    runs-on: ${{ matrix.os }}
+    env:
+      LEY_RELEASE_TAG: ${{ github.ref_name }}
+      LEY_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+      TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_SIGNING_IDENTITY: ${{ vars.APPLE_SIGNING_IDENTITY }}
+      LEY_WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install pinned Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component rustfmt
+          rustup default 1.98.1
+          if [[ -n "${{ matrix.target }}" ]]; then rustup target add "${{ matrix.target }}"; fi
+
+      - name: Install Linux bundle prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils \
+            rpm2cpio \
+            cpio
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Import Apple Developer certificate
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain | grep -F "$APPLE_SIGNING_IDENTITY"
+
+      - name: Import Windows signing certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          [IO.File]::WriteAllBytes("certificate.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $certificate = Import-PfxCertificate -FilePath certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          if (-not $certificate.Thumbprint) { throw "Windows signing certificate import returned no thumbprint" }
+          "LEY_WINDOWS_CERT_THUMBPRINT=$($certificate.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Prepare release-only updater and signing config
+        run: npm run prepare:release-config
+
+      - name: Build, sign, and upload native bundles
+        id: tauri
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Ley ${{ github.ref_name }}
+          releaseBody: Native Ley installers, signed updater artifacts, and SHA-256 checksums. See the README for platform-specific installation notes.
+          releaseDraft: true
+          prerelease: false
+          generateReleaseNotes: true
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }}
+
+      - name: Verify Linux install artifacts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="ley $(node -p "require('./package.json').version")"
+          deb="$(find target -type f -path '*/bundle/deb/*.deb' -print -quit)"
+          rpm="$(find target -type f -path '*/bundle/rpm/*.rpm' -print -quit)"
+          appimage="$(find target -type f -path '*/bundle/appimage/*.AppImage' -print -quit)"
+          test -n "$deb" && test -n "$rpm" && test -n "$appimage"
+
+          dpkg-deb -c "$deb" > /tmp/ley-deb-files.txt
+          grep -F '/usr/lib/Ley/generated/ley-helper' /tmp/ley-deb-files.txt
+          ! grep -E '/(node_modules|target|crates)/' /tmp/ley-deb-files.txt
+          sudo apt-get install -y "$PWD/$deb"
+          test -x /usr/lib/Ley/generated/ley-helper
+          test "$(/usr/lib/Ley/generated/ley-helper --version)" = "$expected"
+
+          rpm2cpio "$rpm" | cpio -t > /tmp/ley-rpm-files.txt
+          grep -F './usr/lib/Ley/generated/ley-helper' /tmp/ley-rpm-files.txt
+          ! grep -E '/(node_modules|target|crates)/' /tmp/ley-rpm-files.txt
+
+          extract_dir="$(mktemp -d)"
+          (cd "$extract_dir" && "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null)
+          image_helper="$(find "$extract_dir/squashfs-root" -type f -path '*/generated/ley-helper' -print -quit)"
+          test -x "$image_helper"
+          test "$("$image_helper" --version)" = "$expected"
+
+      - name: Verify macOS signature and bundled helper
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="ley $(node -p "require('./package.json').version")"
+          app="$(find target -type d -path '*/bundle/macos/*.app' -print -quit)"
+          dmg="$(find target -type f -path '*/bundle/dmg/*.dmg' -print -quit)"
+          test -n "$app" && test -n "$dmg"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          hdiutil verify "$dmg"
+          helper="$app/Contents/Resources/generated/ley-helper"
+          test -x "$helper"
+          codesign --verify --strict --verbose=2 "$helper"
+          test "$("$helper" --version)" = "$expected"
+
+      - name: Verify Windows signatures and bundled helper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $expected = "ley $version"
+          $nsis = Get-ChildItem target -Recurse -File -Filter '*.exe' | Where-Object { $_.FullName -match '\\bundle\\nsis\\' } | Select-Object -First 1
+          $msi = Get-ChildItem target -Recurse -File -Filter '*.msi' | Where-Object { $_.FullName -match '\\bundle\\msi\\' } | Select-Object -First 1
+          if (-not $nsis -or -not $msi) { throw 'Missing Windows NSIS or MSI installer' }
+          foreach ($artifact in @($nsis, $msi)) {
+            $signature = Get-AuthenticodeSignature $artifact.FullName
+            if ($signature.Status -ne 'Valid') {
+              throw "Invalid Authenticode signature for $($artifact.Name): $($signature.Status)"
+            }
+          }
+          $extract = Join-Path $PWD 'msi-extracted'
+          $process = Start-Process msiexec.exe -ArgumentList @('/a', $msi.FullName, '/qn', "TARGETDIR=$extract") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "MSI administrative extraction failed: $($process.ExitCode)" }
+          $helper = Get-ChildItem $extract -Recurse -File -Filter 'ley-helper.exe' | Select-Object -First 1
+          if (-not $helper) { throw 'MSI payload does not contain ley-helper.exe' }
+          $helperSignature = Get-AuthenticodeSignature $helper.FullName
+          if ($helperSignature.Status -ne 'Valid') {
+            throw "Invalid bundled helper signature: $($helperSignature.Status)"
+          }
+          $actual = & $helper.FullName --version
+          if ($actual.Trim() -ne $expected) { throw "Bundled helper version mismatch: $actual" }
+
+      - name: Verify updater signatures were produced
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$(find target -type f -name '*.sig' -print -quit)" || {
+            echo 'No signed updater artifact was produced.' >&2
+            exit 1
+          }
+
+      - name: Write SHA-256 checksums
+        env:
+          LEY_RELEASE_CHECKSUM_LABEL: ${{ matrix.label }}
+        run: node scripts/write-release-checksums.mjs
+
+      - name: Upload checksum manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" "release-checksums/SHA256SUMS-${{ matrix.label }}.txt" --clobber
+
+  publish:
+    name: publish verified release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify required release assets exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' > assets.txt
+          for exact in \
+            latest.json \
+            SHA256SUMS-linux-x86_64.txt \
+            SHA256SUMS-macos-arm64.txt \
+            SHA256SUMS-macos-x86_64.txt \
+            SHA256SUMS-windows-x86_64.txt; do
+            grep -Fx "$exact" assets.txt >/dev/null || { echo "Missing release asset: $exact" >&2; exit 1; }
+          done
+          grep -E '\.AppImage$' assets.txt >/dev/null || { echo 'Missing AppImage' >&2; exit 1; }
+          grep -E '\.deb$' assets.txt >/dev/null || { echo 'Missing DEB' >&2; exit 1; }
+          grep -E '\.rpm$' assets.txt >/dev/null || { echo 'Missing RPM' >&2; exit 1; }
+          test "$(grep -Ec '\.dmg$' assets.txt)" -ge 2 || { echo 'Missing one or more macOS DMGs' >&2; exit 1; }
+          grep -E '\.exe$' assets.txt >/dev/null || { echo 'Missing Windows NSIS installer' >&2; exit 1; }
+          grep -E '\.msi$' assets.txt >/dev/null || { echo 'Missing Windows MSI installer' >&2; exit 1; }
+
+      - name: Publish release
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false

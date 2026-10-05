@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({
   chooseAgentProject: vi.fn(),
   chooseLegacyAgentVault: vi.fn(),
   connectAgentProject: vi.fn(),
+  connectAgentHost: vi.fn(),
   correctAgentLearning: vi.fn(),
   eraseAgentProjectMemory: vi.fn(),
   eraseAgentSession: vi.fn(),
@@ -17,6 +18,7 @@ const api = vi.hoisted(() => ({
   inspectAgentProject: vi.fn(),
   listAgentProjects: vi.fn(),
   readAgentProjectActivity: vi.fn(),
+  readAgentHostIntegrations: vi.fn(),
   openAgentProjectMarkdownSource: vi.fn(),
   readAgentArtifacts: vi.fn(),
   readAgentMediaEvidence: vi.fn(),
@@ -39,6 +41,7 @@ vi.mock("./api", () => ({
   chooseAgentProject: api.chooseAgentProject,
   chooseLegacyAgentVault: api.chooseLegacyAgentVault,
   connectAgentProject: api.connectAgentProject,
+  connectAgentHost: api.connectAgentHost,
   correctAgentLearning: api.correctAgentLearning,
   eraseAgentProjectMemory: api.eraseAgentProjectMemory,
   eraseAgentSession: api.eraseAgentSession,
@@ -48,6 +51,7 @@ vi.mock("./api", () => ({
   inspectAgentProject: api.inspectAgentProject,
   listAgentProjects: api.listAgentProjects,
   readAgentProjectActivity: api.readAgentProjectActivity,
+  readAgentHostIntegrations: api.readAgentHostIntegrations,
   openAgentProjectMarkdownSource: api.openAgentProjectMarkdownSource,
   readAgentArtifacts: api.readAgentArtifacts,
   readAgentMediaEvidence: api.readAgentMediaEvidence,
@@ -205,6 +209,34 @@ describe("Agent Memory workspace boundaries", () => {
       privacyNotice: "OS-private sharing authority.",
     });
     api.readAgentCaptureSettings.mockResolvedValue(captureSettings);
+    api.readAgentHostIntegrations.mockResolvedValue([
+      {
+        id: "codex",
+        displayName: "Codex",
+        detected: true,
+        executablePath: "/usr/bin/codex",
+        version: "codex-cli test",
+        configured: false,
+        enabled: false,
+        managedByLeyDesktop: false,
+        restartRequired: false,
+        reviewRequired: false,
+        statusDetail: "Codex is available.",
+      },
+      {
+        id: "claude-code",
+        displayName: "Claude Code",
+        detected: false,
+        executablePath: null,
+        version: null,
+        configured: null,
+        enabled: null,
+        managedByLeyDesktop: false,
+        restartRequired: false,
+        reviewRequired: false,
+        statusDetail: "Claude Code was not found on this device.",
+      },
+    ]);
   });
 
   it("keeps a partially initialized project on native continuity after capture drift", async () => {
@@ -259,12 +291,12 @@ describe("Agent Memory workspace boundaries", () => {
 
     render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
-      name: "Continue where you left off",
+      name: "Local continuity for coding agents",
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose a project" }));
     expect(
       await screen.findByRole("heading", {
-        name: "Review capture before enabling Agent Memory",
+        name: "Review what Ley will capture",
       }),
     ).toBeVisible();
     expect(screen.getByText("README.md")).toBeVisible();
@@ -272,7 +304,7 @@ describe("Agent Memory workspace boundaries", () => {
     expect(api.initializeAgentProject).not.toHaveBeenCalled();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Approve, initialize & capture" }),
+      screen.getByRole("button", { name: "Enable Ley for this project" }),
     );
     await waitFor(() =>
       expect(api.initializeAgentProject).toHaveBeenCalledWith(
@@ -292,6 +324,69 @@ describe("Agent Memory workspace boundaries", () => {
     await waitFor(() =>
       expect(api.refreshAgentProject).toHaveBeenCalledWith("/projects/new-app"),
     );
+  });
+
+  it("finishes first-project setup with an explicit ready state", async () => {
+    api.listAgentProjects.mockResolvedValue({
+      projects: [],
+      totalProjects: 0,
+      omittedProjects: 0,
+      readyProjects: 0,
+      attentionProjects: 0,
+      privacyNotice: "Only explicitly opened projects.",
+    });
+    api.chooseAgentProject.mockResolvedValue("/projects/new-app");
+    api.inspectAgentProject.mockResolvedValue({
+      status: "uninitialized",
+      suggestedName: "new-app",
+      preview: {
+        mode: "structured",
+        approvedRoots: ["."],
+        respectGitignore: true,
+        maxFileBytes: 1_048_576,
+        maxTotalBytes: 536_870_912,
+        captureFingerprint: "sha256:capture",
+        planFingerprint: "sha256:plan",
+        approvalFingerprint: "sha256:approval",
+        eligibleFiles: 1,
+        eligibleBytes: 1024,
+        includedPaths: ["README.md"],
+        omittedIncludedPaths: 0,
+        skippedOversized: 0,
+        skippedTotalLimit: 0,
+        skippedSymlinks: 0,
+        skippedPaths: [],
+        omittedSkippedPaths: 0,
+        exclusionNotice: "Default exclusions apply.",
+        privacyNotice: "Nothing is written until approval.",
+      },
+    });
+    api.initializeAgentProject.mockResolvedValue({
+      ...dashboard,
+      overview: { ...dashboard.overview, projectName: "new-app" },
+    });
+
+    render(<AgentMemoryWorkspace />);
+    await screen.findByRole("heading", {
+      name: "Local continuity for coding agents",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Choose a project" }));
+    await screen.findByRole("heading", { name: "Review what Ley will capture" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Enable Ley for this project" }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Ley is ready for new-app" }),
+    ).toBeVisible();
+    expect(api.initializeAgentProject).toHaveBeenCalledWith(
+      "/projects/new-app",
+      "sha256:approval",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open project" }));
+    expect(
+      await screen.findByRole("heading", { name: "Agent brief preview" }),
+    ).toBeVisible();
   });
 
   it("treats unbound projects as reconnect-only legacy migration", async () => {
@@ -315,9 +410,9 @@ describe("Agent Memory workspace boundaries", () => {
 
     render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
-      name: "Continue where you left off",
+      name: "Local continuity for coding agents",
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose a project" }));
     expect(
       await screen.findByRole("heading", {
         name: "Reconnect historical Ley data",
@@ -356,9 +451,9 @@ describe("Agent Memory workspace boundaries", () => {
 
     render(<AgentMemoryWorkspace />);
     await screen.findByRole("heading", {
-      name: "Continue where you left off",
+      name: "Local continuity for coding agents",
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose a project" }));
     expect(
       await screen.findByRole("heading", {
         name: "Reconnect legacy migration source",
@@ -417,7 +512,9 @@ describe("Agent Memory workspace boundaries", () => {
     );
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: "Your projects" }),
+        screen.getByRole("heading", {
+          name: "Local continuity for coding agents",
+        }),
       ).toHaveFocus(),
     );
   });

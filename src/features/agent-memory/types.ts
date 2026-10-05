@@ -1,3 +1,17 @@
+export interface AgentHostIntegrationStatus {
+  id: "codex" | "claude-code";
+  displayName: string;
+  detected: boolean;
+  executablePath?: string | null;
+  version?: string | null;
+  configured?: boolean | null;
+  enabled?: boolean | null;
+  managedByLeyDesktop: boolean;
+  restartRequired: boolean;
+  reviewRequired: boolean;
+  statusDetail: string;
+}
+
 export type CaptureMode = "minimal" | "structured" | "full-evidence";
 export type LearningAction =
   | "confirm"

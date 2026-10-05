@@ -43,6 +43,29 @@ General-purpose note editing, backlinks, Canvas, daily notes, and the retired no
 
 See [`LEY.md`](LEY.md) in a local development checkout for the current execution direction and [`docs/README.md`](docs/README.md) for documentation status.
 
+## Install and first run
+
+Ley's normal-user distribution is the native Desktop app. Release builds produce a macOS DMG, Windows NSIS/MSI
+installers, and Linux AppImage/DEB/RPM packages. The application carries the matching native Ley engine itself;
+normal users do **not** install Rust, Node.js, clone this repository, run `cargo install`, or add `ley` to `PATH`.
+
+First launch is deliberately small:
+
+1. choose a coding-project folder;
+2. review the exact proposed capture boundary and exclusions;
+3. enable Ley and create the first local snapshot;
+4. optionally connect detected Codex or Claude Code installations from Ley Desktop;
+5. restart/review the host when Ley says that host requires it, then use **Run smoke check** to verify that Ley has
+   actually observed host-hook activity.
+
+Ley Desktop is not a daemon. A configured coding agent starts Ley's app-owned helper directly when its hooks/MCP
+server need it, so closing Desktop does not disable continuity.
+
+The repository now contains a signed cross-platform release/update pipeline, but this README does **not** claim a
+public release exists until that pipeline has actually run with the required Apple, Windows, and updater signing
+credentials from a public release repository. See [`docs/native-release.md`](docs/native-release.md) for the exact
+release trust boundary and prerequisites.
+
 ## Repository map
 
 ```text
@@ -90,6 +113,11 @@ Routine GitHub Actions CI runs on pushes to `main` and pull requests. It continu
 typecheck/lint/tests/website+desktop-UI builds/production dependency audit and the pinned Rust workspace
 format/check/tests on Ubuntu. The manual six-lane portability/security workflow remains separate because
 its Linux/macOS/Windows x64+ARM64 matrix is intentionally more expensive and evidence-oriented.
+
+Native release tags use a separate fail-closed workflow. It refuses to publish when release versions disagree, the
+GitHub release repository is not public, or required updater/platform signing material is absent. Successful lanes
+build and verify Linux/macOS/Windows bundles on clean hosted runners, upload signed updater artifacts plus SHA-256
+checksum manifests, and publish only after all required assets are present.
 
 ## Compatibility state
 

@@ -8,6 +8,8 @@ dist/
 dist-desktop/
 build/
 target/
+src-tauri/generated/
+release-checksums/
 *.tsbuildinfo
 
 # Environment files (NEVER commit secrets)

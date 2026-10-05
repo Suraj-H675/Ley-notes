@@ -28,8 +28,10 @@ import {
   refreshAgentProject,
 } from "./api";
 import { ProjectsHub } from "./ProjectsHub";
-import { ProjectOnboarding } from "./ProjectOnboarding";
+import { ProjectOnboarding, ProjectSetupReady } from "./ProjectOnboarding";
 import { ProjectOverview } from "./ProjectOverview";
+import { HostIntegrationsPanel } from "./HostIntegrationsPanel";
+import { UpdateControl } from "./UpdateControl";
 import {
   errorMessage,
   ErrorNotice,
@@ -182,6 +184,7 @@ export function AgentMemoryWorkspace() {
   const [artifactFocus, setArtifactFocus] = useState<ArtifactFocus | null>(
     null,
   );
+  const [showProjectSetupReady, setShowProjectSetupReady] = useState(false);
 
   useEffect(() => {
     if (projectPath || catalog) return;
@@ -232,6 +235,7 @@ export function AgentMemoryWorkspace() {
       const selected = await chooseAgentProject();
       if (selected) {
         setBusy(true);
+        setShowProjectSetupReady(false);
         setInspection(null);
         setInspectedPath(null);
         setProjectPath(selected);
@@ -246,6 +250,7 @@ export function AgentMemoryWorkspace() {
     destination?: AgentProjectSearchResult,
   ) {
     setBusy(true);
+    setShowProjectSetupReady(false);
     setError(null);
     setInspection(null);
     setInspectedPath(null);
@@ -335,6 +340,8 @@ export function AgentMemoryWorkspace() {
     if (!projectPath) return;
     setBusy(true);
     setError(null);
+    const completingNewProject =
+      kind === "initialize" && inspection?.status === "uninitialized";
     try {
       let dashboard: AgentMemoryDashboard;
       if (kind === "initialize") {
@@ -356,6 +363,7 @@ export function AgentMemoryWorkspace() {
       }
       setInspection({ status: "ready", dashboard });
       setSection("overview");
+      setShowProjectSetupReady(completingNewProject);
     } catch (cause) {
       setError(errorMessage(cause));
       if (kind === "initialize" || kind === "connect") {
@@ -383,6 +391,7 @@ export function AgentMemoryWorkspace() {
     setError(null);
     setLearningId(null);
     setSessionId(null);
+    setShowProjectSetupReady(false);
     setSection("overview");
     setCatalog(null);
     setCatalogBusy(true);
@@ -445,6 +454,7 @@ export function AgentMemoryWorkspace() {
       learningId={learningId}
       section={section}
       artifactFocus={artifactFocus}
+      showProjectSetupReady={showProjectSetupReady}
       onChooseProject={chooseProject}
       onOpenProject={openProject}
       onForgetProject={removeProject}
@@ -473,6 +483,7 @@ export function AgentMemoryWorkspace() {
       onLearningReviewed={reviewLearning}
       onPrivacyUpdated={updateInspection}
       onPrivacyErased={erasePrivacy}
+      onFinishProjectSetup={() => setShowProjectSetupReady(false)}
     />
   );
 }
@@ -490,6 +501,7 @@ interface AgentMemoryWorkspaceViewProps {
   learningId: string | null;
   section: Section;
   artifactFocus: ArtifactFocus | null;
+  showProjectSetupReady: boolean;
   onChooseProject: () => Promise<void>;
   onOpenProject: (
     projectPath: string,
@@ -513,6 +525,7 @@ interface AgentMemoryWorkspaceViewProps {
   onLearningReviewed: (dashboard: AgentMemoryDashboard) => void;
   onPrivacyUpdated: (dashboard: AgentMemoryDashboard) => void;
   onPrivacyErased: (inspection: AgentProjectInspection) => void;
+  onFinishProjectSetup: () => void;
 }
 
 function AgentMemoryWorkspaceView({
@@ -528,6 +541,7 @@ function AgentMemoryWorkspaceView({
   learningId,
   section,
   artifactFocus,
+  showProjectSetupReady,
   onChooseProject,
   onOpenProject,
   onForgetProject,
@@ -548,6 +562,7 @@ function AgentMemoryWorkspaceView({
   onLearningReviewed,
   onPrivacyUpdated,
   onPrivacyErased,
+  onFinishProjectSetup,
 }: AgentMemoryWorkspaceViewProps) {
   return (
     <div
@@ -573,6 +588,7 @@ function AgentMemoryWorkspaceView({
         inspection={inspection}
         section={section}
         artifactFocus={artifactFocus}
+        showProjectSetupReady={showProjectSetupReady}
         onChooseProject={onChooseProject}
         onOpenProject={onOpenProject}
         onForgetProject={onForgetProject}
@@ -586,6 +602,7 @@ function AgentMemoryWorkspaceView({
         onSession={onSession}
         onPrivacyUpdated={onPrivacyUpdated}
         onPrivacyErased={onPrivacyErased}
+        onFinishProjectSetup={onFinishProjectSetup}
       />
       {dashboard && projectPath && (
         <SessionInspector
@@ -709,6 +726,7 @@ function AgentMemoryBody({
   inspection,
   section,
   artifactFocus,
+  showProjectSetupReady,
   onChooseProject,
   onOpenProject,
   onForgetProject,
@@ -722,6 +740,7 @@ function AgentMemoryBody({
   onSession,
   onPrivacyUpdated,
   onPrivacyErased,
+  onFinishProjectSetup,
 }: Pick<
   AgentMemoryWorkspaceViewProps,
   | "projectPath"
@@ -732,6 +751,7 @@ function AgentMemoryBody({
   | "inspection"
   | "section"
   | "artifactFocus"
+  | "showProjectSetupReady"
   | "onChooseProject"
   | "onOpenProject"
   | "onForgetProject"
@@ -745,6 +765,7 @@ function AgentMemoryBody({
   | "onSession"
   | "onPrivacyUpdated"
   | "onPrivacyErased"
+  | "onFinishProjectSetup"
 >) {
   if (!projectPath) {
     return (
@@ -771,6 +792,15 @@ function AgentMemoryBody({
         onInitialize={() => void onMakeReady("initialize")}
         onConnect={() => void onMakeReady("connect")}
         onCapture={() => void onMakeReady("capture")}
+      />
+    );
+  }
+  if (showProjectSetupReady) {
+    return (
+      <ProjectSetupReady
+        projectName={inspection.dashboard.overview.projectName}
+        projectPath={projectPath}
+        onContinue={onFinishProjectSetup}
       />
     );
   }
@@ -992,6 +1022,24 @@ function ProjectSettings({
           captures, can send to agents, exports, or erases.
         </p>
       </div>
+
+      <section
+        aria-labelledby="desktop-update-title"
+        className="flex flex-col gap-3 border-y border-border py-4 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div>
+          <h2 id="desktop-update-title" className="text-lg font-semibold tracking-tight">
+            Ley Desktop
+          </h2>
+          <p className="mt-1 max-w-3xl text-micro leading-5 text-muted-foreground">
+            Update checks happen only when you ask. Signed release metadata is
+            fetched from Ley's configured updater endpoint.
+          </p>
+        </div>
+        <UpdateControl showVersion />
+      </section>
+
+      <HostIntegrationsPanel projectPath={projectPath} />
 
       <section aria-labelledby="integration-activity-title">
         <div className="mb-3 flex items-end justify-between gap-4">

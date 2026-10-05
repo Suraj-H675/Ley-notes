@@ -12,52 +12,48 @@ All three run on the user's machine. The host may send deliberately retrieved co
 
 ## Before connecting a host
 
-Install the `ley` executable on `PATH`, initialize the project, and capture the first native snapshot. From a Ley source checkout:
+For normal use, install Ley Desktop and finish the project's first-run flow there. The packaged app contains the
+native Ley engine and materializes it into Ley's private per-user application data before configuring a coding host.
+No separate CLI installation or `PATH` edit is part of ordinary setup.
 
-```bash
-cargo install --path crates/ley-cli --root "$HOME/.local"
-ley init /path/to/project --capture structured
-ley ingest /path/to/project
-```
+In **Project settings → Coding agents** (also offered at the first-project success state), Ley distinguishes these
+facts instead of collapsing them into one "connected" badge:
+
+- **Detected** — the host executable and version were found on this device;
+- **Configured** — Ley Desktop's own integration package/config is present for the selected project;
+- **Restart required / Review hooks** — the host still needs its documented restart/trust step;
+- **Smoke check passed** — Ley has actually retained a host-hook session from that exact host for this project.
+
+Connecting is always a user action. Ley does not silently mutate Codex or Claude configuration at application
+startup. Generated integration files invoke the absolute app-owned helper path, so they do not depend on a shell's
+`PATH` and Desktop does not need to remain open.
 
 Fresh projects need no filesystem-vault binding. `ley bind PROJECT --vault EXISTING_LEGACY_VAULT` is a
 reconnect-only compatibility command for pre-cutover projects whose selected vault already validates as historical
 memory for that exact project.
 
-Users with access to the repository can install the same CLI directly from
-GitHub without machine-specific paths:
+The CLI remains a developer/maintenance surface. Contributors who deliberately need it from a source checkout may
+still run:
 
 ```bash
-cargo install --git https://github.com/Suraj-H675/Ley-notes.git \
-  --locked ley-cli --root "$HOME/.local"
-ley --version
+cargo run --locked -p ley-cli -- --version
 ```
 
-The repository is currently private, so GitHub-based installation requires an
-authenticated collaborator until Suraj deliberately publishes the repository
-or separate release artifacts. A local source checkout does not have that
-requirement.
+That developer command is not a prerequisite for Desktop integration. Generated packages contain no developer home
+directory, vault path, token, or source-checkout path; project-specific Codex configuration is created only for the
+project the user explicitly connected.
 
-Every integration intentionally launches `ley` from `PATH`. On Linux and
-macOS, ensure `$HOME/.local/bin` is on the PATH inherited by the agent host; the
-command above uses that conventional location. On Windows, install to a
-directory already on PATH. Do not continue until `ley --version` succeeds in a
-fresh terminal. The packages contain no developer home directory, vault path,
-project path, token, or other machine-specific configuration.
-
-Ley Desktop deliberately does **not** infer whether Codex, Claude Code, or an
-MCP client is currently installed, trusted, connected, or healthy. The Overview
-shows only **Recorded agent activity** from retained Ley session provenance:
+Ley Desktop does inspect documented host CLI state for detection/configuration, but it still does **not** infer
+runtime health from installation. **Recorded agent activity** is a separate historical evidence surface built from
+retained Ley session provenance:
 recognized Codex/Claude Code host-hook sessions, generic host-hook provenance
 when the retained host label is missing or unrecognized, and MCP-origin
 sessions. Rows show retained-session counts plus the most recent qualifying
 session start time; later session updates are not treated as host-observation
 events. Manual CLI sessions and explicit
 historical imports are not presented as integration activity. A blank activity surface
-means only that Ley has no retained matching session for that project; verify
-current plugin/hook/MCP state in the host itself. Desktop does not probe
-undocumented host config files, plugin caches, or process state to manufacture
-a stronger claim.
+means only that Ley has no retained matching session for that project. The explicit Desktop smoke check uses this
+same retained host-hook evidence; it never manufactures a session merely to make the status green.
 
 The packaged integrations enable only the canonical session-checkpoint write capability in their local MCP process. Tentative learning proposals are not enabled by default; a deliberate compatibility workflow may still opt into `--allow-learning-proposals` while that legacy route remains available. Host permission controls still apply.
 
@@ -65,23 +61,28 @@ Dedicated Ley graph query and Context Utility mutation tools are retired. For st
 
 ## Codex
 
-Install directly from GitHub with a sparse checkout of only the marketplace and plugin bundle:
+Use **Connect Codex** in Ley Desktop for normal setup. Ley registers a generated local marketplace/package and writes
+only the selected project's `.codex/config.toml` entries needed to enable the Ley package and bind its `ley` MCP
+server to that exact canonical project path. Existing unrelated project settings are preserved; an existing foreign
+`mcp_servers.ley` is treated as a conflict and is not overwritten.
+
+Ley deliberately keeps the generated Codex plugin's MCP declaration out of the plugin package itself: current
+portable plugin MCP execution is rooted at the plugin, while Ley requires exact active-project isolation. The
+project-level Codex MCP entry launches the stable app-owned helper with the selected project path explicitly. Hooks
+use the same helper and rely on Codex's session working directory only for hook-time project context.
+
+After connecting, restart Codex if Ley requests it, trust the project configuration, then open `/hooks` and review
+the exact Ley hook commands before trusting them. The Desktop status remains "review required" until that is a
+human/host action; Ley does not fake host trust.
+
+For local plugin development only, contributors can still register the repository marketplace manually:
 
 ```bash
-codex plugin marketplace add Suraj-H675/Ley-notes --ref main \
-  --sparse .agents/plugins \
-  --sparse integrations/codex/plugins/ley-memory
+codex plugin marketplace add /absolute/path/to/Ley-notes
 codex plugin add ley-memory@ley
 ```
 
-For local plugin development:
-
-```bash
-codex plugin marketplace add /absolute/path/to/Ley-notes/integrations/codex
-codex plugin add ley-memory@ley
-```
-
-Restart Codex, open `/hooks`, and review the exact Ley hook commands before trusting them. The packaged MCP process uses the default `cloud` egress target and enables session writes only; tentative learning proposals are not enabled by default.
+The packaged MCP process uses the default `cloud` egress target and enables session writes only; tentative learning proposals are not enabled by default.
 
 For an initialized project, the package's normal MCP contract is the same four-tool surface taught by its Skill: `ley_brief`, `ley_search`, `ley_evidence`, and `ley_checkpoint`. `ley_checkpoint` appears only because the package starts MCP with `--allow-session-writes`. `ley_compile_context` is not a normal-project alias; it exists only in the explicit Bootstrap Context mode described below.
 
@@ -97,15 +98,15 @@ Retained Context Mount, Knowledge Scope, Policy Bundle, external-connector, and 
 
 ## Claude Code
 
-Install the repository marketplace and plugin from an authenticated checkout:
+Use **Connect Claude Code** in Ley Desktop for normal setup. Ley generates a local Claude marketplace/package whose
+MCP and hook commands point at the app-owned helper while retaining Claude's documented project-directory boundary,
+then asks Claude Code to install that package at project scope.
 
-```bash
-claude plugin marketplace add https://github.com/Suraj-H675/Ley-notes.git \
-  --sparse .claude-plugin integrations/claude-code/ley-memory
-claude plugin install ley-memory@ley
-```
+Restart Claude Code when prompted and review the plugin/hooks before relying on capture. An installed/enabled plugin
+is still configuration state, not proof that a hook ran; use Ley's smoke check after starting a fresh Claude Code
+session in the selected project.
 
-For local development:
+For local development only:
 
 ```bash
 claude --plugin-dir /absolute/path/to/Ley-notes/integrations/claude-code/ley-memory
