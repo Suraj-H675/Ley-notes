@@ -47,15 +47,29 @@ The GitHub repository used for the release must also be public. Ley's updater en
 `releases/latest/download/latest.json` asset; publishing from a private repository would not be a normal-user update
 channel, so release preflight rejects it.
 
-Generate the Tauri updater key pair with the pinned project CLI, for example:
+Generate the Tauri updater key pair with the project-local CLI under a restrictive umask, for example:
 
 ```bash
-npm run tauri signer generate -- -w ~/.tauri/ley.key
+install -d -m 700 ~/.tauri
+umask 077
+npx tauri signer generate -w ~/.tauri/ley.key
 ```
 
 Keep the private key and its password in protected release secrets/backups. The public key is safe to publish. Losing
 the updater private key breaks the ability to ship trusted updates to already-installed Ley versions, so it is a
 long-lived release credential rather than disposable CI state.
+
+Register that identity with the release repository without putting secret material in Git or shell arguments:
+
+```bash
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/ley.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+gh variable set TAURI_UPDATER_PUBLIC_KEY --body "$(cat ~/.tauri/ley.key.pub)"
+```
+
+The password command prompts for the same password used when the key was generated. Do not replace this keypair after
+a release has shipped unless Ley is deliberately performing an updater trust-key rotation; installed builds trust the
+public key embedded when they were released.
 
 Apple Developer ID signing/notarization and Windows code-signing certificates are separate from Tauri's updater key.
 An updater signature proves update continuity to Ley; platform signatures/notarization establish OS/download trust.
