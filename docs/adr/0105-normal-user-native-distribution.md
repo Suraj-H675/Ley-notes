@@ -57,6 +57,13 @@ Primary references checked on 2026-10-05:
    bundling on macOS/Windows, and release validation verifies that nested signature directly before Ley ever copies
    the helper into its private app-data path. A signed outer installer is not treated as sufficient proof for an
    executable that later runs independently.
+9. **Windows signing is a trust requirement, not a commitment to one certificate transport.** The initial release
+   workflow supports an imported PFX certificate because that is locally testable plumbing, but current Tauri and
+   Microsoft guidance no longer make an exportable PFX the universal modern path. Azure Artifact Signing and
+   provider-specific/custom signing are valid production models; for an eligible public OSS project, SignPath
+   Foundation is especially attractive because it can verify GitHub build origin and deep-sign an MSI together with
+   the nested Ley helper. Do not weaken helper-signature verification to fit a provider, and do not add speculative
+   provider integration before the external account/project contract exists to test against.
 
 ## Consequences
 
@@ -67,5 +74,12 @@ Primary references checked on 2026-10-05:
 - Host setup remains an explicit user-approved mutation. Ley will not silently write host configuration on launch.
 - The helper install/update path is a production trust boundary and therefore uses bounded fixed paths and atomic
   replacement rather than shell scripts or `curl | sh`.
+- The repository's current PFX-based Windows lane is a fallback implementation detail, not architectural authority.
+  A different signing provider may replace that mechanism while preserving the same Authenticode and nested-helper
+  trust outcomes.
+- Microsoft Store MSIX distribution remains an evaluated alternative rather than an implicit fallback. Store signing
+  and Store-managed updates can remove developer-owned Windows certificate infrastructure, but adopting that path
+  would introduce a distinct MSIX identity/submission/update channel and therefore requires an explicit product and
+  release decision rather than opportunistic packaging code.
 - This ADR does not claim integrations are already one-click, releases are signed, or updater credentials exist;
   those are later bounded milestones in the normal-user initiative.

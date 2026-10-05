@@ -43,6 +43,51 @@ GitHub Actions **variables**:
 - `APPLE_SIGNING_IDENTITY` — production Developer ID Application identity
 - `WINDOWS_TIMESTAMP_URL` — the timestamp service required/recommended by the Windows certificate provider
 
+### Windows signing provider checkpoint
+
+The current workflow's `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD` path is a **provider-specific PFX
+fallback**, not a statement that exportable PFX certificates are the preferred modern Windows trust model. Current
+Tauri guidance explicitly limits its simple OV/PFX instructions to certificates acquired before June 1, 2023 and
+documents Azure Artifact Signing plus custom signing commands for modern providers:
+
+- <https://v2.tauri.app/distribute/sign/windows/>
+- <https://learn.microsoft.com/windows/apps/package-and-deploy/code-signing-options>
+
+For a public open-source Ley release, SignPath Foundation is a promising no-cost alternative because it integrates
+with GitHub-hosted builds, verifies build origin, and supports deep Authenticode signing of an MSI together with
+nested executables. That can preserve Ley's stronger requirement that the bundled `ley-helper.exe` itself is signed,
+not merely the outer installer:
+
+- <https://signpath.org/>
+- <https://signpath.org/terms>
+- <https://docs.signpath.io/trusted-build-systems/github>
+- <https://docs.signpath.io/artifact-configuration/examples>
+
+Do not add speculative SignPath workflow code until Ley has an approved SignPath project and the concrete project /
+artifact-configuration / signing-policy identifiers needed to validate the integration. SignPath Foundation also
+requires, among other things, an OSI-approved license, an already released project in the form to be signed, a public
+code-signing policy, and its OSS process rules. Ley currently has no repository license declaration and no published
+release, so that path is not yet eligible. Selecting an open-source license is a product/legal decision and must not
+be silently made by release automation.
+
+Microsoft Store MSIX distribution is another valid zero-certificate option: Microsoft re-signs Store-submitted MSIX
+packages and provides Store-managed updates. It is not a drop-in replacement for Ley's current NSIS/MSI + GitHub
+updater architecture, though; it introduces a Store-specific MSIX package identity, Partner Center submission, and a
+separate update channel. Keep it as an evaluated alternative rather than adding a second packaging stack before Ley
+has a concrete Store identity/distribution decision.
+
+### Open-source licensing checkpoint
+
+Public repository visibility is not itself an open-source license. As of the 2026-10-05 release review, Ley has no
+top-level `LICENSE` file and no project license declaration in its root package manifests. A resolved dependency
+metadata audit found no missing Rust/npm license declarations and no GPL/AGPL-only dependency in the current graphs;
+the notable non-permissive-at-a-glance entries are MPL-2.0 packages (including Servo CSS dependencies and
+`lightningcss`) and `caniuse-lite` under CC-BY-4.0. That inventory is useful evidence, not a legal conclusion.
+
+Before calling Ley an OSS release, choose the project's own license explicitly and review/package the third-party
+notices required by the dependencies actually distributed in the native application. Do not infer a project license
+from dependency licenses or from the repository being public.
+
 The GitHub repository used for the release must also be public. Ley's updater endpoint is the public GitHub
 `releases/latest/download/latest.json` asset; publishing from a private repository would not be a normal-user update
 channel, so release preflight rejects it.
