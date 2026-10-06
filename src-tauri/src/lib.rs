@@ -2140,8 +2140,15 @@ fn prepare_agent_runtime(app: tauri::AppHandle) -> Result<AgentRuntimeStatus, St
 }
 
 #[tauri::command]
-fn read_agent_host_integrations(project_path: Option<String>) -> Vec<HostIntegrationStatus> {
-    host_integrations::inspect_host_integrations(project_path.as_deref().map(Path::new))
+fn read_agent_host_integrations(
+    app: tauri::AppHandle,
+    project_path: Option<String>,
+) -> Result<Vec<HostIntegrationStatus>, String> {
+    let helper_path = runtime::installed_helper_path(&app)?;
+    Ok(host_integrations::inspect_host_integrations(
+        project_path.as_deref().map(Path::new),
+        Some(&helper_path),
+    ))
 }
 
 #[tauri::command]
@@ -2161,6 +2168,16 @@ fn connect_agent_host(
         &host_id,
         &runtime.helper_path,
     )
+}
+
+#[tauri::command]
+fn disconnect_agent_host(
+    app: tauri::AppHandle,
+    project_path: String,
+    host_id: String,
+) -> Result<HostIntegrationStatus, String> {
+    let helper_path = runtime::installed_helper_path(&app)?;
+    host_integrations::disconnect_host(Path::new(&project_path), &host_id, &helper_path)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2202,7 +2219,8 @@ pub fn run() {
             read_agent_project_activity,
             prepare_agent_runtime,
             read_agent_host_integrations,
-            connect_agent_host
+            connect_agent_host,
+            disconnect_agent_host
         ])
         .run(tauri::generate_context!())
         .expect("error while running Ley");

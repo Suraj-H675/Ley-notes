@@ -4,6 +4,7 @@ import { HostIntegrationsPanel } from "./HostIntegrationsPanel";
 
 const api = vi.hoisted(() => ({
   connectAgentHost: vi.fn(),
+  disconnectAgentHost: vi.fn(),
   inspectAgentProject: vi.fn(),
   readAgentHostIntegrations: vi.fn(),
 }));
@@ -63,7 +64,7 @@ it("connects only after the user acts and keeps trust/runtime status separate", 
   expect(screen.getByText("Review hooks")).toBeVisible();
   expect(api.inspectAgentProject).not.toHaveBeenCalled();
 
-  fireEvent.click(screen.getByRole("button", { name: "Run smoke check" }));
+  fireEvent.click(screen.getByRole("button", { name: "Run Codex smoke check" }));
   expect(
     await screen.findByText(/Smoke check passed: Ley retained a Codex hook event/i),
   ).toBeVisible();
@@ -86,9 +87,44 @@ it("does not call missing retained activity a successful smoke check", async () 
   });
 
   render(<HostIntegrationsPanel projectPath="/projects/ley" />);
-  fireEvent.click(await screen.findByRole("button", { name: "Run smoke check" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Run Codex smoke check" }),
+  );
   expect(
     await screen.findByText(/No Codex hook activity is retained yet/i),
   ).toBeVisible();
   expect(screen.queryByText(/Smoke check passed/i)).not.toBeInTheDocument();
+});
+
+it("disconnects only the selected Ley-managed project integration after user action", async () => {
+  api.readAgentHostIntegrations.mockResolvedValue([
+    {
+      ...detectedCodex,
+      configured: true,
+      enabled: true,
+      managedByLeyDesktop: true,
+    },
+  ]);
+  api.disconnectAgentHost.mockResolvedValue({
+    ...detectedCodex,
+    configured: true,
+    enabled: false,
+    managedByLeyDesktop: false,
+    restartRequired: true,
+    statusDetail:
+      "Ley removed this project's Codex binding. Restart Codex if it is already open.",
+  });
+
+  render(<HostIntegrationsPanel projectPath="/projects/ley" />);
+  expect(
+    await screen.findByRole("button", { name: "Disconnect Codex" }),
+  ).toBeVisible();
+  expect(api.disconnectAgentHost).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Disconnect Codex" }));
+  await waitFor(() =>
+    expect(api.disconnectAgentHost).toHaveBeenCalledWith("/projects/ley", "codex"),
+  );
+  expect(await screen.findByRole("button", { name: "Connect Codex" })).toBeVisible();
+  expect(screen.getByText("Restart required")).toBeVisible();
 });

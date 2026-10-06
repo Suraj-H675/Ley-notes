@@ -28,6 +28,12 @@ Connecting is always a user action. Ley does not silently mutate Codex or Claude
 startup. Generated integration files invoke the absolute app-owned helper path, so they do not depend on a shell's
 `PATH` and Desktop does not need to remain open.
 
+Disconnecting is also explicit and project-scoped. **Disconnect** removes only integration state Ley can prove it
+owns for the selected project. It does not erase Ley memory, remove unrelated host configuration, or tear down shared
+marketplace/package state that another connected Ley project may still need. Restart the host when Ley reports a
+restart requirement. Disconnect projects before uninstalling Ley Desktop so hosts are not left pointing at an app
+helper that is no longer installed.
+
 Fresh projects need no filesystem-vault binding. `ley bind PROJECT --vault EXISTING_LEGACY_VAULT` is a
 reconnect-only compatibility command for pre-cutover projects whose selected vault already validates as historical
 memory for that exact project.
@@ -75,6 +81,12 @@ After connecting, restart Codex if Ley requests it, trust the project configurat
 the exact Ley hook commands before trusting them. The Desktop status remains "review required" until that is a
 human/host action; Ley does not fake host trust.
 
+**Disconnect Codex** removes only Ley Desktop's exact selected-project MCP binding plus the `enabled` value Ley wrote
+for `ley-memory@ley-desktop`. Unrelated TOML is preserved. If `mcp_servers.ley` has been changed to a foreign command
+or different arguments, Ley refuses to remove it rather than guessing ownership. The shared Ley Desktop Codex
+package/marketplace may remain installed for other projects; that shared installation alone does not make a
+disconnected project appear configured.
+
 For local plugin development only, contributors can still register the repository marketplace manually:
 
 ```bash
@@ -105,6 +117,10 @@ then asks Claude Code to install that package at project scope.
 Restart Claude Code when prompted and review the plugin/hooks before relying on capture. An installed/enabled plugin
 is still configuration state, not proof that a hook ran; use Ley's smoke check after starting a fresh Claude Code
 session in the selected project.
+
+**Disconnect Claude Code** uninstalls `ley-memory@ley-desktop` only at project scope using Claude Code's documented
+plugin removal command. Ley leaves the shared marketplace declaration available because other projects may still use
+it.
 
 For local development only:
 

@@ -80,6 +80,10 @@ contacts Ley's configured public update endpoint but does not send project memor
 Host integration setup may modify the selected local coding-agent configuration only after explicit user action; it
 does not silently configure hosts on Desktop startup.
 
+Ley provides corresponding project-scoped **Disconnect** controls and normal application uninstall instructions in
+the repository README. Uninstalling the application and erasing retained project continuity are separate explicit
+operations; uninstall does not silently claim deletion of user data or external copies.
+
 ## Incident response and key rotation
 
 If a release credential is suspected to be exposed, signing must stop until the affected credential and published

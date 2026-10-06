@@ -41,6 +41,13 @@ export function connectAgentHost(
   return invoke("connect_agent_host", { projectPath, hostId });
 }
 
+export function disconnectAgentHost(
+  projectPath: string,
+  hostId: AgentHostIntegrationStatus["id"],
+): Promise<AgentHostIntegrationStatus> {
+  return invoke("disconnect_agent_host", { projectPath, hostId });
+}
+
 export async function chooseAgentProject(): Promise<string | null> {
   const selected = await open({
     directory: true,

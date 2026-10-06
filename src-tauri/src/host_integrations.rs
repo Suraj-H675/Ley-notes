@@ -52,15 +52,26 @@ enum HostProbe {
     ClaudeCode,
 }
 
-pub(crate) fn inspect_host_integrations(project_path: Option<&Path>) -> Vec<HostIntegrationStatus> {
+pub(crate) fn inspect_host_integrations(
+    project_path: Option<&Path>,
+    helper_path: Option<&Path>,
+) -> Vec<HostIntegrationStatus> {
     [
-        inspect_host("codex", "Codex", "codex", HostProbe::Codex, project_path),
+        inspect_host(
+            "codex",
+            "Codex",
+            "codex",
+            HostProbe::Codex,
+            project_path,
+            helper_path,
+        ),
         inspect_host(
             "claude-code",
             "Claude Code",
             "claude",
             HostProbe::ClaudeCode,
             project_path,
+            helper_path,
         ),
     ]
     .into_iter()
@@ -124,6 +135,7 @@ pub(crate) fn connect_host(
         executable_name,
         probe,
         Some(&project_path),
+        Some(helper_path),
     );
     status.restart_required = true;
     status.review_required = true;
@@ -138,12 +150,84 @@ pub(crate) fn connect_host(
     Ok(status)
 }
 
+pub(crate) fn disconnect_host(
+    project_path: &Path,
+    host_id: &str,
+    helper_path: &Path,
+) -> Result<HostIntegrationStatus, String> {
+    let project_path = project_path
+        .canonicalize()
+        .map_err(|error| format!("could not resolve the selected project: {error}"))?;
+    if !project_path.is_dir() {
+        return Err("the selected Ley project is not an accessible directory".to_owned());
+    }
+
+    let (id, display_name, executable_name, probe) = match host_id {
+        "codex" => ("codex", "Codex", "codex", HostProbe::Codex),
+        "claude-code" => (
+            "claude-code",
+            "Claude Code",
+            "claude",
+            HostProbe::ClaudeCode,
+        ),
+        _ => return Err(format!("unsupported coding-agent host '{host_id}'")),
+    };
+    let changed = match probe {
+        HostProbe::Codex => remove_codex_project_config(&project_path, helper_path)?,
+        HostProbe::ClaudeCode => {
+            let executable = find_executable(executable_name)
+                .ok_or_else(|| format!("{display_name} is not installed or could not be found."))?;
+            let managed = managed_plugin_status(probe, &executable, Some(&project_path))
+                .map(|(configured, _)| configured)
+                .unwrap_or(false);
+            if managed {
+                run_host_command(
+                    &executable,
+                    [
+                        OsStr::new("plugin"),
+                        OsStr::new("uninstall"),
+                        OsStr::new("ley-memory@ley-desktop"),
+                        OsStr::new("--scope"),
+                        OsStr::new("project"),
+                        OsStr::new("--json"),
+                    ],
+                    Some(&project_path),
+                )?;
+            }
+            managed
+        }
+    };
+
+    let mut status = inspect_host(
+        id,
+        display_name,
+        executable_name,
+        probe,
+        Some(&project_path),
+        Some(helper_path),
+    );
+    if changed {
+        status.restart_required = true;
+        status.review_required = false;
+        status.status_detail = match probe {
+            HostProbe::Codex => {
+                "Ley removed this project's Codex binding. Restart Codex if it is already open. Ley's shared package may remain installed for other projects.".to_owned()
+            }
+            HostProbe::ClaudeCode => {
+                "Ley removed its project-scoped Claude Code plugin. Restart Claude Code if it is already open. Ley's shared marketplace registration may remain for other projects.".to_owned()
+            }
+        };
+    }
+    Ok(status)
+}
+
 fn inspect_host(
     id: &'static str,
     display_name: &'static str,
     executable_name: &str,
     probe: HostProbe,
     project_path: Option<&Path>,
+    helper_path: Option<&Path>,
 ) -> HostIntegrationStatus {
     let Some(executable_path) = find_executable(executable_name) else {
         return HostIntegrationStatus {
@@ -167,20 +251,36 @@ fn inspect_host(
         &["plugin", "list", "--json"],
         project_path,
     );
-    let (configured, enabled) = plugin_json
+    let (installed, enabled) = plugin_json
         .as_deref()
         .and_then(|json| plugin_status(probe, json))
         .unwrap_or((false, false));
-    let managed = plugin_json
+    let managed_package = plugin_json
         .as_deref()
         .and_then(|json| managed_plugin_status_from_json(probe, json))
         .map(|(configured, _)| configured)
         .unwrap_or(false);
 
-    let status_detail = if managed && enabled {
+    let managed_project_binding = match (probe, project_path, helper_path) {
+        (HostProbe::Codex, Some(project_path), Some(helper_path)) => {
+            codex_project_config_is_managed(project_path, helper_path)
+        }
+        (HostProbe::ClaudeCode, _, _) => managed_package,
+        _ => false,
+    };
+    let configured = installed;
+    let managed = match (probe, project_path) {
+        (HostProbe::Codex, Some(_)) => managed_project_binding,
+        _ => managed_package,
+    };
+
+    let status_detail = if managed_project_binding && enabled {
         "Ley Desktop's integration package is installed and enabled. This does not prove a hook or MCP request has run successfully yet.".to_owned()
-    } else if managed {
+    } else if managed_project_binding {
         "Ley Desktop's integration package is installed but is not enabled in this scope."
+            .to_owned()
+    } else if probe == HostProbe::Codex && managed_package {
+        "Ley Desktop's shared Codex package is installed, but this project is not connected."
             .to_owned()
     } else if configured && enabled {
         "A Ley integration is installed and enabled, but it is not the package managed by this Ley Desktop installation.".to_owned()
@@ -498,6 +598,129 @@ fn write_codex_project_config(project_path: &Path, helper_path: &Path) -> Result
     })
 }
 
+fn codex_project_config_is_managed(project_path: &Path, helper_path: &Path) -> bool {
+    let canonical_project = project_path
+        .canonicalize()
+        .unwrap_or_else(|_| project_path.to_path_buf());
+    let path = canonical_project.join(".codex/config.toml");
+    let Ok(source) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(document) = source.parse::<DocumentMut>() else {
+        return false;
+    };
+    codex_mcp_binding_is_managed(&document, &canonical_project, helper_path).unwrap_or(false)
+}
+
+fn codex_mcp_binding_is_managed(
+    document: &DocumentMut,
+    project_path: &Path,
+    helper_path: &Path,
+) -> Result<bool, String> {
+    let Some(server) = document
+        .get("mcp_servers")
+        .and_then(Item::as_table)
+        .and_then(|servers| servers.get("ley"))
+    else {
+        return Ok(false);
+    };
+    let server = server
+        .as_table()
+        .ok_or_else(|| "existing Codex mcp_servers.ley is not a table".to_owned())?;
+    let command = server
+        .get("command")
+        .and_then(Item::as_str)
+        .ok_or_else(|| "existing Codex mcp_servers.ley has no string command".to_owned())?;
+    if command != helper_path.to_string_lossy() {
+        return Ok(false);
+    }
+    let expected_args = [
+        "mcp".to_owned(),
+        project_path.to_string_lossy().into_owned(),
+        "--allow-session-writes".to_owned(),
+    ];
+    let actual_args = server
+        .get("args")
+        .and_then(Item::as_array)
+        .map(|args| {
+            args.iter()
+                .map(|value| value.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+        })
+        .flatten();
+    Ok(actual_args.as_deref() == Some(expected_args.as_slice()))
+}
+
+fn remove_codex_project_config(project_path: &Path, helper_path: &Path) -> Result<bool, String> {
+    let path = project_path.join(".codex/config.toml");
+    let source = match fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("could not read {}: {error}", path.display())),
+    };
+    let mut document = source.parse::<DocumentMut>().map_err(|error| {
+        format!(
+            "could not parse {} without risking user settings: {error}",
+            path.display()
+        )
+    })?;
+
+    let mcp_present = document
+        .get("mcp_servers")
+        .and_then(Item::as_table)
+        .is_some_and(|servers| servers.contains_key("ley"));
+    if mcp_present && !codex_mcp_binding_is_managed(&document, project_path, helper_path)? {
+        return Err(
+            "this project has a Codex MCP server named 'ley' that no longer matches Ley Desktop's exact binding; Ley did not remove it"
+                .to_owned(),
+        );
+    }
+
+    let mut changed = false;
+    if mcp_present {
+        let root = document.as_table_mut();
+        let remove_parent =
+            if let Some(servers) = root.get_mut("mcp_servers").and_then(Item::as_table_mut) {
+                changed = servers.remove("ley").is_some();
+                servers.is_empty()
+            } else {
+                false
+            };
+        if remove_parent {
+            root.remove("mcp_servers");
+        }
+    }
+
+    {
+        let root = document.as_table_mut();
+        let mut remove_plugins_parent = false;
+        if let Some(plugins) = root.get_mut("plugins").and_then(Item::as_table_mut) {
+            let mut remove_plugin_table = false;
+            if let Some(plugin) = plugins
+                .get_mut("ley-memory@ley-desktop")
+                .and_then(Item::as_table_mut)
+            {
+                if plugin.remove("enabled").is_some() {
+                    changed = true;
+                }
+                remove_plugin_table = plugin.is_empty();
+            }
+            if remove_plugin_table {
+                plugins.remove("ley-memory@ley-desktop");
+            }
+            remove_plugins_parent = plugins.is_empty();
+        }
+        if remove_plugins_parent {
+            root.remove("plugins");
+        }
+    }
+
+    if changed {
+        write_text(&path, &document.to_string())?;
+    }
+    Ok(changed)
+}
+
 fn ensure_table_path(document: &mut DocumentMut, keys: &[&str]) -> Result<(), String> {
     let mut item: &mut Item = document.as_item_mut();
     for key in keys {
@@ -747,6 +970,61 @@ mod tests {
         .unwrap();
         let error = write_codex_project_config(&project, &helper).unwrap_err();
         assert!(error.contains("did not overwrite"));
+    }
+
+    #[test]
+    fn codex_disconnect_removes_only_owned_project_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir_all(project.join(".codex")).unwrap();
+        fs::write(
+            project.join(".codex/config.toml"),
+            "model = \"gpt-test\"\n[other]\nkeep = true\n",
+        )
+        .unwrap();
+        let helper = root.path().join("engine/ley");
+        write_codex_project_config(&project, &helper).unwrap();
+        assert!(codex_project_config_is_managed(&project, &helper));
+
+        let mut configured = fs::read_to_string(project.join(".codex/config.toml"))
+            .unwrap()
+            .parse::<DocumentMut>()
+            .unwrap();
+        configured["plugins"]["ley-memory@ley-desktop"]["keep_user_setting"] = value(true);
+        fs::write(project.join(".codex/config.toml"), configured.to_string()).unwrap();
+
+        assert!(remove_codex_project_config(&project, &helper).unwrap());
+        assert!(!codex_project_config_is_managed(&project, &helper));
+        let disconnected = fs::read_to_string(project.join(".codex/config.toml")).unwrap();
+        assert!(disconnected.contains("model = \"gpt-test\""));
+        assert!(disconnected.contains("keep = true"));
+        assert!(disconnected.contains("keep_user_setting = true"));
+        assert!(!disconnected.contains("mcp_servers.ley"));
+        assert!(!disconnected.contains("enabled = true"));
+    }
+
+    #[test]
+    fn codex_disconnect_refuses_foreign_or_modified_ley_server() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        fs::create_dir_all(project.join(".codex")).unwrap();
+        let helper = root.path().join("engine/ley");
+        fs::write(
+            project.join(".codex/config.toml"),
+            format!(
+                "[plugins.\"ley-memory@ley-desktop\"]\nenabled = true\n\n[mcp_servers.ley]\ncommand = {:?}\nargs = [\"mcp\", \"/different/project\", \"--allow-session-writes\"]\n",
+                helper.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let before = fs::read_to_string(project.join(".codex/config.toml")).unwrap();
+
+        let error = remove_codex_project_config(&project, &helper).unwrap_err();
+        assert!(error.contains("did not remove"));
+        assert_eq!(
+            fs::read_to_string(project.join(".codex/config.toml")).unwrap(),
+            before
+        );
     }
 
     #[test]

@@ -40,12 +40,7 @@ pub(crate) fn ensure_bundled_helper(app: &AppHandle) -> Result<AgentRuntimeStatu
         }
     };
 
-    let destination = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|error| format!("could not resolve Ley's private application data: {error}"))?
-        .join("engine")
-        .join(installed_helper_name());
+    let destination = installed_helper_path(app)?;
     install_helper(&packaged, &destination)?;
 
     let bytes = fs::read(&destination)
@@ -55,6 +50,15 @@ pub(crate) fn ensure_bundled_helper(app: &AppHandle) -> Result<AgentRuntimeStatu
         version: env!("CARGO_PKG_VERSION"),
         sha256: hex_sha256(&bytes),
     })
+}
+
+pub(crate) fn installed_helper_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("could not resolve Ley's private application data: {error}"))?
+        .join("engine")
+        .join(installed_helper_name()))
 }
 
 fn install_helper(source: &Path, destination: &Path) -> Result<(), String> {

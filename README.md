@@ -66,7 +66,35 @@ public release exists until that pipeline has actually run with the required App
 credentials from a public release repository. See [`docs/native-release.md`](docs/native-release.md) for the exact
 release trust boundary and prerequisites.
 
-### Code signing policy
+## Uninstall
+
+Before removing Ley Desktop, disconnect Ley from each coding project that you no longer want connected:
+
+1. open the project in Ley Desktop;
+2. go to **Project settings → Coding agents**;
+3. choose **Disconnect** for each Ley-managed Codex or Claude Code integration;
+4. restart that coding agent if Ley reports that a restart is required.
+
+Disconnect is deliberately project-scoped. For Codex, Ley removes only the exact Ley-owned project MCP binding and
+plugin enablement from `.codex/config.toml`; unrelated settings and foreign `mcp_servers.ley` entries are preserved.
+For Claude Code, Ley uninstalls `ley-memory@ley-desktop` only at project scope. Shared marketplace/package metadata
+may remain because another Ley project on the machine can still depend on it.
+
+If you also want Ley's retained continuity for a project removed, use **Project settings → Capture & privacy → Erase
+memory…** before uninstalling. Application uninstall and project-memory erasure are intentionally different actions:
+removing the app does not claim to erase user data, exported backups, or user-owned project files.
+
+Then remove the application using the normal platform mechanism:
+
+- **macOS:** quit Ley and remove `Ley.app` from Applications;
+- **Windows:** **Settings → Apps → Installed apps → Ley → Uninstall**;
+- **Linux AppImage:** quit Ley and delete the AppImage file;
+- **Debian/Ubuntu package:** `sudo apt remove ley`;
+- **RPM-based distributions:** remove the installed Ley package with the distribution's normal package manager.
+
+Reinstalling Ley does not automatically reconnect a coding project; host setup remains an explicit user action.
+
+## Code signing policy
 
 Ley's public [code signing policy](CODE_SIGNING_POLICY.md) defines release authority, source/build provenance,
 credential handling, platform/helper-signature expectations, privacy, and signing-incident response. Production

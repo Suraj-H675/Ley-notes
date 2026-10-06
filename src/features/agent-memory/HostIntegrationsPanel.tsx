@@ -10,6 +10,7 @@ import { Button } from "@/shared/components/Button";
 import { cn } from "@/shared/lib/classnames";
 import {
   connectAgentHost,
+  disconnectAgentHost,
   inspectAgentProject,
   readAgentHostIntegrations,
 } from "./api";
@@ -23,9 +24,10 @@ export function HostIntegrationsPanel({
   compact?: boolean;
 }) {
   const [hosts, setHosts] = useState<AgentHostIntegrationStatus[] | null>(null);
-  const [busyHost, setBusyHost] = useState<AgentHostIntegrationStatus["id"] | null>(
-    null,
-  );
+  const [busyAction, setBusyAction] = useState<{
+    hostId: AgentHostIntegrationStatus["id"];
+    action: "connect" | "check" | "disconnect";
+  } | null>(null);
   const [activityCheck, setActivityCheck] = useState<
     Partial<Record<AgentHostIntegrationStatus["id"], "observed" | "missing">>
   >({});
@@ -55,7 +57,7 @@ export function HostIntegrationsPanel({
   }, [projectPath]);
 
   async function connect(host: AgentHostIntegrationStatus) {
-    setBusyHost(host.id);
+    setBusyAction({ hostId: host.id, action: "connect" });
     setError(null);
     try {
       const next = await connectAgentHost(projectPath, host.id);
@@ -65,12 +67,12 @@ export function HostIntegrationsPanel({
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
-      setBusyHost(null);
+      setBusyAction(null);
     }
   }
 
   async function checkActivity(host: AgentHostIntegrationStatus) {
-    setBusyHost(host.id);
+    setBusyAction({ hostId: host.id, action: "check" });
     setError(null);
     try {
       const inspection = await inspectAgentProject(projectPath);
@@ -90,7 +92,27 @@ export function HostIntegrationsPanel({
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
-      setBusyHost(null);
+      setBusyAction(null);
+    }
+  }
+
+  async function disconnect(host: AgentHostIntegrationStatus) {
+    setBusyAction({ hostId: host.id, action: "disconnect" });
+    setError(null);
+    try {
+      const next = await disconnectAgentHost(projectPath, host.id);
+      setHosts((current) =>
+        (current ?? []).map((item) => (item.id === next.id ? next : item)),
+      );
+      setActivityCheck((current) => {
+        const nextActivity = { ...current };
+        delete nextActivity[host.id];
+        return nextActivity;
+      });
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusyAction(null);
     }
   }
 
@@ -116,7 +138,7 @@ export function HostIntegrationsPanel({
           variant="ghost"
           size="sm"
           onClick={() => void refresh()}
-          disabled={busyHost !== null}
+          disabled={busyAction !== null}
           title="Refresh coding-agent detection"
           aria-label="Refresh coding-agent detection"
         >
@@ -139,10 +161,13 @@ export function HostIntegrationsPanel({
             <HostIntegrationRow
               key={host.id}
               host={host}
-              busy={busyHost === host.id}
+              busyAction={
+                busyAction?.hostId === host.id ? busyAction.action : null
+              }
               activityCheck={activityCheck[host.id]}
               onConnect={() => void connect(host)}
               onCheckActivity={() => void checkActivity(host)}
+              onDisconnect={() => void disconnect(host)}
             />
           ))
         )}
@@ -167,18 +192,21 @@ export function HostIntegrationsPanel({
 
 function HostIntegrationRow({
   host,
-  busy,
+  busyAction,
   activityCheck,
   onConnect,
   onCheckActivity,
+  onDisconnect,
 }: {
   host: AgentHostIntegrationStatus;
-  busy: boolean;
+  busyAction: "connect" | "check" | "disconnect" | null;
   activityCheck?: "observed" | "missing";
   onConnect: () => void;
   onCheckActivity: () => void;
+  onDisconnect: () => void;
 }) {
   const configured = host.managedByLeyDesktop && host.configured === true;
+  const busy = busyAction !== null;
   const { Icon, statusLabel, iconClassName } = hostIntegrationPresentation(
     host,
     configured,
@@ -251,24 +279,44 @@ function HostIntegrationRow({
           {busy ? `Connecting ${host.displayName}…` : `Connect ${host.displayName}`}
         </Button>
       ) : configured ? (
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={busy}
-          onClick={onCheckActivity}
-          className="self-start sm:self-auto"
-        >
-          {busy ? (
-            <RefreshCw
-              size={13}
-              className="animate-spin motion-reduce:animate-none"
-              aria-hidden="true"
-            />
-          ) : (
-            <CheckCircle2 size={13} aria-hidden="true" />
-          )}
-          {busy ? "Checking activity…" : "Run smoke check"}
-        </Button>
+        <div className="flex items-center gap-1 self-start sm:self-auto">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={onCheckActivity}
+            aria-label={`Run ${host.displayName} smoke check`}
+          >
+            {busyAction === "check" ? (
+              <RefreshCw
+                size={13}
+                className="animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <CheckCircle2 size={13} aria-hidden="true" />
+            )}
+            {busyAction === "check" ? "Checking activity…" : "Run smoke check"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={onDisconnect}
+            aria-label={`Disconnect ${host.displayName}`}
+          >
+            {busyAction === "disconnect" ? (
+              <RefreshCw
+                size={13}
+                className="animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : (
+              <Unplug size={13} aria-hidden="true" />
+            )}
+            {busyAction === "disconnect" ? "Disconnecting…" : "Disconnect"}
+          </Button>
+        </div>
       ) : null}
     </div>
   );
