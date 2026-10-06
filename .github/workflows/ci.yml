@@ -40,6 +40,25 @@ jobs:
           test -s LICENSE-MIT
           test -s LICENSE-APACHE
           test "$(node -p "require('./package.json').license")" = 'MIT OR Apache-2.0'
+          node - <<'NODE'
+          const config = require('./src-tauri/tauri.conf.json');
+          const updater = config.plugins?.updater;
+          if (!updater?.pubkey) throw new Error('committed updater public key is missing');
+          if (!Array.isArray(updater.endpoints) || updater.endpoints.length !== 0) {
+            throw new Error('base updater endpoints must stay empty');
+          }
+          NODE
+          LEY_UPDATER_ENDPOINT='https://example.invalid/latest.json' npm run prepare:release-config >/dev/null
+          node - <<'NODE'
+          const release = require('./src-tauri/generated/release.conf.json');
+          if (release.plugins?.updater?.pubkey !== undefined) {
+            throw new Error('release config must not replace the committed updater public key');
+          }
+          if (release.plugins?.updater?.endpoints?.length !== 1) {
+            throw new Error('release config must supply exactly one updater endpoint');
+          }
+          NODE
+          rm -f src-tauri/generated/release.conf.json
           npm run prepare:third-party-notices
           test -s src-tauri/generated/THIRD_PARTY_NOTICES.txt
           grep -Fx 'LEY THIRD-PARTY NOTICES' src-tauri/generated/THIRD_PARTY_NOTICES.txt >/dev/null
@@ -82,7 +101,9 @@ jobs:
         run: npm run build:desktop-ui
 
       - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+        run: |
+          npm audit --audit-level=high
+          npm audit --omit=dev --audit-level=high
 
   rust:
     name: rust + native

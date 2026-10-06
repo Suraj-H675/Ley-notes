@@ -19,7 +19,7 @@ it("does not contact the updater until the user explicitly checks", async () => 
   const downloadAndInstall = vi.fn().mockResolvedValue(undefined);
   mocks.check.mockResolvedValue({ version: "0.2.0", downloadAndInstall });
 
-  render(<UpdateControl showVersion />);
+  render(<UpdateControl showVersion updatesEnabled />);
   expect(await screen.findByText("Ley Desktop 0.1.0")).toBeVisible();
   expect(mocks.check).not.toHaveBeenCalled();
 
@@ -37,9 +37,19 @@ it("does not contact the updater until the user explicitly checks", async () => 
 
 it("reports the current release without fabricating an available update", async () => {
   mocks.check.mockResolvedValue(null);
-  render(<UpdateControl />);
+  render(<UpdateControl updatesEnabled />);
   fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
   expect(
     await screen.findByRole("button", { name: "Up to date" }),
   ).toBeVisible();
+});
+
+it("does not expose update checks in local development builds", async () => {
+  render(<UpdateControl showVersion updatesEnabled={false} />);
+  expect(await screen.findByText("Ley Desktop 0.1.0")).toBeVisible();
+  expect(screen.getByText("Local build · updates disabled")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Check for updates" }),
+  ).not.toBeInTheDocument();
+  expect(mocks.check).not.toHaveBeenCalled();
 });

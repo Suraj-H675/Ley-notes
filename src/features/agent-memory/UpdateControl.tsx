@@ -13,7 +13,13 @@ type UpdateState =
   | { kind: "installed"; version: string }
   | { kind: "error"; message: string };
 
-export function UpdateControl({ showVersion = false }: { showVersion?: boolean }) {
+export function UpdateControl({
+  showVersion = false,
+  updatesEnabled = import.meta.env.VITE_LEY_UPDATER_ENABLED === "true",
+}: {
+  showVersion?: boolean;
+  updatesEnabled?: boolean;
+}) {
   const [state, setState] = useState<UpdateState>({ kind: "idle" });
   const [currentVersion, setCurrentVersion] = useState<string | null>(null);
 
@@ -33,6 +39,7 @@ export function UpdateControl({ showVersion = false }: { showVersion?: boolean }
   }, []);
 
   async function checkForUpdates() {
+    if (!updatesEnabled) return;
     setState({ kind: "checking" });
     try {
       const update = await check();
@@ -73,23 +80,29 @@ export function UpdateControl({ showVersion = false }: { showVersion?: boolean }
           Ley Desktop {currentVersion}
         </span>
       )}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => void checkForUpdates()}
-        disabled={state.kind === "checking" || state.kind === "installing"}
-      >
-        <RefreshCw
-          size={13}
-          aria-hidden="true"
-          className={
-            state.kind === "checking" || state.kind === "installing"
-              ? "animate-spin motion-reduce:animate-none"
-              : undefined
-          }
-        />
-        {labelForState(state)}
-      </Button>
+      {updatesEnabled ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => void checkForUpdates()}
+          disabled={state.kind === "checking" || state.kind === "installing"}
+        >
+          <RefreshCw
+            size={13}
+            aria-hidden="true"
+            className={
+              state.kind === "checking" || state.kind === "installing"
+                ? "animate-spin motion-reduce:animate-none"
+                : undefined
+            }
+          />
+          {labelForState(state)}
+        </Button>
+      ) : (
+        <span className="text-micro text-muted-foreground">
+          Local build · updates disabled
+        </span>
+      )}
       {state.kind === "installed" && (
         <span className="max-w-56 text-right text-micro text-success">
           Ley {state.version} is installed. Restart Ley to use it.

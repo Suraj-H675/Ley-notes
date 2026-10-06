@@ -23,7 +23,6 @@ jobs:
       LEY_RELEASE_TAG: ${{ github.ref_name }}
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
       APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
@@ -48,7 +47,6 @@ jobs:
           required=(
             TAURI_SIGNING_PRIVATE_KEY
             TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-            TAURI_UPDATER_PUBLIC_KEY
             APPLE_CERTIFICATE
             APPLE_CERTIFICATE_PASSWORD
             KEYCHAIN_PASSWORD
@@ -107,7 +105,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             label: linux-x86_64
-            args: --bundles appimage deb rpm --config src-tauri/generated/release.conf.json
+            args: --bundles deb rpm --config src-tauri/generated/release.conf.json
           - os: macos-15
             label: macos-arm64
             target: aarch64-apple-darwin
@@ -123,7 +121,7 @@ jobs:
     env:
       LEY_RELEASE_TAG: ${{ github.ref_name }}
       LEY_UPDATER_ENDPOINT: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
-      TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+      VITE_LEY_UPDATER_ENABLED: "true"
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -228,8 +226,7 @@ jobs:
           expected="ley $(node -p "require('./package.json').version")"
           deb="$(find target -type f -path '*/bundle/deb/*.deb' -print -quit)"
           rpm="$(find target -type f -path '*/bundle/rpm/*.rpm' -print -quit)"
-          appimage="$(find target -type f -path '*/bundle/appimage/*.AppImage' -print -quit)"
-          test -n "$deb" && test -n "$rpm" && test -n "$appimage"
+          test -n "$deb" && test -n "$rpm"
 
           dpkg-deb -c "$deb" > /tmp/ley-deb-files.txt
           grep -F '/usr/lib/Ley/generated/ley-helper' /tmp/ley-deb-files.txt
@@ -250,18 +247,6 @@ jobs:
           grep -F './usr/lib/Ley/generated/LICENSE-MIT' /tmp/ley-rpm-files.txt
           grep -F './usr/lib/Ley/generated/LICENSE-APACHE' /tmp/ley-rpm-files.txt
           ! grep -E '/(node_modules|target|crates)/' /tmp/ley-rpm-files.txt
-
-          extract_dir="$(mktemp -d)"
-          (cd "$extract_dir" && "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null)
-          image_helper="$(find "$extract_dir/squashfs-root" -type f -path '*/generated/ley-helper' -print -quit)"
-          image_notices="$(find "$extract_dir/squashfs-root" -type f -path '*/generated/THIRD_PARTY_NOTICES.txt' -print -quit)"
-          image_mit="$(find "$extract_dir/squashfs-root" -type f -path '*/generated/LICENSE-MIT' -print -quit)"
-          image_apache="$(find "$extract_dir/squashfs-root" -type f -path '*/generated/LICENSE-APACHE' -print -quit)"
-          test -x "$image_helper"
-          test -s "$image_notices"
-          test -s "$image_mit"
-          test -s "$image_apache"
-          test "$("$image_helper" --version)" = "$expected"
 
       - name: Verify macOS signature and bundled helper
         if: runner.os == 'macOS'
@@ -359,7 +344,6 @@ jobs:
             SHA256SUMS-windows-x86_64.txt; do
             grep -Fx "$exact" assets.txt >/dev/null || { echo "Missing release asset: $exact" >&2; exit 1; }
           done
-          grep -E '\.AppImage$' assets.txt >/dev/null || { echo 'Missing AppImage' >&2; exit 1; }
           grep -E '\.deb$' assets.txt >/dev/null || { echo 'Missing DEB' >&2; exit 1; }
           grep -E '\.rpm$' assets.txt >/dev/null || { echo 'Missing RPM' >&2; exit 1; }
           test "$(grep -Ec '\.dmg$' assets.txt)" -ge 2 || { echo 'Missing one or more macOS DMGs' >&2; exit 1; }

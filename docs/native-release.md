@@ -6,18 +6,26 @@ Ley's normal-user release is a signed native application, not a source-install r
 
 ## What the workflow produces
 
-- Linux x86_64 on Ubuntu 22.04: AppImage, DEB, and RPM;
+- Linux x86_64 on Ubuntu 22.04: DEB and RPM;
 - macOS Apple Silicon and Intel: signed/notarized DMGs plus signed updater archives;
 - Windows x86_64: Authenticode-signed NSIS and MSI installers plus signed updater archives;
 - Tauri `latest.json` update metadata and platform updater signatures;
 - one SHA-256 manifest per build lane.
 
-The Linux lane intentionally uses Ubuntu 22.04, an older Tauri v2/WebKitGTK 4.1 baseline, so AppImage compatibility
-is not defined by a rolling developer workstation. Each release lane is a clean hosted runner. Linux additionally
-installs the produced DEB and executes the packaged Ley helper, inspects the RPM payload, and extracts the AppImage;
-macOS signs and directly verifies the helper before it is copied into the signed/notarized app, then verifies code
-signing/Gatekeeper plus that bundled helper; Windows Authenticode-signs the helper itself in addition to the
+The Linux lane intentionally uses Ubuntu 22.04, an older Tauri v2/WebKitGTK 4.1 baseline. Each release lane is a clean
+hosted runner. Linux additionally installs the produced DEB and executes the packaged Ley helper and inspects the RPM
+payload; macOS signs and directly verifies the helper before it is copied into the signed/notarized app, then verifies
+code signing/Gatekeeper plus that bundled helper; Windows Authenticode-signs the helper itself in addition to the
 installers, then administratively extracts the MSI and verifies/executes that helper.
+
+AppImage is currently **deferred rather than release-blocking**. Tauri still supports the format, but current upstream
+`linuxdeploy` and modern Mesa/WebKitGTK reports show build and cross-distro runtime failures, including Arch/rolling
+Linux. Ley will not label that path supported until a current artifact passes representative clean-machine testing.
+
+For Arch Linux, Ley uses the native package-manager model instead. Local production-like testing can run
+`npm run desktop:package:arch`, which converts Ley's locally built DEB payload into a real `ley-bin` pacman package
+with explicit Arch runtime dependencies and updater UI disabled. Public AUR distribution should be maintained as an
+Arch package recipe, with upgrades delivered through pacman/AUR rather than Ley's DEB/RPM in-app updater.
 
 ## External prerequisites
 
@@ -44,7 +52,6 @@ GitHub Actions **secrets**:
 
 GitHub Actions **variables**:
 
-- `TAURI_UPDATER_PUBLIC_KEY`
 - `APPLE_SIGNING_IDENTITY` — production Developer ID Application identity
 - `WINDOWS_TIMESTAMP_URL` — the timestamp service required/recommended by the Windows certificate provider
 
@@ -118,12 +125,13 @@ Keep the private key and its password in protected release secrets/backups. The 
 the updater private key breaks the ability to ship trusted updates to already-installed Ley versions, so it is a
 long-lived release credential rather than disposable CI state.
 
-Register that identity with the release repository without putting secret material in Git or shell arguments:
+Ley's updater **public** key is committed in `src-tauri/tauri.conf.json`, which is the correct trust anchor for
+installed clients and is intentionally public. Release-only config supplies the HTTPS update endpoint but does not
+replace that key. Register only the private signing material with the release repository:
 
 ```bash
 gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/ley.key
 gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-gh variable set TAURI_UPDATER_PUBLIC_KEY --body "$(cat ~/.tauri/ley.key.pub)"
 ```
 
 The password command prompts for the same password used when the key was generated. Do not replace this keypair after
@@ -144,5 +152,7 @@ Neither substitutes for the other.
 5. On an installed prior Ley version, use **Check for updates** and verify the published update before considering the
    release fully exercised.
 
-Development builds contain no fabricated updater endpoint/public key. The update network request is user initiated;
-Ley does not silently check for updates at startup.
+Development/local package builds contain the real public trust key but no fabricated updater endpoint, and the UI
+does not expose update checks. Signed release builds explicitly enable the update UI and inject the HTTPS endpoint.
+The update network request remains user initiated; Ley does not silently check for updates at startup. Arch/AUR
+builds keep the in-app updater disabled and receive upgrades through the package manager.

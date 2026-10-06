@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { createReadStream, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  createReadStream,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,16 +14,7 @@ const target = resolve(root, "target");
 const label = process.env.LEY_RELEASE_CHECKSUM_LABEL?.trim();
 if (!label) throw new Error("LEY_RELEASE_CHECKSUM_LABEL is required");
 
-const allowed = [
-  ".AppImage",
-  ".deb",
-  ".rpm",
-  ".dmg",
-  ".msi",
-  ".exe",
-  ".zip",
-  ".tar.gz",
-];
+const allowed = [".deb", ".rpm", ".dmg", ".msi", ".exe", ".zip", ".tar.gz"];
 const files = walk(target)
   .filter((path) => path.includes(`${sep}bundle${sep}`))
   .filter((path) => {

@@ -46,8 +46,14 @@ See [`LEY.md`](LEY.md) in a local development checkout for the current execution
 ## Install and first run
 
 Ley's normal-user distribution is the native Desktop app. Release builds produce a macOS DMG, Windows NSIS/MSI
-installers, and Linux AppImage/DEB/RPM packages. The application carries the matching native Ley engine itself;
-normal users do **not** install Rust, Node.js, clone this repository, run `cargo install`, or add `ley` to `PATH`.
+installers, and Linux DEB/RPM packages; Arch Linux is intended to use its native AUR/package-manager path. The
+application carries the matching native Ley engine itself; normal users do **not** install Rust, Node.js, clone this
+repository, run `cargo install`, or add `ley` to `PATH`.
+
+AppImage is deliberately not a required v0.1 distribution target. Current Tauri/WebKitGTK AppImage tooling has active
+cross-distro build/runtime reliability problems, including modern rolling-distribution failures. Ley prefers native
+package-manager formats it can verify end to end rather than advertising a portable artifact we cannot currently
+trust across supported Linux environments.
 
 First launch is deliberately small:
 
@@ -88,9 +94,9 @@ Then remove the application using the normal platform mechanism:
 
 - **macOS:** quit Ley and remove `Ley.app` from Applications;
 - **Windows:** **Settings → Apps → Installed apps → Ley → Uninstall**;
-- **Linux AppImage:** quit Ley and delete the AppImage file;
 - **Debian/Ubuntu package:** `sudo apt remove ley`;
 - **RPM-based distributions:** remove the installed Ley package with the distribution's normal package manager.
+- **Arch/AUR:** remove the installed Ley package with `pacman` or the AUR helper used to install it.
 
 Reinstalling Ley does not automatically reconnect a coding project; host setup remains an explicit user action.
 
@@ -140,6 +146,7 @@ npm run build:website
 npm run desktop           # Tauri development app
 npm run build:desktop-ui  # desktop webview frontend only
 npm run desktop:build     # native application bundle
+npm run desktop:package:arch # local pacman package for production-like Arch testing
 
 npm run typecheck
 npm run lint

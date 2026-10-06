@@ -5,7 +5,7 @@
   "identifier": "app.leynotes.desktop",
   "build": {
     "beforeDevCommand": "npm run dev:desktop-runtime",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build:desktop-ui",
     "beforeBundleCommand": "npm run prepare:desktop-resources",
     "frontendDist": "../dist-desktop"
@@ -24,6 +24,12 @@
     ],
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: blob:; font-src 'self' data:; connect-src ipc: http://ipc.localhost ws://localhost:* http://localhost:*"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1NDdBQTY1QzFCMjYyRTQKUldUa1lyTEJaYXBIbGVBU3FQb3RhQm1HN0RIemkzZVFKR29XdEg4NEdqMFNDcEhWRFgzNDlGMFAK",
+      "endpoints": []
     }
   },
   "bundle": {

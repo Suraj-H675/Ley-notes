@@ -16,9 +16,7 @@ function commandOutput(command, args) {
 
 function hostTargetTriple() {
   const output = commandOutput("rustc", ["-vV"]);
-  const host = output
-    .split(/\r?\n/)
-    .find((line) => line.startsWith("host: "));
+  const host = output.split(/\r?\n/).find((line) => line.startsWith("host: "));
   if (!host) throw new Error("rustc did not report a host target triple");
   return host.slice("host: ".length);
 }
@@ -33,9 +31,20 @@ const generated = windows ? "ley-helper.exe" : "ley-helper";
 const cargoArgs = ["build", "--locked", "-p", "ley-cli", "--target", target];
 if (!debug) cargoArgs.push("--release");
 
-execFileSync("cargo", cargoArgs, { cwd: root, stdio: "inherit" });
+const configuredTargetDir = process.env.CARGO_TARGET_DIR;
+const targetDir = configuredTargetDir
+  ? resolve(root, configuredTargetDir)
+  : debug
+    ? join(root, "target", "desktop-helper")
+    : join(root, "target");
+const cargoEnv = { ...process.env, CARGO_TARGET_DIR: targetDir };
 
-const targetDir = resolve(root, process.env.CARGO_TARGET_DIR || "target");
+execFileSync("cargo", cargoArgs, {
+  cwd: root,
+  env: cargoEnv,
+  stdio: "inherit",
+});
+
 const source = join(targetDir, target, profile, executable);
 const destination = join(root, "src-tauri", "generated", generated);
 

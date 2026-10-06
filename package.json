@@ -16,6 +16,7 @@
     "prepare:release-config": "node scripts/write-release-config.mjs",
     "desktop": "tauri dev",
     "desktop:build": "tauri build",
+    "desktop:package:arch": "bash scripts/package-arch-local.sh",
     "build": "npm run build:website",
     "build:website": "tsc && vite build",
     "build:desktop-ui": "tsc && vite build --config vite.desktop.config.ts",
@@ -51,7 +52,7 @@
     "@typescript-eslint/eslint-plugin": "^8.63.0",
     "@typescript-eslint/parser": "^8.63.0",
     "@vitejs/plugin-react": "^6.0.3",
-    "@vitest/ui": "^4.1.10",
+    "@vitest/ui": "^5.0.3",
     "eslint": "^10.6.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
@@ -62,6 +63,6 @@
     "tailwindcss": "^4.3.2",
     "typescript": "^5.9.3",
     "vite": "^8.1.4",
-    "vitest": "^4.1.10"
+    "vitest": "^5.0.3"
   }
 }

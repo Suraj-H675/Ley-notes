@@ -1,6 +1,6 @@
 # ADR 0105: Normal-user native distribution and host integration boundary
 
-**Status:** Accepted — 2026-10-05
+**Status:** Accepted — 2026-10-05; Linux distribution decision amended 2026-10-06
 
 ## Context
 
@@ -41,8 +41,12 @@ Primary references checked on 2026-10-05:
    permissions. Host integrations will invoke that absolute path. This deliberately avoids mutating `PATH`.
 3. **Desktop is not a daemon.** Codex or Claude Code starts the native Ley engine for hooks/MCP when needed. Closing
    Desktop does not disable a configured integration.
-4. **AppImage joins DEB and RPM as the generic Linux artifact.** AppImage is useful for direct download, but its
-   transient mount is exactly why integrations use the materialized helper rather than a path inside the bundle.
+4. **Prefer native Linux package-manager formats; defer AppImage until it earns reliability.** DEB and RPM remain
+   direct release artifacts. Arch uses its native package-manager/AUR path and does not use Ley's DEB/RPM in-app
+   updater. The earlier plan to require AppImage for v0.1 is superseded by current Tauri/linuxdeploy and modern
+   Mesa/WebKitGTK evidence showing active build and cross-distro runtime failures, including rolling Linux. AppImage
+   may return as an optional portable artifact after representative clean-machine validation; it is not a release
+   blocker merely for format coverage.
 5. **Keep host state epistemically separated.** Future Desktop integration UI will distinguish detection,
    Ley-owned files/config installed, host trust/review required, restart required, and actually observed Ley host
    activity. Historical session activity remains historical evidence, not a fabricated live health check.
@@ -71,6 +75,9 @@ Primary references checked on 2026-10-05:
   checkout, or a manually installed `ley` command.
 - The same helper path can be reused by multiple supported hosts and updated with the application, avoiding
   per-plugin binary copies and version skew.
+- Linux update ownership follows the installation channel: direct DEB/RPM installs may use Ley's signed Tauri
+  updater, while Arch/AUR installs update through pacman/AUR with the in-app updater UI disabled. Do not make an Arch
+  package masquerade as a Debian install merely to reuse updater plumbing.
 - Host setup remains an explicit user-approved mutation. Ley will not silently write host configuration on launch.
 - The helper install/update path is a production trust boundary and therefore uses bounded fixed paths and atomic
   replacement rather than shell scripts or `curl | sh`.

@@ -3,10 +3,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const pubkey = process.env.TAURI_UPDATER_PUBLIC_KEY?.trim();
 const endpoint = process.env.LEY_UPDATER_ENDPOINT?.trim();
 
-if (!pubkey) throw new Error("TAURI_UPDATER_PUBLIC_KEY is required");
 if (!endpoint) throw new Error("LEY_UPDATER_ENDPOINT is required");
 
 const parsedEndpoint = new URL(endpoint);
@@ -35,9 +33,13 @@ const destination = resolve(root, "src-tauri/generated/release.conf.json");
 mkdirSync(dirname(destination), { recursive: true });
 writeFileSync(
   destination,
-  `${JSON.stringify({
-    bundle,
-    plugins: { updater: { pubkey, endpoints: [endpoint] } },
-  }, null, 2)}\n`,
+  `${JSON.stringify(
+    {
+      bundle,
+      plugins: { updater: { endpoints: [endpoint] } },
+    },
+    null,
+    2,
+  )}\n`,
 );
 console.log(destination);
