@@ -1,133 +1,247 @@
-# Local storage and data boundaries
+# Project Brain privacy and storage contract
 
-Ley is local-first. The public website serves product information and static assets only; it has no project-memory backend and no browser edition of the application.
+Ley is local-first. Privacy is part of the data model and workflow, not a settings-page decoration.
+
+This document describes the **target Project Brain guarantees** and the current transition boundary. It does not
+claim that every target persistence type is already implemented. See [`../LEY.md`](../LEY.md) and the
+[`M0 reconciliation`](research/project-brain-m0-reconciliation-2026-10-06.md).
+
+## Local-first default
+
+Core behavior must work without a model or network dependency:
+
+- create/open a Brain;
+- deterministic source/repository import;
+- retain and inspect approved local evidence;
+- store supported agent/session observations;
+- search/retrieve local history;
+- inspect provenance/applicability;
+- perform local review/correction;
+- export/erase Ley-controlled state.
+
+Ley does not need a cloud Ley account to own or inspect a Project Brain.
 
 ## Product surfaces
 
-| Surface | Local authority | Network boundary |
+The current/target boundary remains:
+
+| Surface | Project-data authority | Network boundary |
 | --- | --- | --- |
-| Ley Desktop | User-selected local projects plus Ley's owner-private application state | Context leaves only through configured integrations/explicit network features |
-| Public website | No project or knowledge data in the normal website runtime | Ordinary static website delivery only |
-| Legacy browser recovery page | Explicit same-origin access to the retired `ley-notes` IndexedDB only after user action | No upload; local inspect/export/erase only |
+| Ley Desktop | Explicit local Project Brains + owner-private app state | Sends project content only through explicit configured features/integrations |
+| Coding-agent integration | Exact authorized Brain/session and bounded retrieved/captured context | Agent/provider handling applies to deliberately shared context |
+| Public website | No private Brain/project authority | Ordinary public website delivery only |
+| Legacy browser recovery | Retired same-origin browser data after explicit user action | Migration-only local inspect/export/erase; not current Brain authority |
 
-The former browser workspace/PWA, browser-folder mode, and browser-local IndexedDB vault are retired. ADR 0097
-closes the last browser-data compatibility gap: the normal website never opens that database, while a separate
-`/legacy-recovery.html` migration page can explicitly inspect, export, or erase same-origin historical browser-local
-data without uploading it. The dead Dexie runtime/schema island is no longer needed to preserve those bytes.
+## Storage ownership
 
-## Current storage and compatibility sources
+### Private Brain state
 
-Current machine-managed continuity metadata lives in owner-private SQLite, partitioned by stable project ID. Large
-immutable cited evidence may use Ley-managed content-addressed private files. Rebuildable lexical indexes remain
-disposable; Ley no longer ships a semantic/vector index subsystem.
+Machine-managed Project Brain state belongs in owner-private OS storage. The current implementation uses a single
+project-partitioned SQLite database plus private content-addressed evidence files; M1 may evolve the schema without
+weakening privacy/isolation.
 
-The remaining non-SQLite stores are bounded compatibility or configuration surfaces rather than a second current
-memory model:
+Private Brain state includes canonical history, review actions, retained private SourceVersions, privacy/egress
+state, and lifecycle/deletion state. It should not be spread into multiple mutable stores merely to serve UI views.
 
-- a small repository-local `.ley/` project identity/capture configuration;
-- owner-private OS configuration registries for current egress/bootstrap authority plus retained pre-cutover
-  bindings and privacy ancestry;
-- filesystem Agent Memory data only as an existing legacy migration/read-cleanup source; current projects do not
-  create new bound vaults;
-- historical browser IndexedDB data may still exist in old browser profiles until the user exports/erases it through
-  the migration-only recovery page; it is no longer opened by the product runtime.
+### Repo-local `.ley/`
 
-Compatibility stores remain readable only while they protect real migration, cleanup, or privacy obligations. They
-should not grow new product state.
+Repo-local state stays small and portable. It may carry association identity and project-owned configuration, but
+must not contain:
 
-The repo-local `.ley/` directory stays small and portable. It must not contain conversations, generated memory, credentials, embeddings, machine-specific private paths, or raw transcripts.
+- the private Brain database;
+- conversation/session bodies merely for convenience;
+- credentials/tokens;
+- embeddings/indexes;
+- machine-private absolute paths;
+- model-sharing permission;
+- secrets;
+- hidden permission grants.
 
-Portable continuity export/import is separate from browser-notebook recovery. Current continuity uses its validated
-SQLite/evidence bundle; the retired browser notebook exports a lossless archival JSON only and is never imported as
-agent memory by default.
+A copied `.ley` marker cannot grant access to an existing private Brain.
 
-## Agent/model egress
+### User-owned sources
 
-Ley does not independently upload project files, sessions, queries, or indexes.
+Repository/docs/reference files remain user-owned originals. Importing or referencing them does not transfer
+ownership to Ley and Brain erasure must not delete them by default.
 
-When a configured cloud coding agent receives deliberately retrieved Ley context, that selected context becomes part
-of the request handled by that agent provider. Normal initialized-project lifecycle hooks do not automatically inject
-historical project bodies; Brief/Search/Evidence are explicit retrieval surfaces. The separate uninitialized-workspace
-Bootstrap Specification mode can return approved read-only Specification context and is governed by the same egress
-boundary.
+Retained SourceVersions are Ley-managed evidence copies/representations and follow Brain retention/deletion rules.
 
-The reset keeps these principles:
+## Source retention truth
 
-- egress is explicit/configured rather than ambient;
-- project scope is fixed and inspectable;
-- broad historical memory cannot bypass a more restrictive known source policy;
-- agent-facing tools cannot silently grant themselves new human authority;
-- bounded outputs expose provenance but not unnecessary absolute machine paths.
+Ley must distinguish:
 
-Current project-level agent-context egress is user-inspectable in Desktop **Capture & privacy** and through
-`ley egress`. `agent-ok`, `local-model-only`, `confirm-per-use`, and `never-send` remain the enforced vocabulary.
-Desktop uses the same mixed-version transition authority as the CLI and rejects stale project-identity or policy
-writes before mutation.
-`confirm-per-use` remains intentionally fail-closed until a trustworthy confirmation decision can be scoped at the
-actual retrieval boundary; Desktop does not simulate that with an unrelated settings dialog.
+- original source bytes;
+- a redacted/normalized/extracted retained representation;
+- content identity/hash of that retained representation;
+- a locator/path for the live source;
+- the observation/import occurrence.
 
-The existing detailed egress registries/Context Mount/Scope/Policy Bundle implementation is migration-era architecture. Its safety lessons survive; its exact object hierarchy does not automatically survive.
+If capture redacts before persistence, the retained evidence is exact only with respect to the redacted
+representation. Ley must not describe it as an exact original.
 
-## Evidence capture
+Different Sources with identical retained bytes keep distinct project provenance and privacy identity even if the
+underlying blob bytes are deduplicated.
 
-Historical agent memory is untrusted evidence, not executable instruction. Capture must remain bounded and redact recognizable credentials before persistence.
+## Capture boundary
 
-The focused product should prefer compact structured continuity records and exact evidence references over whole-project duplication. Git/live project tools already provide current source. Retain immutable source snippets/blobs only where historical evidence cannot be reconstructed safely or the user explicitly chooses that retention.
+Automatic/session/project capture requires an explicit project boundary and applicable consent. Existing useful
+controls—ignore rules, file/total bounds, symlink/no-follow handling, secret-oriented exclusions, pattern
+redaction, and explicit higher-sensitivity media retention—should be preserved/adapted.
 
-Full Evidence is a current opt-in retention mode for supported original PNG/JPEG/WebP evidence. Ley can return an exact cited original image under the normal egress/output boundary, but it does not perform OCR, generate visual descriptions, or treat image interpretation as trusted memory. Any richer multimodal interpretation still has to earn its complexity through realistic evaluation.
+Connection to Codex/Claude does not authorize ambient capture of unrelated projects or automatic historical
+scraping. Host capability differences and missing observations must remain visible.
 
-## Retired semantic retrieval
+Captured agent text/tool activity is untrusted historical evidence. It cannot self-enable writes, adoption,
+network access, or provider sharing.
 
-The former local Model2Vec experiment and semantic-index implementation have been removed. Native, transition, and
-retained legacy search now use the deterministic lexical path and do not inspect, create, or rebuild semantic indexes.
-Existing user-level public-model cache files are left untouched; existing derived semantic-index files inside an old
-project-memory directory are inert compatibility debris and remain covered by the ordinary project-memory erasure
-boundary for that directory. No semantic index is required for migration, evidence resolution, export, or recovery.
+## Model/provider egress
 
-Model-assisted retrieval should return only after a native-state retrieval/task ablation shows material value over
-the lexical baseline under the same trust, revision, egress, provenance, and budget constraints.
+Running a local `codex` or `claude` executable does not prove local inference. If selected Brain content is sent
+to a cloud-backed model provider, that is egress.
 
-## External network connectors
+### Agent retrieval inside an existing host session
 
-The in-repository public-GitHub fetcher, URL parser, provider refresh path, and connector creation API have been
-removed. Retained connector authorities and snapshots are compatibility/privacy state only; Ley can list/show/remove
-that already-stored state locally but cannot fetch or refresh it from a provider.
+When an explicitly connected agent deliberately retrieves Ley context, the returned bounded content becomes part
+of that host/provider interaction. Engine-side project, source, and egress restrictions still apply.
 
-Existing stored connector evidence remains readable so users can inspect and explicitly remove it without silently
-orphaning retained egress ancestry. The ordinary connector cleanup path deletes its Ley-managed snapshot directory
-without deleting project memory, while separately retained connector-specific egress restrictions survive until the
-user explicitly clears them.
+### Desktop-triggered optional analysis
 
-## Erasure and compatibility migration
+This is a new Project Brain capability and therefore a distinct egress event. Before an analysis run Ley must bind
+authorization to:
 
-Logical deletion must remove Ley-controlled continuity state for the selected project without deleting the user's source repository. It is not a forensic wipe of backups, snapshots, SSD remnants, or external model/provider copies.
+- Project identity;
+- exact eligible SourceVersions/representations (or an equivalently inspectable bounded snapshot);
+- agent/provider target;
+- relevant project/source egress policy;
+- the current source/policy generation so stale approval cannot be reused after changes.
 
-Remaining compatibility migration into the canonical SQLite store must preserve:
+The user should be told that provider account quota/API billing may be consumed and that Ley may not know remaining
+allowance or exact cost.
 
-- import from the existing JSON/filesystem stores without losing retained user data;
-- transactional project/session deletion;
-- crash/concurrent-writer recovery;
-- portable export/import;
-- cleanup of unreferenced content-addressed evidence;
-- no resurrection of deleted data through stale derived indexes.
+Initial authorization should be per invocation. A future broader grant would require its own explicit contract.
 
-## Retired notebook filesystem surface
+`confirm-per-use` sharing remains fail-closed until such a real invocation-scoped confirmation exists; a settings
+toggle elsewhere is not equivalent.
 
-The old desktop note/Canvas filesystem engine and watcher are no longer executable product surfaces. Its
-capability-rooted no-follow implementation and six-lane hosted confinement evidence from run `36151215222`
-remain historical evidence for the retired implementation, not a current Ley security boundary.
+## Derivative privacy
 
-User-owned Markdown, Canvas, attachments, and other files in a former Ley vault remain ordinary user data and
-are not deleted when Ley continuity is erased or the notebook implementation is removed. The active legacy
-migration boundary is narrower: when an older project needs its moved Agent Memory vault, Ley accepts the
-selected directory only if existing captured memory validates for that exact project before any ingest or
-binding change.
+Privacy/egress restrictions propagate through derivatives. A restricted SourceVersion must not be laundered into:
 
-## Website boundary
+- a summary;
+- Assertion;
+- reviewed claim;
+- embedding/vector;
+- lexical/search projection;
+- graph relation;
+- analysis result;
+- portable export;
 
-The normal website does not need project storage, service workers, PWA installability, directory handles, local
-agent processes, or IndexedDB knowledge state. Keeping that runtime intentionally boring from a data-authority
-perspective is a security and maintenance advantage, not a missing feature. The sole exception is the separately
-built `/legacy-recovery.html` migration utility from ADR 0097: it performs no database access until the user chooses
-Inspect, can access only same-origin browser state, and never participates in ordinary website or Desktop product
-behavior.
+that is then exposed more broadly than its evidence permits.
+
+When Ley cannot prove a derivative is independent of restricted evidence, fail closed or disclose the unresolved
+dependency rather than assuming independence.
+
+## Human authority is not permission laundering
+
+Accepting a claim as project intent does not grant:
+
+- filesystem writes;
+- tool execution;
+- network access;
+- capture permission;
+- model/provider sharing;
+- cross-project access.
+
+Likewise, an imported requirements file is reference evidence until the user explicitly adopts relevant project
+intent.
+
+An agent must not be able to manufacture human authority by submitting a payload that merely labels its actor as
+`user`. Human adoption/review and permission-grant operations require a human-control boundary distinct from normal
+agent write capabilities, with durable provenance of that boundary.
+
+## Project isolation
+
+Every canonical record/query/write must remain attributable to one explicit Project unless a future operation
+deliberately models a cross-project source relationship.
+
+Ambient cross-project memory is out of scope. Search or source selection across another Brain must be explicit and
+must not silently transfer that Brain's requirements, permissions, or authority into the active project.
+
+## Erasure and detach semantics
+
+Project Brain distinguishes operations with different privacy effects:
+
+| Operation | Intended effect |
+| --- | --- |
+| Detach working copy | Remove live locator/association; retain Brain history unless separately erased |
+| Remove Source from active use | Stop treating it as current input; retained history may remain according to policy |
+| Erase Source history | Remove selected Ley-managed SourceVersions and dependent derivatives according to the deletion plan |
+| Erase Session | Remove selected Ley-managed session history and dependent derivatives according to the deletion plan |
+| Clear projections | Delete rebuildable indexes/summaries/maps without deleting canonical history |
+| Erase Brain | Remove Ley-controlled canonical/derived state for that Project while preserving user-owned originals |
+
+Erasure must prevent stale/in-flight hooks, imports, or analysis results from resurrecting data after the erasure
+commit. M1 must provide a durable generation/tombstone/equivalent lifecycle guard.
+
+Filesystem evidence and database rows cannot always be removed in one atomic transaction. Interrupted cleanup must
+be detectable and safely retryable. Ley must not claim forensic deletion of backups, filesystem snapshots, SSD
+remnants, user-created exports, original project files, or downstream provider copies.
+
+## Export/import
+
+A complete Brain backup/export must include all intentionally retained canonical Project state, including uncited
+retained Sources/SourceVersions. The preceding cited-only artifact export behavior is insufficient for a Project
+Brain backup.
+
+Rebuildable indexes may be omitted when they can safely be regenerated.
+
+Portable import must not automatically activate:
+
+- machine-local absolute paths;
+- host trust/configuration;
+- capture consent;
+- model-sharing/egress grants;
+- credentials/secrets;
+- stronger human adoption than the exported canonical history actually recorded.
+
+## Current transition stores
+
+At M0, the current runtime still has bounded compatibility/configuration state outside the main SQLite authority,
+including repo-local config and migration/privacy ancestry for older vaults/registries/browser data. These are not
+new Product Brain stores.
+
+They remain only while they protect a concrete migration, erasure, replay, or restrictive privacy obligation. The
+M0 reconciliation records the obligation categories and removal conditions.
+
+## Current egress implementation during transition
+
+The existing focused-continuity runtime currently has project egress states such as `agent-ok`,
+`local-model-only`, `confirm-per-use`, and `never-send`. `confirm-per-use` is intentionally fail-closed because the
+old runtime has no trustworthy per-invocation confirmation boundary. `local-model-only` is a configured assertion,
+not provider attestation.
+
+Those semantics remain safety constraints until the Project Brain analysis/retrieval boundary replaces them with an
+equally explicit or stronger contract.
+
+## Website and legacy browser boundary
+
+The normal public website must not mount private Project Brain storage, local agent transports, or browser-local
+continuity state.
+
+The separate legacy recovery page is migration-only historical behavior. It must not imply that retired notebook
+data becomes current Project Brain knowledge automatically.
+
+## Privacy verification direction
+
+Later milestones must prove at minimum:
+
+- project/source isolation;
+- copied repo markers do not grant authority;
+- source/capture/model-sharing permissions stay separate;
+- no accidental model egress during deterministic import/core use;
+- derivative restrictions survive summarization/indexing/review;
+- erase-vs-in-flight-write cannot resurrect state;
+- exports contain only the selected Brain and intentionally retained canonical content;
+- legacy migration cannot widen authority/egress;
+- secrets/symlinks/path traversal/malformed local content remain bounded;
+- logs/errors/tests do not leak private project bodies unnecessarily.

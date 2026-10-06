@@ -1,7 +1,11 @@
 # Runtime verification contract
 
-Builds and unit tests do not prove that Ley is usable. This document is the current focused-product
-runtime contract. The former notebook/PWA verification diary is preserved as
+> **Transition runtime contract.** The checks below describe the focused-continuity implementation that
+> still runs while the Project Brain milestones replace it. They remain required for behavior we have not
+> intentionally changed, but they are not the target Project Brain IA/domain contract. New milestone-specific
+> verification is added as those capabilities land. See [`../LEY.md`](../LEY.md).
+
+Builds and unit tests do not prove that Ley is usable. The former notebook/PWA verification diary is preserved as
 `archive/runtime-verification-notebook-legacy.md`; it is historical evidence, not a release checklist.
 
 ## Release baseline

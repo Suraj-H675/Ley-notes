@@ -1,181 +1,264 @@
-# Ley architecture
+# Ley architecture during the Project Brain remake
 
-Ley is a local-first continuity/context system for coding agents. The architecture is intentionally smaller than
-its historical notebook and experimental memory surfaces: current source, user intent, and explicit local
-authority remain primary; retained history is bounded evidence that can help a later session continue work.
+This document separates **the current implementation foundation** from **the target Project Brain
+architecture**. It must not imply that a target milestone already ships.
 
-Historical ADRs and research documents explain how Ley reached this shape. They are evidence, not requirements for
-preserving old implementation structure.
+The product/domain contract lives in [`../LEY.md`](../LEY.md). The M0 repository audit and migration map is
+[`research/project-brain-m0-reconciliation-2026-10-06.md`](research/project-brain-m0-reconciliation-2026-10-06.md).
 
-## Product surfaces
+## Target shape
 
-Ley has two current product surfaces plus one migration utility:
+Ley is moving toward one private logical **Project Brain** per software project:
 
-1. **Ley Desktop** — the native control center for explicit project selection, capture, Brief preview, historical
-   recall, session/learning inspection, approved-source authority, evidence, privacy/egress, export, and erasure.
-2. **Public website** — static product information. It has no project-memory backend and does not mount the Desktop
-   runtime.
-3. **Legacy browser recovery page** — a separate same-origin inspect/export/erase utility for retired browser-local
-   notebook data. It is not a browser edition of Ley and does not promote that data into current continuity.
+```text
+Project
+  ├─ Sources ── SourceVersions ── evidence
+  ├─ Repository/working-copy attachments
+  ├─ Sessions ── observable Episodes ── evidence
+  ├─ Human actions / reviewed claim versions
+  └─ derived Entities / Assertions / relationships / summaries / indexes
+                               ↓
+                   bounded context retrieval
+                               ↓
+                       coding agents
+```
 
-The former PWA/browser workspace, note editor, Canvas, note graph, bookmarks, and related notebook runtime are not
-current product surfaces.
+The Project identity is stable and private. A path or `.ley/project.json` can associate a working copy with
+the Brain but is not the Brain and does not grant private-state/capture/egress permission.
 
-## Build boundary
+Canonical retained history and human decisions must survive rebuilding derived knowledge.
 
-Website and Desktop share source where useful but have separate entrypoints and artifacts:
+## Current implementation foundation
 
-- `index.html` + `src/website-main.tsx` + `vite.config.ts` -> `dist/`;
-- `desktop/index.html` + `desktop/desktop-main.tsx` + `vite.desktop.config.ts` -> `dist-desktop/`;
-- `src-tauri/tauri.conf.json` points only at the Desktop build.
+The implementation at the M0 branch point still reflects the preceding focused-continuity product.
 
-The native shell and local commands live in `src-tauri/`; the Rust continuity engine, CLI, and MCP server live under
-`crates/`.
+### Product surfaces
 
-## Project identity and local state
+The current runtime has:
 
-Each initialized project has a small repo-local `.ley/` directory. It carries stable project identity and explicit
-capture configuration only; it is not a conversation database or hidden memory folder.
+1. **Ley Desktop** — native project/capture/continuity/integration/privacy UI;
+2. **public website** — static product/marketing surface without project-memory runtime;
+3. **legacy browser recovery page** — migration-only inspect/export/erase utility for retired browser data.
 
-Machine-managed continuity lives in owner-private operating-system state. The canonical store is SQLite
-(`continuity.sqlite3`), currently schema v11, partitioned by stable project ID. Its durable core is:
+The future sparse Desktop IA is not implemented yet.
 
-- `projects` — project identity;
-- `events` — append-only/versioned continuity events;
-- `event_links` — explicit provenance, dependency, and supersession links;
-- native approved-source, artifact-snapshot, artifact-file, project-observation, and migration state needed by the
-  current engine.
+### Repository layout
 
-Large immutable cited evidence may live in Ley-managed content-addressed storage. Rebuildable indexes and
-presentation projections are not independent authority.
+- `crates/ley-core` — local domain/persistence/capture/retrieval/host logic;
+- `crates/ley-cli` — current CLI and maintenance/transition flows;
+- `crates/ley-mcp` — local stdio MCP server;
+- `src-tauri` — native shell/runtime and Desktop host integration;
+- `src/features/agent-memory` — current focused-continuity Desktop UI;
+- `integrations/` — current Codex and Claude packages/hooks/skills;
+- `eval/` — deterministic and real-agent evaluation harnesses.
 
-Some older owner-private JSON registries and filesystem-vault data still exist as migration/privacy compatibility
-inputs. They are not a second canonical product model.
+### Current durable state
 
-## Capture and evidence
+Current canonical machine-managed continuity uses one owner-private SQLite database (`continuity.sqlite3`,
+schema v11 at M0), partitioned by stable project ID. Important structures include:
 
-Capture is explicit and project-scoped. A new project previews the default Structured plan before initialization.
-The repo-local capture mode plus `.leyignore`, Git ignore rules, hard file/byte bounds, no-follow filesystem access,
-and credential-pattern redaction define the local evidence boundary.
+- projects;
+- append-only/versioned events;
+- event links;
+- machine-local project observations;
+- approved-source state;
+- artifact snapshots/files/current snapshot state;
+- migration/authority-cutover state.
 
-Current capture modes are:
+Large retained captured evidence can live in Ley-managed private content-addressed storage.
 
-- **Minimal** — paths/classifications/hashes without source blobs;
-- **Structured** — bounded post-redaction UTF-8 source evidence and citations;
-- **Full Evidence** — Structured plus explicitly consented original PNG/JPEG/WebP evidence.
+The store already provides valuable production properties including transactions, request idempotency,
+foreign-key/project qualification, ordering guards, private filesystem permissions, locking, bounded payloads,
+WAL, and full synchronous writes in the current implementation.
 
-Captured evidence is historical. Ley does not silently relabel it as a live-source check.
+These are foundations for M1, not a requirement to keep the existing schema shape.
 
-Fresh/native capture persists artifact snapshots, captured bytes where consent allows them, capture time, and
-bounded Git revision metadata. It does not build or persist a source-code graph. The remaining graph parser,
-snapshots, and history belong to finite legacy-vault compatibility and are not part of canonical native authority.
+### Current repo-local state
 
-## Continuity model
+An initialized filesystem project currently stores small `.ley/` metadata:
 
-Ley preserves the facts that change a later engineering decision: goals/handoffs, decisions, constraints, attempts
-and outcomes, verification, unresolved work, corrections/supersession, and exact evidence references.
+- stable `project.json` identity;
+- capture configuration;
+- project-owned ignore rules.
 
-Sessions and learnings remain evidence-bearing structured records rather than executable instructions. Human-reviewed
-or otherwise trusted state still does not outrank current user intent or current repository/runtime evidence.
+Project Brain changes the meaning: a future repo-local ID associates a working copy with a private logical
+Project. It must not contain the Brain database, conversations, secrets, embeddings, machine-private paths, or
+permission grants.
 
-Git applicability is recomputed from bounded local Git evidence. Divergent historical state is withheld
-where the canonical admission rules require it rather than being rewritten as though branch history never happened.
+### Current artifact capture
 
-## Retrieval and Brief compilation
+Current native ingestion already supports bounded/redacted capture, ignore rules, symlink/no-follow safety,
+hashes, optional retained text/media evidence, and captured Git metadata. It does not build a new native code
+graph by default.
 
-Canonical native, transition, and retained legacy Search use deterministic lexical ranking plus explicit trust,
-authority, revision, conflict, egress, and budget handling. The previously bundled Model2Vec experiment and its
-derived semantic-index implementation have been removed rather than kept as dormant product complexity. A future
-model-assisted retrieval path would need a controlled native-state ablation to earn its dependency and authority
-surface again.
+Artifact snapshots are a useful precursor to SourceVersions but do not yet satisfy the new model:
 
-The task-conditioned Brief is a deterministic compiler over bounded Search/authority inputs. Admission, withholding,
-provenance, budget, and egress remain inspectable rather than being delegated to an opaque model classifier.
+- Source identity and path/locator identity are not separate;
+- capture occurrence is not a first-class domain concept;
+- retention currently favors current/cited snapshots rather than all intentionally retained Brain Sources;
+- redacted retained content must be distinguished from exact original bytes.
 
-## Agent interface
+M2 owns that implementation change after M1 establishes identity/persistence.
 
-The canonical native MCP contract is deliberately small:
+### Current Sessions and Learnings
 
-- `ley_brief` — task-conditioned active-project continuity;
-- `ley_search` — bounded historical recall, optionally against one exact explicitly selected already-observed project;
-- `ley_evidence` — citation-bound historical evidence;
-- `ley_checkpoint` — structured session write, only when writes were explicitly enabled at process start.
+Current Session events can retain structured goals, decisions, attempts, problems/resolutions, verification,
+unresolved work, visible turn evidence, tool observations, and citations. Current Learning records add review,
+correction, supersession, provenance, trust, and freshness behavior.
 
-An inactive ordinary workspace exposes no project-memory capabilities and is not initialized implicitly. Bootstrap
-Specification access for an uninitialized workspace is a separate explicit read-only authority path.
+Those records remain valuable migration/evidence inputs. They do not define the final Chronicle or Assertion
+ontology. In particular:
 
-Host adapters establish/reuse session identity and capture bounded/redacted lifecycle evidence. Desktop separately
-probes documented Codex/Claude CLI/plugin state for detection and Ley-managed configuration. Those probes do not
-attest hook trust or runtime health. Recorded integration activity remains retained provenance; the explicit smoke
-check passes only when Ley actually observes a matching host-hook session for the selected project.
+- structured checkpoints are not complete observable history;
+- an old `trusted` state must not mechanically become new human acceptance;
+- tool/agent statements remain reported evidence unless Ley observed the underlying result;
+- derived knowledge must not overwrite exact human-reviewed claim versions.
 
-## Human authority and egress
+### Current retrieval and MCP
 
-Privileged source approval, correction/review, deletion, export, and privacy mutation are human/local control
-surfaces rather than ambient agent authority.
+The implemented canonical-native MCP surface is currently:
 
-The current project egress vocabulary is:
+- `ley_brief`;
+- `ley_search`;
+- `ley_evidence`;
+- optional `ley_checkpoint` when writes are explicitly enabled.
 
-- `agent-ok`;
-- `local-model-only`;
-- `confirm-per-use` (fail-closed until a real retrieval-scoped confirmation flow exists);
-- `never-send`.
+Those routes contain useful boundedness, citation, project-binding, egress, and write-gating behavior. Their
+names are not frozen Project Brain vocabulary.
 
-A local egress target is an explicit host/user assertion, not provider attestation. Retained finer-grained legacy
-ancestry can still make a derivative more restrictive while migration is incomplete; historical data must not
-launder itself through a newer, broader project policy.
+The target agent experience is the native Ley skill/invocation (`$ley` in Codex; appropriate native equivalent
+elsewhere), while the engine continues to enforce capability boundaries independent of prompt instructions.
 
-## Portability, erasure, and recovery
+### Current host integrations
 
-Portable continuity export is project-scoped. It contains the selected project's continuity database plus only the
-Ley-managed evidence actually cited by retained events. Import validates the bundle before installing runtime state.
+Codex and Claude integration already has strong reusable work:
 
-Erasure removes Ley-controlled continuity for the selected project/session while preserving user-owned repository
-files and independent copies. Ley does not claim forensic deletion of backups, filesystem snapshots, SSD remnants,
-or downstream provider copies.
+- app-owned helper packaging;
+- project-scoped explicit Connect/Disconnect;
+- config ownership/conflict checks;
+- lifecycle hooks;
+- bounded visible turn/tool capture;
+- stable Ley session association;
+- separation of host detection, configuration, review/restart, and observed runtime activity.
 
-Interruption recovery is read-only evidence plus ordinary re-verification/checkpointing. The former shape-specific
-recovery-writer MCP family is retired from the canonical product.
+The future Chronicle may capture more supported observations, but it must remain adapter/version aware and expose
+gaps rather than promise complete transcripts or hidden reasoning.
 
-## Compatibility boundaries still in force
+## Target domain/persistence boundaries
 
-Cleanup must not silently orphan real local state. Current finite compatibility obligations include:
+M1 must implement the smallest coherent model that can represent these without another identity reset:
 
-- legacy binding/vault reconnect for pre-cutover projects;
-- one-time legacy project-catalog migration into native observations;
-- legacy session/learning and approved-source import where native authority is not yet complete;
-- retained Context Mount / Knowledge Scope / Policy Bundle / External Connector ancestry needed for cleanup and
-  fail-closed egress;
-- current Bootstrap Specification grants for uninitialized workspaces, plus retained legacy Bootstrap Reference
-  grants only until local list/detach or initialization cleanup retires them;
-- explicit historical-host import while that user-facing import workflow remains supported.
+### Project
 
-Creation/growth and content-contribution paths for those historical products are retired. Only bounded
-inspect/remove/detach readers plus the ancestry reads needed for fail-closed egress remain; those compatibility
-paths should disappear only after persisted-state obligations are explicitly closed, not merely because the current
-machine happens to have no corresponding file.
+Stable private logical Brain, able to exist with no live repository.
 
-## Security and trust invariants
+### Working-copy/repository attachment
 
-Current implementation changes must preserve these boundaries unless new evidence justifies a deliberate redesign:
+The initial product allows zero or one logical code-repository attachment per Project. That repository can have
+multiple explicitly authorized machine-local working-copy/worktree locators, each with independent locator/revision
+identity and authorization state. Multiple-copy/worktree conflicts must fail closed or require explicit resolution;
+copied markers are not grants. Multi-repository Projects are deferred.
 
-- explicit project/file scope and stable identity;
+### Source
+
+Stable project-owned input identity independent of locator or current bytes.
+
+### SourceVersion
+
+Immutable retained representation of a Source, carrying content identity plus transformation/retention metadata.
+
+### Capture/import occurrence
+
+Canonical observation that a specific SourceVersion was observed/imported, including relevant actor/session/scope
+and omissions.
+
+### Session and Episode
+
+Session identifies a host work session. Episode is one supported observable occurrence. Inferred semantic grouping
+is derived rather than fabricated as canonical chronology.
+
+### Evidence reference
+
+Exact reference to retained SourceVersion or Session/Episode evidence. Integrity does not prove entailment.
+
+### Reviewed claim target / human action
+
+When a human accepts/rejects/corrects/supersedes machine interpretation, the exact reviewed version and evidence
+dependencies become canonical durable history along with the human action. A caller-provided `actor=user` label is
+not authority; the action must originate through a human-control boundary not exposed as ordinary agent write
+authority.
+
+### Derived knowledge
+
+Entities, unreviewed Assertions, inferred relationships, summaries, retrieval indexes, embeddings, and graph
+layout remain rebuildable unless an exact version became the target of a durable human decision.
+
+## Applicability model
+
+Knowledge should not use one overloaded trust/freshness value.
+
+Keep separately:
+
+- evidence basis (observed / reported / inferred);
+- producer/origin;
+- adoption (proposed / accepted / rejected / superseded);
+- applicability scope (project/source/version/revision/branch/worktree/etc.);
+- applicability assessment for a context/time (current / stale / contradicted / unknown).
+
+Git ancestry is useful revision evidence, not semantic authority.
+
+## Import boundary
+
+Target import has two distinct phases:
+
+1. **deterministic local import** — creates/updates the Brain and retained approved Sources without any model;
+2. **optional agent analysis** — explicit egress to a selected coding-agent/provider scope, producing candidate
+   knowledge only.
+
+The Project must remain useful if phase 2 never runs.
+
+## Derived state and retrieval
+
+Start with exact filters + lexical retrieval + typed relationship traversal where earned + time/source/revision
+applicability + bounded task-conditioned assembly.
+
+Semantic embeddings/model reranking are optional rebuildable indexes. They return only if controlled downstream
+evaluation materially beats the simpler baseline under the same evidence/privacy/budget constraints.
+
+## Compatibility architecture
+
+Historical stores/registries/readers survive only while a concrete migration, cleanup, replay, erasure, or
+restrictive privacy-ancestry obligation exists. Relevant categories are recorded in the M0 reconciliation.
+
+Do not add new product features to legacy binding, Context Mount, Knowledge Scope, Policy Bundle, connector,
+old graph, or shape-specific recovery architecture. Do not delete their remaining safety/migration paths until
+the supported historical state has an explicit verified destination or removal contract.
+
+## Architecture invariants that survive the reset
+
+- local core operation without mandatory cloud inference;
+- explicit project/source selection and isolation;
 - owner-private machine state;
-- no-follow filesystem containment;
-- bounded/redacted capture and output;
-- historical evidence is not instruction or current truth;
+- bounded/redacted/no-follow local capture;
 - provenance survives derivation;
-- user intent and privileged human authority cannot be self-granted by an agent;
-- revision applicability and uncertainty remain visible;
+- historical text is evidence, not executable instruction;
+- human authority cannot be self-granted by an agent;
+- stale/contradictory/unknown applicability stays visible;
 - egress and erasure fail closed;
-- no unnecessary absolute local paths or unrelated project data cross agent/portable boundaries.
+- retries/concurrent writers cannot silently duplicate or overwrite state;
+- omission/truncation is disclosed when it matters;
+- user-owned source files remain outside Brain erasure unless explicitly selected under a different contract;
+- derived indexes/views never become a second mutable source of truth.
 
-## Verification
+## Verification direction
 
-`docs/runtime-verification.md` is the current human/runtime release contract. Deterministic P0/P1/P2 eval lanes
-exercise the focused continuity capabilities; unit/integration tests cover lower-level correctness and retained
-migration/privacy obligations. Model-dependent studies remain separate evidence and must identify their model,
-host/version, fixture, and limits.
+Current deterministic tests/evals remain transition confidence. New milestones must additionally prove the two
+Project Brain workflows:
 
-A passing historical fixture or ADR is not a reason to preserve a subsystem. A retained subsystem should continue to
-exist only while the current product or a finite migration/security obligation still needs it.
+1. cold fresh-agent continuation recovers requirement, decision, failed approach/root cause, solution,
+   verification, unresolved work, applicability, and evidence—and avoids repeating the historical failure;
+2. a sources-only Brain later guides a new/empty code repository from explicitly accepted sources without treating
+   every imported reference as authoritative.
+
+Passing legacy tests cannot veto a deliberate contract change, but behavior still intended to survive must retain
+meaningful regression coverage.

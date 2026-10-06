@@ -2,6 +2,11 @@
 
 ## Status
 
+> **Superseded product conclusion as of 2026-10-06.** This audit remains important evidence for the
+> simplification, trust, evaluation, and migration work that produced the current repository, but its
+> “focused continuity layer” product boundary is no longer the current contract. See [`../../LEY.md`](../../LEY.md)
+> and [`project-brain-m0-reconciliation-2026-10-06.md`](project-brain-m0-reconciliation-2026-10-06.md).
+
 This audit supersedes the assumption that existing Ley code, `LEY.md`, ADRs, tests, or product copy are
 binding product decisions. They remain evidence about what was built and what was learned, but every
 capability must re-earn its place against a simpler alternative and measurable downstream value.

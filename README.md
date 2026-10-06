@@ -1,10 +1,19 @@
 # Ley
 
-Ley is a **local, trustworthy continuity and context layer for coding agents**.
+Ley is being rebuilt as a **local-first Project Brain for software development**.
 
-A repository tells an agent what exists now. Ley is for the information that usually disappears between sessions: what was decided, what was attempted, what failed, what was actually verified, what remains unresolved, and where that evidence came from.
+A repository tells an agent much of what exists now. Ley is for the project history and source context that
+usually disappears or becomes ambiguous across sessions: what was required, decided, attempted, failed,
+verified, superseded, left unresolved, and what evidence supports those conclusions.
 
-The 2026-09-25 first-principles reset is documented in [`docs/research/first-principles-audit-2026-09-25.md`](docs/research/first-principles-audit-2026-09-25.md). Existing ADRs and feature documents remain useful implementation history, but they are no longer automatically current requirements.
+The current contract is [`LEY.md`](LEY.md). The 2026-10-06 M0 audit maps the existing repository onto that
+contract in [`docs/research/project-brain-m0-reconciliation-2026-10-06.md`](docs/research/project-brain-m0-reconciliation-2026-10-06.md).
+Existing ADRs and older research remain useful implementation history, but they are not automatically current
+requirements.
+
+> **Migration status:** the repository still implements the preceding focused-continuity runtime while the
+> Project Brain milestones are being built. This README distinguishes the target product from behavior that
+> already ships; it does not claim the new Desktop IA or Brain data model is finished yet.
 
 ## Product surfaces
 
@@ -15,19 +24,46 @@ Ley now has exactly two intended surfaces:
 
 The previous `/app` browser workspace, PWA, browser-folder mode, and browser-local notebook mode have been retired. A web page cannot provide the same local project/MCP boundary as the native product, and maintaining a parallel notebook implementation added substantial complexity without strengthening Ley's differentiated value.
 
-## Direction
+## Project Brain direction
 
-The canonical agent-facing contract is intentionally small:
+The target product gives each software project one durable logical Brain. A Brain may exist before code and
+can contain retained sources/specifications, repository evidence, Codex/Claude sessions, supported observable
+activity, decisions, failed attempts, solutions, verification, unresolved work, and evidence-backed knowledge.
 
-- **Brief** — the smallest cited continuity pack useful for the current task.
-- **Search** — explicit bounded historical recall from the active project by default or one exact
-  deliberately selected already-observed project; selection is request-scoped, not ambient sharing.
-- **Evidence** — exact provenance/source drill-down from the project-qualified citation returned by Ley.
-- **Checkpoint** — one structured durable write path for meaningful session state.
+The central rule is **store broadly, retrieve selectively**: retained history can be rich, while agent context
+stays bounded, task-relevant, evidence-linked, privacy-aware, and explicit about stale or uncertain applicability.
 
-The human-facing desktop is a focused control center for project setup/status, brief preview, recall, session/handoff history, review/correction, evidence, privacy, export, and integration-facing continuity controls.
+The eventual Desktop shell is deliberately sparse:
 
-General-purpose note editing, backlinks, Canvas, daily notes, and the retired notebook runtime have been removed from the shipped product tree. Historical browser-local notebook data is handled only by an explicit same-origin recovery page that can inspect, export, or erase the retired IndexedDB after user action; the normal website and Desktop do not open it.
+- global: **Home / Projects / Settings**;
+- inside a Brain: **Overview / Knowledge / History / Review**;
+- optional **Project Contents** rail: **Sources / Repository**.
+
+The user-facing coding-agent workflow centers on the Ley skill/invocation (`$ley` in Codex and the cleanest
+native equivalent in other hosts). The local engine—not prompt text—enforces project scope, evidence,
+idempotency/concurrency, human-authority, capture, and egress boundaries.
+
+Deterministic local import is the core path. Optional Desktop-triggered Codex/Claude analysis is a later,
+explicit egress action whose output remains candidate knowledge rather than truth.
+
+Ley is not becoming a general-purpose note editor/PKM, IDE, terminal, ambient cross-project memory service, or
+graph-demo homepage.
+
+## Current implementation during the remake
+
+Today the implementation still exposes the focused continuity foundation that the Project Brain will build on:
+
+- owner-private transactional SQLite continuity state;
+- bounded/redacted project capture and exact retained-evidence citations;
+- revision/applicability evidence;
+- project/session erasure and egress controls;
+- a small native MCP surface (`ley_brief`, `ley_search`, `ley_evidence`, and opt-in `ley_checkpoint`);
+- project-scoped Codex and Claude lifecycle integrations;
+- the current Agent Memory Desktop surfaces.
+
+Those names and the current UI are transition behavior, not permanent Project Brain ontology. General-purpose
+note editing, backlinks, Canvas, daily notes, and the retired notebook runtime remain out of scope. Historical
+browser-local notebook data is still handled only by the explicit recovery utility.
 
 ## Important principles
 
@@ -41,7 +77,8 @@ General-purpose note editing, backlinks, Canvas, daily notes, and the retired no
 - derived indexes/views are rebuildable;
 - advanced features must beat a simpler baseline in realistic agent-task evaluation before they earn their complexity.
 
-See [`LEY.md`](LEY.md) in a local development checkout for the current execution direction and [`docs/README.md`](docs/README.md) for documentation status.
+See [`LEY.md`](LEY.md) for the Project Brain contract and [`docs/README.md`](docs/README.md) for current,
+transition, and historical documentation boundaries.
 
 ## Install and first run
 
@@ -55,7 +92,7 @@ cross-distro build/runtime reliability problems, including modern rolling-distri
 package-manager formats it can verify end to end rather than advertising a portable artifact we cannot currently
 trust across supported Linux environments.
 
-First launch is deliberately small:
+The **currently implemented** first launch remains deliberately small while the new onboarding milestone is pending:
 
 1. choose a coding-project folder;
 2. review the exact proposed capture boundary and exclusions;
@@ -166,11 +203,12 @@ GitHub release repository is not public, or required updater/platform signing ma
 build and verify Linux/macOS/Windows bundles on clean hosted runners, upload signed updater artifacts plus SHA-256
 checksum manifests, and publish only after all required assets are present.
 
-## Compatibility state
+## Compatibility state during the remake
 
 The retired notebook implementation has been removed. Remaining compatibility code exists only where it still
-protects real migration, recovery, privacy/erasure, or historical local data; it is not a second product surface and
-must not grow new authority.
+protects real migration, recovery, privacy/erasure, or historical local data; it is not a second product surface
+and must not grow new authority. The Project Brain reset does not authorize deleting those paths until each real
+persisted-state/privacy obligation has a verified migration or removal condition.
 
 Work being retained or adapted includes:
 
@@ -185,18 +223,18 @@ Work being retained or adapted includes:
 
 Canonical artifact/session/learning/approved-source continuity now lives in transactional SQLite. A smaller set of legacy JSON registries remains only where it still carries migration, cleanup, or privacy/egress ancestry; those records no longer expand the canonical agent context surface. Large immutable evidence may remain content-addressed files. Old browser IndexedDB bytes remain in the user's browser profile until the user chooses the migration-only same-origin recovery page to export or erase them; they are no longer part of the product runtime.
 
-## Evaluation before feature growth
+## Evaluation and Project Brain growth
 
-The Phase-0 comparison is complete for the reset decision. A pinned `gpt-6-luna` / `xhigh` study compared
+The earlier Phase-0 comparison remains useful evidence, not authority over the Project Brain shape. A pinned
+`gpt-6-luna` / `xhigh` study compared
 no history, a human `HANDOFF.md`, a tiny historical brief, and current/full Ley across four controlled
 continuity tasks. After fixing two evaluator artifacts and replacing the affected observations, the final
 sample contains 48 valid attempts with three observations per task/arm cell and zero runner failures.
 
-The result does **not** justify preserving the current architecture wholesale. It earns a narrower set of
-capabilities: structured verification/evidence and explicit selected-source context; bounded event evidence
-and lightweight revision applicability remain cheap safety/provenance primitives. Persistent mount/scope/
-policy graphs, shape-specific recovery APIs, semantic/vector retrieval, full source graphs/capture, and
-other legacy breadth still have to beat simpler replacements before they return.
+The result does **not** justify preserving the current architecture wholesale. It still supports keeping
+structured verification/evidence, bounded event evidence, explicit selected-source context, and lightweight
+revision applicability as strong foundations. The new milestones will test the broader Project Brain workflows
+directly, especially failed-attempt avoidance and sources-first project creation.
 
 See [`docs/research/phase0-frontier-agent-benchmark-2026-09-26.md`](docs/research/phase0-frontier-agent-benchmark-2026-09-26.md)
 for methodology, corrected results, discarded evaluator artifacts, limits, and migration implications.
