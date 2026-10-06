@@ -213,19 +213,24 @@ jobs:
 
           dpkg-deb -c "$deb" > /tmp/ley-deb-files.txt
           grep -F '/usr/lib/Ley/generated/ley-helper' /tmp/ley-deb-files.txt
+          grep -F '/usr/lib/Ley/generated/THIRD_PARTY_NOTICES.txt' /tmp/ley-deb-files.txt
           ! grep -E '/(node_modules|target|crates)/' /tmp/ley-deb-files.txt
           sudo apt-get install -y "$PWD/$deb"
           test -x /usr/lib/Ley/generated/ley-helper
+          test -s /usr/lib/Ley/generated/THIRD_PARTY_NOTICES.txt
           test "$(/usr/lib/Ley/generated/ley-helper --version)" = "$expected"
 
           rpm2cpio "$rpm" | cpio -t > /tmp/ley-rpm-files.txt
           grep -F './usr/lib/Ley/generated/ley-helper' /tmp/ley-rpm-files.txt
+          grep -F './usr/lib/Ley/generated/THIRD_PARTY_NOTICES.txt' /tmp/ley-rpm-files.txt
           ! grep -E '/(node_modules|target|crates)/' /tmp/ley-rpm-files.txt
 
           extract_dir="$(mktemp -d)"
           (cd "$extract_dir" && "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null)
           image_helper="$(find "$extract_dir/squashfs-root" -type f -path '*/generated/ley-helper' -print -quit)"
+          image_notices="$(find "$extract_dir/squashfs-root" -type f -path '*/generated/THIRD_PARTY_NOTICES.txt' -print -quit)"
           test -x "$image_helper"
+          test -s "$image_notices"
           test "$("$image_helper" --version)" = "$expected"
 
       - name: Verify macOS signature and bundled helper
@@ -241,7 +246,9 @@ jobs:
           spctl --assess --type execute --verbose=4 "$app"
           hdiutil verify "$dmg"
           helper="$app/Contents/Resources/generated/ley-helper"
+          notices="$app/Contents/Resources/generated/THIRD_PARTY_NOTICES.txt"
           test -x "$helper"
+          test -s "$notices"
           codesign --verify --strict --verbose=2 "$helper"
           test "$("$helper" --version)" = "$expected"
 
@@ -265,6 +272,8 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "MSI administrative extraction failed: $($process.ExitCode)" }
           $helper = Get-ChildItem $extract -Recurse -File -Filter 'ley-helper.exe' | Select-Object -First 1
           if (-not $helper) { throw 'MSI payload does not contain ley-helper.exe' }
+          $notices = Get-ChildItem $extract -Recurse -File -Filter 'THIRD_PARTY_NOTICES.txt' | Select-Object -First 1
+          if (-not $notices -or $notices.Length -le 0) { throw 'MSI payload does not contain non-empty third-party notices' }
           $helperSignature = Get-AuthenticodeSignature $helper.FullName
           if ($helperSignature.Status -ne 'Valid') {
             throw "Invalid bundled helper signature: $($helperSignature.Status)"

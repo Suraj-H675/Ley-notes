@@ -88,6 +88,15 @@ Before calling Ley an OSS release, choose the project's own license explicitly a
 notices required by the dependencies actually distributed in the native application. Do not infer a project license
 from dependency licenses or from the repository being public.
 
+Ley now generates `generated/THIRD_PARTY_NOTICES.txt` from the locked, non-development dependency closures used by
+the shipped Desktop binary, bundled `ley` helper, and production frontend. The file preserves package/version/license/
+source metadata for every included dependency and deduplicates exact package-supplied license/notice texts by content
+hash. Packages that publish a license expression without a standalone top-level notice file remain visible as such;
+the generator does not fabricate missing copyright text. Normal CI proves the inventory can be regenerated from a
+clean checkout, and every native release lane verifies that the non-empty notice file is present inside the packaged
+application beside the helper. This improves attribution evidence but still does not choose Ley's own license or turn
+metadata inventory into a legal conclusion.
+
 The GitHub repository used for the release must also be public. Ley's updater endpoint is the public GitHub
 `releases/latest/download/latest.json` asset; publishing from a private repository would not be a normal-user update
 channel, so release preflight rejects it.

@@ -19,6 +19,10 @@ fn main() {
     if !helper.exists() {
         fs::write(&helper, []).expect("create Ley helper resource placeholder");
     }
+    let notices = generated.join("THIRD_PARTY_NOTICES.txt");
+    if !notices.exists() {
+        fs::write(&notices, []).expect("create third-party notices resource placeholder");
+    }
 
     tauri_build::build()
 }

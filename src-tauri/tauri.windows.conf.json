@@ -1,6 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
-    "resources": ["generated/ley-helper.exe"]
+    "resources": [
+      "generated/ley-helper.exe",
+      "generated/THIRD_PARTY_NOTICES.txt"
+    ]
   }
 }
