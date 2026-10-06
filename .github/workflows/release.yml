@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: native-release-${{ github.ref }}
@@ -38,6 +39,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Verify release version and public distribution prerequisites
         shell: bash
@@ -71,6 +73,24 @@ jobs:
             echo "Public Ley releases require a public GitHub release repository; current visibility is '$visibility'." >&2
             exit 1
           fi
+
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "Release tag commit $GITHUB_SHA is not contained in origin/main." >&2
+            exit 1
+          fi
+
+          ci_success="$(
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&status=completed&per_page=100" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success" and .event == "push" and .head_branch == "main")] | length'
+          )"
+          if [[ "$ci_success" -lt 1 ]]; then
+            echo "Release tag commit $GITHUB_SHA has no successful completed CI workflow run." >&2
+            exit 1
+          fi
+
           node scripts/verify-release-version.mjs
 
   build:
@@ -192,7 +212,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Ley ${{ github.ref_name }}
-          releaseBody: Native Ley installers, signed updater artifacts, and SHA-256 checksums. See the README for platform-specific installation notes.
+          releaseBody: Native Ley installers, signed updater artifacts, and SHA-256 checksums. See the README for platform-specific installation notes and the [Code signing policy](https://github.com/${{ github.repository }}/blob/main/CODE_SIGNING_POLICY.md) for release trust and provenance requirements.
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: true

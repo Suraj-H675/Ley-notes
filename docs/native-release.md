@@ -24,6 +24,11 @@ installers, then administratively extracts the MSI and verifies/executes that he
 The workflow fails before creating a public release unless all of the following are configured. These are external
 trust assets and must never be committed to the repository.
 
+Ley's public [`CODE_SIGNING_POLICY.md`](../CODE_SIGNING_POLICY.md) defines who may approve releases, the provenance
+requirements that must hold before signing, credential handling, and incident/key-rotation expectations. The release
+workflow enforces two of those provenance gates directly before any build lane starts: the tagged commit must be
+contained in `main`, and that exact commit must already have at least one successful completed ordinary CI run.
+
 GitHub Actions **secrets**:
 
 - `TAURI_SIGNING_PRIVATE_KEY`

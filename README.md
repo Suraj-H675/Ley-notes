@@ -66,6 +66,12 @@ public release exists until that pipeline has actually run with the required App
 credentials from a public release repository. See [`docs/native-release.md`](docs/native-release.md) for the exact
 release trust boundary and prerequisites.
 
+### Code signing policy
+
+Ley's public [code signing policy](CODE_SIGNING_POLICY.md) defines release authority, source/build provenance,
+credential handling, platform/helper-signature expectations, privacy, and signing-incident response. Production
+release tags must resolve to reviewed `main` history with successful ordinary CI before signing is allowed.
+
 ## Repository map
 
 ```text
