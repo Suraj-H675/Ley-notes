@@ -3,7 +3,9 @@
   "bundle": {
     "resources": [
       "generated/ley-helper.exe",
-      "generated/THIRD_PARTY_NOTICES.txt"
+      "generated/THIRD_PARTY_NOTICES.txt",
+      "generated/LICENSE-MIT",
+      "generated/LICENSE-APACHE"
     ]
   }
 }

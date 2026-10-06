@@ -3,6 +3,7 @@ name = "ley-cli"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 description = "Local command-line interface for Ley project and agent memory"
 
 [features]

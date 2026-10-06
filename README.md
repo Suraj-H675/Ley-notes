@@ -100,6 +100,12 @@ Ley's public [code signing policy](CODE_SIGNING_POLICY.md) defines release autho
 credential handling, platform/helper-signature expectations, privacy, and signing-incident response. Production
 release tags must resolve to reviewed `main` history with successful ordinary CI before signing is allowed.
 
+## License
+
+Ley is dual-licensed under your choice of either the [MIT License](LICENSE-MIT) or the
+[Apache License, Version 2.0](LICENSE-APACHE). The SPDX expression used by the package manifests is
+`MIT OR Apache-2.0`: recipients may choose either license at their option.
+
 ## Repository map
 
 ```text

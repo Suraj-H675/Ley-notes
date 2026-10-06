@@ -29,7 +29,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["generated/ley-helper", "generated/THIRD_PARTY_NOTICES.txt"],
+    "resources": [
+      "generated/ley-helper",
+      "generated/THIRD_PARTY_NOTICES.txt",
+      "generated/LICENSE-MIT",
+      "generated/LICENSE-APACHE"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

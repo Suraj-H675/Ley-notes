@@ -2,6 +2,7 @@
   "name": "ley",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,8 +10,9 @@
     "dev:desktop-ui": "vite --config vite.desktop.config.ts",
     "dev:desktop-runtime": "npm run prepare:desktop-helper && npm run dev:desktop-ui",
     "prepare:desktop-helper": "node scripts/prepare-desktop-helper.mjs",
+    "prepare:license-resources": "node scripts/prepare-license-resources.mjs",
     "prepare:third-party-notices": "node scripts/write-third-party-notices.mjs",
-    "prepare:desktop-resources": "npm run prepare:desktop-helper && npm run prepare:third-party-notices",
+    "prepare:desktop-resources": "npm run prepare:desktop-helper && npm run prepare:license-resources && npm run prepare:third-party-notices",
     "prepare:release-config": "node scripts/write-release-config.mjs",
     "desktop": "tauri dev",
     "desktop:build": "tauri build",

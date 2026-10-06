@@ -37,6 +37,9 @@ jobs:
       - name: Generate third-party notices
         run: |
           set -euo pipefail
+          test -s LICENSE-MIT
+          test -s LICENSE-APACHE
+          test "$(node -p "require('./package.json').license")" = 'MIT OR Apache-2.0'
           npm run prepare:third-party-notices
           test -s src-tauri/generated/THIRD_PARTY_NOTICES.txt
           grep -Fx 'LEY THIRD-PARTY NOTICES' src-tauri/generated/THIRD_PARTY_NOTICES.txt >/dev/null
@@ -115,7 +118,18 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Rust workspace check
-        run: cargo check --locked --workspace
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 --no-deps > /tmp/ley-metadata.json
+          python - <<'PY'
+          import json
+          metadata = json.load(open('/tmp/ley-metadata.json'))
+          workspace = set(metadata['workspace_members'])
+          bad = [(p['name'], p.get('license')) for p in metadata['packages'] if p['id'] in workspace and p.get('license') != 'MIT OR Apache-2.0']
+          if bad:
+              raise SystemExit(f'workspace package license mismatch: {bad}')
+          PY
+          cargo check --locked --workspace
 
       - name: Rust workspace tests
         run: cargo test --locked --workspace

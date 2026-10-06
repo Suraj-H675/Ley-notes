@@ -23,6 +23,12 @@ fn main() {
     if !notices.exists() {
         fs::write(&notices, []).expect("create third-party notices resource placeholder");
     }
+    for license in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        let path = generated.join(license);
+        if !path.exists() {
+            fs::write(&path, []).expect("create license resource placeholder");
+        }
+    }
 
     tauri_build::build()
 }

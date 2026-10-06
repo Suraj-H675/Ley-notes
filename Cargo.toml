@@ -11,6 +11,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 authors = ["Suraj"]
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 atomic-write-file = "0.3"

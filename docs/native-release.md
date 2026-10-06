@@ -71,9 +71,9 @@ not merely the outer installer:
 Do not add speculative SignPath workflow code until Ley has an approved SignPath project and the concrete project /
 artifact-configuration / signing-policy identifiers needed to validate the integration. SignPath Foundation also
 requires, among other things, an OSI-approved license, an already released project in the form to be signed, a public
-code-signing policy, and its OSS process rules. Ley currently has no repository license declaration and no published
-release, so that path is not yet eligible. Selecting an open-source license is a product/legal decision and must not
-be silently made by release automation.
+code-signing policy, and its OSS process rules. Ley is now explicitly dual-licensed `MIT OR Apache-2.0` with both
+canonical license texts committed and included in native bundles, so the former project-license blocker is closed.
+Ley still has no published release in the form to be signed, so SignPath Foundation eligibility is not yet complete.
 
 Microsoft Store MSIX distribution is another valid zero-certificate option: Microsoft re-signs Store-submitted MSIX
 packages and provides Store-managed updates. It is not a drop-in replacement for Ley's current NSIS/MSI + GitHub
@@ -83,15 +83,15 @@ has a concrete Store identity/distribution decision.
 
 ### Open-source licensing checkpoint
 
-Public repository visibility is not itself an open-source license. As of the 2026-10-05 release review, Ley has no
-top-level `LICENSE` file and no project license declaration in its root package manifests. A resolved dependency
-metadata audit found no missing Rust/npm license declarations and no GPL/AGPL-only dependency in the current graphs;
-the notable non-permissive-at-a-glance entries are MPL-2.0 packages (including Servo CSS dependencies and
-`lightningcss`) and `caniuse-lite` under CC-BY-4.0. That inventory is useful evidence, not a legal conclusion.
+Ley is dual-licensed under the user's explicit choice of **MIT OR Apache-2.0**. `LICENSE-MIT` and `LICENSE-APACHE`
+contain the canonical license texts, and Rust/npm package metadata carries the SPDX expression `MIT OR Apache-2.0`.
+Native bundles include both files so redistributed application copies carry the offered license terms. `OR` means a
+recipient may use Ley under either license at their option; it does not require simultaneous compliance with both.
 
-Before calling Ley an OSS release, choose the project's own license explicitly and review/package the third-party
-notices required by the dependencies actually distributed in the native application. Do not infer a project license
-from dependency licenses or from the repository being public.
+A resolved dependency metadata audit found no missing Rust/npm license declarations and no GPL/AGPL-only dependency
+in the current graphs; the notable non-permissive-at-a-glance entries are MPL-2.0 packages (including Servo CSS
+dependencies and `lightningcss`) and `caniuse-lite` under CC-BY-4.0. That inventory is useful evidence, not a legal
+conclusion, and remains separate from Ley's own license choice.
 
 Ley now generates `generated/THIRD_PARTY_NOTICES.txt` from the locked, non-development dependency closures used by
 the shipped Desktop binary, bundled `ley` helper, and production frontend. The file preserves package/version/license/
@@ -99,8 +99,8 @@ source metadata for every included dependency and deduplicates exact package-sup
 hash. Packages that publish a license expression without a standalone top-level notice file remain visible as such;
 the generator does not fabricate missing copyright text. Normal CI proves the inventory can be regenerated from a
 clean checkout, and every native release lane verifies that the non-empty notice file is present inside the packaged
-application beside the helper. This improves attribution evidence but still does not choose Ley's own license or turn
-metadata inventory into a legal conclusion.
+application beside the helper. This improves attribution evidence but does not turn metadata inventory into a legal
+conclusion.
 
 The GitHub repository used for the release must also be public. Ley's updater endpoint is the public GitHub
 `releases/latest/download/latest.json` asset; publishing from a private repository would not be a normal-user update

@@ -101,5 +101,9 @@ accepted or signed by SignPath Foundation. If that provider is adopted, this pol
 will be updated with SignPath Foundation's required attribution, current team-role links, and provider-specific manual
 approval/origin-verification rules before the first SignPath-signed release.
 
+Ley is publicly dual-licensed under `MIT OR Apache-2.0`; the canonical `LICENSE-MIT` and `LICENSE-APACHE` files are
+committed at repository root and included in native application bundles. This satisfies the project's own
+OSI-approved-license prerequisite independently of any future signing provider approval.
+
 See [`docs/native-release.md`](docs/native-release.md) for the operational release prerequisites and current provider
 status.
