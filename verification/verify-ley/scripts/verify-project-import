@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Verify Project Brain import through the copied CLI in a control-ley run."""
+import argparse
+import json
+import os
+from pathlib import Path
+import runpy
+import subprocess
+
+HELPER = Path(__file__).with_name("control-ley")
+Run = runpy.run_path(str(HELPER))["Run"]
+
+
+def verify(evidence):
+    run = Run(evidence)
+    scratch = run.scratch()
+    project = scratch / "import-project"
+    project.mkdir()
+    (project / "src").mkdir()
+    originals = {
+        "README.md": b"# Project Brain proof\nretainedbeacon initial evidence\n",
+        "Cargo.toml": b'[package]\nname = "proof"\nversion = "0.1.0"\n',
+        "src/main.rs": b'fn main() { println!("proof"); }\n',
+        "docs/\u03bb\u6587\u4ef6.md": "Unicode evidence\n".encode(),
+        "docs/line\nbreak.md": b"Newline path evidence\n",
+        "src/settings.rs": b'password = "x"\n',
+    }
+    for name, content in originals.items():
+        path = project / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    excluded = [".env", "id_rsa", ".netrc", "node_modules/package/index.js", "vendor/lib.rs", ".cache/cached.txt"]
+    for name in excluded:
+        path = project / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("DO_NOT_RETAIN_PRIVATE_FIXTURE\n")
+    (project / ".gitignore").write_text("ignored.txt\n")
+    (project / "ignored.txt").write_text("DO_NOT_RETAIN_IGNORED\n")
+    (project / "binary.dat").write_bytes(b"binary\0fixture")
+    (project / "large.txt").write_bytes(b"x" * 1_048_577)
+    outside = scratch / "outside.txt"
+    outside.write_text("DO_NOT_RETAIN_OUTSIDE\n")
+    (project / "escape.md").symlink_to(outside)
+    trap = scratch / "provider-traps"
+    trap.mkdir()
+    provider_marker = scratch / "provider-invoked"
+    for name in ("codex", "claude"):
+        script = trap / name
+        script.write_text(f'#!/bin/sh\nprintf invoked > "{provider_marker}"\nexit 99\n')
+        script.chmod(0o700)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(trap) + os.pathsep + old_path
+
+    def cli(label, command, *args):
+        return run.cli("m2-" + label, "brain", command, *args, "--json")
+
+    def entries(contents):
+        return {entry["relativePath"]: entry for entry in contents["entries"]}
+
+    def require_failure(label, command, *args):
+        try:
+            cli(label, command, *args)
+        except RuntimeError:
+            result = json.loads((run.evidence / ("m2-" + label + ".json")).read_text())
+            assert result["exitCode"] != 0
+            return
+        raise AssertionError(label + " unexpectedly succeeded")
+
+    try:
+        created = cli("create", "create", "--name", "M2 proof", "--request", "m2-create")
+        pid = created["identity"]["projectId"]
+        attached = cli("attach", "attach", "--project", pid, "--root", project, "--request", "m2-attach")
+        locator = attached["locator"]["locatorId"]
+        scope = ("--project", pid, "--locator", locator)
+
+        def imported(label, request):
+            return cli(label, "import", *scope, "--root", project, "--request", request)
+
+        imported("first", "m2-import-1")
+        first = cli("contents-first", "contents", *scope)
+        initial = entries(first)
+        for path in originals:
+            assert initial[path]["state"] == "retained", path
+        for path in excluded + ["ignored.txt", "binary.dat", "large.txt", "escape.md"]:
+            assert path not in initial or initial[path]["state"] != "retained", path
+        source = initial["README.md"]["sourceId"]
+        version = initial["README.md"]["sourceVersionId"]
+        imported("replay", "m2-import-1")
+        replay = cli("contents-replay", "contents", *scope)
+        assert replay["lastSuccess"] == first["lastSuccess"]
+        imported("unchanged", "m2-import-2")
+        unchanged = cli("contents-unchanged", "contents", *scope)
+        assert entries(unchanged)["README.md"]["sourceId"] == source
+        assert entries(unchanged)["README.md"]["sourceVersionId"] == version
+        assert unchanged["lastSuccess"] != first["lastSuccess"]
+        old = cli("old-evidence", "version", "--project", pid, "--source", source, "--version", version)
+        assert bytes(old["bytes"]) == originals["README.md"]
+        redacted = initial["src/settings.rs"]
+        redacted_evidence = cli("redacted-evidence", "version", "--project", pid, "--source", redacted["sourceId"], "--version", redacted["sourceVersionId"])
+        assert b'"x"' not in bytes(redacted_evidence["bytes"])
+        assert redacted_evidence["transformation"]
+
+        (project / "README.md").write_text("# Changed\nretainedbeacon updated evidence\n")
+        (project / "src/main.rs").rename(project / "src/renamed.rs")
+        (project / "Cargo.toml").unlink()
+        imported("changed", "m2-import-3")
+        changed = cli("contents-changed", "contents", *scope)
+        changed_entries = entries(changed)
+        assert changed_entries["README.md"]["sourceId"] == source
+        assert changed_entries["README.md"]["sourceVersionId"] != version
+        assert changed_entries["src/renamed.rs"]["sourceId"] == initial["src/main.rs"]["sourceId"]
+        assert changed_entries["Cargo.toml"]["state"] == "missing"
+        historical = cli("historical-read", "version", "--project", pid, "--source", source, "--version", version)
+        assert historical["bytes"] == old["bytes"] and historical["transformation"] == old["transformation"]
+
+        assert os.geteuid() != 0, "Unreadable-file proof requires a non-root user"
+        readme_mode = (project / "README.md").stat().st_mode
+        (project / "README.md").chmod(0)
+        try:
+            require_failure("unreadable", "import", *scope, "--root", project, "--request", "m2-import-unreadable")
+            assert cli("contents-unreadable", "contents", *scope)["lastSuccess"] == changed["lastSuccess"]
+        finally:
+            (project / "README.md").chmod(readme_mode)
+        (project / ".gitignore").unlink()
+        (project / ".gitignore").symlink_to(outside)
+        require_failure("failed-scan", "import", *scope, "--root", project, "--request", "m2-import-failed")
+        after_failure = cli("contents-failed", "contents", *scope)
+        assert after_failure["lastSuccess"] == changed["lastSuccess"]
+        assert entries(after_failure) == changed_entries
+        assert after_failure["latestAttempt"]["status"] == "failed"
+        (project / ".gitignore").unlink()
+        (project / ".gitignore").write_text("ignored.txt\n")
+        imported("retry-after-failure", "m2-import-4")
+
+        moved = scratch / "moved-project"
+        project.rename(moved)
+        cli("move", "move-locator", *scope, "--root", moved, "--request", "m2-move")
+        project = moved
+        imported("after-move", "m2-import-5")
+        moved_contents = cli("contents-moved", "contents", *scope)
+        assert entries(moved_contents)["README.md"]["sourceId"] == source
+        assert cli("brain-identity", "show", "--project", pid)["brain"]["identity"]["projectId"] == pid
+        assert not (project / ".ley").exists(), "M2 wrote a repo marker"
+        git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        git_env["GIT_CONFIG_NOSYSTEM"] = "1"
+        git_env["GIT_CONFIG_GLOBAL"] = os.devnull
+        for label, args in [
+            ("git-init", ["init", "--initial-branch=main"]),
+            ("git-add", ["add", "."]),
+            ("git-commit", ["-c", "user.name=M2 proof", "-c", "user.email=proof@example.invalid", "commit", "-m", "Seed offline proof"]),
+        ]:
+            run.command("m2-" + label, ["git", "-C", str(project), *args], git_env)
+        clean_git = imported("git-clean", "m2-import-git-1")
+        assert clean_git["git"]["kind"] == "observed"
+        assert clean_git["git"]["head"] and clean_git["git"]["branch"] == "main"
+        assert clean_git["git"]["dirty"] is False and clean_git["git"]["untracked"] is False
+        assert entries(cli("contents-tracked-secrets", "contents", *scope))[".env"]["state"] == "omitted"
+        (project / "README.md").write_text("# Git worktree change\n")
+        (project / "new.txt").write_text("Untracked evidence\n")
+        dirty_git = imported("git-dirty", "m2-import-git-2")
+        assert dirty_git["git"]["dirty"] is True and dirty_git["git"]["untracked"] is True
+        assert dirty_git["git"]["head"] == clean_git["git"]["head"]
+        assert dirty_git["git"]["repositoryIdentity"] and dirty_git["git"]["worktreeIdentity"]
+        assert cli("git-historical-read", "version", "--project", pid, "--source", source, "--version", version)["bytes"] == old["bytes"]
+        assert not provider_marker.exists(), "Import invoked a model provider"
+        run.state["m2Passed"] = ["offline-local-import", "non-git", "filtering", "unicode-paths", "exact-retained-evidence", "redaction", "replay", "new-occurrence", "changes", "deletion", "rename", "atomic-failure", "unreadable-file", "retry", "explicit-move", "git-clean", "git-dirty-untracked", "git-historical-evidence"]
+        run.save()
+    finally:
+        os.environ["PATH"] = old_path
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("evidence", type=Path, help="An active run created with control-ley launch")
+    args = parser.parse_args()
+    verify(args.evidence)
+
+
+if __name__ == "__main__":
+    main()

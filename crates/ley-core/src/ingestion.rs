@@ -2172,44 +2172,7 @@ fn read_scoped_file(
     preview_bytes: u64,
     limit: u64,
 ) -> Result<Vec<u8>, LeyCoreError> {
-    let mut options = OpenOptions::new();
-    options.read(true).follow(FollowSymlinks::No);
-    let mut file = root
-        .open_with(relative, &options)
-        .map_err(|source| LeyCoreError::Io {
-            path: PathBuf::from(relative),
-            source,
-        })?;
-    let before = file.metadata().map_err(|source| LeyCoreError::Io {
-        path: PathBuf::from(relative),
-        source,
-    })?;
-    if !before.is_file() || before.len() != preview_bytes || before.len() > limit {
-        return Err(LeyCoreError::ProjectChangedDuringIngestion(
-            relative.to_owned(),
-        ));
-    }
-    let mut bytes = Vec::with_capacity(before.len() as usize);
-    Read::by_ref(&mut file)
-        .take(limit.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|source| LeyCoreError::Io {
-            path: PathBuf::from(relative),
-            source,
-        })?;
-    let after = file.metadata().map_err(|source| LeyCoreError::Io {
-        path: PathBuf::from(relative),
-        source,
-    })?;
-    if bytes.len() as u64 != preview_bytes
-        || after.len() != before.len()
-        || after.modified().ok() != before.modified().ok()
-    {
-        return Err(LeyCoreError::ProjectChangedDuringIngestion(
-            relative.to_owned(),
-        ));
-    }
-    Ok(bytes)
+    crate::bounded_reader::read_scoped_file(root, Path::new(relative), preview_bytes, limit)
 }
 
 fn read_optional_store_file(

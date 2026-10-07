@@ -12,9 +12,10 @@ Existing ADRs and older research remain useful implementation history, but they 
 requirements.
 
 > **Migration status:** the repository still implements the preceding focused-continuity runtime while the
-> Project Brain milestones are being built. M1 has now established the path-independent Brain identity/persistence
-> foundation in `ley-core` (schema v12), but deterministic import, final agent workflow, derived knowledge, and the
-> new Desktop IA are later milestones. This README does not claim those later surfaces already ship.
+> Project Brain milestones are being built. M1 established path-independent Brain identity and persistence. M2
+> adds deterministic local folder/repository import and inspectable SourceVersions through `ley-core` and the
+> `ley brain` CLI, using schema v13. The final agent workflow, derived knowledge, optional analysis, complete Brain
+> backup, and new Desktop IA remain later milestones.
 
 ## Product surfaces
 
@@ -57,12 +58,16 @@ Today the implementation still exposes the focused continuity foundation that th
 - owner-private transactional SQLite continuity state;
 - path-independent Project Brain creation with durable lifecycle generations/tombstones;
 - explicit repository/working-copy, Source/SourceVersion, Session/Episode, and human-action persistence foundations;
+- deterministic offline project import with per-working-copy inventories, retained version inspection, omission
+  disclosures, retry safety, and explicit locator movement;
 - bounded/redacted project capture and exact retained-evidence citations;
 - revision/applicability evidence;
 - project/session erasure and egress controls;
 - a small native MCP surface (`ley_brief`, `ley_search`, `ley_evidence`, and opt-in `ley_checkpoint`);
 - project-scoped Codex and Claude lifecycle integrations;
 - the current Agent Memory Desktop surfaces.
+
+See [Import a local project into a Brain](docs/project-import.md) for the M2 CLI workflow.
 
 Those names and the current UI are transition behavior, not permanent Project Brain ontology. General-purpose
 note editing, backlinks, Canvas, daily notes, and the retired notebook runtime remain out of scope. Historical

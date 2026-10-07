@@ -55,6 +55,7 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         return Ok(());
     };
     match command {
+        "brain" => brain(&arguments[1..]),
         "init" => initialize(&arguments[1..]),
         "bind" => bind(&arguments[1..]),
         "binding" => binding(&arguments[1..]),
@@ -86,6 +87,136 @@ fn run(arguments: Vec<String>) -> Result<(), CliError> {
         }
         other => Err(CliError::Usage(format!("unknown command '{other}'"))),
     }
+}
+
+fn brain(arguments: &[String]) -> Result<(), CliError> {
+    use ley_core::{CreateProjectBrainInput, LocalImportInput, ProjectHandle};
+    use std::collections::BTreeMap;
+    use std::io::Write;
+    let command = arguments.first().map(String::as_str).ok_or_else(|| CliError::Usage("brain requires create, list, show, attach, import, contents, versions, version, or move-locator".into()))?;
+    let mut values = BTreeMap::new();
+    let mut raw = false;
+    let mut index = 1;
+    while index < arguments.len() {
+        let option = arguments[index].as_str();
+        match option {
+            "--json" => {}
+            "--raw" => raw = true,
+            "--project" | "--locator" | "--root" | "--request" | "--source" | "--version"
+            | "--name" => {
+                index += 1;
+                if values
+                    .insert(option, required_value(arguments, index, option)?)
+                    .is_some()
+                {
+                    return Err(CliError::Usage(format!("duplicate option {option}")));
+                }
+            }
+            other => return Err(CliError::Usage(format!("unknown brain option {other}"))),
+        }
+        index += 1;
+    }
+    let allowed: &[&str] = match command {
+        "create" => &["--name", "--request"],
+        "list" => &[],
+        "show" => &["--project"],
+        "attach" => &["--project", "--root", "--request"],
+        "import" | "move-locator" => &["--project", "--locator", "--root", "--request"],
+        "contents" => &["--project", "--locator"],
+        "versions" => &["--project", "--source"],
+        "version" => &["--project", "--source", "--version"],
+        other => return Err(CliError::Usage(format!("unknown brain command {other}"))),
+    };
+    for option in values.keys() {
+        if !allowed.contains(option) {
+            return Err(CliError::Usage(format!(
+                "{option} is not accepted by brain {command}"
+            )));
+        }
+    }
+    if raw && command != "version" {
+        return Err(CliError::Usage("--raw requires brain version".into()));
+    }
+    let required = |key: &str| {
+        values
+            .get(key)
+            .copied()
+            .ok_or_else(|| CliError::Usage(format!("brain {command} requires {key}")))
+    };
+    let store = ContinuityStore::system_default()?;
+    let output = if command == "create" {
+        serde_json::to_value(store.create_project_brain(&CreateProjectBrainInput {
+            name: required("--name")?.into(),
+            request_id: required("--request")?.into(),
+        })?)
+        .expect("serializable")
+    } else if command == "list" {
+        serde_json::to_value(store.list_project_brains()?).expect("serializable")
+    } else {
+        let project = required("--project")?;
+        let opened = store.open_project_brain(project)?;
+        let handle = ProjectHandle {
+            project_id: project.into(),
+            generation: opened.generation,
+        };
+        match command {
+            "show" => {
+                serde_json::json!({"brain":opened,"repository":store.project_repository(project)?,"workingCopies":store.working_copies(project)?,"sources":store.project_sources(project)?})
+            }
+            "attach" => {
+                let (repository, locator) = store.authorize_working_copy(
+                    &handle,
+                    required("--root")?,
+                    required("--request")?,
+                )?;
+                serde_json::json!({"repository":repository,"locator":locator})
+            }
+            "import" => serde_json::to_value(store.import_local_project(
+                &handle,
+                &LocalImportInput {
+                    locator_id: required("--locator")?.into(),
+                    selected_root: required("--root")?.into(),
+                    request_id: required("--request")?.into(),
+                },
+            )?)
+            .expect("serializable"),
+            "contents" => {
+                serde_json::to_value(store.project_contents(project, required("--locator")?)?)
+                    .expect("serializable")
+            }
+            "versions" => {
+                serde_json::to_value(store.source_versions(project, required("--source")?)?)
+                    .expect("serializable")
+            }
+            "version" => {
+                let evidence = store.source_evidence(
+                    project,
+                    required("--source")?,
+                    required("--version")?,
+                )?;
+                if raw {
+                    std::io::stdout()
+                        .write_all(&evidence.bytes)
+                        .map_err(CliError::StdinInput)?;
+                    return Ok(());
+                }
+                serde_json::to_value(evidence).expect("serializable")
+            }
+            "move-locator" => serde_json::to_value(store.relocate_working_copy(
+                &handle,
+                required("--locator")?,
+                required("--root")?,
+                required("--request")?,
+            )?)
+            .expect("serializable"),
+            _ => unreachable!(),
+        }
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).expect("serializable")
+    );
+    Ok(())
 }
 
 fn egress(arguments: &[String]) -> Result<(), CliError> {
@@ -3519,6 +3650,17 @@ fn print_help() {
     println!("Ley local project memory");
     println!();
     println!("Usage:");
+    println!("  ley brain create --name NAME --request REQUEST [--json]");
+    println!("  ley brain list [--json]");
+    println!("  ley brain show --project PROJECT [--json]");
+    println!("  ley brain attach --project PROJECT --root ROOT --request REQUEST [--json]");
+    println!("  ley brain import --project PROJECT --locator LOCATOR --root ROOT --request REQUEST [--json]");
+    println!("  ley brain contents --project PROJECT --locator LOCATOR [--json]");
+    println!("  ley brain versions --project PROJECT --source SOURCE [--json]");
+    println!(
+        "  ley brain version --project PROJECT --source SOURCE --version VERSION [--raw|--json]"
+    );
+    println!("  ley brain move-locator --project PROJECT --locator LOCATOR --root NEW_ROOT --request REQUEST [--json]");
     println!("  ley init [path] [--name NAME] [--capture minimal|structured|full] [--json]");
     println!("  ley bind [path] --vault EXISTING_LEGACY_VAULT [--json]  # reconnect only");
     println!("  ley binding [path] [--vault EXISTING_LEGACY_VAULT] [--json]");

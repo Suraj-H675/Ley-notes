@@ -30,8 +30,8 @@ Canonical retained history and human decisions must survive rebuilding derived k
 
 ## Current implementation foundation
 
-The runtime still contains the preceding focused-continuity product, but M1 now adds the first Project Brain
-persistence foundation alongside it. The final Desktop/import/retrieval experience is not implemented yet.
+The runtime still contains the preceding focused-continuity product, alongside the M1 Project Brain
+persistence foundation and M2 deterministic import. The final Desktop and agent retrieval experience remains deferred.
 
 ### Product surfaces
 
@@ -56,7 +56,7 @@ The future sparse Desktop IA is not implemented yet.
 ### Current durable state
 
 Current canonical machine-managed continuity uses one owner-private SQLite database (`continuity.sqlite3`,
-schema v12 after M1), partitioned by stable project ID. The pre-M1 structures remain for transition compatibility;
+schema v13 after M2), partitioned by stable project ID. The pre-M1 structures remain for transition compatibility;
 M1 adds:
 
 - durable Project lifecycle generation/tombstones independent of live Project rows;
@@ -84,7 +84,7 @@ WAL, and full synchronous writes in the current implementation.
 
 M1 deliberately reuses the proven SQLite/event/CAS primitives instead of introducing a second persistence engine.
 Candidate Entities/Assertions, summaries, embeddings, analysis jobs, and graph projections remain deferred derived
-state rather than being prematurely frozen into schema v12.
+state rather than being prematurely frozen into the canonical schema.
 
 ### Current repo-local state
 
@@ -114,8 +114,8 @@ without pretending path-keyed artifact snapshots are stable Source identity:
   occurrence event;
 - legacy artifact retention still favors current/cited snapshots and remains a compatibility concern.
 
-M2 owns deterministic project/source import and migration of live capture into these canonical SourceVersion
-semantics; M1 does not claim the old ingestion path has already become the new import flow.
+M2 implements a separate explicit deterministic import into these canonical SourceVersion semantics. Legacy
+artifact ingestion remains a transition workflow; M2 does not silently relabel or migrate its historical claims.
 
 ### Current Sessions and Learnings
 
@@ -173,8 +173,8 @@ Stable private logical Brain, able to exist with no live repository.
 
 The initial product allows zero or one logical code-repository attachment per Project. That repository can have
 multiple explicitly authorized machine-local working-copy/worktree locators, each with independent locator identity
-and authorization state. M1 reserves revision-observation fields but does not yet populate them; deterministic M2
-import owns that observation flow. Multiple-copy/worktree conflicts fail closed or require explicit resolution;
+and authorization state. M2 import populates revision observations and keeps a separate inventory for each
+authorized working copy. Multiple-copy/worktree conflicts fail closed or require explicit resolution;
 copied markers are not grants. Multi-repository Projects are deferred.
 
 ### Source
@@ -249,13 +249,29 @@ Git ancestry is useful revision evidence, not semantic authority.
 
 ## Import boundary
 
-Target import has two distinct phases:
+The import contract has two distinct phases:
 
-1. **deterministic local import** — creates/updates the Brain and retained approved Sources without any model;
+1. **deterministic local import** — M2 imports selected local material into an existing Brain without any model;
 2. **optional agent analysis** — explicit egress to a selected coding-agent/provider scope, producing candidate
    knowledge only.
 
-The Project must remain useful if phase 2 never runs.
+M2 implements phase 1 through `project_import.rs` and the `ley brain` CLI. Phase 2 remains deferred.
+
+A bounded scan collects eligible text and ignore/Git metadata before publication. The engine rechecks the Project
+generation, working-copy authorization, root binding, and prior inventory before committing Sources, versions,
+occurrences, and the new inventory in one SQLite transaction under the existing artifact lock. Failed attempts do
+not advance the successful observation. Contents exposes both attempt state and the last successful observation.
+
+Same paths preserve Source identity. Unique exact original-content matches can preserve identity across a rename;
+redacted-content equality or similarity alone cannot. Missing and omitted states describe one working copy, while
+historical versions remain retained. An explicit locator move changes the path association and generation while
+preserving Brain identity.
+
+The shared bounded reader opens directory components without following links. Import reuses existing credential
+redaction and private CAS retention. Source erasure scrubs import provenance and fences erased paths against later
+reimport. Portable v1 fails closed for M2 state it cannot represent, including imports that retain no versions.
+
+See [Import a local project into a Brain](project-import.md) for CLI contracts and limits.
 
 ## Derived state and retrieval
 

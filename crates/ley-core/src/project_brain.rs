@@ -36,6 +36,8 @@ pub(crate) fn is_reserved_project_brain_event_kind(kind: &str) -> bool {
             | EVENT_KIND_SOURCE_CREATED
             | EVENT_KIND_SOURCE_LOCATOR_ATTACHED
             | EVENT_KIND_EPISODE_RECORDED
+            | "project-imported"
+            | "working-copy-relocated"
             | EVENT_KIND_HUMAN_ACTION_RECORDED
     )
 }
@@ -528,7 +530,7 @@ impl ContinuityStore {
         request_id: &str,
     ) -> Result<(ProjectRepositoryAttachment, WorkingCopyLocator), LeyCoreError> {
         validate_request_id(request_id)?;
-        let root = canonical_existing_directory(root.as_ref())?;
+        let root = crate::project_import::safe_root(root.as_ref())?;
         let root_text = root
             .to_str()
             .ok_or_else(|| LeyCoreError::NonUtf8Path(root.clone()))?
@@ -647,6 +649,7 @@ impl ContinuityStore {
                 ],
             )
             .map_err(|error| self.database_error(error))?;
+        transaction.execute("UPDATE working_copy_locators SET root_identity=?1 WHERE project_id=?2 AND locator_id=?3",params![crate::project_import::root_stamp(&root)?,handle.project_id,locator.locator_id]).map_err(|e|self.database_error(e))?;
         let event = human_action_event(
             handle,
             request_id,
@@ -1229,6 +1232,28 @@ impl ContinuityStore {
         source_id: &str,
         input: &SourceVersionInput,
     ) -> Result<RetainedSourceVersion, LeyCoreError> {
+        self.with_artifact_authority_lock(|| {
+            let mut connection = self.open_connection()?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(|error| self.database_error(error))?;
+            let result =
+                self.retain_source_version_on(&transaction, handle, source_id, input, None)?;
+            transaction
+                .commit()
+                .map_err(|error| self.database_error(error))?;
+            Ok(result)
+        })
+    }
+
+    pub(crate) fn retain_source_version_on(
+        &self,
+        transaction: &Transaction<'_>,
+        handle: &ProjectHandle,
+        source_id: &str,
+        input: &SourceVersionInput,
+        import_provenance: Option<&Value>,
+    ) -> Result<RetainedSourceVersion, LeyCoreError> {
         validate_brain_id(source_id, "src_", "source ID")?;
         validate_request_id(&input.request_id)?;
         validate_kind_text(&input.representation_kind, "representation kind")?;
@@ -1237,11 +1262,6 @@ impl ContinuityStore {
                 "retained SourceVersion exceeds the M1 {}-byte limit",
                 MAX_PROJECT_BRAIN_SOURCE_BYTES
             )));
-        }
-        if input.source_bytes < input.retained_bytes.len() as u64 {
-            return Err(invalid_brain(
-                "source byte count cannot be smaller than the retained representation",
-            ));
         }
         validate_optional_hash(input.original_content_hash.as_deref())?;
         let transformation_json =
@@ -1261,53 +1281,45 @@ impl ContinuityStore {
         }))?;
         let now = unix_time_ms()?;
 
-        self.with_artifact_authority_lock(|| {
-            let mut connection = self.open_connection()?;
-            let transaction = connection
-                .transaction_with_behavior(TransactionBehavior::Immediate)
-                .map_err(|error| self.database_error(error))?;
-            require_project_generation_on(&transaction, handle, self)?;
-            let source = read_source_on(&transaction, &handle.project_id, source_id, self)?
-                .ok_or_else(|| invalid_brain("source is not present"))?;
-            if source.state != ProjectSourceState::Active {
+        require_project_generation_on(transaction, handle, self)?;
+        let source = read_source_on(transaction, &handle.project_id, source_id, self)?
+            .ok_or_else(|| invalid_brain("source is not present"))?;
+        if source.state != ProjectSourceState::Active {
+            return Err(invalid_brain(
+                "cannot retain a new SourceVersion unless the source is active",
+            ));
+        }
+
+        if let Some(event) = read_event_by_request(
+            transaction,
+            &handle.project_id,
+            None,
+            &input.request_id,
+            self.path(),
+        )? {
+            if event.request_fingerprint.as_deref() != Some(fingerprint.as_str()) {
                 return Err(invalid_brain(
-                    "cannot retain a new SourceVersion unless the source is active",
+                    "SourceVersion request ID was reused with different content",
                 ));
             }
-
-            if let Some(event) = read_event_by_request(
-                &transaction,
+            let version_id = required_payload_string(&event, "sourceVersionId")?;
+            let version = read_source_version_on(
+                transaction,
                 &handle.project_id,
-                None,
-                &input.request_id,
-                self.path(),
-            )? {
-                if event.request_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-                    return Err(invalid_brain(
-                        "SourceVersion request ID was reused with different content",
-                    ));
-                }
-                let version_id = required_payload_string(&event, "sourceVersionId")?;
-                let version = read_source_version_on(
-                    &transaction,
-                    &handle.project_id,
-                    source_id,
-                    &version_id,
-                    self,
-                )?
-                .ok_or_else(|| invalid_brain("retained SourceVersion disappeared"))?;
-                transaction
-                    .commit()
-                    .map_err(|error| self.database_error(error))?;
-                return Ok(RetainedSourceVersion {
-                    occurrence_event_id: event.event_id,
-                    ..version
-                });
-            }
+                source_id,
+                &version_id,
+                self,
+            )?
+            .ok_or_else(|| invalid_brain("retained SourceVersion disappeared"))?;
+            return Ok(RetainedSourceVersion {
+                occurrence_event_id: event.event_id,
+                ..version
+            });
+        }
 
-            let existing = transaction
-                .query_row(
-                    "SELECT source_version_id
+        let existing = transaction
+            .query_row(
+                "SELECT source_version_id
                      FROM source_versions
                      WHERE project_id = ?1 AND source_id = ?2
                        AND representation_kind = ?3 AND content_hash = ?4
@@ -1315,9 +1327,51 @@ impl ContinuityStore {
                        AND source_bytes = ?6 AND stored_bytes = ?7
                        AND transformation_json = ?8
                      ORDER BY retained_at_unix_ms, source_version_id LIMIT 1",
+                params![
+                    handle.project_id,
+                    source_id,
+                    input.representation_kind,
+                    content_hash,
+                    input.original_content_hash,
+                    u64_i64(input.source_bytes, "SourceVersion source bytes")?,
+                    u64_i64(
+                        input.retained_bytes.len() as u64,
+                        "SourceVersion stored bytes"
+                    )?,
+                    transformation_json,
+                ],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| self.database_error(error))?;
+
+        self.install_artifact_blob(
+            &handle.project_id,
+            &content_hash,
+            input.retained_bytes.len() as u64,
+            &input.retained_bytes,
+        )?;
+        let version_id = existing.unwrap_or_else(|| format!("ver_{}", Uuid::new_v4().simple()));
+        if read_source_version_on(
+            transaction,
+            &handle.project_id,
+            source_id,
+            &version_id,
+            self,
+        )?
+        .is_none()
+        {
+            transaction
+                .execute(
+                    "INSERT INTO source_versions(
+                            project_id, source_id, source_version_id, representation_kind,
+                            content_hash, original_content_hash, source_bytes, stored_bytes,
+                            transformation_json, retained_at_unix_ms
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     params![
                         handle.project_id,
                         source_id,
+                        version_id,
                         input.representation_kind,
                         content_hash,
                         input.original_content_hash,
@@ -1327,101 +1381,63 @@ impl ContinuityStore {
                             "SourceVersion stored bytes"
                         )?,
                         transformation_json,
+                        u64_i64(now, "SourceVersion retention time")?,
                     ],
-                    |row| row.get::<_, String>(0),
                 )
-                .optional()
                 .map_err(|error| self.database_error(error))?;
-
-            self.install_artifact_blob(
-                &handle.project_id,
-                &content_hash,
-                input.retained_bytes.len() as u64,
-                &input.retained_bytes,
-            )?;
-            let version_id = existing.unwrap_or_else(|| format!("ver_{}", Uuid::new_v4().simple()));
-            if read_source_version_on(
-                &transaction,
-                &handle.project_id,
-                source_id,
-                &version_id,
-                self,
-            )?
-            .is_none()
-            {
-                transaction
-                    .execute(
-                        "INSERT INTO source_versions(
-                            project_id, source_id, source_version_id, representation_kind,
-                            content_hash, original_content_hash, source_bytes, stored_bytes,
-                            transformation_json, retained_at_unix_ms
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                        params![
-                            handle.project_id,
-                            source_id,
-                            version_id,
-                            input.representation_kind,
-                            content_hash,
-                            input.original_content_hash,
-                            u64_i64(input.source_bytes, "SourceVersion source bytes")?,
-                            u64_i64(
-                                input.retained_bytes.len() as u64,
-                                "SourceVersion stored bytes"
-                            )?,
-                            transformation_json,
-                            u64_i64(now, "SourceVersion retention time")?,
-                        ],
-                    )
-                    .map_err(|error| self.database_error(error))?;
-            }
-            let occurrence = ContinuityEventInput {
-                event_id: format!("evt_{}", Uuid::new_v4().simple()),
-                project_id: handle.project_id.clone(),
-                subject_id: Some(source_id.to_owned()),
-                session_id: None,
-                session_sequence: None,
-                request_id: Some(input.request_id.clone()),
-                request_fingerprint: Some(fingerprint.clone()),
-                kind: EVENT_KIND_SOURCE_VERSION_RETAINED.to_owned(),
-                payload_version: 1,
-                recorded_at_unix_ms: now,
-                revision_head: None,
-                revision_branch: None,
-                payload: json!({
-                    "projectGeneration": handle.generation,
-                    "sourceId": source_id,
-                    "sourceVersionId": version_id,
-                    "representationKind": input.representation_kind,
-                    "contentHash": content_hash,
-                    "storedBytes": input.retained_bytes.len(),
-                }),
-            };
-            let event =
-                append_project_brain_event_on(&transaction, &occurrence, self.path())?.record;
-            transaction
-                .execute(
-                    "INSERT OR IGNORE INTO event_source_version_links(
+        }
+        let occurrence = ContinuityEventInput {
+            event_id: format!("evt_{}", Uuid::new_v4().simple()),
+            project_id: handle.project_id.clone(),
+            subject_id: Some(source_id.to_owned()),
+            session_id: None,
+            session_sequence: None,
+            request_id: Some(input.request_id.clone()),
+            request_fingerprint: Some(fingerprint.clone()),
+            kind: EVENT_KIND_SOURCE_VERSION_RETAINED.to_owned(),
+            payload_version: 1,
+            recorded_at_unix_ms: now,
+            revision_head: import_provenance
+                .and_then(|p| p.get("git"))
+                .and_then(|g| g.get("head"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            revision_branch: import_provenance
+                .and_then(|p| p.get("git"))
+                .and_then(|g| g.get("branch"))
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            payload: json!({
+                "projectGeneration": handle.generation,
+                "import": import_provenance,
+                "sourceId": source_id,
+                "sourceVersionId": version_id,
+                "representationKind": input.representation_kind,
+                "contentHash": content_hash,
+                "storedBytes": input.retained_bytes.len(),
+            }),
+        };
+        let event = append_project_brain_event_on(transaction, &occurrence, self.path())?.record;
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO event_source_version_links(
                         project_id, event_id, source_id, source_version_id,
                         relation, selector_version, selector_json
                      ) VALUES (?1, ?2, ?3, ?4, 'retained-version', 1, '{\"kind\":\"whole\"}')",
-                    params![handle.project_id, event.event_id, source_id, version_id],
-                )
-                .map_err(|error| self.database_error(error))?;
-            let version = read_source_version_on(
-                &transaction,
-                &handle.project_id,
-                source_id,
-                &version_id,
-                self,
-            )?
-            .ok_or_else(|| invalid_brain("retained SourceVersion was not persisted"))?;
-            transaction
-                .commit()
-                .map_err(|error| self.database_error(error))?;
-            Ok(RetainedSourceVersion {
-                occurrence_event_id: event.event_id,
-                ..version
-            })
+                params![handle.project_id, event.event_id, source_id, version_id],
+            )
+            .map_err(|error| self.database_error(error))?;
+        let version = read_source_version_on(
+            transaction,
+            &handle.project_id,
+            source_id,
+            &version_id,
+            self,
+        )?
+        .ok_or_else(|| invalid_brain("retained SourceVersion was not persisted"))?;
+        Ok(RetainedSourceVersion {
+            occurrence_event_id: event.event_id,
+            ..version
         })
     }
 
@@ -1487,7 +1503,7 @@ impl ContinuityStore {
             let mut source_events = transaction
                 .prepare(
                     "SELECT event_id FROM events
-                     WHERE project_id = ?1 AND subject_id = ?2",
+                     WHERE project_id = ?1 AND (subject_id = ?2 OR kind = 'project-imported')",
                 )
                 .map_err(|error| self.database_error(error))?;
             event_ids.extend(
@@ -1510,6 +1526,12 @@ impl ContinuityStore {
                     )
                     .map_err(|error| self.database_error(error))?;
             }
+            crate::project_import::erase_import_source_on(
+                &transaction,
+                &handle.project_id,
+                source_id,
+                self,
+            )?;
             transaction
                 .execute(
                     "DELETE FROM source_versions WHERE project_id = ?1 AND source_id = ?2",
@@ -2002,7 +2024,7 @@ fn dependent_event_closure_on(
     Ok(closure)
 }
 
-fn require_project_generation_on(
+pub(crate) fn require_project_generation_on(
     connection: &Connection,
     handle: &ProjectHandle,
     store: &ContinuityStore,
@@ -2018,7 +2040,7 @@ fn require_project_generation_on(
     Ok(lifecycle)
 }
 
-fn bump_project_generation_on(
+pub(crate) fn bump_project_generation_on(
     transaction: &Transaction<'_>,
     project_id: &str,
     updated_at_unix_ms: u64,
@@ -2092,7 +2114,7 @@ fn read_repository_on(
         .transpose()
 }
 
-fn read_working_copy_on(
+pub(crate) fn read_working_copy_on(
     connection: &Connection,
     project_id: &str,
     locator_id: &str,
@@ -2248,7 +2270,7 @@ fn read_source_locator_on(
         .transpose()
 }
 
-fn read_source_version_on(
+pub(crate) fn read_source_version_on(
     connection: &Connection,
     project_id: &str,
     source_id: &str,
@@ -2425,7 +2447,7 @@ fn validate_kind_text(value: &str, label: &str) -> Result<(), LeyCoreError> {
     Ok(())
 }
 
-fn validate_request_id(value: &str) -> Result<(), LeyCoreError> {
+pub(crate) fn validate_request_id(value: &str) -> Result<(), LeyCoreError> {
     if value.is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
         return Err(invalid_brain(
             "request ID must be non-empty, bounded text without control characters",
@@ -2491,17 +2513,7 @@ fn validate_optional_hash(value: Option<&str>) -> Result<(), LeyCoreError> {
     Ok(())
 }
 
-fn canonical_existing_directory(path: &Path) -> Result<PathBuf, LeyCoreError> {
-    if !path.is_dir() {
-        return Err(LeyCoreError::NotDirectory(path.to_path_buf()));
-    }
-    path.canonicalize().map_err(|source| LeyCoreError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-fn request_fingerprint(value: &Value) -> Result<String, LeyCoreError> {
+pub(crate) fn request_fingerprint(value: &Value) -> Result<String, LeyCoreError> {
     let bytes = serde_json::to_vec(value).map_err(|error| {
         invalid_brain(&format!(
             "request fingerprint serialization failed: {error}"
@@ -2510,14 +2522,14 @@ fn request_fingerprint(value: &Value) -> Result<String, LeyCoreError> {
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
 }
 
-fn unix_time_ms() -> Result<u64, LeyCoreError> {
+pub(crate) fn unix_time_ms() -> Result<u64, LeyCoreError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .map_err(|_| invalid_brain("system clock is before the Unix epoch"))
 }
 
-fn u64_i64(value: u64, label: &str) -> Result<i64, LeyCoreError> {
+pub(crate) fn u64_i64(value: u64, label: &str) -> Result<i64, LeyCoreError> {
     i64::try_from(value).map_err(|_| invalid_brain(&format!("{label} exceeds SQLite range")))
 }
 
@@ -2525,7 +2537,7 @@ fn sqlite_u64(value: i64, label: &str) -> Result<u64, LeyCoreError> {
     u64::try_from(value).map_err(|_| invalid_brain(&format!("{label} is negative")))
 }
 
-fn invalid_brain(message: &str) -> LeyCoreError {
+pub(crate) fn invalid_brain(message: &str) -> LeyCoreError {
     LeyCoreError::InvalidContinuityStore(message.to_owned())
 }
 
@@ -3335,7 +3347,12 @@ mod tests {
             .execute_batch(
                 r#"
                 PRAGMA foreign_keys = OFF;
-                DROP TABLE event_source_version_links;
+                DROP TABLE working_copy_import_heads;
+                 DROP TABLE working_copy_inventory;
+                 DROP TABLE import_source_paths;
+                 DROP TABLE import_erasure_fences;
+                 DROP TABLE project_import_attempts;
+                 DROP TABLE event_source_version_links;
                 DROP TABLE source_locators;
                 DROP TABLE source_versions;
                 DROP TABLE project_sources;
@@ -3394,5 +3411,84 @@ mod tests {
             authorized, 0,
             "historical path observation must not grant working-copy authority"
         );
+    }
+    #[test]
+    fn source_erasure_removes_transitive_dependents_of_import_events() {
+        let (base, store) = private_store();
+        let brain = store
+            .create_project_brain(&CreateProjectBrainInput {
+                name: "Import dependency".into(),
+                request_id: "req_create".into(),
+            })
+            .unwrap();
+        let root = base.path().join("root");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("sensitive.txt"), "retained evidence").unwrap();
+        let (_, locator) = store
+            .authorize_working_copy(&handle(&brain), &root, "req_attach")
+            .unwrap();
+        store
+            .import_local_project(
+                &handle(&brain),
+                &crate::LocalImportInput {
+                    locator_id: locator.locator_id,
+                    selected_root: root,
+                    request_id: "req_import".into(),
+                },
+            )
+            .unwrap();
+        let connection = store.open_connection().unwrap();
+        let imported: String = connection
+            .query_row(
+                "SELECT event_id FROM events WHERE project_id=?1 AND kind='project-imported'",
+                [&brain.identity.project_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        let action = store
+            .record_local_human_action(
+                &handle(&brain),
+                &LocalHumanActionInput {
+                    request_id: "req_action".into(),
+                    action_kind: "accept-candidate".into(),
+                    exact_target: json!({"statement":"sensitive imported path"}),
+                    evidence: vec![HumanActionEvidenceInput::Episode {
+                        event_id: imported.clone(),
+                    }],
+                },
+            )
+            .unwrap();
+        let dependent = store
+            .record_local_human_action(
+                &handle(&brain),
+                &LocalHumanActionInput {
+                    request_id: "req_dependent".into(),
+                    action_kind: "accept-candidate".into(),
+                    exact_target: json!({"statement":"dependent snapshot"}),
+                    evidence: vec![HumanActionEvidenceInput::Episode {
+                        event_id: action.event_id.clone(),
+                    }],
+                },
+            )
+            .unwrap();
+        let source = store
+            .project_sources(&brain.identity.project_id)
+            .unwrap()
+            .remove(0);
+        store
+            .erase_project_source(&handle(&brain), &source.source_id)
+            .unwrap();
+        let connection = store.open_connection().unwrap();
+        for id in [imported, action.event_id, dependent.event_id] {
+            let exists: bool = connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM events WHERE project_id=?1 AND event_id=?2)",
+                    params![brain.identity.project_id, id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(!exists, "erased import dependency survived: {id}");
+        }
     }
 }

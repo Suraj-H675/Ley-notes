@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const CONTINUITY_DATABASE_FILE: &str = "continuity.sqlite3";
-pub const CONTINUITY_SCHEMA_VERSION: u32 = 12;
+pub const CONTINUITY_SCHEMA_VERSION: u32 = 13;
 pub const CONTINUITY_EVENT_LIMIT_BYTES: usize = 1_048_576;
 const CONTINUITY_APPROVED_SOURCE_LIMIT_BYTES: usize = 1_048_576;
 const CONTINUITY_EGRESS_AUTHORITY_LOCK_FILE: &str = "continuity-egress.lock";
@@ -3976,6 +3976,7 @@ impl ContinuityStore {
                         (SELECT count(*) FROM project_repositories WHERE project_id = ?1) +
                         (SELECT count(*) FROM project_sources WHERE project_id = ?1) +
                         (SELECT count(*) FROM project_sessions WHERE project_id = ?1) +
+                        (SELECT count(*) FROM project_import_attempts WHERE project_id = ?1) +
                         (SELECT count(*) FROM events
                          WHERE project_id = ?1
                            AND kind IN (
@@ -4363,7 +4364,10 @@ impl ContinuityStore {
             })?,
         )?;
 
-        let source = self.open_connection()?;
+        let mut source_connection = self.open_connection()?;
+        let source = source_connection
+            .transaction()
+            .map_err(|error| self.database_error(error))?;
         let project_exists: bool = source
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM projects WHERE project_id = ?1)",
@@ -4378,14 +4382,14 @@ impl ContinuityStore {
         }
         let source_version_count: i64 = source
             .query_row(
-                "SELECT count(*) FROM source_versions WHERE project_id = ?1",
+                "SELECT (SELECT count(*) FROM source_versions WHERE project_id = ?1) + (SELECT count(*) FROM project_import_attempts WHERE project_id = ?1)",
                 [project_id],
                 |row| row.get(0),
             )
             .map_err(|error| self.database_error(error))?;
         if source_version_count != 0 {
             return Err(LeyCoreError::InvalidPortableContinuityBundle(
-                "portable continuity v1 cannot represent retained Project Brain SourceVersions; export is disabled until the Project Brain bundle format includes their retained representations"
+                "portable continuity v1 cannot represent retained Project Brain SourceVersions or canonical import state; export is disabled until the Project Brain bundle format includes their retained representations"
                     .to_owned(),
             ));
         }
@@ -5959,6 +5963,11 @@ fn migrate(connection: &mut Connection, path: &Path) -> Result<(), LeyCoreError>
             )
             .map_err(|error| database_error(path, error))?;
     }
+    if version < 13 {
+        transaction
+            .execute_batch(crate::project_import::IMPORT_SCHEMA)
+            .map_err(|error| database_error(path, error))?;
+    }
     transaction
         .commit()
         .map_err(|error| database_error(path, error))?;
@@ -7456,7 +7465,12 @@ mod tests {
         let connection = store.open_connection().unwrap();
         connection
             .execute_batch(
-                "DROP TABLE event_source_version_links;
+                "DROP TABLE working_copy_import_heads;
+                 DROP TABLE working_copy_inventory;
+                 DROP TABLE import_source_paths;
+                 DROP TABLE import_erasure_fences;
+                 DROP TABLE project_import_attempts;
+                 DROP TABLE event_source_version_links;
                  DROP TABLE source_locators;
                  DROP TABLE source_versions;
                  DROP TABLE project_sources;
@@ -7559,7 +7573,12 @@ mod tests {
         let connection = store.open_connection().unwrap();
         connection
             .execute_batch(
-                "DROP TABLE event_source_version_links;
+                "DROP TABLE working_copy_import_heads;
+                 DROP TABLE working_copy_inventory;
+                 DROP TABLE import_source_paths;
+                 DROP TABLE import_erasure_fences;
+                 DROP TABLE project_import_attempts;
+                 DROP TABLE event_source_version_links;
                  DROP TABLE source_locators;
                  DROP TABLE source_versions;
                  DROP TABLE project_sources;

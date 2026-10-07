@@ -36,8 +36,8 @@ The current/target boundary remains:
 
 ### Private Brain state
 
-Machine-managed Project Brain state belongs in owner-private OS storage. M1 now uses the existing single
-project-partitioned SQLite authority at schema v12 plus the private content-addressed evidence store for exact
+Machine-managed Project Brain state belongs in owner-private OS storage. M1 and M2 use the existing single
+project-partitioned SQLite authority at schema v13 plus the private content-addressed evidence store for exact
 retained SourceVersion representations. This preserves the existing private-file, no-follow, transactional, WAL,
 secure-delete, and project-isolation safeguards rather than creating another mutable store.
 
@@ -81,7 +81,13 @@ If capture redacts before persistence, the retained evidence is exact only with 
 representation. Ley must not describe it as an exact original.
 
 Different Sources with identical retained bytes keep distinct project provenance and privacy identity even if the
-underlying blob bytes are deduplicated.
+underlying blob bytes are deduplicated. Original and stored byte counts are independent because redaction can
+expand short credentials. Transformation metadata identifies the retained representation.
+
+M2 import remains local and one-shot. Explicit attachment and import do not enable automatic capture or model
+egress. It records a bounded per-working-copy observation, excludes secret/generated/dependency material even
+when tracked, respects root-local ignore rules, and refuses symlink traversal. Failed eligible scans do not publish
+a new successful inventory. Omitted files and files observed missing are distinct from retained historical evidence.
 
 ## Capture boundary
 
@@ -198,7 +204,8 @@ retained Sources/SourceVersions. The preceding cited-only artifact export behavi
 Brain backup.
 
 The current portable-continuity v1 format does **not** yet satisfy that complete Project Brain backup contract. M1
-fails export closed when retained Project Brain SourceVersions are present rather than silently dropping them. A
+fails export closed when retained Project Brain SourceVersions are present rather than silently dropping them.
+M2 also rejects exports containing canonical import state that v1 cannot faithfully represent. A
 later portable format must carry all retained canonical SourceVersion representations and their provenance before
 Ley can call that export a complete Brain backup.
 

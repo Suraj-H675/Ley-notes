@@ -1,3 +1,9 @@
+mod bounded_reader;
+mod project_import;
+pub use project_import::{
+    ContentsEntry, ImportAttempt, ImportReceipt, InventoryState, LocalImportInput, ProjectContents,
+    SourceEvidence, SourceVersionMetadata, MAX_IMPORT_ENTRIES, MAX_IMPORT_TOTAL_BYTES,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};

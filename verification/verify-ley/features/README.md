@@ -10,10 +10,12 @@ Report each entry point as passed, failed, or blocked. An absent host, inaccessi
 
 ## Features
 
+- [Deterministic Project Brain import](project-import.md): M2 Sources, versions, per-copy inventory, retries and failures.
 - [Project onboarding and capture](capture.md): initialization, capture preview, refresh, native persistence.
 - [Session continuity](sessions.md): session start, checkpoint, readback, Desktop history.
 - [Project search](search.md): matching, empty results, revision scope, result opening.
 - [Capture privacy and egress](privacy.md): policy mutation and persisted readback.
 - [Agent brief and evidence](brief-evidence.md): explicit task compilation, egress target, historical evidence inspection.
 
-Other checks include coding-agent connection/disconnection and observed-hook smoke checks, learning review, erasure/export, marketing website, and packaging. Those are outside this initial map's proof; consult the runtime contract when changes affect them. M1's path-independent Brain persistence does not yet have a user-facing deterministic import workflow.
+Other checks include coding-agent connection/disconnection and observed-hook smoke checks, learning review, erasure/export, marketing website, and packaging. Those are outside this initial map's proof; consult the runtime contract when changes affect them. M2 now exposes deterministic Project Brain import through the CLI. Its separate behavioral script extends the
+existing run without claiming the final Desktop import workflow.

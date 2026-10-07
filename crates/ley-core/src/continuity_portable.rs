@@ -1548,6 +1548,11 @@ mod tests {
                  DROP TABLE project_artifact_state;
                  DROP TABLE artifact_files;
                  DROP TABLE artifact_snapshots;
+                 DROP TABLE working_copy_import_heads;
+                 DROP TABLE working_copy_inventory;
+                 DROP TABLE import_source_paths;
+                 DROP TABLE import_erasure_fences;
+                 DROP TABLE project_import_attempts;
                  DROP TABLE event_source_version_links;
                  DROP TABLE source_locators;
                  DROP TABLE source_versions;
